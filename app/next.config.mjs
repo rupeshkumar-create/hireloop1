@@ -1,0 +1,70 @@
+/** @type {import('next').NextConfig} */
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+let apiConnectOrigin = "";
+try {
+  apiConnectOrigin = new URL(apiUrl).origin;
+} catch {
+  apiConnectOrigin = "http://127.0.0.1:8000";
+}
+
+const backendUrl = apiUrl.replace(/\/$/, "");
+
+const nextConfig = {
+  reactStrictMode: true,
+
+  async rewrites() {
+    return [
+      {
+        source: "/hireloop-api/:path*",
+        destination: `${backendUrl}/:path*`,
+      },
+    ];
+  },
+
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "*.supabase.co",
+        pathname: "/storage/v1/object/**",
+      },
+      {
+        protocol: "https",
+        hostname: "media.licdn.com",
+      },
+    ],
+  },
+
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Permissions-Policy",
+            // Microphone allowed: used for Aarya voice chat
+            value: "camera=(), microphone=(self), geolocation=()",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: https://*.supabase.co https://media.licdn.com",
+              "font-src 'self' data:",
+              // Voice is browser-native (Web Speech API) — no external voice API calls needed
+              `connect-src 'self' ${apiConnectOrigin} https://*.supabase.co wss://*.supabase.co https://openrouter.ai`,
+              "media-src 'self' blob:",
+            ].join("; "),
+          },
+        ],
+      },
+    ];
+  },
+};
+
+export default nextConfig;

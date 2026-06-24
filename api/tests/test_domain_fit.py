@@ -1,0 +1,89 @@
+"""Tests for industry/domain fit penalties in matching."""
+
+from __future__ import annotations
+
+from hireloop_api.services.domain_fit import (
+    detect_domains,
+    domain_fit_multiplier,
+    generic_title_overlap_penalty,
+)
+from hireloop_api.services.matching import _assemble_score
+
+
+def test_detect_hospitality_job_from_accor_title() -> None:
+    domains = detect_domains(
+        title="Associate Director of Sales - Mumbai",
+        company="AccorHotel",
+        skills=["sales", "hospitality"],
+        extra="hotel revenue management",
+    )
+    assert "hospitality" in domains
+
+
+def test_detect_staffing_saas_candidate() -> None:
+    domains = detect_domains(
+        title="Go-To-Market Lead",
+        company="Candidately",
+        skills=["AI", "Digital Strategy", "Automation"],
+        extra="staffing agencies B2B SaaS",
+    )
+    assert domains & {"tech", "staffing"}
+
+
+def test_hospitality_job_penalised_for_saas_candidate() -> None:
+    cand = detect_domains(
+        title="Go-To-Market Lead",
+        company="Candidately",
+        skills=["AI", "Digital Strategy", "Automation"],
+    )
+    job = detect_domains(
+        title="Associate Director of Sales",
+        company="AccorHotel",
+        extra="hospitality hotel resort",
+    )
+    assert domain_fit_multiplier(cand, job) <= 0.15
+
+
+def test_generic_sales_title_overlap_penalised() -> None:
+    assert (
+        generic_title_overlap_penalty(
+            "Associate Director of Sales",
+            "Regional Sales Manager",
+        )
+        < 1.0
+    )
+
+
+def test_saas_gtm_vs_accor_hotel_score_is_low() -> None:
+    """Regression: Accor hotel sales must not rank ~60% for a SaaS GTM profile."""
+    cand_row = {
+        "full_name": "Rupesh Kumar",
+        "current_title": "Go-To-Market Lead",
+        "current_company": "Candidately",
+        "headline": "B2B SaaS for staffing agencies",
+        "summary": "AI resume builder and recruiting automation",
+        "years_experience": 10,
+        "skills": ["AI", "Digital Strategy", "Automation", "Sales"],
+        "expected_ctc_min": 2_500_000,
+        "expected_ctc_max": 4_000_000,
+        "location_city": "Bengaluru",
+        "location_state": "Karnataka",
+        "remote_preference": "any",
+        "open_to_relocation": False,
+        "location_scope": "city",
+        "target_titles": ["Head of Sales", "VP Sales"],
+    }
+    job_row = {
+        "title": "Associate Director of Sales - Mumbai",
+        "description": "Accor hospitality hotel sales leadership in Mumbai",
+        "seniority": "director",
+        "skills_required": ["sales", "hospitality", "revenue"],
+        "is_remote": False,
+        "location_city": "Mumbai",
+        "location_state": "Maharashtra",
+        "ctc_min": 2_000_000,
+        "ctc_max": 3_500_000,
+        "company_name": "AccorHotel",
+    }
+    result = _assemble_score(cand_row, job_row, embed_skills_sim=0.45, embed_profile_sim=0.42)
+    assert result["overall"] < 0.35, f"expected weak match, got {result['overall']}"

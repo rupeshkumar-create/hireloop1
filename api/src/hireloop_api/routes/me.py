@@ -1,0 +1,1017 @@
+"""
+User account routes — DPDP export/delete, notification prefs (P19, P23).
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+import asyncpg
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from hireloop_api.config import Settings, get_settings
+from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.services.consent import log_consent
+from hireloop_api.services.job_preferences import (
+    VALID_REMOTE_PREFERENCES,
+    apply_negative_preference,
+    extract_negative_preferences,
+    normalize_remote_preference,
+)
+from hireloop_api.services.job_present import serialize_job_card
+from hireloop_api.services.linkedin_oauth import (
+    extract_linkedin_display_name,
+    heal_candidate_headline_from_linkedin,
+)
+from hireloop_api.services.profile_experience import (
+    build_merged_education,
+    build_merged_experience,
+)
+
+logger = structlog.get_logger()
+router = APIRouter(prefix="/me", tags=["me"])
+
+
+class NotificationPrefsUpdate(BaseModel):
+    prefs: dict[str, dict[str, bool]]
+
+
+class OnboardingConsentRequest(BaseModel):
+    tos_accepted: bool
+    marketing_emails: bool = False
+
+
+class CompleteOnboardingRequest(BaseModel):
+    skipped_voice: bool = False
+    skipped_resume: bool = False
+
+
+async def _schedule_post_consent_enrichment(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    user_id: uuid.UUID,
+    candidate_id: str,
+) -> None:
+    """Run LinkedIn enrichment + CI only after explicit DPDP consent."""
+    from hireloop_api.services.background_jobs import (
+        CAREER_INTELLIGENCE_UPDATE,
+        CAREER_PATH_UPDATE,
+        LINKDAPI_ENRICH,
+        MATCH_EMBED_CANDIDATE,
+        enqueue_job,
+    )
+    from hireloop_api.services.linkedin_oauth import extract_linkedin_profile_url
+
+    row = await db.fetchrow(
+        "SELECT linkedin_data, linkedin_url FROM public.candidates WHERE id = $1::uuid",
+        uuid.UUID(candidate_id),
+    )
+    linkedin_url = (row["linkedin_url"] if row else None) or (
+        extract_linkedin_profile_url(row["linkedin_data"]) if row else None
+    )
+    if linkedin_url and settings.linkdapi_key:
+        await enqueue_job(
+            db,
+            kind=LINKDAPI_ENRICH,
+            payload={"user_id": str(user_id), "linkedin_url": linkedin_url},
+            idempotency_key=f"linkdapi:{user_id}",
+        )
+    else:
+        await enqueue_job(
+            db,
+            kind=CAREER_INTELLIGENCE_UPDATE,
+            payload={"candidate_id": candidate_id, "only_if_missing": True},
+            idempotency_key=f"career_intel:{candidate_id}",
+        )
+        await enqueue_job(
+            db,
+            kind=CAREER_PATH_UPDATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"career_path_update:{candidate_id}",
+        )
+    await enqueue_job(
+        db,
+        kind=MATCH_EMBED_CANDIDATE,
+        payload={"candidate_id": candidate_id},
+        idempotency_key=f"match_embed_candidate:{candidate_id}",
+    )
+    await log_consent(
+        db,
+        user_id=user_id,
+        purpose="linkedin_oauth_profile",
+        granted=True,
+    )
+
+
+_VISIBILITY_VALUES = {"open_to_matches", "exceptional_only", "private"}
+
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: str | None = None
+    headline: str | None = None
+    summary: str | None = None
+    current_title: str | None = None
+    current_company: str | None = None
+    years_experience: int | None = None
+    location_city: str | None = None
+    location_state: str | None = None
+    skills: list[str] | None = None
+    visibility: str | None = None
+    looking_for: str | None = None
+    remote_preference: str | None = None
+    open_to_relocation: bool | None = None
+    location_scope: str | None = None
+    expected_ctc_min: int | None = None
+    expected_ctc_max: int | None = None
+    current_ctc: int | None = None
+    notice_period_days: int | None = None
+
+
+def _serialize_value(value: Any) -> Any:  # noqa: ANN401
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _serialize_row(row: asyncpg.Record | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {key: _serialize_value(val) for key, val in dict(row).items()}
+
+
+async def _ensure_candidate_row(
+    db: asyncpg.Connection,
+    user_id: uuid.UUID,
+    *,
+    headline: str = "New candidate",
+) -> asyncpg.Record:
+    existing = await db.fetchrow(
+        """
+        SELECT id, headline, summary, current_title, current_company,
+               years_experience, location_city, location_state, skills,
+               profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
+               open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
+               current_ctc, notice_period_days,
+               is_active, linkedin_url, linkedin_data, career_profile, career_analysis
+        FROM public.candidates
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if existing:
+        return existing
+
+    return await db.fetchrow(
+        """
+        INSERT INTO public.candidates (user_id, headline, profile_complete)
+        VALUES ($1::uuid, $2, FALSE)
+        RETURNING id, headline, summary, current_title, current_company,
+                  years_experience, location_city, location_state, skills,
+                  profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
+                  open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
+                  current_ctc, notice_period_days,
+                  is_active, linkedin_url, linkedin_data, career_profile, career_analysis
+        """,
+        user_id,
+        headline,
+    )
+
+
+@router.get("/access")
+async def get_access_status(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Returns whether the user has unlocked the jobs/matches feed.
+    Unlocked when the candidate has uploaded a resume OR completed
+    a voice session with Aarya.
+    """
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        current_user["id"],
+    )
+    if not candidate:
+        return {"unlocked": False, "has_resume": False, "has_voice_session": False}
+
+    has_resume = await db.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM public.resumes WHERE candidate_id = $1)",
+        candidate["id"],
+    )
+    has_voice = await db.fetchval(
+        """
+        SELECT EXISTS(
+          SELECT 1 FROM public.voice_sessions
+          WHERE candidate_id = $1 AND status = 'completed'
+        )
+        """,
+        candidate["id"],
+    )
+
+    return {
+        "unlocked": bool(has_resume or has_voice),
+        "has_resume": bool(has_resume),
+        "has_voice_session": bool(has_voice),
+    }
+
+
+@router.get("/profile")
+async def get_my_profile(
+    current_user: dict = Depends(get_india_verified_user),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    user_row = await db.fetchrow(
+        """
+        SELECT id, email, phone, full_name, role, india_verified, avatar_url
+        FROM public.users
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    candidate_row = await _ensure_candidate_row(
+        db,
+        user_id,
+        headline="New candidate",
+    )
+
+    user_payload = _serialize_row(user_row) or {}
+    candidate_payload = _serialize_row(candidate_row) or {}
+
+    # Admin status mirrors deps.get_admin_user: DB role OR the operator allow-list
+    # (so a founder bootstrapped via SUPER_ADMIN_EMAILS — whose DB role is still
+    # 'candidate' — still sees the Admin entry point). Never user-editable.
+    _allow = {e.lower() for e in (getattr(settings, "super_admin_emails", []) or []) if e}
+    user_payload["is_admin"] = (
+        user_payload.get("role") == "admin"
+        or str(user_payload.get("email") or "").lower() in _allow
+    )
+
+    linkedin_name = extract_linkedin_display_name(candidate_row.get("linkedin_data"))
+    if linkedin_name and not user_payload.get("full_name"):
+        user_payload["full_name"] = linkedin_name
+
+    try:
+        healed = await heal_candidate_headline_from_linkedin(
+            db,
+            user_id=user_id,
+            linkedin_data=candidate_row.get("linkedin_data"),
+            user_full_name=user_payload.get("full_name"),
+        )
+        if healed:
+            candidate_payload["headline"] = healed
+    except Exception as exc:
+        logger.warning("linkedin_headline_heal_failed", user_id=str(user_id), error=str(exc))
+
+    # ── Work experience + education from the primary (latest) resume ──────────
+    experience: list[dict[str, Any]] = []
+    education: list[dict[str, Any]] = []
+    resume_education: list[dict[str, Any]] = []
+    candidate_id = candidate_row.get("id")
+    resume_filename: str | None = None
+    if candidate_id is not None:
+        resume_row = await db.fetchrow(
+            """
+            SELECT parsed_data, file_name
+            FROM public.resumes
+            WHERE candidate_id = $1
+            ORDER BY is_primary DESC, version DESC, created_at DESC
+            LIMIT 1
+            """,
+            candidate_id,
+        )
+        parsed = resume_row["parsed_data"] if resume_row else None
+        resume_filename = resume_row.get("file_name") if resume_row else None
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except (ValueError, TypeError):
+                parsed = None
+        if isinstance(parsed, dict):
+            raw_exp = parsed.get("work_experience")
+            if isinstance(raw_exp, list):
+                experience = [e for e in raw_exp if isinstance(e, dict)]
+            raw_edu = parsed.get("education")
+            if isinstance(raw_edu, list):
+                resume_education = [e for e in raw_edu if isinstance(e, dict)]
+
+        career_intel = None
+        try:
+            from hireloop_api.services.career_intelligence import CareerIntelligenceService
+
+            career_intel = await CareerIntelligenceService.get(db, str(candidate_id))
+        except Exception:
+            career_intel = None
+
+        cp_raw = candidate_row.get("career_profile")
+        career_profile = cp_raw if isinstance(cp_raw, dict) else None
+        if isinstance(cp_raw, str):
+            try:
+                career_profile = json.loads(cp_raw)
+            except (ValueError, TypeError):
+                career_profile = None
+
+        experience = build_merged_experience(
+            resume_experience=experience,
+            linkedin_data=candidate_row.get("linkedin_data"),
+            career_profile=career_profile if isinstance(career_profile, dict) else None,
+            career_intelligence=career_intel,
+            candidate=candidate_payload,
+            skills=list(candidate_payload.get("skills") or []),
+        )
+
+        # Education merges the same three persisted sources as experience so it
+        # surfaces from CV, LinkedIn, OR resume — whichever the candidate gave.
+        education = build_merged_education(
+            resume_education=resume_education,
+            linkedin_data=candidate_row.get("linkedin_data"),
+            career_profile=career_profile if isinstance(career_profile, dict) else None,
+        )
+
+        if career_intel is None:
+            from hireloop_api.services.background_jobs import (
+                CAREER_INTELLIGENCE_UPDATE,
+                enqueue_job,
+            )
+
+            await enqueue_job(
+                db,
+                kind=CAREER_INTELLIGENCE_UPDATE,
+                payload={
+                    "candidate_id": str(candidate_id),
+                    "only_if_missing": True,
+                },
+                idempotency_key=f"career_intel:{candidate_id}",
+            )
+
+    return {
+        "user": user_payload,
+        "candidate": candidate_payload,
+        "experience": experience,
+        "education": education,
+        "resume_filename": resume_filename,
+    }
+
+
+class LinkedInUrlRequest(BaseModel):
+    linkedin_url: str
+
+
+@router.post("/linkedin")
+async def set_linkedin_url(
+    body: LinkedInUrlRequest,
+    current_user: dict = Depends(get_india_verified_user),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Save / confirm the candidate's LinkedIn URL and (re)run LinkDAPI enrichment
+    so the dashboard pre-fills. This is the onboarding fallback for when LinkedIn
+    OAuth didn't return a vanity URL.
+    """
+    from hireloop_api.services.background_jobs import LINKDAPI_ENRICH, enqueue_job
+    from hireloop_api.services.linkdapi_profile import extract_linkedin_username
+
+    url = (body.linkedin_url or "").strip()
+    if not extract_linkedin_username(url):
+        raise HTTPException(400, "Enter a valid LinkedIn profile URL (linkedin.com/in/…).")
+
+    user_id = uuid.UUID(str(current_user["id"]))
+    await _ensure_candidate_row(db, user_id)
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET linkedin_url = $2, updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        url,
+    )
+
+    scheduled = bool(settings.linkdapi_key)
+    if scheduled:
+        await enqueue_job(
+            db,
+            kind=LINKDAPI_ENRICH,
+            payload={"user_id": str(user_id), "linkedin_url": url},
+            idempotency_key=f"linkdapi:{user_id}",
+        )
+    return {"ok": True, "linkedin_url": url, "enrichment_scheduled": scheduled}
+
+
+@router.patch("/profile")
+async def update_my_profile(
+    body: ProfileUpdateRequest,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    user_id = uuid.UUID(str(current_user["id"]))
+    updates = body.model_dump(exclude_unset=True)
+
+    if "full_name" in updates:
+        raw_name = updates.pop("full_name")
+        await db.execute(
+            """
+            UPDATE public.users
+            SET full_name = $2, updated_at = NOW()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            user_id,
+            raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None,
+        )
+
+    if updates:
+        candidate = await _ensure_candidate_row(db, user_id)
+        set_clauses: list[str] = []
+        values: list[Any] = [candidate["id"]]
+        param_idx = 2
+
+        column_map = {
+            "headline": "headline",
+            "summary": "summary",
+            "current_title": "current_title",
+            "current_company": "current_company",
+            "years_experience": "years_experience",
+            "location_city": "location_city",
+            "location_state": "location_state",
+            "looking_for": "looking_for",
+            "open_to_relocation": "open_to_relocation",
+            "expected_ctc_min": "expected_ctc_min",
+            "expected_ctc_max": "expected_ctc_max",
+            "current_ctc": "current_ctc",
+            "notice_period_days": "notice_period_days",
+        }
+        if "remote_preference" in updates:
+            pref = normalize_remote_preference(updates["remote_preference"])
+            if pref not in VALID_REMOTE_PREFERENCES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Invalid remote_preference. "
+                        f"Expected one of: {', '.join(sorted(VALID_REMOTE_PREFERENCES))}."
+                    ),
+                )
+            set_clauses.append(f"remote_preference = ${param_idx}")
+            values.append(pref)
+            param_idx += 1
+            updates.pop("remote_preference", None)
+
+        if "location_scope" in updates:
+            scope = str(updates["location_scope"]).lower().strip()
+            if scope not in {"city", "state", "country", "global"}:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid location_scope. Expected one of: city, state, country, global.",
+                )
+            set_clauses.append(f"location_scope = ${param_idx}")
+            values.append(scope)
+            param_idx += 1
+            # Keep the legacy relocation flag coherent with the scope.
+            set_clauses.append(f"open_to_relocation = ${param_idx}")
+            values.append(scope in {"country", "global"})
+            param_idx += 1
+            updates.pop("location_scope", None)
+
+        for field, column in column_map.items():
+            if field not in updates:
+                continue
+            set_clauses.append(f"{column} = ${param_idx}")
+            values.append(updates[field])
+            param_idx += 1
+
+        if "skills" in updates:
+            set_clauses.append(f"skills = ${param_idx}::text[]")
+            values.append(updates["skills"] or [])
+            param_idx += 1
+
+        if "visibility" in updates:
+            vis = updates["visibility"]
+            if vis not in _VISIBILITY_VALUES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid visibility '{vis}'. "
+                    f"Expected one of: {', '.join(sorted(_VISIBILITY_VALUES))}.",
+                )
+            set_clauses.append(f"visibility = ${param_idx}::candidate_visibility")
+            values.append(vis)
+            param_idx += 1
+
+        if set_clauses:
+            set_clauses.append("updated_at = NOW()")
+            if "current_title" in updates or "years_experience" in updates:
+                set_clauses.append(
+                    """
+                    profile_complete = CASE
+                      WHEN COALESCE(current_title, '') <> ''
+                       AND COALESCE(years_experience, 0) > 0
+                      THEN TRUE
+                      ELSE profile_complete
+                    END
+                    """.strip()
+                )
+            query = (
+                f"UPDATE public.candidates SET {', '.join(set_clauses)} "  # noqa: S608
+                "WHERE id = $1::uuid AND deleted_at IS NULL"
+            )
+            await db.execute(query, *values)
+
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'profile_update_manual', TRUE)
+        """,
+        user_id,
+    )
+
+    candidate_row = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        user_id,
+    )
+    if candidate_row:
+        from hireloop_api.services.background_jobs import (
+            MATCH_EMBED_CANDIDATE,
+            PROFILE_COMPLETENESS,
+            enqueue_job,
+        )
+
+        await enqueue_job(
+            db,
+            kind=PROFILE_COMPLETENESS,
+            payload={"candidate_id": str(candidate_row["id"])},
+            idempotency_key=f"profile_completeness:{candidate_row['id']}",
+        )
+
+        # Re-score matches when job-search preferences change.
+        preference_fields = {
+            "remote_preference",
+            "location_scope",
+            "location_city",
+            "location_state",
+            "open_to_relocation",
+            "expected_ctc_min",
+            "expected_ctc_max",
+            "current_title",
+            "skills",
+            "looking_for",
+        }
+        if preference_fields & set(body.model_dump(exclude_unset=True).keys()):
+            await enqueue_job(
+                db,
+                kind=MATCH_EMBED_CANDIDATE,
+                payload={"candidate_id": str(candidate_row["id"])},
+                idempotency_key=f"match_embed:{candidate_row['id']}",
+            )
+
+    return {"ok": True}
+
+
+@router.get("/saved-jobs")
+async def list_saved_jobs(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Return jobs the candidate bookmarked, newest first."""
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        return []
+
+    rows = await db.fetch(
+        """
+        SELECT
+            j.id AS job_id,
+            j.title,
+            co.name AS company_name,
+            j.location_city,
+            j.location_state,
+            j.is_remote,
+            j.employment_type,
+            j.seniority,
+            j.ctc_min,
+            j.ctc_max,
+            j.skills_required,
+            j.apply_url,
+            ms.overall_score,
+            ms.skills_score,
+            ms.experience_score,
+            ms.location_score,
+            ms.ctc_score,
+            ms.explanation,
+            ms.computed_at,
+            sj.saved_at
+        FROM public.saved_jobs sj
+        JOIN public.jobs j ON j.id = sj.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        LEFT JOIN public.match_scores ms
+          ON ms.job_id = j.id AND ms.candidate_id = sj.candidate_id
+        WHERE sj.candidate_id = $1::uuid
+          AND j.deleted_at IS NULL
+          AND j.country_code = 'IN'
+        ORDER BY sj.saved_at DESC
+        """,
+        candidate["id"],
+    )
+    return [serialize_job_card(r) for r in rows]
+
+
+@router.get("/saved-jobs/ids")
+async def list_saved_job_ids(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, list[str]]:
+    """Lightweight list of saved job IDs for heart-button state."""
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        return {"job_ids": []}
+
+    rows = await db.fetch(
+        "SELECT job_id FROM public.saved_jobs WHERE candidate_id = $1::uuid",
+        candidate["id"],
+    )
+    return {"job_ids": [str(r["job_id"]) for r in rows]}
+
+
+@router.post("/saved-jobs/{job_id}", status_code=201)
+async def save_job_for_later(
+    job_id: str,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, bool]:
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate profile not found")
+
+    job_exists = await db.fetchval(
+        """
+        SELECT EXISTS(
+          SELECT 1 FROM public.jobs
+          WHERE id = $1::uuid AND deleted_at IS NULL AND country_code = 'IN'
+        )
+        """,
+        uuid.UUID(job_id),
+    )
+    if not job_exists:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    await db.execute(
+        """
+        INSERT INTO public.saved_jobs (candidate_id, job_id)
+        VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT (candidate_id, job_id) DO NOTHING
+        """,
+        candidate["id"],
+        uuid.UUID(job_id),
+    )
+    return {"saved": True}
+
+
+@router.delete("/saved-jobs/{job_id}", status_code=200)
+async def unsave_job(
+    job_id: str,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, bool]:
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate profile not found")
+
+    await db.execute(
+        """
+        DELETE FROM public.saved_jobs
+        WHERE candidate_id = $1::uuid AND job_id = $2::uuid
+        """,
+        candidate["id"],
+        uuid.UUID(job_id),
+    )
+    return {"saved": False}
+
+
+@router.post("/onboarding-consent")
+async def record_onboarding_consent(
+    body: OnboardingConsentRequest,
+    request: Request,
+    current_user: dict = Depends(get_india_verified_user),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Record ToS / privacy + marketing consent during onboarding (DPDP R14).
+    Also seeds notification prefs for job alerts and optional marketing email.
+    """
+    if not body.tos_accepted:
+        raise HTTPException(status_code=400, detail="Terms and privacy policy must be accepted")
+
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    for purpose in ("terms_of_service", "privacy_policy", "ai_disclaimer"):
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose=purpose,
+            granted=True,
+            request=request,
+        )
+
+    await log_consent(
+        db,
+        user_id=user_id,
+        purpose="marketing_emails",
+        granted=body.marketing_emails,
+        request=request,
+    )
+
+    prefs = {
+        "job_match_alerts": {"email": True, "whatsapp": True},
+        "intro_updates": {"email": True, "whatsapp": True},
+        "intro_status": {"email": True, "whatsapp": True},
+        "platform_updates": {"email": body.marketing_emails},
+    }
+    await db.execute(
+        """
+        UPDATE public.users SET notification_prefs = $2::jsonb, updated_at = NOW()
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        json.dumps(prefs),
+    )
+    await log_consent(
+        db,
+        user_id=user_id,
+        purpose="notification_prefs_onboarding",
+        granted=True,
+        request=request,
+    )
+
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        user_id,
+    )
+    if candidate:
+        await _schedule_post_consent_enrichment(
+            db,
+            settings,
+            user_id=user_id,
+            candidate_id=str(candidate["id"]),
+        )
+
+    return {"ok": True, "prefs": prefs}
+
+
+@router.post("/complete-onboarding")
+async def complete_onboarding(
+    body: CompleteOnboardingRequest,
+    request: Request,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Mark candidate onboarding wizard complete (server-side gate)."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    consent = await db.fetchval(
+        """
+        SELECT 1 FROM public.consent_log
+        WHERE user_id = $1::uuid AND purpose = 'terms_of_service' AND granted = TRUE
+        LIMIT 1
+        """,
+        user_id,
+    )
+    if not consent:
+        raise HTTPException(
+            status_code=400,
+            detail="Accept terms and privacy policy before finishing onboarding.",
+        )
+
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET onboarding_complete = TRUE, updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    purpose = "onboarding_complete_voice_skip" if body.skipped_voice else "onboarding_complete"
+    await log_consent(db, user_id=user_id, purpose=purpose, granted=True, request=request)
+    if body.skipped_resume:
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose="resume_upload_skipped",
+            granted=True,
+            request=request,
+        )
+    return {"ok": True, "onboarding_complete": True}
+
+
+@router.get("/notification-prefs")
+async def get_notification_prefs(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    row = await db.fetchrow(
+        "SELECT notification_prefs FROM public.users WHERE id = $1",
+        current_user["id"],
+    )
+    return {"prefs": row["notification_prefs"] if row else {}}
+
+
+class ExcludePreferenceRequest(BaseModel):
+    kind: Literal["companies", "titles"]
+    value: str
+    remove: bool = False
+
+
+@router.post("/preferences/exclude")
+async def set_negative_preference(
+    body: ExcludePreferenceRequest,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Add/remove a "not interested" exclusion (#37) — a company or a title keyword.
+    Excluded items are hard-filtered from the candidate's match feed. Stored on
+    candidates.aarya_state so it lives alongside the rest of Aarya's memory.
+    """
+    if not body.value.strip():
+        raise HTTPException(status_code=400, detail="value is required")
+    row = await db.fetchrow(
+        "SELECT id, aarya_state FROM public.candidates "
+        "WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(current_user["id"]),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    new_state = apply_negative_preference(
+        row["aarya_state"], kind=body.kind, value=body.value, remove=body.remove
+    )
+    await db.execute(
+        "UPDATE public.candidates SET aarya_state = $1::jsonb, updated_at = NOW() WHERE id = $2",
+        json.dumps(new_state),
+        row["id"],
+    )
+    companies, titles = extract_negative_preferences(new_state)
+    return {"ok": True, "excluded": {"companies": sorted(companies), "titles": sorted(titles)}}
+
+
+@router.patch("/notification-prefs")
+async def update_notification_prefs(
+    body: NotificationPrefsUpdate,
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    await db.execute(
+        """
+        UPDATE public.users SET notification_prefs = $2::jsonb, updated_at = NOW()
+        WHERE id = $1
+        """,
+        current_user["id"],
+        json.dumps(body.prefs),
+    )
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'notification_prefs_update', TRUE)
+        """,
+        current_user["id"],
+    )
+    return {"ok": True, "prefs": body.prefs}
+
+
+async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[str, Any]:
+    user = await db.fetchrow(
+        "SELECT * FROM public.users WHERE id = $1",
+        uuid.UUID(user_id),
+    )
+    candidate = await db.fetchrow(
+        "SELECT * FROM public.candidates WHERE user_id = $1",
+        uuid.UUID(user_id),
+    )
+    consents = await db.fetch(
+        "SELECT * FROM public.consent_log WHERE user_id = $1 ORDER BY created_at",
+        uuid.UUID(user_id),
+    )
+    messages = []
+    if candidate:
+        messages = await db.fetch(
+            """
+            SELECT m.role, m.content, m.created_at
+            FROM public.messages m
+            JOIN public.conversations c ON c.id = m.conversation_id
+            WHERE c.candidate_id = $1
+            ORDER BY m.created_at
+            LIMIT 5000
+            """,
+            candidate["id"],
+        )
+    intros = []
+    if candidate:
+        intros = await db.fetch(
+            "SELECT * FROM public.intro_requests WHERE candidate_id = $1",
+            candidate["id"],
+        )
+
+    return {
+        "exported_at": datetime.now(UTC).isoformat(),
+        "user": dict(user) if user else None,
+        "candidate": dict(candidate) if candidate else None,
+        "consent_log": [dict(c) for c in consents],
+        "messages_sample": [dict(m) for m in messages],
+        "intro_requests": [dict(i) for i in intros],
+        "dpdp_contact": "privacy@hireloop.in",
+    }
+
+
+@router.get("/dpdp/export")
+async def dpdp_export(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> JSONResponse:
+    """Synchronous export for MVP (<60s for typical user)."""
+    payload = await _build_export_payload(db, current_user["id"])
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'data_export', TRUE)
+        """,
+        current_user["id"],
+    )
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="hireloop-export-{current_user["id"]}.json"'
+            ),
+        },
+    )
+
+
+@router.delete("")
+async def dpdp_delete_account(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Soft-delete user + schedule 30-day purge (R14).
+    """
+    purge_after = datetime.now(UTC) + timedelta(days=30)
+    await db.execute(
+        """
+        UPDATE public.users SET deleted_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+        """,
+        current_user["id"],
+    )
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1",
+        current_user["id"],
+    )
+    if candidate:
+        await db.execute(
+            "UPDATE public.candidates SET deleted_at = NOW() WHERE id = $1",
+            candidate["id"],
+        )
+    await db.execute(
+        """
+        INSERT INTO public.dpdp_export_jobs (user_id, status, purge_after)
+        VALUES ($1::uuid, 'pending', $2)
+        """,
+        current_user["id"],
+        purge_after,
+    )
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'account_deletion', TRUE)
+        """,
+        current_user["id"],
+    )
+    return {
+        "ok": True,
+        "message": "Account scheduled for deletion. Data purged after 30 days.",
+        "purge_after": purge_after.isoformat(),
+    }

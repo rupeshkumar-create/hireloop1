@@ -1,0 +1,128 @@
+# Hireloop MVP Rules — v1.1
+# Synced from /Users/rupesh/Claude/hireloop/MVP_RULES.md
+# Upload this file as .cursorrules at repo root so all AI coding agents respect it.
+
+## R1 — Spec is truth
+All implementation MUST match HIRELOOP_MVP.md (master spec).
+When in doubt, re-read the spec before writing code.
+
+## R2 — Phase discipline
+Only build what the current phase requires.
+Do not jump ahead; do not skip done-when criteria.
+
+## R3 — Confirmed tech stack (no substitutions without explicit user approval)
+Frontend (web + app):    Next.js 15, TypeScript, Tailwind CSS 4, shadcn/ui, Framer Motion
+State / realtime:        Zustand, Supabase Realtime (SSE)
+Auth:                    Supabase Auth (LinkedIn OAuth + MSG91 OTP bridge for +91 only)
+Backend API:             FastAPI (Python 3.12), Pydantic v2, asyncpg, httpx
+Agent framework:         LangGraph (Python), single-threaded master loop
+Database:                Supabase (Postgres 15 + pgvector + pg_cron)
+Storage:                 Supabase Storage (resumes, profile photos)
+AI / LLM:               OpenRouter (claude-3-5-sonnet primary, fallback configured)
+Voice (TTS):             ElevenLabs (Hinglish caveat: auto-detect; offer switch-to-text)
+Voice (STT):             Deepgram Nova-3
+Job scraping:            Apify (LinkedIn Jobs Scraper actor)
+HM enrichment:           Apify waterfall — LinkedIn Company Employees → Profile → Email Finder
+Email verification:      NeverBounce
+Transactional email:     SendGrid (templates only — see R9)
+WhatsApp / OTP SMS:      MSG91
+Infra:                   AWS ap-south-1 (ECS Fargate + RDS Postgres read replica)
+CDN / WAF:               Cloudflare (non-IN ASN block at WAF level)
+CI/CD:                   GitHub Actions
+
+## R4 — India geo-lock (5 layers, all required)
+1. +91 phone OTP mandatory at signup (MSG91)
+2. Cloudflare WAF rule: block non-IN ASN (CF-IPCountry header)
+3. All prices in INR only
+4. Job DB filter: country_code = 'IN' always
+5. AWS ap-south-1 region for all compute
+
+## R5 — Intro handshake via DB state only (NO agent-to-agent RPC)
+Flow: candidate clicks "Request Intro" → row in intro_requests table →
+Nitya reads via Postgres LISTEN/NOTIFY → Nitya composes cold email →
+sends from candidate's Gmail OAuth token → updates intro_requests.status
+No direct API calls between Aarya and Nitya.
+
+## R6 — Agent loop pattern
+Every agent follows the single-threaded master loop:
+  while True:
+    thought = llm.think(state)          # Claude via OpenRouter
+    action  = llm.choose_tool(thought)  # structured tool call
+    result  = execute_tool(action)      # deterministic Python
+    state   = update_state(result)      # LangGraph checkpoint
+    write_agent_action(action, result)  # → agent_actions table (for UI)
+    if done(state): break
+
+## R7 — "Performed X actions" UI
+Every tool call writes a row to agent_actions (job_id, action_type, payload, ts).
+Frontend subscribes via Supabase Realtime channel.
+Show running count: "Aarya performed 7 actions on your profile."
+
+## R8 — Voice UI pattern (Claude/Codex style)
+Single chat surface. Text input always visible.
+Voice button (mic icon) in bottom-right of input bar.
+Hold-to-talk OR toggle mode. Deepgram STT → text → same LLM pipeline.
+ElevenLabs TTS streams response audio.
+No separate voice screen — voice IS the chat.
+
+## R9 — Email discipline (CRITICAL)
+SendGrid:  transactional ONLY (OTP email fallback, signup confirmation,
+           job match alert, interview reminder). Subject lines must be
+           expected/wanted by the recipient. Max 1 per trigger.
+Gmail OAuth: ALL cold outreach to hiring managers. "Request Intro" flow
+             REQUIRES candidate's Gmail OAuth token. Never use SendGrid
+             for cold/unsolicited email — ToS §6 bans it.
+MSG91:     WhatsApp messages + OTP SMS. Never for cold outreach.
+
+## R10 — WhatsApp via MSG91 only
+Use MSG91 WhatsApp Business API for all WhatsApp messages.
+Template messages for job alerts and intro status updates.
+Session messages for conversational replies within 24h window.
+
+## R11 — Supabase Storage for all files
+Resumes, cover letters, profile photos → Supabase Storage buckets.
+Signed URLs only (never public). Expiry: 1 hour for downloads.
+Virus scan on upload via ClamAV sidecar (Phase 8+).
+
+## R12 — pgvector HNSW for all embeddings
+All *_embedding columns: vector(1536), HNSW index, ef_construction=200, m=16.
+Run ANALYZE after bulk inserts.
+Never use L2 for semantic search — use cosine (<=>).
+
+## R13 — Payments deferred
+No payment plumbing of any kind in MVP phases 1-21.
+Phase 22 (Razorpay) is marked DEFERRED.
+MVP billing = manual invoice via founder email.
+
+## R14 — DPDP Act 2023 compliance
+consent_log table: every data collection event logged with purpose + ts.
+Data export endpoint: GET /api/v1/me/export (returns zip, async job).
+Data delete endpoint: DELETE /api/v1/me (soft-delete, 30-day purge job).
+Bias audit: every match_score row gets a bias_audit JSONB field.
+DPO contact: privacy@hireloop.in shown in footer and in consent flows.
+
+## R15 — No mock data in production
+Seed scripts allowed in dev/staging only.
+Feature flags: NEXT_PUBLIC_DEMO_MODE=true enables mock data for demos.
+Production DB: real data only.
+
+## R16 — Hard NOs (never do these)
+1.  No pirated or cracked software anywhere in the stack
+2.  No cold email via SendGrid (ToS ban — see R9)
+3.  No LinkedIn scraping without Apify no-cookie actors
+4.  No agent-to-agent RPC (use DB state — see R5)
+5.  No payment plumbing in MVP (see R13)
+6.  No Razorpay or Stripe in Phase 1-21
+7.  No storing raw LinkedIn cookies
+8.  No hardcoded secrets — all via env vars
+9.  No console.log of PII in production
+10. No SELECT * on large tables — always project columns
+11. No synchronous file I/O in FastAPI endpoints
+12. No blocking sleep() in agent loops — use asyncio.sleep()
+13. No direct DB writes from frontend — always via API
+14. No unauthenticated API endpoints except /health and /auth/callback
+15. No SMS to non-+91 numbers
+16. No job listings with country_code != 'IN'
+17. No Cloudflare bypass in production
+18. No OpenRouter calls without model fallback configured
+19. No ElevenLabs calls without audio timeout guard (max 10s)

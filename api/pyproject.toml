@@ -1,0 +1,68 @@
+[project]
+name = "hireloop-api"
+version = "0.1.0"
+description = "Hireloop backend API — FastAPI + LangGraph agent loops"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.4",
+    "uvicorn[standard]>=0.32.0",
+    # Settings + validation
+    "pydantic>=2.9.2",
+    "pydantic-settings>=2.6.1",
+    # Database
+    "asyncpg>=0.30.0",
+    "supabase>=2.9.1",
+    # HTTP client
+    "httpx>=0.27.2",
+    # WebSocket client (live Deepgram STT proxy) — also pulled in by
+    # uvicorn[standard]; pinned here so the import is guaranteed.
+    "websockets>=13.0",
+    # Agent framework
+    # Pinned to the 1.x line: langgraph 1.x changed node-injection rules
+    # (the `config` arg must be typed `RunnableConfig`, else it is silently
+    # not injected and graph nodes break). Cap below 2.0 so a future major
+    # bump can't slip in untested.
+    "langgraph>=1.0,<2.0",
+    "langchain-openai>=1.0,<2.0",
+    # Utilities
+    "python-multipart>=0.0.12",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "structlog>=24.4.0",
+    "orjson>=3.10.10",
+    "pypdf>=6.12.2",
+    "python-docx>=1.2.0",
+    "pdfplumber>=0.11.9",
+    # Renders scanned/image PDF pages to images for the Claude-vision resume
+    # fallback. Permissive licence, bundles pdfium — no system binaries.
+    "pypdfium2>=4.30.0",
+    "sentry-sdk[fastapi]>=2.63.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.2",
+    "ruff>=0.7.3",
+    "mypy>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hireloop_api"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true

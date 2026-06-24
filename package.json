@@ -1,0 +1,27 @@
+{
+  "name": "hireloop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hireloop — India-first AI recruiting platform. Aarya (candidate) + Nitya (recruiter).",
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "dev:app": "pnpm --filter app dev",
+    "dev:api": "cd api && uvicorn hireloop_api.main:app --reload --host 0.0.0.0 --port 8000",
+    "build:web": "pnpm --filter web build",
+    "build:app": "pnpm --filter app build",
+    "lint": "pnpm --filter web lint && pnpm --filter app lint",
+    "typecheck": "pnpm --filter web typecheck && pnpm --filter app typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "clean": "pnpm --filter web clean && pnpm --filter app clean"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "prettier-plugin-tailwindcss": "^0.6.6",
+    "turbo": "^2.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.2"
+}

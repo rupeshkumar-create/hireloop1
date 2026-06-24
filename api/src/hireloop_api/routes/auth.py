@@ -1,0 +1,700 @@
+"""
+Authentication routes — phone collection and optional OTP.
+
+Flow:
+  1. POST /api/v1/auth/save-phone   → saves +91 number (onboarding; sets india_verified)
+  2. POST /api/v1/auth/send-otp     → optional OTP via Gupshup WhatsApp
+  3. POST /api/v1/auth/verify-otp   → optional OTP verification
+  4. GET  /api/v1/auth/me           → returns current user profile
+
+Onboarding uses save-phone only (no OTP round-trip). The number is used for
+WhatsApp job-match and intro alerts.
+
+Note: LinkedIn OAuth is handled entirely by Supabase Auth + /auth/callback
+on the Next.js side.
+"""
+
+import hashlib
+import hmac
+import secrets
+import uuid
+from datetime import UTC, datetime
+from typing import Any, Literal
+
+import asyncpg
+import httpx
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, field_validator
+
+from hireloop_api.config import Settings, get_settings
+from hireloop_api.deps import get_current_user, get_current_user_with_supabase, get_db
+from hireloop_api.services import otp_store
+from hireloop_api.services.consent import log_consent
+from hireloop_api.services.linkedin_oauth import (
+    extract_linkedin_headline,
+    extract_linkedin_profile_url,
+    heal_candidate_headline_from_linkedin,
+)
+from hireloop_api.services.whatsapp.gupshup import GupshupWhatsApp
+
+logger = structlog.get_logger()
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+# OTP state lives in Postgres (services/otp_store) so it's shared across API
+# workers and survives restarts — not a per-process dict (HIR-46).
+OTP_TTL_MINUTES = 10
+MAX_OTP_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 30
+
+
+# ── Request/Response models ───────────────────────────────────────────────────
+
+
+class SendOTPRequest(BaseModel):
+    phone: str
+
+    @field_validator("phone")
+    @classmethod
+    def validate_india_phone(cls, v: str) -> str:
+        # India geo-lock: +91 only, valid mobile prefix (6-9)
+        if not v.startswith("+91"):
+            raise ValueError("Only Indian phone numbers (+91) are accepted")
+        digits = v[3:]
+        if not digits.isdigit() or len(digits) != 10 or digits[0] not in "6789":
+            raise ValueError("Invalid Indian mobile number")
+        return v
+
+
+class VerifyOTPRequest(BaseModel):
+    phone: str
+    otp: str
+
+    @field_validator("otp")
+    @classmethod
+    def validate_otp(cls, v: str) -> str:
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError("OTP must be 6 digits")
+        return v
+
+
+class SendOTPResponse(BaseModel):
+    message: str
+    expires_in_seconds: int
+    resend_available_in_seconds: int
+    delivery_channel: str
+    dev_otp: str | None = None
+
+
+class VerifyOTPResponse(BaseModel):
+    message: str
+    india_verified: bool
+
+
+class SavePhoneRequest(BaseModel):
+    phone: str
+
+    @field_validator("phone")
+    @classmethod
+    def validate_india_phone(cls, v: str) -> str:
+        # Same +91 format check as OTP — we still store a clean, valid number.
+        if not v.startswith("+91"):
+            raise ValueError("Only Indian phone numbers (+91) are accepted")
+        digits = v[3:]
+        if not digits.isdigit() or len(digits) != 10 or digits[0] not in "6789":
+            raise ValueError("Invalid Indian mobile number")
+        return v
+
+
+class SavePhoneResponse(BaseModel):
+    message: str
+    india_verified: bool
+
+
+class BootstrapRequest(BaseModel):
+    role: str = "candidate"  # candidate | recruiter
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("candidate", "recruiter"):
+            raise ValueError("role must be candidate or recruiter")
+        return v
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _hash_otp(otp: str, phone: str, secret: str) -> str:
+    """Keyed HMAC-SHA256 of the OTP so a leaked store can't be brute-forced
+    offline without the server secret (a bare 6-digit OTP is only 10^6 wide)."""
+    return hmac.new(
+        (secret or "hireloop-otp").encode(),
+        f"{otp}:{phone}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+async def _send_gupshup_whatsapp_otp(phone: str, otp: str, settings: Settings) -> None:
+    """Send OTP via Gupshup WhatsApp template. Raises HTTPException on failure."""
+    wa = GupshupWhatsApp(
+        settings.gupshup_api_key,
+        settings.gupshup_whatsapp_number,
+        app_name=settings.gupshup_app_name,
+    )
+    try:
+        result = await wa.send_otp(
+            to_phone=phone,
+            otp=otp,
+            template_id=settings.gupshup_otp_template_id,
+        )
+    finally:
+        await wa.close()
+
+    if not result.get("sent"):
+        logger.error("gupshup_otp_failed", phone=phone[-4:], response=result.get("error"))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to send OTP. Please try again.",
+        )
+
+
+def _is_twilio_verify_configured(settings: Settings) -> bool:
+    return bool(
+        settings.twilio_account_sid
+        and settings.twilio_auth_token
+        and settings.twilio_verify_service_sid
+    )
+
+
+def _is_gupshup_configured(settings: Settings) -> bool:
+    return bool(
+        settings.gupshup_api_key
+        and settings.gupshup_whatsapp_number
+        and settings.gupshup_otp_template_id
+    )
+
+
+def _is_twilio_trial_destination_error(exc: HTTPException) -> bool:
+    """Twilio trial accounts can only send SMS to Console-verified numbers."""
+    return (
+        exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        and isinstance(exc.detail, str)
+        and "trial account" in exc.detail.lower()
+        and "verified" in exc.detail.lower()
+    )
+
+
+def _select_otp_provider(
+    settings: Settings,
+) -> Literal["gupshup", "twilio", "local", "unconfigured"]:
+    if _is_gupshup_configured(settings):
+        return "gupshup"
+    if _is_twilio_verify_configured(settings):
+        return "twilio"
+    if settings.is_development:
+        return "local"
+    return "unconfigured"
+
+
+async def _send_twilio_verify_otp(phone: str, settings: Settings) -> None:
+    """Send OTP via Twilio Verify SMS."""
+    service_sid = settings.twilio_verify_service_sid
+    url = f"https://verify.twilio.com/v2/Services/{service_sid}/Verifications"
+    data = {"To": phone, "Channel": "sms"}
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.post(
+            url,
+            data=data,
+            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+        )
+        if resp.status_code not in (200, 201):
+            logger.error("twilio_verify_send_failed", status=resp.status_code, body=resp.text)
+            # Surface Twilio's reason when we can — the most common one in dev/
+            # staging is a trial account that can only SMS pre-verified numbers
+            # (code 21608), which is otherwise an opaque "try again" dead end.
+            twilio_code = None
+            twilio_msg = None
+            try:
+                payload = resp.json()
+                twilio_code = payload.get("code")
+                twilio_msg = payload.get("message")
+            except ValueError as exc:
+                logger.warning("twilio_verify_error_parse_failed", error=str(exc))
+
+            if twilio_code == 21608:
+                detail = (
+                    "This number isn't authorised on our SMS trial account. "
+                    "Use a verified test number, or contact support to enable "
+                    "this number."
+                )
+            else:
+                detail = twilio_msg or "Failed to send OTP. Please try again."
+
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=detail,
+            )
+
+
+async def _verify_twilio_otp(phone: str, otp: str, settings: Settings) -> None:
+    """Verify OTP via Twilio Verify SMS."""
+    service_sid = settings.twilio_verify_service_sid
+    url = f"https://verify.twilio.com/v2/Services/{service_sid}/VerificationCheck"
+    data = {"To": phone, "Code": otp}
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.post(
+            url,
+            data=data,
+            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+        )
+        if resp.status_code not in (200, 201):
+            logger.error("twilio_verify_check_failed", status=resp.status_code, body=resp.text)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP.",
+            )
+
+        payload = resp.json()
+        if payload.get("status") != "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP.",
+            )
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.post("/bootstrap", status_code=200)
+async def bootstrap_user(
+    body: BootstrapRequest,
+    current_user: dict = Depends(get_current_user_with_supabase),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    After Supabase OAuth, sync profile + create candidate/recruiter row.
+    Called from /auth/callback (app) with Bearer token.
+    """
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    # Never downgrade an existing recruiter when the signup tab was "Job Seeker".
+    has_recruiter = await db.fetchval(
+        """
+        SELECT 1 FROM public.recruiters
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    effective_role = "recruiter" if has_recruiter else body.role
+
+    await db.execute(
+        """
+        UPDATE public.users SET
+          role = $2,
+          updated_at = NOW()
+        WHERE id = $1
+        """,
+        user_id,
+        effective_role,
+    )
+
+    if effective_role == "candidate":
+        # ── Signup pipeline, stages 1 → 2 (the fixed order) ──────────────────
+        # 1. Extract details from the LinkedIn OAuth login (below): pull the
+        #    profile URL + headline from Supabase's OAuth metadata and persist
+        #    them to candidates.linkedin_data.
+        # 2. Run the Apify LinkedIn profile scraper: scheduled immediately after
+        #    extraction via background_jobs (see end of this block). It runs
+        #    off the request so the OAuth redirect isn't blocked, but it is
+        #    always kicked off AFTER step 1 has persisted the OAuth data.
+        # Stages 3 (CV scrape) and 4 (Aarya call) run in the /onboarding wizard.
+        #
+        # Save LinkedIn/OAuth profile payload from Supabase for downstream enrichment.
+        # DPDP note: we redact any token-like fields before persisting.
+        supabase_user: dict[str, Any] = current_user.get("_supabase_user") or {}
+
+        def _redact(value: Any) -> Any:  # noqa: ANN401
+            if isinstance(value, dict):
+                out: dict[str, Any] = {}
+                for raw_k, v in value.items():
+                    k = str(raw_k)
+                    lk = k.lower()
+                    if "token" in lk or "secret" in lk:
+                        continue
+                    out[k] = _redact(v)
+                return out
+            if isinstance(value, list):
+                return [_redact(v) for v in value]
+            return value
+
+        linkedin_data = _redact(
+            {
+                "provider": (supabase_user.get("app_metadata") or {}).get("provider"),
+                "providers": (supabase_user.get("app_metadata") or {}).get("providers"),
+                "user_metadata": supabase_user.get("user_metadata") or {},
+                "identities": supabase_user.get("identities") or [],
+            }
+        )
+        linkedin_url = extract_linkedin_profile_url(linkedin_data)
+        linkedin_headline = extract_linkedin_headline(linkedin_data)
+        initial_headline = linkedin_headline or "New candidate"
+
+        existing = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1",
+            user_id,
+        )
+        is_new_user = existing is None
+        if not existing:
+            await db.execute(
+                """
+                INSERT INTO public.candidates (user_id, headline, profile_complete)
+                VALUES ($1, $2, FALSE)
+                """,
+                user_id,
+                initial_headline,
+            )
+            await log_consent(db, user_id=user_id, purpose="profile_creation", granted=True)
+
+        # Persist linkedin_data blob (best-effort, non-fatal)
+        try:
+            await db.execute(
+                """
+                UPDATE public.candidates
+                SET linkedin_data = $2::jsonb,
+                    linkedin_url  = COALESCE(linkedin_url, $3),
+                    updated_at = NOW()
+                WHERE user_id = $1::uuid AND deleted_at IS NULL
+                """,
+                user_id,
+                __import__("json").dumps(linkedin_data),
+                linkedin_url,
+            )
+        except Exception as exc:
+            logger.error("linkedin_data_persist_failed", user_id=str(user_id), error=str(exc))
+
+        try:
+            await heal_candidate_headline_from_linkedin(
+                db,
+                user_id=user_id,
+                linkedin_data=linkedin_data,
+                user_full_name=current_user.get("full_name"),
+            )
+        except Exception as exc:
+            logger.warning(
+                "linkedin_headline_heal_failed",
+                user_id=str(user_id),
+                error=str(exc)[:200],
+            )
+
+        # LinkedIn enrichment + CI jobs run after DPDP consent (POST /me/onboarding-consent).
+    else:
+        existing = await db.fetchrow(
+            "SELECT id FROM public.recruiters WHERE user_id = $1",
+            user_id,
+        )
+        is_new_user = existing is None
+        if not existing:
+            await db.execute(
+                """
+                INSERT INTO public.recruiters (user_id, title)
+                VALUES ($1, 'Hiring Manager')
+                """,
+                user_id,
+            )
+
+    # `is_new_user` lets /auth/callback route first-time candidates into the
+    # onboarding wizard while sending returning users straight to their home.
+    return {"ok": True, "role": effective_role, "is_new_user": is_new_user}
+
+
+@router.post("/send-otp", response_model=SendOTPResponse, status_code=200)
+async def send_otp(
+    body: SendOTPRequest,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    current_user: dict = Depends(get_current_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> SendOTPResponse:
+    """
+    Send OTP to an Indian mobile number.
+    Priority:
+      1) Gupshup WhatsApp OTP (if configured; required for India production)
+      2) Twilio Verify (temporary fallback if Gupshup is missing)
+      3) Local dev OTP fallback only when no provider is configured
+    Rate limited: max 3 OTP sends per phone per hour (enforced by Cloudflare WAF + this code).
+    """
+    phone = body.phone
+
+    # Cooldown: allow resend only after a short wait (UI shows countdown).
+    elapsed = await otp_store.seconds_since_last_send(db, phone)
+    if elapsed is not None:
+        remaining = int(OTP_RESEND_COOLDOWN_SECONDS - elapsed)
+        if remaining > 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Please wait {remaining}s before resending the OTP.",
+                headers={"Retry-After": str(remaining)},
+            )
+
+    provider = _select_otp_provider(settings)
+
+    if provider == "unconfigured":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OTP provider is not configured. Please contact support.",
+        )
+
+    if provider == "twilio":
+        try:
+            await _send_twilio_verify_otp(phone, settings)
+            logger.info("otp_sent_twilio", phone_last4=phone[-4:])
+            await otp_store.mark_sent(db, phone)
+            return SendOTPResponse(
+                message="OTP sent successfully",
+                expires_in_seconds=OTP_TTL_MINUTES * 60,
+                resend_available_in_seconds=OTP_RESEND_COOLDOWN_SECONDS,
+                delivery_channel="sms",
+            )
+        except HTTPException as exc:
+            if not (settings.is_development and _is_twilio_trial_destination_error(exc)):
+                raise
+            logger.warning("twilio_trial_blocked_using_dev_otp", phone_last4=phone[-4:])
+            provider = "local"
+
+    # Generate cryptographically secure 6-digit OTP
+    otp = str(secrets.randbelow(900000) + 100000)  # 100000-999999
+
+    if provider == "gupshup":
+        await _send_gupshup_whatsapp_otp(phone, otp, settings)
+    else:
+        logger.info("dev_otp", phone_last4=phone[-4:], otp=otp)
+
+    # Store hashed OTP with expiry (also stamps last_sent_at for the cooldown).
+    await otp_store.store_otp(
+        db,
+        phone,
+        otp_hash=_hash_otp(otp, phone, settings.secret_key),
+        ttl_minutes=OTP_TTL_MINUTES,
+    )
+
+    logger.info("otp_sent", phone_last4=phone[-4:])
+
+    return SendOTPResponse(
+        message="OTP sent successfully",
+        expires_in_seconds=OTP_TTL_MINUTES * 60,
+        resend_available_in_seconds=OTP_RESEND_COOLDOWN_SECONDS,
+        delivery_channel="whatsapp" if provider == "gupshup" else "local_dev",
+        dev_otp=otp if provider == "local" else None,
+    )
+
+
+@router.post("/verify-otp", response_model=VerifyOTPResponse, status_code=200)
+async def verify_otp(
+    body: VerifyOTPRequest,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    current_user: dict = Depends(get_current_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> VerifyOTPResponse:
+    """
+    Verify OTP. On success, marks the user as india_verified = TRUE.
+    Requires the user to already have a Supabase Auth session.
+    """
+    phone = body.phone
+    provider = _select_otp_provider(settings)
+    if provider == "twilio":
+        await _verify_twilio_otp(phone, body.otp, settings)
+    else:
+        stored = await otp_store.get_active(db, phone)
+        if not stored:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No OTP found for this number. Please request a new one.",
+            )
+
+        # Check expiry
+        if datetime.now(UTC) > stored["expires_at"]:
+            await otp_store.clear(db, phone)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has expired. Please request a new one.",
+            )
+
+        # Check attempts (brute-force protection)
+        attempts = await otp_store.increment_attempts(db, phone)
+        if attempts > MAX_OTP_ATTEMPTS:
+            await otp_store.clear(db, phone)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed attempts. Please request a new OTP.",
+            )
+
+        # Verify hash (timing-safe)
+        if not hmac.compare_digest(
+            _hash_otp(body.otp, phone, settings.secret_key), stored["otp_hash"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP.",
+            )
+
+        # OTP valid — clean up store
+        await otp_store.clear(db, phone)
+
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    # ── UPDATE users — catch UNIQUE(phone) violation cleanly ──────────────
+    try:
+        result = await db.execute(
+            """
+            UPDATE public.users SET
+              phone = $2,
+              india_verified = TRUE,
+              updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            phone,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        # Most likely: another account already verified this number.
+        logger.warning(
+            "phone_already_claimed",
+            user_id=str(user_id),
+            phone_last4=phone[-4:],
+            constraint=exc.constraint_name,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This phone number is already linked to another Hireloop "
+                "account. Sign in with that account, or use a different "
+                "+91 number."
+            ),
+        ) from exc
+
+    # asyncpg execute returns e.g. "UPDATE 1" — if 0, the row didn't exist
+    if result.endswith(" 0"):
+        logger.error(
+            "verify_otp_user_missing",
+            user_id=str(user_id),
+            result=result,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Your user record is missing. Sign out and sign in again.",
+        )
+
+    # ── INSERT consent_log — non-fatal if it fails, log and continue ─────
+    try:
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose="phone_verification",
+            granted=True,
+            request=request,
+        )
+    except Exception as exc:
+        # DPDP audit trail is important but we don't want to fail the user's
+        # signup over a logging insert. Log loudly so it's caught in review.
+        logger.error(
+            "consent_log_insert_failed",
+            user_id=str(user_id),
+            error=str(exc),
+        )
+
+    logger.info("otp_verified", user_id=str(user_id), phone_last4=phone[-4:])
+
+    return VerifyOTPResponse(
+        message="Phone verified successfully",
+        india_verified=True,
+    )
+
+
+@router.post("/save-phone", response_model=SavePhoneResponse, status_code=200)
+async def save_phone(
+    body: SavePhoneRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> SavePhoneResponse:
+    """
+    Save the user's +91 mobile number (format-validated, unique).
+
+    Onboarding flow: collect the number and mark india_verified so gated routes
+    unlock. WhatsApp alerts use this number — no OTP required for signup.
+    """
+    phone = body.phone
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    try:
+        result = await db.execute(
+            """
+            UPDATE public.users SET
+              phone = $2,
+              india_verified = TRUE,
+              updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            phone,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        logger.warning(
+            "phone_already_claimed",
+            user_id=str(user_id),
+            phone_last4=phone[-4:],
+            constraint=exc.constraint_name,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This phone number is already linked to another Hireloop "
+                "account. Use a different +91 number."
+            ),
+        ) from exc
+
+    if result.endswith(" 0"):
+        logger.error("save_phone_user_missing", user_id=str(user_id), result=result)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Your user record is missing. Sign out and sign in again.",
+        )
+
+    # DPDP audit trail — non-fatal if it fails.
+    try:
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose="phone_collection",
+            granted=True,
+            request=request,
+        )
+    except Exception as exc:
+        logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
+
+    logger.info("phone_saved", user_id=str(user_id), phone_last4=phone[-4:])
+
+    return SavePhoneResponse(
+        message="Phone number saved",
+        india_verified=True,
+    )
+
+
+@router.get("/me", status_code=200)
+async def get_me(
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict:
+    """Return current user profile."""
+    return {
+        "id": str(current_user["id"]),
+        "email": current_user["email"],
+        "role": current_user["role"],
+        "india_verified": current_user["india_verified"],
+        "full_name": current_user["full_name"],
+    }

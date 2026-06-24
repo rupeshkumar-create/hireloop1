@@ -1,0 +1,39 @@
+# Ruff configuration for hireloop-api
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "ANN",  # flake8-annotations (type hints)
+    "S",    # flake8-bandit (security)
+    "T20",  # flake8-print (no print statements)
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "ANN101",  # Missing type annotation for `self`
+    "ANN102",  # Missing type annotation for `cls`
+    "S101",    # Use of `assert` (needed in tests)
+    "B008",    # Do not perform function calls in default argument (needed for FastAPI Depends)
+]
+
+[lint.per-file-ignores]
+# Test fixtures use fake tokens/passwords; these are not real secrets.
+"tests/**" = ["S105", "S106"]
+# CLI helper scripts legitimately print to stdout and use throwaway tokens.
+"scripts/**" = ["T201", "S105", "S106"]
+
+[lint.isort]
+known-first-party = ["hireloop_api"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

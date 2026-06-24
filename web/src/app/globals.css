@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hireloop marketing globals — DESIGN.md compliant. Mirrors app/globals.css. */
+
+@layer utilities {
+  .bg-paper-0   { background-color: #FAFAF7; }
+  .bg-paper-1   { background-color: #FFFFFF; }
+  .text-paper-0 { color: #FAFAF7; }
+  .text-paper-1 { color: #FFFFFF; }
+
+  .bg-accent        { background-color: #3B5BFD; }
+  .bg-accent-hover  { background-color: #2F4BE6; }
+  .text-accent      { color: #3B5BFD; }
+  .text-accent-fg   { color: #FFFFFF; }
+  .border-accent    { border-color: #3B5BFD; }
+  .ring-accent-ring { --tw-ring-color: rgba(59, 91, 253, 0.15); }
+  .hover\:bg-accent-hover:hover { background-color: #2F4BE6; }
+
+  .bg-destructive-bg { background-color: #FEE2E2; }
+  .text-destructive  { color: #B91C1C; }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #FAFAF7;
+    color: #0E0E10;
+    font-family: var(--font-geist-sans), "Inter", -apple-system,
+                 BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    font-weight: 400;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  p, span, label, button, input, textarea, select, a, li, td, th {
+    font-family: inherit;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: #0E0E10;
+    letter-spacing: -0.01em;
+  }
+
+  input, textarea, select, button {
+    font: inherit;
+    color: inherit;
+  }
+
+  ::placeholder { color: #B5B5BA; opacity: 1; }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #FAFAF7, 0 0 0 4px #3B5BFD;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background-color: rgba(59, 91, 253, 0.18);
+    color: #0E0E10;
+  }
+}
+
+@layer base {
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: #E6E6E4;
+    border-radius: 9999px;
+    border: 2px solid #FAFAF7;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: #B5B5BA; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

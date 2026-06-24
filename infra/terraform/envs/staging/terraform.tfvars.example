@@ -1,0 +1,22 @@
+# Staging environment — copy to terraform.tfvars and fill in real values
+# NEVER commit terraform.tfvars (it's in .gitignore)
+
+environment = "staging"
+aws_region  = "ap-south-1"
+app_name    = "hireloop"
+
+# Cloudflare — get from Cloudflare dashboard
+cloudflare_api_token  = "your-cloudflare-api-token"
+cloudflare_zone_id    = "your-zone-id-for-hireloop.in"
+cloudflare_account_id = "your-cloudflare-account-id"
+
+# Supabase
+supabase_project_ref = "your-supabase-project-ref"
+
+# ECS sizing (staging — keep small)
+api_cpu           = 256
+api_memory        = 512
+api_desired_count = 1
+
+# RDS
+db_instance_class = "db.t4g.micro"

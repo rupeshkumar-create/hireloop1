@@ -1,0 +1,141 @@
+"""
+Tests for Aarya's auto-ingest-on-empty-search behaviour.
+
+When job_search returns nothing, the agent can (opt-in) enqueue a durable
+background job for a career-path-scoped Apify scrape.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+
+from hireloop_api.agents.aarya import tools
+from hireloop_api.config import Settings
+
+_USER_ID = str(uuid.uuid4())
+_CAND_ID = uuid.uuid4()
+
+
+class _EmptyDB:
+    """Fake connection: a candidate exists but no jobs match."""
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        if "career_paths" in query:
+            return None
+        return {"id": _CAND_ID, "remote_preference": "any"}
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        return []
+
+    async def fetchval(self, query: str, *args: object) -> object | None:
+        if "background_jobs" in query and "SELECT id" in query:
+            return None
+        if "INSERT INTO public.background_jobs" in query:
+            return uuid.uuid4()
+        return None
+
+    async def execute(self, query: str, *args: object) -> str:
+        return "INSERT 0 1"
+
+
+def _settings(**overrides: object) -> Settings:
+    base: dict[str, object] = {
+        "environment": "development",
+        "auto_ingest_on_empty_search": True,
+        "apify_token": "test-token",
+    }
+    base.update(overrides)
+    return Settings(_env_file=None, **base)  # type: ignore[arg-type]
+
+
+async def _run_search(settings: Settings | None) -> list[dict]:
+    return await tools.job_search(
+        _EmptyDB(),  # type: ignore[arg-type]
+        _USER_ID,
+        str(uuid.uuid4()),
+        "growth designer",
+        settings=settings,
+    )
+
+
+async def test_empty_search_enqueues_auto_ingest(monkeypatch: pytest.MonkeyPatch) -> None:
+    fired: dict[str, str] = {}
+
+    async def _spy_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        payload = kwargs.get("payload") or {}
+        if isinstance(payload, dict):
+            fired["candidate_id"] = str(payload.get("candidate_id", ""))
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        _spy_enqueue,
+    )
+
+    out = await _run_search(_settings())
+    assert out == []
+    assert fired.get("candidate_id") == str(_CAND_ID)
+
+
+async def test_no_auto_ingest_when_flag_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    fired: dict[str, str] = {}
+
+    async def _spy_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        payload = kwargs.get("payload") or {}
+        if isinstance(payload, dict):
+            fired["candidate_id"] = str(payload.get("candidate_id", ""))
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        _spy_enqueue,
+    )
+
+    out = await _run_search(_settings(auto_ingest_on_empty_search=False))
+    assert out == []
+    assert "candidate_id" not in fired
+
+
+async def test_no_auto_ingest_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    fired: dict[str, str] = {}
+
+    async def _spy_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        payload = kwargs.get("payload") or {}
+        if isinstance(payload, dict):
+            fired["candidate_id"] = str(payload.get("candidate_id", ""))
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        _spy_enqueue,
+    )
+
+    out = await _run_search(_settings(apify_token=""))
+    assert out == []
+    assert "candidate_id" not in fired
+
+
+async def test_no_auto_ingest_without_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    fired: dict[str, str] = {}
+
+    async def _spy_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        payload = kwargs.get("payload") or {}
+        if isinstance(payload, dict):
+            fired["candidate_id"] = str(payload.get("candidate_id", ""))
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        _spy_enqueue,
+    )
+
+    out = await _run_search(None)
+    assert out == []
+    assert "candidate_id" not in fired
+
+
+def test_auto_ingest_flag_defaults_off() -> None:
+    s = Settings(_env_file=None, environment="development")  # type: ignore[call-arg]
+    assert s.auto_ingest_on_empty_search is False

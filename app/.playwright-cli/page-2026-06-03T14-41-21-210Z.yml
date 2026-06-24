@@ -1,0 +1,21 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]: H
+      - generic [ref=e7]: Hireloop
+    - generic [ref=e8]:
+      - heading "Get started" [level=1] [ref=e9]
+      - paragraph [ref=e10]: India's AI recruiting platform — for candidates & recruiters.
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - paragraph [ref=e13]: I am a…
+        - generic [ref=e14]:
+          - button "Job Seeker" [ref=e15] [cursor=pointer]
+          - button "Recruiter / Hiring Manager" [ref=e16] [cursor=pointer]
+      - button "Continue with LinkedIn" [ref=e17] [cursor=pointer]
+      - generic [ref=e21]: "Next: answer a few basics and upload your resume"
+      - paragraph [ref=e22]: LinkedIn gives us your identity basics. We'll collect experience via resume upload and onboarding.
+    - paragraph [ref=e23]:
+      - text: India only (+91) · DPDP Act 2023 ·
+      - link "privacy@hireloop.in" [ref=e24] [cursor=pointer]:
+        - /url: mailto:privacy@hireloop.in
