@@ -456,3 +456,33 @@ async def test_candidate_row_cached_across_pairs() -> None:
     await engine.score_pair("11111111-1111-1111-1111-111111111111", "job-c")
     # The (multi-join) candidate row is fetched ONCE, not once per job.
     assert conn.candidate_fetches == 1
+
+
+# ── seniority fit (relevant-level matching) ───────────────────────────────────
+
+
+def test_seniority_inference_and_fit_gate() -> None:
+    from hireloop_api.services.matching import (
+        _candidate_seniority_rank,
+        _infer_seniority_from_title,
+        _seniority_fit_gate,
+    )
+
+    # Title → level inference (scraped JDs rarely state a level).
+    assert _infer_seniority_from_title("Business Development Representative") == "junior"
+    assert _infer_seniority_from_title("Business Development Executive") == "junior"
+    assert _infer_seniority_from_title("Head of Growth") == "director"
+    assert _infer_seniority_from_title("VP Marketing") == "vp"
+    assert _infer_seniority_from_title("Senior Backend Engineer") == "senior"
+    assert _infer_seniority_from_title("Data Scientist") is None  # no level signal
+
+    # A 13-yr "Go-To-Market Lead" reads as lead (title primary, not VP-by-years).
+    leader = _candidate_seniority_rank("Go-To-Market Lead", 13)
+    assert leader == 4
+
+    # Big level gap penalised; adjacent level untouched; unknown → no penalty.
+    assert _seniority_fit_gate(leader, "junior") < 0.7  # leader vs entry BDR → drop
+    assert _seniority_fit_gate(leader, "director") == 1.0  # peer level → kept
+    assert _seniority_fit_gate(leader, "mid") == 0.9  # one extra step → gentle
+    assert _seniority_fit_gate(leader, None) == 1.0  # unknown job level → no penalty
+    assert _seniority_fit_gate(None, "junior") == 1.0  # unknown candidate → no penalty

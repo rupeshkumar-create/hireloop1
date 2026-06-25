@@ -406,6 +406,100 @@ def _bias_audit() -> dict[str, Any]:
     }
 
 
+# ── Seniority fit (relevant-LEVEL matching) ──────────────────────────────────
+# Ordinal ranks let us measure the LEVEL gap between a candidate and a job, not
+# just the function. Without this, a 13-yr GTM leader matched entry-level
+# "Business Development Representative" roles: the function overlapped and the
+# scraped job carried no seniority tag, so the level mismatch was invisible.
+_SENIORITY_RANK: dict[str, int] = {
+    "intern": 0,
+    "junior": 1,
+    "mid": 2,
+    "senior": 3,
+    "lead": 4,
+    "director": 5,
+    "vp": 6,
+    "c_level": 7,
+}
+
+
+def _infer_seniority_from_title(title: str | None) -> str | None:
+    """Best-effort seniority from a title when it isn't stated, so scraped JDs
+    (which rarely tag a level) still get one. Checked most-senior first so
+    'Senior Director' reads as director. Returns a _SENIORITY_RANK key or None."""
+    t = f" {(title or '').lower()} "
+    if any(k in t for k in (" chief ", " cxo ", " cto ", " cfo ", " ceo ", " cmo ", "c-level")):
+        return "c_level"
+    if " vp " in t or "vice president" in t:
+        return "vp"
+    if "head of" in t or " head " in t or " director" in t:
+        return "director"
+    if any(k in t for k in (" principal ", " staff ", " lead ", " lead,")):
+        return "lead"
+    if " senior " in t or " sr " in t or " sr. " in t:
+        return "senior"
+    if " manager " in t or " mgr " in t:
+        return "mid"
+    if any(
+        k in t
+        for k in (
+            " associate ",
+            " executive ",
+            " representative ",
+            " rep ",
+            " sdr ",
+            " bdr ",
+            " junior ",
+            " jr ",
+            " intern ",
+            " trainee ",
+            " entry ",
+            " fresher ",
+            " graduate ",
+        )
+    ):
+        return "junior"
+    return None
+
+
+def _candidate_seniority_rank(current_title: str | None, years: float | None) -> int | None:
+    """Candidate's current LEVEL. Title is primary (an IC 'Lead' with 13 yrs is
+    still lead, not VP); years are the fallback when the title gives no signal."""
+    sen = _infer_seniority_from_title(current_title)
+    if sen is not None:
+        return _SENIORITY_RANK[sen]
+    if years is None:
+        return None
+    if years < 2:
+        return _SENIORITY_RANK["junior"]
+    if years < 5:
+        return _SENIORITY_RANK["mid"]
+    if years < 9:
+        return _SENIORITY_RANK["senior"]
+    if years < 13:
+        return _SENIORITY_RANK["lead"]
+    return _SENIORITY_RANK["director"]
+
+
+def _seniority_fit_gate(cand_rank: int | None, job_seniority: str | None) -> float:
+    """Multiplier (0.4-1.0): penalise large level gaps so a senior leader isn't
+    matched to entry-level roles (or a fresher to a VP role). Same/adjacent level
+    is untouched; only a 2+ level gap bites. Unknown on either side → no penalty."""
+    if cand_rank is None or job_seniority is None:
+        return 1.0
+    job_rank = _SENIORITY_RANK.get(job_seniority)
+    if job_rank is None:
+        return 1.0
+    gap = abs(cand_rank - job_rank)
+    if gap <= 1:
+        return 1.0
+    if gap == 2:
+        return 0.9
+    if gap == 3:
+        return 0.6
+    return 0.4
+
+
 def _assemble_score(
     cand_row: Mapping[str, Any],
     job_row: Mapping[str, Any],
@@ -482,6 +576,14 @@ def _assemble_score(
         cand_row.get("current_title"),
         job_row.get("title"),
     )
+    # Level fit: a job's seniority is inferred from its title when the scraped JD
+    # doesn't state one, so an entry-level role for a senior leader is penalised
+    # (and vice-versa) instead of slipping through on function overlap alone.
+    job_seniority = job_row.get("seniority") or _infer_seniority_from_title(job_row.get("title"))
+    cand_rank = _candidate_seniority_rank(
+        cand_row.get("current_title"), cand_row.get("years_experience")
+    )
+    overall *= _seniority_fit_gate(cand_rank, job_seniority)
     overall = round(min(1.0, max(0.0, overall)), 4)
 
     explanation = _build_explanation(
