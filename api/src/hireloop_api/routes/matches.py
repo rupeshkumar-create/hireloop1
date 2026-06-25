@@ -27,6 +27,7 @@ from hireloop_api.services.job_preferences import (
     normalize_remote_preference,
     remote_filter_sql,
 )
+from hireloop_api.services.match_quality import DEFAULT_FEED_MIN_SCORE
 from hireloop_api.services.match_rationale import generate_match_rationales
 from hireloop_api.services.matching import (
     MatchingEngine,
@@ -118,10 +119,13 @@ class EmbedResponse(BaseModel):
 @router.get("", response_model=list[MatchedJob])
 async def get_match_feed(
     min_score: float = Query(
-        default=0.0,
+        # Relevance floor: by default the candidate feed hides weak/wrong-function
+        # matches (e.g. a 5% RevOps role for a UX designer). The frontend can pass
+        # min_score=0 for an explicit "show everything" view. Tune as needed.
+        default=DEFAULT_FEED_MIN_SCORE,
         ge=0.0,
         le=1.0,
-        description="Minimum overall score filter",
+        description="Minimum overall score filter (default relevance floor)",
     ),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -347,10 +351,13 @@ class MatchFeedCountResponse(BaseModel):
 @router.get("/count", response_model=MatchFeedCountResponse)
 async def get_match_feed_count(
     min_score: float = Query(
-        default=0.0,
+        # Relevance floor: by default the candidate feed hides weak/wrong-function
+        # matches (e.g. a 5% RevOps role for a UX designer). The frontend can pass
+        # min_score=0 for an explicit "show everything" view. Tune as needed.
+        default=DEFAULT_FEED_MIN_SCORE,
         ge=0.0,
         le=1.0,
-        description="Minimum overall score filter",
+        description="Minimum overall score filter (default relevance floor)",
     ),
     current_user: dict = Depends(get_india_verified_user),
     db: asyncpg.Connection = Depends(get_db),

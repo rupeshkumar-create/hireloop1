@@ -72,7 +72,7 @@ function matchFeedCacheKey(filters: MatchFeedFilters = {}): string {
 }
 
 function matchFeedCountCacheKey(filters: Pick<MatchFeedFilters, "min_score"> = {}): string {
-  return JSON.stringify({ min_score: filters.min_score ?? 0 });
+  return JSON.stringify({ min_score: filters.min_score ?? MATCH_FEED_RELEVANCE_FLOOR });
 }
 
 export function getCachedMatchFeed(
@@ -96,10 +96,13 @@ export function invalidateMatchFeedCache(): void {
 
 /** Default filters shared by Home stat card and Jobs → For you tab. */
 export const DEFAULT_MATCH_FEED_FILTERS: MatchFeedFilters = {
-  min_score: 0,
+  min_score: 0.45,
   limit: 10,
   offset: 0,
 };
+
+/** Quality-first relevance floor (matches API DEFAULT_FEED_MIN_SCORE). */
+export const MATCH_FEED_RELEVANCE_FLOOR = 0.45;
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 

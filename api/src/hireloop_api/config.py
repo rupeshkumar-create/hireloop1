@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     apify_enable_career_site_ingest: bool = True
     apify_linkedin_jobs_actor: str = "bebity/linkedin-jobs-scraper"
     apify_career_site_actor: str = "fantastic-jobs/career-site-job-listing-api"
+    # No-cookie LinkedIn profile actor for candidate onboarding (R16).
+    apify_linkedin_profile_actor: str = "dev_fusion/linkedin-profile-scraper"
 
     # ── ATS feeds (#26) — free first-party boards, no Apify spend ─────────────
     # Comma-separated allowlists. Greenhouse board tokens (the slug in

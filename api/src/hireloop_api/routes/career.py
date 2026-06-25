@@ -184,6 +184,7 @@ async def _ingest_and_rescore(
             ingester = JobIngester(
                 apify_token=settings.apify_token,
                 db=conn,
+                settings=settings,
                 linkedin_actor=settings.apify_linkedin_jobs_actor,
                 career_site_actor=settings.apify_career_site_actor,
                 enable_career_site=settings.apify_enable_career_site_ingest,

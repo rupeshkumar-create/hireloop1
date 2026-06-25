@@ -67,3 +67,7 @@ infra/*.tfvars
 
 # Local dev runtime artifacts
 .local-dev-*.pid
+
+# env backups (contain secrets)
+.env.bak*
+*.env.bak*

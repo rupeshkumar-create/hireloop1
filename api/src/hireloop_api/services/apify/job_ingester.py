@@ -16,10 +16,13 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 import structlog
 
+from hireloop_api.config import Settings
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 from hireloop_api.services.job_validator import validate_job_record
 
 logger = structlog.get_logger()
+
+_MAX_JD_ENRICH_PER_INGEST = 20
 
 
 def _failed_source_stats(exc: Exception) -> dict:
@@ -118,11 +121,13 @@ class JobIngester:
         apify_token: str,
         db: asyncpg.Connection,
         *,
+        settings: Settings | None = None,
         linkedin_actor: str = "apify/linkedin-jobs-scraper",
         career_site_actor: str = "fantastic-jobs/career-site-job-listing-api",
         enable_career_site: bool = True,
     ) -> None:
         self._apify_token = apify_token
+        self._settings = settings
         self._scraper = ApifyJobsScraper(apify_token, actor=linkedin_actor)
         self._career_site_actor = career_site_actor
         self._enable_career_site = enable_career_site
@@ -377,9 +382,15 @@ class JobIngester:
         Returns (inserted, updated, skipped).
         """
         inserted = updated = skipped = 0
+        enriched = 0
 
         for rec in records:
             try:
+                if enriched < _MAX_JD_ENRICH_PER_INGEST:
+                    did = await self._maybe_enrich_record(rec)
+                    if did:
+                        enriched += 1
+
                 existing = await self._db.fetchrow(
                     "SELECT id, updated_at FROM public.jobs WHERE apify_job_id = $1",
                     rec.apify_job_id,
@@ -466,6 +477,30 @@ class JobIngester:
                 skipped += 1
 
         return inserted, updated, skipped
+
+    async def _maybe_enrich_record(self, rec: JobRecord) -> bool:
+        """Fill missing skills/seniority from JD via LLM (ingest-time, capped)."""
+        if not self._settings or not self._settings.openrouter_api_key:
+            return False
+        if rec.skills_required and len(rec.skills_required) >= 2:
+            return False
+        if not (rec.description or "").strip():
+            return False
+        from hireloop_api.services.jd_enrichment import enrich_job_description
+
+        payload = await enrich_job_description(rec.title, rec.description or "", self._settings)
+        if not payload:
+            return False
+        skills = payload.get("skills_required") or []
+        if skills:
+            rec.skills_required = skills
+        if payload.get("seniority") and not rec.seniority:
+            rec.seniority = payload["seniority"]
+        if payload.get("ctc_min") and not rec.ctc_min:
+            rec.ctc_min = payload["ctc_min"]
+        if payload.get("ctc_max") and not rec.ctc_max:
+            rec.ctc_max = payload["ctc_max"]
+        return bool(skills or payload.get("seniority"))
 
     async def _ensure_companies(self, records: list[JobRecord]) -> None:
         """

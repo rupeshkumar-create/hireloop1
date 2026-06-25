@@ -9,6 +9,7 @@ Shared across all routers:
 
 import hmac
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Any
 
@@ -38,22 +39,51 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
     if _pool is None:
         # Convert SQLAlchemy-style URL to plain asyncpg URL
         dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
-        _pool = await asyncpg.create_pool(
-            dsn,
-            min_size=2,
-            max_size=10,
-            command_timeout=30,
-        )
+        pool_kwargs: dict[str, Any] = {
+            "min_size": 2,
+            "max_size": 10,
+            "command_timeout": 30,
+        }
+        # Supabase transaction pooler (port 6543) requires statement cache off.
+        if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
+            pool_kwargs["statement_cache_size"] = 0
+        _pool = await asyncpg.create_pool(dsn, **pool_kwargs)
     return _pool
 
 
 async def get_db(
     settings: Settings = Depends(get_settings),
-) -> asyncpg.Connection:
+) -> AsyncGenerator[asyncpg.Connection, None]:
     """Yield a DB connection from the pool."""
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
         yield conn
+
+
+async def get_db_optional(
+    settings: Settings = Depends(get_settings),
+) -> AsyncGenerator[asyncpg.Connection | None, None]:
+    """Yield a DB connection, or None when Postgres is unreachable."""
+    try:
+        pool = await get_db_pool(settings)
+    except Exception as exc:
+        logger.warning("db_pool_unavailable", error=str(exc)[:200])
+        yield None
+        return
+
+    conn: asyncpg.Connection | None = None
+    try:
+        conn = await pool.acquire()
+    except Exception as exc:
+        logger.warning("db_acquire_unavailable", error=str(exc)[:200])
+        yield None
+        return
+
+    try:
+        yield conn
+    finally:
+        if conn is not None:
+            await pool.release(conn)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -117,6 +147,54 @@ async def _fetch_supabase_user(token: str, settings: Settings) -> dict[str, Any]
             detail="Invalid token payload",
         )
     return supabase_user
+
+
+async def get_supabase_identity(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Validated Supabase JWT identity only (no Postgres lookup)."""
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await _fetch_supabase_user(credentials.credentials, settings)
+
+
+async def _load_app_user(
+    settings: Settings,
+    db: asyncpg.Connection | None,
+    supabase_user: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Load public.users via Postgres, falling back to Supabase REST."""
+    user_id = supabase_user["id"]
+
+    if db is not None:
+        try:
+            user = await db.fetchrow(
+                """
+                SELECT id, email, phone, full_name, avatar_url, role, india_verified
+                FROM public.users
+                WHERE id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+            )
+            if user:
+                return serialize_row(user)
+            provisioned = await _provision_user_row(db, supabase_user)
+            if provisioned:
+                return provisioned
+        except Exception as exc:
+            logger.warning("asyncpg_user_lookup_failed", error=str(exc)[:200])
+
+    from hireloop_api.services import supabase_users as rest_users
+
+    row = await rest_users.fetch_user(settings, user_id)
+    if not row:
+        row = await rest_users.provision_user(settings, supabase_user)
+    return row
 
 
 async def _provision_user_row(
@@ -219,7 +297,7 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection = Depends(get_db),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
 ) -> dict[str, Any]:
     """
     Validate the Supabase JWT from the Authorization header.
@@ -238,38 +316,20 @@ async def get_current_user(
     token = credentials.credentials
 
     supabase_user = await _fetch_supabase_user(token, settings)
-    user_id = supabase_user["id"]
 
-    # Fetch user from our DB
-    user = await db.fetchrow(
-        """
-        SELECT id, email, phone, full_name, avatar_url, role, india_verified
-        FROM public.users
-        WHERE id = $1 AND deleted_at IS NULL
-        """,
-        user_id,
-    )
-
-    if not user:
-        # The Supabase token is valid but our public.users row is missing —
-        # typically a brand-new signup whose on_auth_user_created trigger hasn't
-        # committed yet (or isn't installed). Provision it now so onboarding
-        # doesn't dead-end on "User not found".
-        provisioned = await _provision_user_row(db, supabase_user)
-        if provisioned:
-            uid = coerce_uuid(provisioned["id"])
-            provisioned["role"] = await _resolve_user_role(
-                db, uid, str(provisioned.get("role") or "candidate")
-            )
-            return provisioned
+    row = await _load_app_user(settings, db, supabase_user)
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
-    row = serialize_row(user) or {}
     uid = coerce_uuid(row["id"])
-    row["role"] = await _resolve_user_role(db, uid, str(row.get("role") or "candidate"))
+    if db is not None:
+        try:
+            row["role"] = await _resolve_user_role(db, uid, str(row.get("role") or "candidate"))
+        except Exception as exc:
+            logger.warning("resolve_user_role_failed", error=str(exc)[:200])
     return row
 
 
@@ -277,7 +337,7 @@ async def get_current_user_with_supabase(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection = Depends(get_db),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
 ) -> dict[str, Any]:
     """
     Like get_current_user, but also returns the raw Supabase user payload under
@@ -293,24 +353,19 @@ async def get_current_user_with_supabase(
     token = credentials.credentials
     supabase_user = await _fetch_supabase_user(token, settings)
 
-    user = await db.fetchrow(
-        """
-        SELECT id, email, phone, full_name, avatar_url, role, india_verified
-        FROM public.users
-        WHERE id = $1 AND deleted_at IS NULL
-        """,
-        supabase_user["id"],
-    )
-
-    base = serialize_row(user) if user else await _provision_user_row(db, supabase_user)
+    base = await _load_app_user(settings, db, supabase_user)
     if not base:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
-    uid = coerce_uuid(base["id"])
-    base["role"] = await _resolve_user_role(db, uid, str(base.get("role") or "candidate"))
+    if db is not None:
+        uid = coerce_uuid(base["id"])
+        try:
+            base["role"] = await _resolve_user_role(db, uid, str(base.get("role") or "candidate"))
+        except Exception as exc:
+            logger.warning("resolve_user_role_failed", error=str(exc)[:200])
     return {**base, "_supabase_user": supabase_user}
 
 

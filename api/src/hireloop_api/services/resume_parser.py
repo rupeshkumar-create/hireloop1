@@ -442,7 +442,12 @@ Rules:
 - Use null for anything genuinely absent. Never invent data.
 - Order work_experience most-recent first; mark the current role is_current=true.
 - For Indian phone numbers keep the +91 / leading-zero form as written.
-- Skills must be concrete technologies/competencies, not full sentences."""
+- Skills must be concrete technologies/competencies, not full sentences.
+- Derive skills from what the person actually DID in their work_experience and
+  projects. IGNORE a LinkedIn "Top Skills" sidebar or any standalone skills list
+  that the experience does not support — those are frequently stale/aspirational
+  and misrepresent the candidate (e.g. "Sales Operations" listed by a UX
+  designer). When a sidebar skill conflicts with the actual roles, omit it."""
 
 
 class ResumeParserService:

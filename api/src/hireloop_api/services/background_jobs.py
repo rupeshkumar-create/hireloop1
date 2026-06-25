@@ -376,6 +376,7 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
         ingester = JobIngester(
             apify_token=settings.apify_token,
             db=conn,
+            settings=settings,
             linkedin_actor=settings.apify_linkedin_jobs_actor,
             career_site_actor=settings.apify_career_site_actor,
             enable_career_site=settings.apify_enable_career_site_ingest,
@@ -388,9 +389,9 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
 
 
 async def _handle_linkdapi_enrich(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.services.linkdapi_profile import run_linkdapi_enrichment
+    from hireloop_api.services.linkedin_enrichment import run_linkedin_profile_enrichment
 
-    await run_linkdapi_enrichment(
+    await run_linkedin_profile_enrichment(
         settings,
         str(payload["user_id"]),
         str(payload["linkedin_url"]),

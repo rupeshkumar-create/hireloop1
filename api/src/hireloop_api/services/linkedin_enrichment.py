@@ -1,4 +1,4 @@
-"""LinkedIn profile enrichment scheduling (via LinkDAPI — linkdapi.com)."""
+"""LinkedIn profile enrichment — Apify primary, LinkDAPI fallback."""
 
 from __future__ import annotations
 
@@ -20,19 +20,98 @@ logger = structlog.get_logger()
 
 
 def _enrichment_enabled(settings: Settings) -> bool:
-    return bool(settings.linkdapi_key)
+    return bool(settings.apify_token or settings.linkdapi_key)
 
 
 async def _enrich(
     conn: asyncpg.Connection, settings: Settings, *, user_id: str, profile_url: str
 ) -> dict[str, Any]:
-    return await enrich_candidate_via_linkdapi(
-        conn,
-        user_id=user_id,
-        profile_url=profile_url,
-        api_key=settings.linkdapi_key,
-        base_url=settings.linkdapi_base_url,
+    """Apify first (full apify_profile blob), then LinkDAPI if Apify misses."""
+    if settings.apify_token:
+        from hireloop_api.services.apify.linkedin_profile_scraper import enrich_candidate_via_apify
+
+        result = await enrich_candidate_via_apify(
+            conn,
+            user_id=user_id,
+            profile_url=profile_url,
+            settings=settings,
+        )
+        if result.get("status") == "enriched":
+            return result
+        logger.info(
+            "linkedin_apify_miss_fallback_linkdapi",
+            user_id=user_id,
+            apify_status=result.get("status"),
+        )
+
+    if settings.linkdapi_key:
+        return await enrich_candidate_via_linkdapi(
+            conn,
+            user_id=user_id,
+            profile_url=profile_url,
+            api_key=settings.linkdapi_key,
+            base_url=settings.linkdapi_base_url,
+        )
+
+    return {"status": "skipped", "reason": "no_enrichment_provider"}
+
+
+async def _post_enrichment_success(settings: Settings, user_id: str) -> None:
+    """Career intel, career path, and match embed after a successful scrape."""
+    from hireloop_api.services.background_jobs import MATCH_EMBED_CANDIDATE, enqueue_job
+    from hireloop_api.services.career_intelligence import run_career_intelligence_update
+    from hireloop_api.services.career_path import run_career_path_update
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        cid = await db.fetchval(
+            """
+            SELECT id FROM public.candidates
+            WHERE user_id = $1::uuid AND deleted_at IS NULL
+            """,
+            user_id,
+        )
+    if not cid:
+        return
+    await asyncio.gather(
+        run_career_intelligence_update(settings, str(cid)),
+        run_career_path_update(settings, str(cid)),
     )
+    async with pool.acquire() as db:
+        await enqueue_job(
+            db,
+            kind=MATCH_EMBED_CANDIDATE,
+            payload={"candidate_id": str(cid)},
+            idempotency_key=f"match_embed_candidate:{cid}",
+        )
+
+
+async def run_linkedin_profile_enrichment(
+    settings: Settings,
+    user_id: str,
+    profile_url: str,
+) -> None:
+    """Fire-and-forget LinkedIn enrichment. Never raises."""
+    if not _enrichment_enabled(settings):
+        logger.info(
+            "linkedin_profile_enrichment_disabled",
+            user_id=user_id,
+            reason="apify_and_linkdapi_missing",
+        )
+        return
+    try:
+        pool = await get_db_pool(settings)
+        async with pool.acquire() as conn:
+            result = await _enrich(conn, settings, user_id=user_id, profile_url=profile_url)
+        logger.info("linkedin_profile_enrichment_done", user_id=user_id, **result)
+        if result.get("status") == "enriched":
+            await _post_enrichment_success(settings, user_id)
+    except Exception as exc:
+        logger.warning(
+            "linkedin_profile_enrichment_failed",
+            user_id=user_id,
+            error=str(exc)[:300],
+        )
 
 
 async def enrich_linkedin_profile_background(
@@ -41,26 +120,8 @@ async def enrich_linkedin_profile_background(
     linkedin_url: str,
     settings: Settings,
 ) -> None:
-    """Fire-and-forget LinkDAPI enrichment for one candidate (own DB connection)."""
-    if not _enrichment_enabled(settings):
-        logger.info(
-            "linkedin_profile_enrichment_disabled",
-            user_id=user_id,
-            reason="linkdapi_key_missing",
-        )
-        return
-
-    pool = await get_db_pool(settings)
-    async with pool.acquire() as conn:
-        try:
-            result = await _enrich(conn, settings, user_id=user_id, profile_url=linkedin_url)
-            logger.info("linkedin_profile_enrichment_done", user_id=user_id, **result)
-        except Exception as exc:
-            logger.warning(
-                "linkedin_profile_enrichment_failed",
-                user_id=user_id,
-                error=str(exc)[:300],
-            )
+    """Fire-and-forget enrichment for one candidate (own DB connection)."""
+    await run_linkedin_profile_enrichment(settings, user_id, linkedin_url)
 
 
 def _coerce_linkedin_data(raw: Any) -> dict[str, Any]:  # noqa: ANN401
@@ -123,11 +184,11 @@ async def backfill_linkedin_profiles(
     delay_seconds: float = 2.0,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Run LinkDAPI enrichment for candidates still missing profile data."""
+    """Run LinkedIn enrichment for candidates still missing profile data."""
     if not _enrichment_enabled(settings):
         return {
             "status": "skipped",
-            "reason": "linkdapi_key_missing",
+            "reason": "apify_and_linkdapi_missing",
             "pending": 0,
             "processed": 0,
         }
@@ -147,6 +208,8 @@ async def backfill_linkedin_profiles(
                 db, settings, user_id=item["user_id"], profile_url=item["profile_url"]
             )
             results.append({"user_id": item["user_id"], **outcome})
+            if outcome.get("status") == "enriched":
+                await _post_enrichment_success(settings, item["user_id"])
         except Exception as exc:
             results.append(
                 {

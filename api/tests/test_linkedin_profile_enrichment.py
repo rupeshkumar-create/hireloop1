@@ -16,17 +16,15 @@ def test_bootstrap_does_not_schedule_linkedin_profile_scraper() -> None:
 
     assert "enrich_linkedin_profile_background" not in source
     assert "should_schedule_linkedin_enrichment" not in source
-    assert "CAREER_INTELLIGENCE_UPDATE" in source
-    assert "enqueue_job" in source
+    assert "LINKDAPI" not in source.upper() or "consent" in source.lower()
 
 
 def test_should_schedule_returns_false_when_enrichment_disabled() -> None:
     from hireloop_api.config import Settings
     from hireloop_api.services.linkedin_enrichment import should_schedule_linkedin_enrichment
 
-    # Enrichment is gated on `linkdapi_key`; an empty key means disabled.
-    # Explicit init kwargs take priority over any .env value in pydantic-settings.
-    settings = Settings(linkdapi_key="")
+    # Enrichment requires Apify token or LinkDAPI key.
+    settings = Settings(apify_token="", linkdapi_key="")
     schedule, url = should_schedule_linkedin_enrichment(
         linkedin_url="https://www.linkedin.com/in/testuser",
         linkedin_data={},

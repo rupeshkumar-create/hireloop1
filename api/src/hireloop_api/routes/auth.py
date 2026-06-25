@@ -28,7 +28,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_current_user, get_current_user_with_supabase, get_db
+from hireloop_api.deps import (
+    _provision_user_row,
+    get_current_user,
+    get_current_user_with_supabase,
+    get_db,
+    get_db_optional,
+    get_supabase_identity,
+)
 from hireloop_api.services import otp_store
 from hireloop_api.services.consent import log_consent
 from hireloop_api.services.linkedin_oauth import (
@@ -391,7 +398,8 @@ async def bootstrap_user(
                 error=str(exc)[:200],
             )
 
-        # LinkedIn enrichment + CI jobs run after DPDP consent (POST /me/onboarding-consent).
+        # LinkedIn URL + OAuth metadata saved above. LinkDAPI enrichment runs
+        # after DPDP consent (POST /me/onboarding-consent).
     else:
         existing = await db.fetchrow(
             "SELECT id FROM public.recruiters WHERE user_id = $1",
@@ -620,8 +628,9 @@ async def verify_otp(
 async def save_phone(
     body: SavePhoneRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
-    db: asyncpg.Connection = Depends(get_db),
+    supabase_user: dict = Depends(get_supabase_identity),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
 ) -> SavePhoneResponse:
     """
     Save the user's +91 mobile number (format-validated, unique).
@@ -630,53 +639,110 @@ async def save_phone(
     unlock. WhatsApp alerts use this number — no OTP required for signup.
     """
     phone = body.phone
-    user_id = uuid.UUID(str(current_user["id"]))
+    user_id = uuid.UUID(str(supabase_user["id"]))
 
-    try:
-        result = await db.execute(
-            """
-            UPDATE public.users SET
-              phone = $2,
-              india_verified = TRUE,
-              updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
-            """,
-            user_id,
-            phone,
-        )
-    except asyncpg.UniqueViolationError as exc:
-        logger.warning(
-            "phone_already_claimed",
-            user_id=str(user_id),
-            phone_last4=phone[-4:],
-            constraint=exc.constraint_name,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "This phone number is already linked to another Hireloop "
-                "account. Use a different +91 number."
-            ),
-        ) from exc
+    saved_via_rest = False
+    if db is not None:
+        try:
+            result = await db.execute(
+                """
+                UPDATE public.users SET
+                  phone = $2,
+                  india_verified = TRUE,
+                  updated_at = NOW()
+                WHERE id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+                phone,
+            )
+            if result.endswith(" 0"):
+                provisioned = await _provision_user_row(db, supabase_user)
+                if not provisioned:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Your user record is missing. Sign out and sign in again.",
+                    )
+                result = await db.execute(
+                    """
+                    UPDATE public.users SET
+                      phone = $2,
+                      india_verified = TRUE,
+                      updated_at = NOW()
+                    WHERE id = $1 AND deleted_at IS NULL
+                    """,
+                    user_id,
+                    phone,
+                )
+                if result.endswith(" 0"):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Your user record is missing. Sign out and sign in again.",
+                    )
+            try:
+                await log_consent(
+                    db,
+                    user_id=user_id,
+                    purpose="phone_collection",
+                    granted=True,
+                    request=request,
+                )
+            except Exception as exc:
+                logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
+        except asyncpg.UniqueViolationError as exc:
+            logger.warning(
+                "phone_already_claimed",
+                user_id=str(user_id),
+                phone_last4=phone[-4:],
+                constraint=exc.constraint_name,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This phone number is already linked to another Hireloop "
+                    "account. Use a different +91 number."
+                ),
+            ) from exc
+        except Exception as exc:
+            logger.warning("save_phone_asyncpg_failed_using_rest", error=str(exc)[:200])
+            saved_via_rest = True
+    else:
+        saved_via_rest = True
 
-    if result.endswith(" 0"):
-        logger.error("save_phone_user_missing", user_id=str(user_id), result=result)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Your user record is missing. Sign out and sign in again.",
-        )
+    if saved_via_rest:
+        from hireloop_api.services import supabase_users as rest_users
 
-    # DPDP audit trail — non-fatal if it fails.
-    try:
-        await log_consent(
-            db,
-            user_id=user_id,
-            purpose="phone_collection",
-            granted=True,
-            request=request,
-        )
-    except Exception as exc:
-        logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
+        try:
+            await rest_users.save_phone(
+                settings,
+                user_id=user_id,
+                phone=phone,
+                supabase_user=supabase_user,
+            )
+            try:
+                await rest_users.log_consent_rest(
+                    settings,
+                    user_id=user_id,
+                    purpose="phone_collection",
+                    granted=True,
+                )
+            except Exception as exc:
+                logger.error("consent_log_rest_failed", user_id=str(user_id), error=str(exc))
+        except ValueError as exc:
+            if str(exc) == "phone_already_claimed":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "This phone number is already linked to another Hireloop "
+                        "account. Use a different +91 number."
+                    ),
+                ) from exc
+            raise
+        except Exception as exc:
+            logger.error("save_phone_rest_failed", user_id=str(user_id), error=str(exc)[:300])
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Couldn't save your number right now. Try again in a moment.",
+            ) from exc
 
     logger.info("phone_saved", user_id=str(user_id), phone_last4=phone[-4:])
 

@@ -7,28 +7,20 @@
  * the server the moment LinkedIn OAuth completes (see /auth/callback →
  * POST /api/v1/auth/bootstrap):
  *
- *   1. Extract details from the LinkedIn OAuth login (metadata → linkedin_data)
- *   2. Run LinkDAPI profile enrichment (background) to pre-fill the dashboard
- *      from the candidate's LinkedIn URL. If OAuth didn't surface a vanity URL,
- *      the Resume step below offers a "confirm your LinkedIn URL" fallback so
- *      enrichment always has a URL to resolve.
+ *   1. Extract details from the LinkedIn OAuth login (metadata → linkedin_data +
+ *      linkedin_url on the candidate row).
+ *   2. After DPDP consent (Legal step), LinkDAPI enrichment runs in the
+ *      background from that URL — no separate LinkedIn form in the wizard.
  *
  * The wizard below continues that same fixed order on the client:
  *
  * Step 0  Welcome          Full-screen intro with Aarya avatar
- * Step 1  Goal             What kind of help are you looking for?
  * Step 1  Phone            Collect +91 mobile (saved for WhatsApp alerts)
- * Step 3  Legal / DPDP     ToS + marketing consent — the LAST form step
- * Step 4  Resume / CV      3. Scrape the candidate's CV (required path)
- * Step 5  Voice call       4. Talk to Aarya to round out the profile
- *
- * Legal/DPDP consent is intentionally the final input step: it sits right
- * before steps 4 → 5, which are the first stages that actually PROCESS personal
- * data (CV parse + voice call). Consent must precede processing under DPDP, so
- * it can't move any later than this.
- *
- * Steps 4 → 5 are SEQUENTIAL (CV first, then the call) — not an either/or — so
- * the candidate graph is built in the same order every time.
+ * Step 2  Goal             What kind of help are you looking for?
+ * Step 3  Legal / DPDP     ToS + marketing consent — triggers LinkedIn import
+ * Step 4  Resume / CV      Parse the candidate's CV
+ * Step 5  Preferences      Salary, remote, location defaults
+ * Step 6  Voice call       Talk to Aarya to round out the profile
  *
  * Design: mirrors Jack & Jill AI aesthetic — conversational bubbles, hand-drawn
  * Aarya avatar, two-column layout on desktop (content left, illustration right).
@@ -44,7 +36,6 @@ import {
   Check,
   FileText,
   HelpCircle,
-  Linkedin,
   Mic,
   Phone,
   Search,
@@ -577,8 +568,10 @@ function LegalStep({
         </div>
 
         <p className="mt-4 text-micro text-ink-500 leading-relaxed">
-          CV parsing and voice calls only start after you accept. Raw voice audio
-          is not stored — only the transcript (DPDP). Contact{" "}
+          Accepting lets us import your LinkedIn profile from your sign-in (we
+          already have your profile URL). CV parsing and voice calls only start
+          after you accept. Raw voice audio is not stored — only the transcript
+          (DPDP). Contact{" "}
           <a href="mailto:privacy@hireloop.in" className="underline">
             privacy@hireloop.in
           </a>
@@ -774,230 +767,7 @@ function PhoneStep({
   );
 }
 
-// ── LinkedIn URL confirm (enrichment fallback) ────────────────────────────────
-//
-// LinkDAPI enrichment runs off the candidate's LinkedIn URL. LinkedIn OAuth
-// doesn't always return a vanity URL, so we let the user confirm/correct it here
-// (prefilled when we already have it). Saving (re)triggers enrichment so the
-// dashboard is pre-filled. Sits after Legal consent → DPDP-safe.
-
-const LINKEDIN_RE = /linkedin\.com\/in\/[^/?#\s]+/i;
-
-type ProfileSnippet = {
-  linkedin_url?: string | null;
-  headline?: string | null;
-  current_title?: string | null;
-  current_company?: string | null;
-  skills?: string[] | null;
-  linkedin_data?: { linkdapi_enriched_at?: string } | null;
-};
-
-type LinkedInImportStatus = "idle" | "waiting" | "scraping" | "imported" | "timed_out";
-
-function LinkedInConfirm() {
-  const [url, setUrl] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [importStatus, setImportStatus] = useState<LinkedInImportStatus>("idle");
-  const [preview, setPreview] = useState<ProfileSnippet | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadProfile = useCallback(async () => {
-    const res = await apiAuthFetch("/api/v1/me/profile");
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      candidate?: ProfileSnippet & { linkedin_data?: Record<string, unknown> };
-    };
-    const c = data.candidate;
-    if (!c) return null;
-    const liData = c.linkedin_data;
-    const enrichedAt =
-      liData && typeof liData === "object"
-        ? (liData as { linkdapi_enriched_at?: string }).linkdapi_enriched_at
-        : undefined;
-    setPreview({
-      headline: c.headline,
-      current_title: c.current_title,
-      current_company: c.current_company,
-      skills: c.skills,
-      linkedin_url: c.linkedin_url,
-      linkedin_data: enrichedAt ? { linkdapi_enriched_at: enrichedAt } : null,
-    });
-    if (enrichedAt) setImportStatus("imported");
-    else if (c.linkedin_url) setImportStatus("scraping");
-    if (c.linkedin_url) {
-      setUrl(c.linkedin_url);
-      setSaved(true);
-    }
-    return c;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadProfile()
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadProfile]);
-
-  useEffect(() => {
-    if (importStatus !== "scraping" && importStatus !== "waiting") return;
-    let attempts = 0;
-    const id = window.setInterval(() => {
-      attempts += 1;
-      void loadProfile().then((c) => {
-        const enriched =
-          c?.linkedin_data &&
-          typeof c.linkedin_data === "object" &&
-          "linkdapi_enriched_at" in (c.linkedin_data as object);
-        if (enriched) {
-          setImportStatus("imported");
-          window.clearInterval(id);
-        } else if (attempts >= 20) {
-          setImportStatus("timed_out");
-          window.clearInterval(id);
-        }
-      });
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, [importStatus, loadProfile]);
-
-  const valid = LINKEDIN_RE.test(url.trim());
-
-  async function save() {
-    if (!valid || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await apiAuthFetch("/api/v1/me/linkedin", {
-        method: "POST",
-        body: JSON.stringify({ linkedin_url: url.trim() }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { detail?: string };
-        setError(data.detail ?? "Couldn't save that URL.");
-        return;
-      }
-      const payload = (await res.json().catch(() => ({}))) as {
-        enrichment_scheduled?: boolean;
-      };
-      setSaved(true);
-      setImportStatus(payload.enrichment_scheduled ? "scraping" : "waiting");
-    } catch {
-      setError("Couldn't reach the server.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const statusCopy: Record<LinkedInImportStatus, string> = {
-    idle: "Add your LinkedIn URL — we scrape it after you accept consent.",
-    waiting: "URL saved — scrape runs after DPDP consent on the previous step.",
-    scraping: "Scraping your LinkedIn profile now…",
-    imported: "LinkedIn profile imported",
-    timed_out:
-      "Scrape is taking longer than usual — your CV data still powers matches.",
-  };
-
-  return (
-    <div className="mb-4 rounded-lg border border-ink-100 bg-paper-1 p-4 shadow-1">
-      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-        <Linkedin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
-        <h3 className="text-small font-semibold text-ink-900">
-          LinkedIn profile import
-        </h3>
-        {importStatus !== "idle" && (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-micro font-medium",
-              importStatus === "imported" ? "text-accent" : "text-ink-500",
-            )}
-          >
-            {importStatus === "imported" ? (
-              <Check className="h-3 w-3" strokeWidth={2} />
-            ) : importStatus === "scraping" ? (
-              <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-            ) : null}
-            {statusCopy[importStatus]}
-          </span>
-        )}
-      </div>
-      <p className="text-micro text-ink-500 mb-2.5 leading-relaxed">
-        We read your public LinkedIn via LinkDAPI after consent — title, company,
-        skills, and experience. You&apos;ll see imported fields below when done.
-      </p>
-      <div className="flex gap-2">
-        <input
-          type="url"
-          value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            setSaved(false);
-          }}
-          placeholder="https://www.linkedin.com/in/your-name"
-          disabled={!loaded}
-          className="flex-1 min-w-0 rounded-md border border-ink-100 bg-paper-1 px-3 py-2 text-small text-ink-900 placeholder:text-ink-300 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:opacity-60"
-        />
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={!valid || saving || saved}
-          className={cn(
-            "shrink-0 rounded-md px-4 py-2 text-small font-medium transition-colors duration-fast ease-out-soft",
-            valid && !saving && !saved
-              ? "bg-accent text-accent-fg hover:bg-accent-hover"
-              : "bg-ink-50 text-ink-300 cursor-not-allowed",
-          )}
-        >
-          {saved ? "Saved" : saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-      {error && <p className="mt-2 text-micro text-ink-700">{error}</p>}
-
-      {importStatus === "imported" && preview && (
-        <div className="mt-3 rounded-md border border-ink-100 bg-paper-0 p-3 text-micro text-ink-600 space-y-1">
-          <p className="font-medium text-ink-800">Imported from LinkedIn</p>
-          {preview.current_title && (
-            <p>
-              Role: <span className="text-ink-900">{preview.current_title}</span>
-              {preview.current_company ? ` at ${preview.current_company}` : ""}
-            </p>
-          )}
-          {preview.headline && (
-            <p>
-              Headline: <span className="text-ink-900">{preview.headline}</span>
-            </p>
-          )}
-          {preview.skills && preview.skills.length > 0 && (
-            <p>
-              Skills:{" "}
-              <span className="text-ink-900">
-                {preview.skills.slice(0, 6).join(", ")}
-                {preview.skills.length > 6 ? "…" : ""}
-              </span>
-            </p>
-          )}
-          {preview.linkedin_data?.linkdapi_enriched_at && (
-            <p className="text-ink-400">
-              Scraped at{" "}
-              {new Date(preview.linkedin_data.linkdapi_enriched_at).toLocaleString(
-                "en-IN",
-                { dateStyle: "medium", timeStyle: "short" },
-              )}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Step 4: Resume / CV scrape (sequential — comes before the call) ───────────
+// ── Step 4: Resume / CV scrape (sequential — comes before preferences) ─────────
 
 function ResumeStep({
   onBack,
@@ -1043,17 +813,14 @@ function ResumeStep({
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">
-              Great, {firstName} — I&apos;ll help you {selectedGoal}. First, upload
-              your CV so I can read your experience. Then we&apos;ll have a quick
-              call to fill in the rest.
+              Great, {firstName} — I&apos;m already pulling in your LinkedIn from
+              sign-in. Upload your CV too so I can sharpen your matches for{" "}
+              {selectedGoal}.
             </p>
           </Bubble>
         </div>
 
         <div className="ml-0 md:ml-[68px]">
-          {/* LinkedIn URL fallback — ensures LinkDAPI enrichment always has a URL */}
-          <LinkedInConfirm />
-
           <div className="rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
             <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-ink-900 text-paper-0">
               <FileText className="h-5 w-5" strokeWidth={1.5} />

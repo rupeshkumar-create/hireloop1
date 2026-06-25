@@ -132,6 +132,17 @@ def candidate_has_apify_profile(linkedin_data: Any) -> bool:  # noqa: ANN401
     return isinstance(apify, dict) and bool(apify)
 
 
+def candidate_has_linkdapi_profile(linkedin_data: Any) -> bool:  # noqa: ANN401
+    """True when LinkDAPI returned experience/overview data."""
+    blob = _coerce_linkedin_blob(linkedin_data)
+    linkd = blob.get("linkdapi_profile")
+    if not isinstance(linkd, dict) or not linkd:
+        return False
+    if linkd.get("experience") or linkd.get("overview"):
+        return True
+    return bool(blob.get("linkdapi_enriched_at"))
+
+
 def linkedin_scrape_cooldown_elapsed(
     linkedin_data: Any,  # noqa: ANN401
     *,
@@ -141,7 +152,7 @@ def linkedin_scrape_cooldown_elapsed(
     True when we may attempt another scrape (never tried, or last try was long ago).
     """
     blob = _coerce_linkedin_blob(linkedin_data)
-    if candidate_has_apify_profile(blob):
+    if candidate_has_apify_profile(blob) or candidate_has_linkdapi_profile(blob):
         return False
 
     raw_at = blob.get("apify_scraped_at")
@@ -170,7 +181,7 @@ def candidate_needs_linkedin_extraction(
     True when the candidate has a LinkedIn URL but no successful Apify extraction yet.
     """
     blob = _coerce_linkedin_blob(linkedin_data)
-    if candidate_has_apify_profile(blob):
+    if candidate_has_apify_profile(blob) or candidate_has_linkdapi_profile(blob):
         return False, None
 
     profile_url = resolve_linkedin_profile_url(linkedin_url, blob)

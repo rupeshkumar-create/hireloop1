@@ -201,7 +201,7 @@ export function DashboardClient({
       });
 
     void fetchMatchFeed(DEFAULT_MATCH_FEED_FILTERS).catch(() => {});
-    void fetchMatchFeedCount({ min_score: 0 }).catch(() => {});
+    void fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS).catch(() => {});
     void fetchMyProfile().catch(() => {});
     void fetchIntros().then((rows) => {
       if (!cancelled) {
@@ -560,7 +560,7 @@ function HomePanel({
     rows.filter((r) => !["declined", "expired", "cancelled"].includes(r.status)).length;
 
   const [jobCount, setJobCount]       = useState<number | null>(
-    () => getCachedMatchFeedCount({ min_score: 0 })
+    () => getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
   );
   const [introCount, setIntroCount]   = useState<number | null>(() => {
     const cached = getCachedIntros();
@@ -578,7 +578,7 @@ function HomePanel({
   const [intelCompleteness, setIntelCompleteness] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchMatchFeedCount({ min_score: 0 })
+    fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
       .then((total) => setJobCount(total))
       .catch(() => setJobCount(0));
 

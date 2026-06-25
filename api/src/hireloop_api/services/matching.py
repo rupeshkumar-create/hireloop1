@@ -46,6 +46,10 @@ from hireloop_api.services.job_preferences import (
     REMOTE_PREFERENCE_ONSITE_ONLY,
     normalize_remote_preference,
 )
+from hireloop_api.services.match_quality import (
+    job_in_persona_pool,
+    should_persist_match,
+)
 from hireloop_api.services.skills import canonical_skill
 from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 
@@ -653,7 +657,7 @@ class MatchingEngine:
         ctc_score = result["ctc_score"]
         explanation = result["explanation"]
 
-        # ── Persist ───────────────────────────────────────────────────────────
+        # ── Persist (quality gate — weak fits are dropped, not stored) ────────
         prior = await self._db.fetchrow(
             """
             SELECT overall_score FROM public.match_scores
@@ -663,6 +667,17 @@ class MatchingEngine:
             job_id,
         )
         prior_score = float(prior["overall_score"]) if prior else None
+
+        if not should_persist_match(cand_row, job_row, result):
+            await self._db.execute(
+                """
+                DELETE FROM public.match_scores
+                WHERE candidate_id = $1::uuid AND job_id = $2::uuid
+                """,
+                candidate_id,
+                job_id,
+            )
+            return overall
 
         bias_audit = _bias_audit()
 
@@ -758,18 +773,40 @@ class MatchingEngine:
             LIMIT $2
             """,
             candidate_id,
-            limit,
+            max(limit * 2, 400),
         )
         if not jobs:
             logger.info("score_candidate_done", candidate_id=candidate_id, scored=0)
             return 0
 
+        # Persona pool: score role-relevant jobs first; widen only if the pool is thin.
+        pool_jobs: list[asyncpg.Record] = [j for j in jobs if job_in_persona_pool(j, cand_row)]
+        if len(pool_jobs) < min(50, limit):
+            seen = {str(j["id"]) for j in pool_jobs}
+            for j in jobs:
+                jid = str(j["id"])
+                if jid in seen:
+                    continue
+                if job_in_persona_pool(j, cand_row, min_title_affinity=0.0):
+                    pool_jobs.append(j)
+                    seen.add(jid)
+                if len(pool_jobs) >= limit:
+                    break
+        if len(pool_jobs) < min(20, limit):
+            pool_jobs = list(jobs[:limit])
+        else:
+            pool_jobs = pool_jobs[:limit]
+
         bias_audit = json.dumps(_bias_audit())
         records: list[tuple] = []
-        for j in jobs:
+        drop_job_ids: list[str] = []
+        for j in pool_jobs:
             es = max(0.0, float(j["skills_sim"])) if j["skills_sim"] is not None else None
             ep = max(0.0, float(j["profile_sim"])) if j["profile_sim"] is not None else None
             r = _assemble_score(cand_row, j, es, ep)
+            if not should_persist_match(cand_row, j, r):
+                drop_job_ids.append(str(j["id"]))
+                continue
             records.append(
                 (
                     uuid.uuid4(),
@@ -784,6 +821,20 @@ class MatchingEngine:
                     bias_audit,
                 )
             )
+
+        if drop_job_ids:
+            await self._db.execute(
+                """
+                DELETE FROM public.match_scores
+                WHERE candidate_id = $1::uuid AND job_id = ANY($2::uuid[])
+                """,
+                candidate_id,
+                drop_job_ids,
+            )
+
+        if not records:
+            logger.info("score_candidate_done", candidate_id=candidate_id, scored=0)
+            return 0
 
         await self._db.executemany(
             """

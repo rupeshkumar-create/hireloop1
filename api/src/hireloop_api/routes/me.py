@@ -4,6 +4,7 @@ User account routes — DPDP export/delete, notification prefs (P19, P23).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_db_optional, get_india_verified_user
 from hireloop_api.services.consent import log_consent
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
@@ -58,12 +59,11 @@ async def _schedule_post_consent_enrichment(
     *,
     user_id: uuid.UUID,
     candidate_id: str,
-) -> None:
+) -> dict[str, Any]:
     """Run LinkedIn enrichment + CI only after explicit DPDP consent."""
     from hireloop_api.services.background_jobs import (
         CAREER_INTELLIGENCE_UPDATE,
         CAREER_PATH_UPDATE,
-        LINKDAPI_ENRICH,
         MATCH_EMBED_CANDIDATE,
         enqueue_job,
     )
@@ -76,13 +76,13 @@ async def _schedule_post_consent_enrichment(
     linkedin_url = (row["linkedin_url"] if row else None) or (
         extract_linkedin_profile_url(row["linkedin_data"]) if row else None
     )
-    if linkedin_url and settings.linkdapi_key:
-        await enqueue_job(
-            db,
-            kind=LINKDAPI_ENRICH,
-            payload={"user_id": str(user_id), "linkedin_url": linkedin_url},
-            idempotency_key=f"linkdapi:{user_id}",
-        )
+    linkedin_enrichment_scheduled = bool(
+        linkedin_url and (settings.apify_token or settings.linkdapi_key)
+    )
+    if linkedin_enrichment_scheduled:
+        # Full scrape runs immediately via asyncio.create_task in onboarding-consent
+        # (run_linkedin_profile_enrichment → Apify first, LinkDAPI fallback).
+        pass
     else:
         await enqueue_job(
             db,
@@ -96,18 +96,22 @@ async def _schedule_post_consent_enrichment(
             payload={"candidate_id": candidate_id},
             idempotency_key=f"career_path_update:{candidate_id}",
         )
-    await enqueue_job(
-        db,
-        kind=MATCH_EMBED_CANDIDATE,
-        payload={"candidate_id": candidate_id},
-        idempotency_key=f"match_embed_candidate:{candidate_id}",
-    )
+        await enqueue_job(
+            db,
+            kind=MATCH_EMBED_CANDIDATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"match_embed_candidate:{candidate_id}",
+        )
     await log_consent(
         db,
         user_id=user_id,
         purpose="linkedin_oauth_profile",
         granted=True,
     )
+    return {
+        "linkedin_url": linkedin_url,
+        "linkedin_enrichment_scheduled": linkedin_enrichment_scheduled,
+    }
 
 
 _VISIBILITY_VALUES = {"open_to_matches", "exceptional_only", "private"}
@@ -379,9 +383,8 @@ async def set_linkedin_url(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
-    Save / confirm the candidate's LinkedIn URL and (re)run LinkDAPI enrichment
-    so the dashboard pre-fills. This is the onboarding fallback for when LinkedIn
-    OAuth didn't return a vanity URL.
+    Save / confirm the candidate's LinkedIn URL and (re)run Apify/LinkDAPI enrichment
+    so the dashboard pre-fills. Fallback when OAuth didn't return a vanity URL.
     """
     from hireloop_api.services.background_jobs import LINKDAPI_ENRICH, enqueue_job
     from hireloop_api.services.linkdapi_profile import extract_linkedin_username
@@ -402,7 +405,7 @@ async def set_linkedin_url(
         url,
     )
 
-    scheduled = bool(settings.linkdapi_key)
+    scheduled = bool(settings.apify_token or settings.linkdapi_key)
     if scheduled:
         await enqueue_job(
             db,
@@ -417,45 +420,48 @@ async def set_linkedin_url(
 async def update_my_profile(
     body: ProfileUpdateRequest,
     current_user: dict = Depends(get_india_verified_user),
-    db: asyncpg.Connection = Depends(get_db),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     user_id = uuid.UUID(str(current_user["id"]))
     updates = body.model_dump(exclude_unset=True)
 
-    if "full_name" in updates:
-        raw_name = updates.pop("full_name")
-        await db.execute(
-            """
-            UPDATE public.users
-            SET full_name = $2, updated_at = NOW()
-            WHERE id = $1::uuid AND deleted_at IS NULL
-            """,
-            user_id,
-            raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None,
-        )
+    async def _rest_fallback(reason: str) -> dict:
+        from hireloop_api.services import supabase_users as rest_users
 
-    if updates:
-        candidate = await _ensure_candidate_row(db, user_id)
-        set_clauses: list[str] = []
-        values: list[Any] = [candidate["id"]]
-        param_idx = 2
-
-        column_map = {
-            "headline": "headline",
-            "summary": "summary",
-            "current_title": "current_title",
-            "current_company": "current_company",
-            "years_experience": "years_experience",
-            "location_city": "location_city",
-            "location_state": "location_state",
-            "looking_for": "looking_for",
-            "open_to_relocation": "open_to_relocation",
-            "expected_ctc_min": "expected_ctc_min",
-            "expected_ctc_max": "expected_ctc_max",
-            "current_ctc": "current_ctc",
-            "notice_period_days": "notice_period_days",
+        logger.warning("profile_update_via_rest", user_id=str(user_id), reason=reason)
+        if "full_name" in updates:
+            await rest_users.patch_user(
+                settings,
+                user_id,
+                {
+                    "full_name": updates["full_name"].strip()
+                    if isinstance(updates["full_name"], str) and updates["full_name"].strip()
+                    else None
+                },
+            )
+        candidate_fields = {
+            k: updates[k]
+            for k in (
+                "headline",
+                "summary",
+                "current_title",
+                "current_company",
+                "years_experience",
+                "location_city",
+                "location_state",
+                "looking_for",
+                "open_to_relocation",
+                "expected_ctc_min",
+                "expected_ctc_max",
+                "current_ctc",
+                "notice_period_days",
+                "visibility",
+            )
+            if k in updates
         }
+        if "skills" in updates:
+            candidate_fields["skills"] = updates["skills"] or []
         if "remote_preference" in updates:
             pref = normalize_remote_preference(updates["remote_preference"])
             if pref not in VALID_REMOTE_PREFERENCES:
@@ -466,118 +472,193 @@ async def update_my_profile(
                         f"Expected one of: {', '.join(sorted(VALID_REMOTE_PREFERENCES))}."
                     ),
                 )
-            set_clauses.append(f"remote_preference = ${param_idx}")
-            values.append(pref)
-            param_idx += 1
-            updates.pop("remote_preference", None)
-
+            candidate_fields["remote_preference"] = pref
         if "location_scope" in updates:
             scope = str(updates["location_scope"]).lower().strip()
             if scope not in {"city", "state", "country", "global"}:
                 raise HTTPException(
                     status_code=422,
-                    detail="Invalid location_scope. Expected one of: city, state, country, global.",
+                    detail=(
+                        "Invalid location_scope. Expected one of: city, state, country, global."
+                    ),
                 )
-            set_clauses.append(f"location_scope = ${param_idx}")
-            values.append(scope)
-            param_idx += 1
-            # Keep the legacy relocation flag coherent with the scope.
-            set_clauses.append(f"open_to_relocation = ${param_idx}")
-            values.append(scope in {"country", "global"})
-            param_idx += 1
-            updates.pop("location_scope", None)
-
-        for field, column in column_map.items():
-            if field not in updates:
-                continue
-            set_clauses.append(f"{column} = ${param_idx}")
-            values.append(updates[field])
-            param_idx += 1
-
-        if "skills" in updates:
-            set_clauses.append(f"skills = ${param_idx}::text[]")
-            values.append(updates["skills"] or [])
-            param_idx += 1
-
-        if "visibility" in updates:
-            vis = updates["visibility"]
-            if vis not in _VISIBILITY_VALUES:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Invalid visibility '{vis}'. "
-                    f"Expected one of: {', '.join(sorted(_VISIBILITY_VALUES))}.",
-                )
-            set_clauses.append(f"visibility = ${param_idx}::candidate_visibility")
-            values.append(vis)
-            param_idx += 1
-
-        if set_clauses:
-            set_clauses.append("updated_at = NOW()")
-            if "current_title" in updates or "years_experience" in updates:
-                set_clauses.append(
-                    """
-                    profile_complete = CASE
-                      WHEN COALESCE(current_title, '') <> ''
-                       AND COALESCE(years_experience, 0) > 0
-                      THEN TRUE
-                      ELSE profile_complete
-                    END
-                    """.strip()
-                )
-            query = (
-                f"UPDATE public.candidates SET {', '.join(set_clauses)} "  # noqa: S608
-                "WHERE id = $1::uuid AND deleted_at IS NULL"
+            candidate_fields["location_scope"] = scope
+            candidate_fields["open_to_relocation"] = scope in {"country", "global"}
+        if candidate_fields:
+            candidate = await rest_users.ensure_candidate(settings, user_id)
+            await rest_users.patch_candidate(settings, candidate["id"], candidate_fields)
+        try:
+            await rest_users.log_consent_rest(
+                settings, user_id=user_id, purpose="profile_update_manual", granted=True
             )
-            await db.execute(query, *values)
+        except Exception as exc:
+            logger.error("consent_log_rest_failed", user_id=str(user_id), error=str(exc))
+        return {"ok": True}
 
-    await db.execute(
-        """
-        INSERT INTO public.consent_log (user_id, purpose, granted)
-        VALUES ($1::uuid, 'profile_update_manual', TRUE)
-        """,
-        user_id,
-    )
+    if db is None:
+        return await _rest_fallback("db_pool_unavailable")
 
-    candidate_row = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
-        user_id,
-    )
-    if candidate_row:
-        from hireloop_api.services.background_jobs import (
-            MATCH_EMBED_CANDIDATE,
-            PROFILE_COMPLETENESS,
-            enqueue_job,
+    try:
+        if "full_name" in updates:
+            raw_name = updates.pop("full_name")
+            await db.execute(
+                """
+                UPDATE public.users
+                SET full_name = $2, updated_at = NOW()
+                WHERE id = $1::uuid AND deleted_at IS NULL
+                """,
+                user_id,
+                raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None,
+            )
+
+        if updates:
+            candidate = await _ensure_candidate_row(db, user_id)
+            set_clauses: list[str] = []
+            values: list[Any] = [candidate["id"]]
+            param_idx = 2
+
+            column_map = {
+                "headline": "headline",
+                "summary": "summary",
+                "current_title": "current_title",
+                "current_company": "current_company",
+                "years_experience": "years_experience",
+                "location_city": "location_city",
+                "location_state": "location_state",
+                "looking_for": "looking_for",
+                "open_to_relocation": "open_to_relocation",
+                "expected_ctc_min": "expected_ctc_min",
+                "expected_ctc_max": "expected_ctc_max",
+                "current_ctc": "current_ctc",
+                "notice_period_days": "notice_period_days",
+            }
+            if "remote_preference" in updates:
+                pref = normalize_remote_preference(updates["remote_preference"])
+                if pref not in VALID_REMOTE_PREFERENCES:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "Invalid remote_preference. "
+                            f"Expected one of: {', '.join(sorted(VALID_REMOTE_PREFERENCES))}."
+                        ),
+                    )
+                set_clauses.append(f"remote_preference = ${param_idx}")
+                values.append(pref)
+                param_idx += 1
+                updates.pop("remote_preference", None)
+
+            if "location_scope" in updates:
+                scope = str(updates["location_scope"]).lower().strip()
+                if scope not in {"city", "state", "country", "global"}:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "Invalid location_scope. Expected one of: city, state, country, global."
+                        ),
+                    )
+                set_clauses.append(f"location_scope = ${param_idx}")
+                values.append(scope)
+                param_idx += 1
+                set_clauses.append(f"open_to_relocation = ${param_idx}")
+                values.append(scope in {"country", "global"})
+                param_idx += 1
+                updates.pop("location_scope", None)
+
+            for field, column in column_map.items():
+                if field not in updates:
+                    continue
+                set_clauses.append(f"{column} = ${param_idx}")
+                values.append(updates[field])
+                param_idx += 1
+
+            if "skills" in updates:
+                set_clauses.append(f"skills = ${param_idx}::text[]")
+                values.append(updates["skills"] or [])
+                param_idx += 1
+
+            if "visibility" in updates:
+                vis = updates["visibility"]
+                if vis not in _VISIBILITY_VALUES:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Invalid visibility '{vis}'. "
+                        f"Expected one of: {', '.join(sorted(_VISIBILITY_VALUES))}.",
+                    )
+                set_clauses.append(f"visibility = ${param_idx}::candidate_visibility")
+                values.append(vis)
+                param_idx += 1
+
+            if set_clauses:
+                set_clauses.append("updated_at = NOW()")
+                if "current_title" in updates or "years_experience" in updates:
+                    set_clauses.append(
+                        """
+                        profile_complete = CASE
+                          WHEN COALESCE(current_title, '') <> ''
+                           AND COALESCE(years_experience, 0) > 0
+                          THEN TRUE
+                          ELSE profile_complete
+                        END
+                        """.strip()
+                    )
+                query = (
+                    f"UPDATE public.candidates SET {', '.join(set_clauses)} "  # noqa: S608
+                    "WHERE id = $1::uuid AND deleted_at IS NULL"
+                )
+                await db.execute(query, *values)
+
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'profile_update_manual', TRUE)
+            """,
+            user_id,
         )
 
-        await enqueue_job(
-            db,
-            kind=PROFILE_COMPLETENESS,
-            payload={"candidate_id": str(candidate_row["id"])},
-            idempotency_key=f"profile_completeness:{candidate_row['id']}",
+        candidate_row = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+            user_id,
         )
+        if candidate_row:
+            from hireloop_api.services.background_jobs import (
+                MATCH_EMBED_CANDIDATE,
+                PROFILE_COMPLETENESS,
+                enqueue_job,
+            )
 
-        # Re-score matches when job-search preferences change.
-        preference_fields = {
-            "remote_preference",
-            "location_scope",
-            "location_city",
-            "location_state",
-            "open_to_relocation",
-            "expected_ctc_min",
-            "expected_ctc_max",
-            "current_title",
-            "skills",
-            "looking_for",
-        }
-        if preference_fields & set(body.model_dump(exclude_unset=True).keys()):
             await enqueue_job(
                 db,
-                kind=MATCH_EMBED_CANDIDATE,
+                kind=PROFILE_COMPLETENESS,
                 payload={"candidate_id": str(candidate_row["id"])},
-                idempotency_key=f"match_embed:{candidate_row['id']}",
+                idempotency_key=f"profile_completeness:{candidate_row['id']}",
             )
 
-    return {"ok": True}
+            preference_fields = {
+                "remote_preference",
+                "location_scope",
+                "location_city",
+                "location_state",
+                "open_to_relocation",
+                "expected_ctc_min",
+                "expected_ctc_max",
+                "current_title",
+                "skills",
+                "looking_for",
+            }
+            if preference_fields & set(body.model_dump(exclude_unset=True).keys()):
+                await enqueue_job(
+                    db,
+                    kind=MATCH_EMBED_CANDIDATE,
+                    payload={"candidate_id": str(candidate_row["id"])},
+                    idempotency_key=f"match_embed:{candidate_row['id']}",
+                )
+
+        return {"ok": True}
+    except Exception as exc:
+        err = str(exc)
+        if "ECIRCUITBREAKER" in err or "authentication failed" in err.lower():
+            return await _rest_fallback(err[:120])
+        raise
 
 
 @router.get("/saved-jobs")
@@ -718,7 +799,7 @@ async def record_onboarding_consent(
     request: Request,
     current_user: dict = Depends(get_india_verified_user),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection = Depends(get_db),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
 ) -> dict:
     """
     Record ToS / privacy + marketing consent during onboarding (DPDP R14).
@@ -728,59 +809,120 @@ async def record_onboarding_consent(
         raise HTTPException(status_code=400, detail="Terms and privacy policy must be accepted")
 
     user_id = uuid.UUID(str(current_user["id"]))
-
-    for purpose in ("terms_of_service", "privacy_policy", "ai_disclaimer"):
-        await log_consent(
-            db,
-            user_id=user_id,
-            purpose=purpose,
-            granted=True,
-            request=request,
-        )
-
-    await log_consent(
-        db,
-        user_id=user_id,
-        purpose="marketing_emails",
-        granted=body.marketing_emails,
-        request=request,
-    )
-
     prefs = {
         "job_match_alerts": {"email": True, "whatsapp": True},
         "intro_updates": {"email": True, "whatsapp": True},
         "intro_status": {"email": True, "whatsapp": True},
         "platform_updates": {"email": body.marketing_emails},
     }
-    await db.execute(
-        """
-        UPDATE public.users SET notification_prefs = $2::jsonb, updated_at = NOW()
-        WHERE id = $1::uuid AND deleted_at IS NULL
-        """,
-        user_id,
-        json.dumps(prefs),
-    )
-    await log_consent(
-        db,
-        user_id=user_id,
-        purpose="notification_prefs_onboarding",
-        granted=True,
-        request=request,
-    )
 
-    candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
-        user_id,
-    )
-    if candidate:
-        await _schedule_post_consent_enrichment(
-            db,
+    async def _rest_consent() -> dict[str, Any]:
+        from hireloop_api.services import supabase_users as rest_users
+
+        for purpose in ("terms_of_service", "privacy_policy", "ai_disclaimer"):
+            await rest_users.log_consent_rest(
+                settings, user_id=user_id, purpose=purpose, granted=True
+            )
+        await rest_users.log_consent_rest(
             settings,
             user_id=user_id,
-            candidate_id=str(candidate["id"]),
+            purpose="marketing_emails",
+            granted=body.marketing_emails,
+        )
+        await rest_users.patch_user(settings, user_id, {"notification_prefs": prefs})
+        await rest_users.log_consent_rest(
+            settings,
+            user_id=user_id,
+            purpose="notification_prefs_onboarding",
+            granted=True,
+        )
+        candidate = await rest_users.fetch_candidate(settings, user_id)
+        enrichment: dict[str, Any] = {}
+        if candidate:
+            meta = (current_user.get("_supabase_user") or {}).get("user_metadata") or {}
+            linkedin_url = meta.get("linkedin_url") or meta.get("profile_url")
+            if linkedin_url:
+                from hireloop_api.services.linkedin_enrichment import (
+                    run_linkedin_profile_enrichment,
+                )
+
+                asyncio.create_task(  # noqa: RUF006
+                    run_linkedin_profile_enrichment(settings, str(user_id), str(linkedin_url))
+                )
+                enrichment = {
+                    "linkedin_enrichment_scheduled": True,
+                    "linkedin_url": linkedin_url,
+                }
+        return {"ok": True, "prefs": prefs, **enrichment}
+
+    if db is None:
+        return await _rest_consent()
+
+    try:
+        for purpose in ("terms_of_service", "privacy_policy", "ai_disclaimer"):
+            await log_consent(
+                db,
+                user_id=user_id,
+                purpose=purpose,
+                granted=True,
+                request=request,
+            )
+
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose="marketing_emails",
+            granted=body.marketing_emails,
+            request=request,
         )
 
-    return {"ok": True, "prefs": prefs}
+        await db.execute(
+            """
+            UPDATE public.users SET notification_prefs = $2::jsonb, updated_at = NOW()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            user_id,
+            json.dumps(prefs),
+        )
+        await log_consent(
+            db,
+            user_id=user_id,
+            purpose="notification_prefs_onboarding",
+            granted=True,
+            request=request,
+        )
+
+        candidate = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+            user_id,
+        )
+        enrichment: dict[str, Any] = {}
+        if candidate:
+            enrichment = await _schedule_post_consent_enrichment(
+                db,
+                settings,
+                user_id=user_id,
+                candidate_id=str(candidate["id"]),
+            )
+            if enrichment.get("linkedin_enrichment_scheduled") and enrichment.get("linkedin_url"):
+                from hireloop_api.services.linkedin_enrichment import (
+                    run_linkedin_profile_enrichment,
+                )
+
+                asyncio.create_task(  # noqa: RUF006 — fire-and-forget; errors logged in enrichment
+                    run_linkedin_profile_enrichment(
+                        settings,
+                        str(user_id),
+                        str(enrichment["linkedin_url"]),
+                    )
+                )
+
+        return {"ok": True, "prefs": prefs, **enrichment}
+    except Exception as exc:
+        err = str(exc)
+        if "ECIRCUITBREAKER" in err or "authentication failed" in err.lower():
+            return await _rest_consent()
+        raise
 
 
 @router.post("/complete-onboarding")

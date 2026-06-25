@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 CREDS_FILE = ROOT / "scripts" / "supabase-credentials.env"
@@ -63,11 +63,21 @@ def normalize_supabase_url(raw_url: str) -> str:
 def build_database_url(creds: dict[str, str]) -> str:
     ref = creds["SUPABASE_PROJECT_REF"]
     password = creds["SUPABASE_DB_PASSWORD"]
-    host = creds.get("SUPABASE_DB_HOST") or f"db.{ref}.supabase.co"
-    # Direct DB connection is the most reliable default for local development.
-    user = creds.get("SUPABASE_DB_USER") or "postgres"
-    port = creds.get("SUPABASE_DB_PORT") or "5432"
-    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/postgres?sslmode=require"
+    # Supabase direct host (db.*.supabase.co:5432) is often IPv6-only and refuses
+    # connections on many networks. Prefer the transaction pooler (IPv4, port 6543).
+    pooler_host = (
+        creds.get("SUPABASE_POOLER_HOST")
+        or creds.get("SUPABASE_DB_HOST")
+        or f"aws-0-ap-south-1.pooler.supabase.com"
+    )
+    pooler_port = creds.get("SUPABASE_DB_PORT") or "6543"
+    user = creds.get("SUPABASE_DB_USER") or f"postgres.{ref}"
+    if user == "postgres" and pooler_port == "6543":
+        user = f"postgres.{ref}"
+    return (
+        f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
+        f"@{pooler_host}:{pooler_port}/postgres?sslmode=require"
+    )
 
 
 def upsert_env_lines(path: Path, updates: dict[str, str]) -> None:

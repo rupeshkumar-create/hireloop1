@@ -244,6 +244,19 @@ def _edu_key(edu: dict[str, Any]) -> str:
     return f"||{(_clean(edu.get('major')) or '').casefold()}"
 
 
+def _infer_years_experience(roles: list[dict[str, Any]]) -> int | None:
+    """Rough YOE from earliest role start year to today (LinkedIn work history)."""
+    starts: list[int] = []
+    for role in roles:
+        y = _year(role.get("start_date"))
+        if y:
+            starts.append(y)
+    if not starts:
+        return None
+    years = datetime.now(UTC).year - min(starts)
+    return max(0, min(years, 45))
+
+
 # ── Enrichment ────────────────────────────────────────────────────────────────
 
 
@@ -292,6 +305,12 @@ async def enrich_candidate_via_linkdapi(
 
     headline = _first(overview, ("headline", "title", "occupation"))
     summary = _first(overview, ("summary", "about", "description"))
+    full_name = _first(overview, ("fullName", "name", "displayName"))
+    if not full_name:
+        first = _first(overview, ("firstName", "first_name"))
+        last = _first(overview, ("lastName", "last_name"))
+        if first or last:
+            full_name = " ".join(part for part in (first, last) if part)
     current = roles[0] if roles else {}
     current_title = _first(overview, ("currentTitle", "jobTitle")) or current.get("title")
     current_company = _first(overview, ("currentCompany", "companyName")) or current.get("company")
@@ -314,7 +333,7 @@ async def enrich_candidate_via_linkdapi(
     row = await db.fetchrow(
         """
         SELECT id, headline, summary, current_title, current_company,
-               location_city, location_state, skills, career_profile
+               location_city, location_state, skills, years_experience, career_profile
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
@@ -337,6 +356,13 @@ async def enrich_candidate_via_linkdapi(
     new_state = _fill(row["location_state"], state)
     existing_skills = list(row["skills"] or [])
     new_skills = existing_skills if existing_skills else skills
+    inferred_years = _infer_years_experience(roles)
+    existing_years = row["years_experience"]
+    new_years = (
+        existing_years
+        if existing_years is not None and int(existing_years) > 0
+        else inferred_years
+    )
 
     # Merge experience + education into career_profile (fill, don't clobber).
     cp: dict[str, Any] = {}
@@ -387,6 +413,17 @@ async def enrich_candidate_via_linkdapi(
         "linkdapi_enriched_at": datetime.now(UTC).isoformat(),
     }
 
+    if full_name:
+        await db.execute(
+            """
+            UPDATE public.users
+            SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), $2), updated_at = NOW()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            uid,
+            full_name,
+        )
+
     await db.execute(
         """
         UPDATE public.candidates SET
@@ -396,10 +433,11 @@ async def enrich_candidate_via_linkdapi(
           current_company = $5,
           location_city = $6,
           location_state = $7,
-          skills = CASE WHEN cardinality($8::text[]) > 0 THEN $8::text[] ELSE skills END,
-          career_profile = $9::jsonb,
-          linkedin_url = COALESCE(linkedin_url, $10),
-          linkedin_data = COALESCE(linkedin_data, '{}'::jsonb) || $11::jsonb,
+          years_experience = COALESCE($8, years_experience),
+          skills = CASE WHEN cardinality($9::text[]) > 0 THEN $9::text[] ELSE skills END,
+          career_profile = $10::jsonb,
+          linkedin_url = COALESCE(linkedin_url, $11),
+          linkedin_data = COALESCE(linkedin_data, '{}'::jsonb) || $12::jsonb,
           updated_at = NOW()
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
@@ -410,6 +448,7 @@ async def enrich_candidate_via_linkdapi(
         new_company,
         new_city,
         new_state,
+        new_years,
         new_skills,
         json.dumps(cp),
         profile_url,
@@ -430,55 +469,12 @@ async def enrich_candidate_via_linkdapi(
         "roles": len(roles),
         "education": len(education),
         "skills": len(skills),
+        "years_experience": new_years,
     }
 
 
 async def run_linkdapi_enrichment(settings: Any, user_id: str, profile_url: str) -> None:  # noqa: ANN401
-    """Fire-and-forget LinkDAPI enrichment on its own pooled connection. Never raises."""
-    from hireloop_api.deps import get_db_pool
+    """Backward-compatible alias — runs Apify-first LinkedIn enrichment."""
+    from hireloop_api.services.linkedin_enrichment import run_linkedin_profile_enrichment
 
-    api_key = getattr(settings, "linkdapi_key", "") or ""
-    if not api_key:
-        return
-    base_url = getattr(settings, "linkdapi_base_url", "https://linkdapi.com")
-    try:
-        pool = await get_db_pool(settings)
-        async with pool.acquire() as db:
-            result = await enrich_candidate_via_linkdapi(
-                db,
-                user_id=user_id,
-                profile_url=profile_url,
-                api_key=api_key,
-                base_url=base_url,
-            )
-        logger.info(
-            "linkdapi_enrichment_done",
-            user_id=str(user_id),
-            **{k: v for k, v in result.items() if k != "error"},
-        )
-        # Rebuild Career Intelligence AND the career path now that the profile is
-        # richer — concurrently. The CI refresh is the important one: without it,
-        # completeness stayed frozen at its name-only value (~23%) until some
-        # OTHER path (CV upload) happened to regenerate CI, producing the
-        # confusing 23%→85% jump. Now LinkedIn enrichment immediately lifts it.
-        if result.get("status") == "enriched":
-            from hireloop_api.services.career_intelligence import (
-                run_career_intelligence_update,
-            )
-            from hireloop_api.services.career_path import run_career_path_update
-
-            async with pool.acquire() as db:
-                cid = await db.fetchval(
-                    """
-                    SELECT id FROM public.candidates
-                    WHERE user_id = $1::uuid AND deleted_at IS NULL
-                    """,
-                    uuid.UUID(str(user_id)),
-                )
-            if cid:
-                await asyncio.gather(
-                    run_career_intelligence_update(settings, str(cid)),
-                    run_career_path_update(settings, str(cid)),
-                )
-    except Exception as exc:  # background task — never propagate
-        logger.warning("linkdapi_enrichment_bg_failed", user_id=str(user_id), error=str(exc))
+    await run_linkedin_profile_enrichment(settings, user_id, profile_url)

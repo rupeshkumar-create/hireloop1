@@ -31,7 +31,7 @@ export async function warmupChatContext(
 
     const [profileRes, countRes, intelRes] = await Promise.allSettled([
       fetchMyProfile(),
-      fetchMatchFeedCount({ min_score: 0 }),
+      fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS),
       fetchCareerIntelligence(),
     ]);
 

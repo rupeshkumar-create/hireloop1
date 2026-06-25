@@ -43,8 +43,11 @@ async def check_db(dsn: str) -> tuple[bool, str]:
         return False, "asyncpg not installed (pip install asyncpg in api venv)"
 
     pg_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
+    pool_kwargs: dict = {}
+    if ":6543/" in pg_dsn or pg_dsn.rstrip("/").endswith(":6543"):
+        pool_kwargs["statement_cache_size"] = 0
     try:
-        conn = await asyncpg.connect(pg_dsn, timeout=15)
+        conn = await asyncpg.connect(pg_dsn, timeout=15, **pool_kwargs)
         row = await conn.fetchrow(
             "SELECT COUNT(*)::int AS n FROM storage.buckets WHERE id IN ('resumes','avatars','tailored-resumes')"
         )

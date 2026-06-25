@@ -21,6 +21,7 @@ import {
   fetchMatchFeedCount,
   getCachedMatchFeed,
   getCachedMatchFeedCount,
+  MATCH_FEED_RELEVANCE_FLOOR,
   type MatchedJob,
   type MatchFeedFilters,
 } from "@/lib/api/matches";
@@ -108,7 +109,7 @@ export function MatchFeed({
   const initialJobs = getCachedMatchFeed(DEFAULT_MATCH_FEED_FILTERS);
   const [jobs, setJobs] = useState<MatchedJob[]>(initialJobs ?? []);
   const [totalCount, setTotalCount] = useState<number | null>(
-    () => getCachedMatchFeedCount({ min_score: 0 })
+    () => getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
   );
   const [loading, setLoading] = useState(initialJobs === null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -119,7 +120,7 @@ export function MatchFeed({
   const [offset, setOffset] = useState(initialJobs?.length ?? 0);
 
   // Filters
-  const [minScore, setMinScore] = useState(0);
+  const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [seniority, setSeniority] = useState("");
 
