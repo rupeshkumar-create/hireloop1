@@ -4,7 +4,7 @@ Industry / domain fit signals for the matching engine.
 Generic title overlap (e.g. both roles mention "sales") and embedding cosine
 similarity can inflate scores for cross-industry matches — a B2B SaaS GTM lead
 vs a hotel sales director. This module tags candidate and job blobs with coarse
-domain labels and returns a multiplier (0.1–1.0) applied to the overall score.
+domain labels and returns a multiplier (0.1-1.0) applied to the overall score.
 """
 
 from __future__ import annotations
@@ -135,7 +135,8 @@ def detect_domains(
         tags.add("manufacturing")
 
     title_tokens = canonical_title_tokens(title)
-    if title_tokens & {"sales"} and not tags:
+    # "sales" now canonicalises to the "gotomarket" function token.
+    if title_tokens & {"sales", "gotomarket"} and not tags:
         tags.add("generic_sales")
     return frozenset(tags)
 
@@ -144,7 +145,7 @@ def domain_fit_multiplier(
     candidate_domains: frozenset[str],
     job_domains: frozenset[str],
 ) -> float:
-    """0.1–1.0 multiplier; 1.0 when domains are compatible or unknown."""
+    """0.1-1.0 multiplier; 1.0 when domains are compatible or unknown."""
     if not job_domains:
         return 1.0
 

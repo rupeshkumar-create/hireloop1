@@ -33,7 +33,7 @@ _EXPANSIONS: dict[str, tuple[str, ...]] = {
     "sdet": ("software", "engineer", "quality"),
     "pm": ("product", "manager"),
     "apm": ("product", "manager"),
-    "gtm": ("go", "market"),
+    "gtm": ("gotomarket",),
     "tpm": ("technical", "program", "manager"),
     "hr": ("human", "resources"),
     "hrbp": ("human", "resources", "partner"),
@@ -81,11 +81,20 @@ _SYNONYMS: dict[str, str] = {
     "recruiter": "recruitment",
     "recruiting": "recruitment",
     "talent": "recruitment",
-    "salesperson": "sales",
+    "salesperson": "gotomarket",
     "marketer": "marketing",
     "architect": "architect",
     "consultant": "consultant",
     "administrator": "admin",
+    # Commercial / go-to-market function cluster: GTM = Growth = Revenue = Sales
+    # collapse to ONE function token so "Head of Growth" reads as the same
+    # function as "Head of GTM" / "Director of Sales". Precision (level, industry)
+    # is enforced by the seniority-fit gate and domain-fit multiplier, so
+    # clustering function here is safe.
+    "gtm": "gotomarket",
+    "growth": "gotomarket",
+    "revenue": "gotomarket",
+    "sales": "gotomarket",
 }
 
 
@@ -93,7 +102,13 @@ def canonical_title_tokens(title: str | None) -> frozenset[str]:
     """Canonical token set for a role title; empty when unknown."""
     if not title:
         return frozenset()
-    words = re.findall(r"[a-z0-9+#]+", title.lower())
+    # Normalise separators (hyphens/dashes/slash/&) to spaces so multi-word
+    # commercial phrases are contiguous, then collapse them to the go-to-market
+    # function token (the tokenizer would otherwise split "go-to-market").
+    t = re.sub(r"[-\u2010-\u2015_/&]+", " ", title.lower())
+    t = t.replace("go to market", "gtm")
+    t = t.replace("business development", "sales")
+    words = re.findall(r"[a-z0-9+#]+", t)
     out: set[str] = set()
     for w in words:
         if w in _STOPWORDS:

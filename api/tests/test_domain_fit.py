@@ -44,14 +44,15 @@ def test_hospitality_job_penalised_for_saas_candidate() -> None:
     assert domain_fit_multiplier(cand, job) <= 0.15
 
 
-def test_generic_sales_title_overlap_penalised() -> None:
-    assert (
-        generic_title_overlap_penalty(
-            "Associate Director of Sales",
-            "Regional Sales Manager",
-        )
-        < 1.0
-    )
+def test_commercial_function_overlap_counts_generic_overlap_still_penalised() -> None:
+    # Commercial-function overlap (sales/GTM/growth/revenue) now COUNTS as a
+    # function match — precision is enforced by the seniority-fit gate + domain
+    # fit, not by penalising the shared commercial function. (Previously the
+    # generic-title penalty down-ranked these; that fought relevant senior GTM
+    # matching, so it's intentionally no longer penalised here.)
+    assert generic_title_overlap_penalty("Director of Sales", "Head of Growth") == 1.0
+    # A truly generic, NON-commercial single-word overlap is still down-ranked.
+    assert generic_title_overlap_penalty("Operations Manager", "Project Manager") < 1.0
 
 
 def test_saas_gtm_vs_accor_hotel_score_is_low() -> None:
