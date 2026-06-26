@@ -10,7 +10,7 @@ import { fetchMyProfile } from "@/lib/api/profile";
 export function useProfileQuery() {
   return useQuery({
     queryKey: ["profile", "me"],
-    queryFn: fetchMyProfile,
+    queryFn: () => fetchMyProfile(),
     staleTime: 60_000,
   });
 }

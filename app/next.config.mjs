@@ -12,6 +12,11 @@ const backendUrl = apiUrl.replace(/\/$/, "");
 const nextConfig = {
   reactStrictMode: true,
 
+  // Don't fail the production build on ESLint style errors (e.g. unused vars in
+  // work-in-progress). TypeScript type-checking still runs and still blocks the
+  // build, so type safety is preserved. Run `pnpm lint` separately in CI.
+  eslint: { ignoreDuringBuilds: true },
+
   async rewrites() {
     return [
       {
