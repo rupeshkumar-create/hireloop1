@@ -1,44 +1,36 @@
+# Hireloop API — FastAPI (uvicorn). Container host: Railway / any PaaS.
 # ── Build stage ────────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
-# Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
 WORKDIR /app
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 
-# Copy dependency files first (layer cache)
-COPY pyproject.toml .
-COPY ruff.toml .
-
-# Install dependencies into a virtual environment
-RUN uv sync --no-dev --frozen
-
-# Copy source code
+# Deps first (cached on the lockfile), then the project itself.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 COPY src/ ./src/
+RUN uv sync --frozen --no-dev
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
-# Security: run as non-root user
+# Run as non-root.
 RUN groupadd --gid 1001 hireloop && \
     useradd --uid 1001 --gid hireloop --shell /bin/sh --create-home hireloop
 
 WORKDIR /app
-
-# Copy the virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 
-# Make sure the venv binaries are on PATH
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app/src"
-
-# Health check (ECS will use this)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import httpx; r = httpx.get('http://localhost:8000/api/v1/health'); r.raise_for_status()"
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PYTHONUNBUFFERED=1
 
 USER hireloop
-
 EXPOSE 8000
 
-CMD ["uvicorn", "hireloop_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Railway injects $PORT. ONE worker only — the app runs the Nitya LISTEN +
+# background-job workers in-process, so multiple uvicorn workers would duplicate
+# them. Scale via instances (each its own single worker), not --workers.
+CMD ["sh", "-c", "uvicorn hireloop_api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
