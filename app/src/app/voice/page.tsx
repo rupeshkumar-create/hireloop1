@@ -1,5 +1,5 @@
 /**
- * /voice — 15-min Aarya voice session (shared brain with text chat).
+ * /voice — onboarding career call only. Day-to-day voice lives in chat (mic).
  */
 
 import type { Metadata } from "next";
@@ -18,6 +18,10 @@ type VoicePageProps = {
 export default async function VoicePage({ searchParams }: VoicePageProps) {
   const supabase = await createClient();
   const params = await searchParams;
+
+  if (params.from !== "onboarding") {
+    redirect("/dashboard");
+  }
 
   const {
     data: { user },

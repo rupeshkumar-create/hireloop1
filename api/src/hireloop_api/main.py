@@ -179,7 +179,7 @@ app.middleware("http")(rate_limit_middleware)
 # P01: health
 app.include_router(health_router, prefix="/api/v1")
 
-# P04: auth (LinkedIn OAuth callback + Gupshup WhatsApp OTP)
+# P04: auth (LinkedIn OAuth callback + MSG91 SMS OTP)
 app.include_router(auth_router, prefix="/api/v1")
 
 # P06: resume upload + parsing
@@ -211,13 +211,13 @@ app.include_router(gmail_router, prefix="/api/v1")
 # P14: Intro handshake (candidate view + cancel)
 app.include_router(intros_router, prefix="/api/v1")
 
-# P15: Voice STT/TTS (Deepgram + ElevenLabs)
+# P15: Voice STT/TTS (Deepgram)
 app.include_router(voice_router, prefix="/api/v1")
 
 # P16-P18: Recruiter / Nitya
 app.include_router(recruiter_router, prefix="/api/v1")
 
-# P19: WhatsApp webhooks (Gupshup)
+# P19: WhatsApp webhooks (MSG91)
 app.include_router(whatsapp_router, prefix="/api/v1")
 
 # P19 + P23: User prefs, DPDP export/delete

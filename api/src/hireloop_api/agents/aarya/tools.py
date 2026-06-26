@@ -16,7 +16,7 @@ Tool catalogue:
   - prepare_application_kit : save job + tailored resume, cover letter, interview prep
   - update_job_preferences : remote vs on-site job filter
   - book_voice_call    : get available voice-call slots (in-house Google Calendar)
-  - voice_response     : signal that ElevenLabs TTS should be used for response
+  - voice_response     : signal that Deepgram TTS should be used for response
 """
 
 from __future__ import annotations
@@ -448,7 +448,7 @@ async def job_search(
                 block_result,
                 duration_ms,
             )
-            return []
+            return {"count": 0, "job_cards": [], "matches": [], **block_result}
 
     rows = None
     if candidate:
@@ -602,7 +602,11 @@ async def job_search(
         )
         logger.info("aarya_auto_ingest_enqueued", candidate_id=str(candidate["id"]))
 
-    return results
+    return {
+        "count": len(results),
+        "job_cards": job_cards,
+        "matches": results,
+    }
 
 
 async def prepare_application_kit(

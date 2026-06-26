@@ -80,11 +80,21 @@ import { dedupeJobs } from "@/lib/chat/dedupeJobs";
 import {
   ensureAaryaSession,
   readStoredAaryaSession,
+  readVoiceSendOnPause,
   storeAaryaSession,
+  storeVoiceSendOnPause,
   streamAaryaMessage,
 } from "@/lib/chat/aaryaStream";
+import {
+  extractNewCompleteSentences,
+  remainingSpeechTail,
+} from "@/lib/chat/sentenceTts";
+import { preconnectVoicePipeline } from "@/lib/voice/preconnect";
+import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageIntent";
+import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import {
@@ -233,7 +243,17 @@ export function ChatInterface({
   );
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [preferTextMode, setPreferTextMode] = useState(false);
+  const [sendOnPause, setSendOnPause] = useState(false);
+  const [hinglishHint, setHinglishHint] = useState(false);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
+  const holdActiveRef = useRef(false);
+  const streamJobsRef = useRef<MatchedJob[]>([]);
+  const spokenStreamRef = useRef("");
+  const streamingTtsQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const jobsAnnouncedRef = useRef(false);
+  const emptySttRetryRef = useRef(false);
+  const hinglishActiveRef = useRef(false);
 
   // Session ID: resolved from prop or created lazily on first send.
   // Use a ref so sendMessage always sees the latest value without needing
@@ -263,6 +283,7 @@ export function ChatInterface({
     startRecording,
     stopRecording,
     speak,
+    speakFiller,
     stopSpeaking,
     interimTranscript,
     audioLevel,
@@ -276,7 +297,19 @@ export function ChatInterface({
   // ── Effects ────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    void warmupChatContext().then(setWarmup).catch(() => {});
+    setSendOnPause(readVoiceSendOnPause());
+    void warmupChatContext().then((snap) => {
+      setWarmup(snap);
+      if (snap.sessionId && !sessionIdRef.current) {
+        sessionIdRef.current = snap.sessionId;
+        setSessionId(snap.sessionId);
+        storeAaryaSession(snap.sessionId);
+      }
+    }).catch(() => {});
+    void createClient()
+      .auth.getUser()
+      .then(({ data }) => setAuthUserId(data.user?.id ?? null))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -350,7 +383,16 @@ export function ChatInterface({
     [onSavedChange]
   );
 
-  // Action counter poll — only once a session exists.
+  // Realtime agent_actions (R7) — instant timeline during streaming.
+  useAgentActionsRealtime(sessionId, authUserId, {
+    enabled: Boolean(sessionId && authUserId),
+    onActions: (live) => setActions(live),
+    onTurnCount: (count) => setActionCount(count),
+    onJobs: (jobs) => attachJobsToLastAssistant(jobs),
+    onApplicationKits: (kits) => attachApplicationKitsToLastAssistant(kits),
+  });
+
+  // Fallback poll when Realtime is unavailable or between turns.
   useEffect(() => {
     if (!sessionId) return;
     const poll = async () => {
@@ -377,7 +419,7 @@ export function ChatInterface({
         }
       } catch { /* silent */ }
     };
-    const ms = isStreaming ? 1000 : 3000;
+    const ms = isStreaming ? 4000 : 8000;
     const id = window.setInterval(poll, ms);
     void poll();
     return () => window.clearInterval(id);
@@ -430,6 +472,26 @@ export function ChatInterface({
     ]);
   }, []);
 
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("hireloop_voice_session_summary");
+      if (!raw) return;
+      sessionStorage.removeItem("hireloop_voice_session_summary");
+      const summary = JSON.parse(raw) as { jobCount?: number };
+      if (summary.jobCount && summary.jobCount > 0) {
+        appendSystemNote(
+          `Your voice call is saved. I dropped ${summary.jobCount} matching roles in this chat — scroll up after my reply.`
+        );
+      } else {
+        appendSystemNote(
+          "Your voice call is saved in this thread. Ask me to show your top matches anytime."
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [appendSystemNote]);
+
   const handleJobSaved = useCallback(
     (jobId: string, saved: boolean, jobs: MatchedJob[]) => {
       onSavedChange?.(jobId, saved);
@@ -466,8 +528,14 @@ export function ChatInterface({
 
       setPendingVoiceTranscript(null);
       setStreamRecovery(null);
+      setHinglishHint(false);
+      hinglishActiveRef.current = false;
+      spokenStreamRef.current = "";
+      streamingTtsQueueRef.current = Promise.resolve();
+      jobsAnnouncedRef.current = false;
       setStreamingApplicationKits([]);
       streamingApplicationKitsRef.current = [];
+      streamJobsRef.current = [];
       setThinkingStatus("Thinking…");
       const trimmedIntent = text.trim();
       lastUserTurnRef.current = {
@@ -495,7 +563,7 @@ export function ChatInterface({
       let streamFinalized = false;
       const trimmed = text.trim();
 
-      const finalize = () => {
+      const finalize = (jobsForMessage?: MatchedJob[]) => {
         if (streamFinalized || !accumulated) return;
         streamFinalized = true;
         finalReply = accumulated;
@@ -503,6 +571,12 @@ export function ChatInterface({
           streamingApplicationKitsRef.current.length > 0
             ? streamingApplicationKitsRef.current
             : undefined;
+        const jobs =
+          jobsForMessage && jobsForMessage.length > 0
+            ? dedupeJobs(jobsForMessage)
+            : streamJobsRef.current.length > 0
+              ? dedupeJobs(streamJobsRef.current)
+              : undefined;
         setMessages((prev) => [
           ...prev,
           {
@@ -512,6 +586,7 @@ export function ChatInterface({
             content_type: "text",
             created_at: new Date().toISOString(),
             applicationKits: kitsForMessage,
+            jobs,
           },
         ]);
         setStreamingContent("");
@@ -530,23 +605,79 @@ export function ChatInterface({
           }
         );
 
-        await streamAaryaMessage(
+        const streamResult = await streamAaryaMessage(
           currentSessionId,
           trimmed,
           contentType,
           {
-            onStatus: (status) => setThinkingStatus(status),
+            onStatus: (status, meta) => {
+              setThinkingStatus(formatStatusWithEta(status, meta?.etaSec));
+              if (
+                contentType === "voice" &&
+                !preferTextMode &&
+                meta?.spokenFiller
+              ) {
+                speakFiller(meta.spokenFiller);
+              }
+              if (meta?.hinglishHint) {
+                setHinglishHint(true);
+                hinglishActiveRef.current = true;
+              }
+            },
+            onJobs: (jobs) => {
+              streamJobsRef.current = dedupeJobs([
+                ...streamJobsRef.current,
+                ...jobs,
+              ]);
+              attachJobsToLastAssistant(jobs);
+              if (
+                shouldSpeakReply &&
+                !jobsAnnouncedRef.current &&
+                jobs.length > 0
+              ) {
+                jobsAnnouncedRef.current = true;
+                const n = streamJobsRef.current.length;
+                speakFiller(
+                  `I found ${n} strong match${n !== 1 ? "es" : ""} — scroll up to see them.`
+                );
+              }
+            },
             onText: (_chunk, full) => {
               accumulated = full;
               setThinkingStatus(null);
               setStreamingContent(full);
+              if (shouldSpeakReply && !preferTextMode) {
+                const newSentences = extractNewCompleteSentences(
+                  spokenStreamRef.current,
+                  full
+                );
+                for (const sentence of newSentences) {
+                  spokenStreamRef.current = spokenStreamRef.current
+                    ? `${spokenStreamRef.current} ${sentence}`
+                    : sentence;
+                  streamingTtsQueueRef.current = streamingTtsQueueRef.current.then(
+                    () =>
+                      speak(sentence, "aarya", {
+                        hinglish: hinglishActiveRef.current,
+                      })
+                  );
+                }
+              }
             },
           },
           abortRef.current.signal
         );
 
+        if (streamResult.hinglishHint) {
+          setHinglishHint(true);
+          hinglishActiveRef.current = true;
+        }
+        if (streamResult.jobs.length > 0) {
+          streamJobsRef.current = dedupeJobs(streamResult.jobs);
+        }
+
         if (!streamFinalized && accumulated.trim()) {
-          finalize();
+          finalize(streamResult.jobs);
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
@@ -591,11 +722,22 @@ export function ChatInterface({
               i === prev.length - 1 ? { ...m, spoken: true } : m
             );
           });
-          void speak(finalReply.slice(0, 2000), "aarya");
+          const tail = remainingSpeechTail(spokenStreamRef.current, finalReply);
+          if (tail.trim()) {
+            void streamingTtsQueueRef.current.then(() =>
+              speak(tail.slice(0, 2000), "aarya", {
+                hinglish: hinglishActiveRef.current,
+              })
+            );
+          } else if (!spokenStreamRef.current.trim()) {
+            void speak(finalReply.slice(0, 2000), "aarya", {
+              hinglish: hinglishActiveRef.current,
+            });
+          }
         }
       }
     },
-    [isStreaming, speak, onSessionCreated, actionCount, preferTextMode]
+    [isStreaming, speak, speakFiller, onSessionCreated, actionCount, preferTextMode, attachJobsToLastAssistant]
   );
 
   const handleJobApply = useCallback(
@@ -610,28 +752,64 @@ export function ChatInterface({
 
   // ── Voice ───────────────────────────────────────────────────────────────
 
-  const handleMicToggle = useCallback(async () => {
-    if (!VOICE_FEATURE_ENABLED) return;
-    if (isRecording) {
+  const finishVoiceCapture = useCallback(
+    async (autoSend: boolean) => {
       setVoiceProcessing(true);
       try {
         const transcript = await stopRecording().catch(() => "");
         if (transcript.trim()) {
-          setPendingVoiceTranscript(transcript.trim());
+          emptySttRetryRef.current = false;
+          if (autoSend || sendOnPause) {
+            void sendMessage(transcript.trim(), { contentType: "voice" });
+          } else {
+            setPendingVoiceTranscript(transcript.trim());
+          }
+        } else if (!emptySttRetryRef.current) {
+          emptySttRetryRef.current = true;
+          appendSystemNote("I didn't catch that — listening again…");
+          await startRecording();
         } else {
+          emptySttRetryRef.current = false;
           appendSystemNote(
-            "I didn’t catch that. Tap the mic and try again, or type it instead."
+            "I didn't catch that. Tap and hold the mic to try again, or type instead."
           );
         }
       } finally {
         setVoiceProcessing(false);
       }
-    } else {
+    },
+    [appendSystemNote, sendMessage, sendOnPause, startRecording, stopRecording]
+  );
+
+  const handleMicToggle = useCallback(async () => {
+    if (!VOICE_FEATURE_ENABLED) return;
+    if (isPlaying) {
       stopSpeaking();
-      setPendingVoiceTranscript(null);
-      await startRecording();
+      return;
     }
-  }, [appendSystemNote, isRecording, startRecording, stopRecording, stopSpeaking]);
+    if (isRecording) {
+      await finishVoiceCapture(false);
+      return;
+    }
+    stopSpeaking();
+    setPendingVoiceTranscript(null);
+    await startRecording();
+  }, [finishVoiceCapture, isPlaying, isRecording, startRecording, stopSpeaking]);
+
+  const handleMicHoldStart = useCallback(async () => {
+    if (!VOICE_FEATURE_ENABLED || isStreaming || voiceProcessing) return;
+    holdActiveRef.current = true;
+    stopSpeaking();
+    setPendingVoiceTranscript(null);
+    await startRecording();
+  }, [isStreaming, startRecording, stopSpeaking, voiceProcessing]);
+
+  const handleMicHoldEnd = useCallback(async () => {
+    if (!holdActiveRef.current) return;
+    holdActiveRef.current = false;
+    if (!isRecording) return;
+    await finishVoiceCapture(sendOnPause);
+  }, [finishVoiceCapture, isRecording, sendOnPause]);
 
   const sendVoiceTranscript = useCallback(() => {
     if (!pendingVoiceTranscript?.trim()) return;
@@ -1049,28 +1227,40 @@ export function ChatInterface({
 
               {/* Right: phone + voice */}
               <div className="flex items-center gap-2">
-                {VOICE_FEATURE_ENABLED && (
+                {VOICE_FEATURE_ENABLED && isLocked && (
                   <Link
                     href="/voice"
-                    title="Voice call with Aarya"
+                    title="15-min voice onboarding call"
                     className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
                   >
                     <Phone className="h-[17px] w-[17px]" strokeWidth={1.5} />
                   </Link>
                 )}
 
-                {/* Voice mic — filled dark pill like J&J */}
+                {/* Voice mic — tap to toggle, hold to talk (R8) */}
                 {VOICE_FEATURE_ENABLED ? (
                   <button
                     type="button"
                     onClick={() => void handleMicToggle()}
+                    onPointerEnter={() => void preconnectVoicePipeline()}
+                    onFocus={() => void preconnectVoicePipeline()}
+                    onPointerDown={(e) => {
+                      if (e.pointerType === "mouse" && e.button !== 0) return;
+                      void handleMicHoldStart();
+                    }}
+                    onPointerUp={() => void handleMicHoldEnd()}
+                    onPointerLeave={() => void handleMicHoldEnd()}
                     disabled={
                       isStreaming ||
                       voiceProcessing ||
                       Boolean(pendingVoiceTranscript)
                     }
                     aria-pressed={isRecording}
-                    title={isRecording ? "Stop and review transcript" : "Speak to Aarya"}
+                    title={
+                      isRecording
+                        ? "Release to send (or tap to review)"
+                        : "Hold to talk · tap to review transcript"
+                    }
                     className={cn(
                       "w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-fast",
                       isRecording
@@ -1114,6 +1304,33 @@ export function ChatInterface({
               </div>
             </div>
           </div>
+
+          {hinglishHint && (
+            <p className="text-micro text-ink-500 text-center px-2">
+              Hindi/English mix detected —{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-ink-800"
+                onClick={() => setPreferTextMode(true)}
+              >
+                switch to text
+              </button>{" "}
+              if voice is unclear.
+            </p>
+          )}
+
+          <label className="flex items-center justify-center gap-2 text-micro text-ink-500">
+            <input
+              type="checkbox"
+              checked={sendOnPause}
+              onChange={(e) => {
+                setSendOnPause(e.target.checked);
+                storeVoiceSendOnPause(e.target.checked);
+              }}
+              className="rounded border-ink-300"
+            />
+            Send voice immediately on release (skip transcript review)
+          </label>
 
           {voiceError && (
             <div className="mt-2 text-center space-y-1">

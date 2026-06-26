@@ -457,7 +457,7 @@ async def verify_service_secret(
     request: Request,
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Validate X-Service-Secret for webhooks (Gupshup, etc.), timing-safe."""
+    """Validate X-Service-Secret for webhooks (MSG91, etc.), timing-safe."""
     secret = request.headers.get("X-Service-Secret", "")
     expected = settings.service_secret or ""
     # Reject when the server secret is unset/default so an empty or guessed

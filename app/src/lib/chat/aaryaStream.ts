@@ -7,12 +7,20 @@
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import type { MatchedJob } from "@/lib/api/matches";
 
 export type AaryaContentType = "text" | "voice";
 
+export type AaryaStatusMeta = {
+  spokenFiller?: string;
+  etaSec?: number;
+  hinglishHint?: boolean;
+};
+
 export type AaryaStreamCallbacks = {
-  onStatus?: (status: string) => void;
+  onStatus?: (status: string, meta?: AaryaStatusMeta) => void;
   onText?: (chunk: string, accumulated: string) => void;
+  onJobs?: (jobs: MatchedJob[]) => void;
   onError?: (error: string) => void;
 };
 
@@ -20,15 +28,22 @@ export type AaryaStreamResult = {
   text: string;
   error: string | null;
   sawDone: boolean;
+  jobs: MatchedJob[];
+  hinglishHint: boolean;
 };
 
 type StreamPayload = {
   text?: string;
   error?: string;
   status?: string;
+  spoken_filler?: string;
+  eta_sec?: number;
+  hinglish_hint?: boolean;
+  jobs?: MatchedJob[];
 };
 
 export const AARYA_SESSION_STORAGE_KEY = "hireloop_aarya_session_id";
+export const VOICE_SEND_ON_PAUSE_KEY = "hireloop_voice_send_on_pause";
 
 export function readStoredAaryaSession(): string | null {
   if (typeof window === "undefined") return null;
@@ -45,6 +60,24 @@ export function storeAaryaSession(id: string): void {
     localStorage.setItem(AARYA_SESSION_STORAGE_KEY, id);
   } catch {
     /* ignore quota / private mode */
+  }
+}
+
+export function readVoiceSendOnPause(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(VOICE_SEND_ON_PAUSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function storeVoiceSendOnPause(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(VOICE_SEND_ON_PAUSE_KEY, enabled ? "1" : "0");
+  } catch {
+    /* ignore */
   }
 }
 
@@ -71,6 +104,28 @@ export async function ensureAaryaSession(
   const id = await createAaryaSession();
   onCreated?.(id);
   return id;
+}
+
+/** Prefetch profile + top matches before first turn (voice + chat). */
+export async function prefetchAaryaWarmup(): Promise<{
+  profileCompleteness: number;
+  prefetchedJobs: MatchedJob[];
+  matchCount: number;
+}> {
+  const res = await apiAuthFetch("/api/v1/chat/warmup", { cache: "no-store" });
+  if (!res.ok) {
+    return { profileCompleteness: 0, prefetchedJobs: [], matchCount: 0 };
+  }
+  const data = (await res.json()) as {
+    profile_completeness?: number;
+    prefetched_jobs?: MatchedJob[];
+    match_count?: number;
+  };
+  return {
+    profileCompleteness: Number(data.profile_completeness) || 0,
+    prefetchedJobs: Array.isArray(data.prefetched_jobs) ? data.prefetched_jobs : [],
+    matchCount: Number(data.match_count) || 0,
+  };
 }
 
 /**
@@ -113,6 +168,8 @@ export async function streamAaryaMessage(
   let streamError: string | null = null;
   let sawDone = false;
   let buffer = "";
+  let hinglishHint = false;
+  const jobs: MatchedJob[] = [];
 
   const consumeFrames = () => {
     const frames = buffer.split("\n\n");
@@ -136,7 +193,16 @@ export async function streamAaryaMessage(
           continue;
         }
         if (parsed.status) {
-          callbacks.onStatus?.(parsed.status);
+          if (parsed.hinglish_hint) hinglishHint = true;
+          callbacks.onStatus?.(parsed.status, {
+            spokenFiller: parsed.spoken_filler,
+            etaSec: parsed.eta_sec,
+            hinglishHint: parsed.hinglish_hint,
+          });
+        }
+        if (Array.isArray(parsed.jobs) && parsed.jobs.length > 0) {
+          jobs.push(...parsed.jobs);
+          callbacks.onJobs?.(parsed.jobs);
         }
         if (parsed.text) {
           accumulated += parsed.text;
@@ -170,5 +236,11 @@ export async function streamAaryaMessage(
     throw new Error("Stream ended before completion — please try again.");
   }
 
-  return { text: accumulated, error: null, sawDone };
+  return {
+    text: accumulated,
+    error: null,
+    sawDone,
+    jobs,
+    hinglishHint,
+  };
 }

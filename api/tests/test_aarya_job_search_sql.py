@@ -71,5 +71,5 @@ async def test_job_search_falls_back_to_top_matches_when_query_filters_zero() ->
         ctc_min=1_000_000,
     )
 
-    assert len(out) == 1
-    assert out[0]["title"] == "Senior Product Manager (Growth)"
+    assert len(out["matches"]) == 1
+    assert out["matches"][0]["title"] == "Senior Product Manager (Growth)"

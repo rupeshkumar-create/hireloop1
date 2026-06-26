@@ -188,3 +188,50 @@ class SendGridService:
                 "cta_url": "https://app.hireloop.in/dashboard",
             },
         )
+
+    async def send_recruiter_invite(
+        self,
+        to_email: str,
+        invited_name: str | None,
+        template_id: str,
+        *,
+        candidate_name: str,
+        job_title: str,
+        cta_url: str,
+    ) -> bool:
+        """Invite an unregistered hiring manager to view a candidate intro (R9)."""
+        return await self._send(
+            to_email=to_email,
+            to_name=invited_name,
+            template_id=template_id,
+            dynamic_data={
+                "invited_name": invited_name or "there",
+                "candidate_name": candidate_name,
+                "job_title": job_title,
+                "cta_url": cta_url,
+            },
+        )
+
+    async def send_recruiter_intro_request(
+        self,
+        to_email: str,
+        recruiter_name: str | None,
+        template_id: str,
+        *,
+        candidate_name: str,
+        job_title: str,
+        cta_url: str,
+    ) -> bool:
+        """Notify a registered recruiter of a new candidate intro request (R9)."""
+        return await self._send(
+            to_email=to_email,
+            to_name=recruiter_name,
+            template_id=template_id,
+            dynamic_data={
+                "recruiter_name": recruiter_name or "there",
+                "candidate_name": candidate_name,
+                "job_title": job_title,
+                "cta_url": cta_url,
+                "status": "new_intro_request",
+            },
+        )

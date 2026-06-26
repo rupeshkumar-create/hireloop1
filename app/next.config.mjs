@@ -57,7 +57,7 @@ const nextConfig = {
               "img-src 'self' data: https://*.supabase.co https://media.licdn.com",
               "font-src 'self' data:",
               // Voice is browser-native (Web Speech API) — no external voice API calls needed
-              `connect-src 'self' ${apiConnectOrigin} https://*.supabase.co wss://*.supabase.co https://openrouter.ai`,
+              `connect-src 'self' ${apiConnectOrigin} wss://127.0.0.1:8000 wss://localhost:8000 https://*.supabase.co wss://*.supabase.co https://openrouter.ai`,
               "media-src 'self' blob:",
             ].join("; "),
           },

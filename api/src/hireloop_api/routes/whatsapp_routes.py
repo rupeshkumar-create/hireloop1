@@ -1,5 +1,5 @@
 """
-WhatsApp webhooks + notification triggers (P19) — Gupshup (R10).
+WhatsApp webhooks + notification triggers (P19) — MSG91 (R10).
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ class SendTestNotification(BaseModel):
 
 
 def _parse_intro_button_payload(body: dict[str, Any]) -> tuple[str | None, str | None]:
-    """Best-effort parse for legacy JSON button payloads (if forwarded by provider)."""
-    payload = body.get("payload") or body.get("button") or {}
+    """Best-effort parse for JSON button payloads from MSG91 inbound events."""
+    payload = body.get("payload") or body.get("button") or body.get("interactive") or {}
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -41,20 +41,19 @@ def _parse_intro_button_payload(body: dict[str, Any]) -> tuple[str | None, str |
     return None, None
 
 
-@router.post("/gupshup-whatsapp")
-async def gupshup_whatsapp_webhook(
+@router.post("/msg91-whatsapp")
+async def msg91_whatsapp_webhook(
     request: Request,
     db: asyncpg.Connection = Depends(get_db),
     _: None = Depends(verify_service_secret),
 ) -> Response:
     """
-    Inbound Gupshup WhatsApp events (delivery status, button replies).
-    Configure Gupshup callback URL to POST here with X-Service-Secret header.
-    Return empty 200 — a body causes Gupshup to forward 'OK' to the user.
+    Inbound MSG91 WhatsApp events (delivery status, button replies).
+    Configure MSG91 callback URL to POST here with X-Service-Secret header.
     """
     body = await request.json()
-    event_type = body.get("type")
-    logger.info("gupshup_whatsapp_webhook", event_type=event_type)
+    event_type = body.get("type") or body.get("event")
+    logger.info("msg91_whatsapp_webhook", event_type=event_type)
 
     intro_id, action = _parse_intro_button_payload(body)
     if intro_id and action:
@@ -70,18 +69,18 @@ async def gupshup_whatsapp_webhook(
         )
         return Response(status_code=200)
 
-    if event_type == "message-event":
-        payload = body.get("payload") or {}
+    if event_type in ("message-event", "delivery"):
+        payload = body.get("payload") or body
         logger.info(
-            "gupshup_message_event",
-            message_status=payload.get("type"),
+            "msg91_message_event",
+            message_status=payload.get("status") or payload.get("type"),
             destination=str(payload.get("destination", ""))[-4:],
         )
-    elif event_type == "message":
-        payload = body.get("payload") or {}
-        inner = payload.get("payload") if isinstance(payload, dict) else {}
-        if isinstance(inner, dict) and inner.get("type") == "button":
-            logger.info("gupshup_button_reply", button_text=inner.get("text"))
+    elif event_type in ("message", "incoming"):
+        payload = body.get("payload") or body
+        button = payload.get("button") or payload.get("interactive")
+        if isinstance(button, dict):
+            logger.info("msg91_button_reply", button_text=button.get("text"))
 
     return Response(status_code=200)
 

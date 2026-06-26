@@ -50,7 +50,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **base)  # type: ignore[arg-type]
 
 
-async def _run_search(settings: Settings | None) -> list[dict]:
+async def _run_search(settings: Settings | None) -> dict:
     return await tools.job_search(
         _EmptyDB(),  # type: ignore[arg-type]
         _USER_ID,
@@ -75,7 +75,8 @@ async def test_empty_search_enqueues_auto_ingest(monkeypatch: pytest.MonkeyPatch
     )
 
     out = await _run_search(_settings())
-    assert out == []
+    assert out["count"] == 0
+    assert out["matches"] == []
     assert fired.get("candidate_id") == str(_CAND_ID)
 
 
@@ -94,7 +95,8 @@ async def test_no_auto_ingest_when_flag_disabled(monkeypatch: pytest.MonkeyPatch
     )
 
     out = await _run_search(_settings(auto_ingest_on_empty_search=False))
-    assert out == []
+    assert out["count"] == 0
+    assert out["matches"] == []
     assert "candidate_id" not in fired
 
 
@@ -113,7 +115,8 @@ async def test_no_auto_ingest_without_token(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     out = await _run_search(_settings(apify_token=""))
-    assert out == []
+    assert out["count"] == 0
+    assert out["matches"] == []
     assert "candidate_id" not in fired
 
 
@@ -132,7 +135,8 @@ async def test_no_auto_ingest_without_settings(monkeypatch: pytest.MonkeyPatch) 
     )
 
     out = await _run_search(None)
-    assert out == []
+    assert out["count"] == 0
+    assert out["matches"] == []
     assert "candidate_id" not in fired
 
 

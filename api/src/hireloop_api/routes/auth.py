@@ -3,7 +3,7 @@ Authentication routes — phone collection and optional OTP.
 
 Flow:
   1. POST /api/v1/auth/save-phone   → saves +91 number (onboarding; sets india_verified)
-  2. POST /api/v1/auth/send-otp     → optional OTP via Gupshup WhatsApp
+  2. POST /api/v1/auth/send-otp     → optional OTP via MSG91 SMS
   3. POST /api/v1/auth/verify-otp   → optional OTP verification
   4. GET  /api/v1/auth/me           → returns current user profile
 
@@ -43,7 +43,8 @@ from hireloop_api.services.linkedin_oauth import (
     extract_linkedin_profile_url,
     heal_candidate_headline_from_linkedin,
 )
-from hireloop_api.services.whatsapp.gupshup import GupshupWhatsApp
+from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
+from hireloop_api.services.whatsapp.msg91 import Msg91Client
 
 logger = structlog.get_logger()
 
@@ -143,24 +144,23 @@ def _hash_otp(otp: str, phone: str, secret: str) -> str:
     ).hexdigest()
 
 
-async def _send_gupshup_whatsapp_otp(phone: str, otp: str, settings: Settings) -> None:
-    """Send OTP via Gupshup WhatsApp template. Raises HTTPException on failure."""
-    wa = GupshupWhatsApp(
-        settings.gupshup_api_key,
-        settings.gupshup_whatsapp_number,
-        app_name=settings.gupshup_app_name,
+async def _send_msg91_sms_otp(phone: str, otp: str, settings: Settings) -> None:
+    """Send OTP via MSG91 SMS. Raises HTTPException on failure."""
+    client = Msg91Client(
+        settings.msg91_auth_key,
+        sender_id=settings.msg91_sender_id,
     )
     try:
-        result = await wa.send_otp(
+        result = await client.send_sms_otp(
             to_phone=phone,
             otp=otp,
-            template_id=settings.gupshup_otp_template_id,
+            template_id=settings.msg91_otp_template_id,
         )
     finally:
-        await wa.close()
+        await client.close()
 
     if not result.get("sent"):
-        logger.error("gupshup_otp_failed", phone=phone[-4:], response=result.get("error"))
+        logger.error("msg91_otp_failed", phone=phone[-4:], response=result.get("error"))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to send OTP. Please try again.",
@@ -175,12 +175,8 @@ def _is_twilio_verify_configured(settings: Settings) -> bool:
     )
 
 
-def _is_gupshup_configured(settings: Settings) -> bool:
-    return bool(
-        settings.gupshup_api_key
-        and settings.gupshup_whatsapp_number
-        and settings.gupshup_otp_template_id
-    )
+def _is_msg91_configured(settings: Settings) -> bool:
+    return bool(settings.msg91_auth_key and settings.msg91_otp_template_id)
 
 
 def _is_twilio_trial_destination_error(exc: HTTPException) -> bool:
@@ -195,9 +191,9 @@ def _is_twilio_trial_destination_error(exc: HTTPException) -> bool:
 
 def _select_otp_provider(
     settings: Settings,
-) -> Literal["gupshup", "twilio", "local", "unconfigured"]:
-    if _is_gupshup_configured(settings):
-        return "gupshup"
+) -> Literal["msg91", "twilio", "local", "unconfigured"]:
+    if _is_msg91_configured(settings):
+        return "msg91"
     if _is_twilio_verify_configured(settings):
         return "twilio"
     if settings.is_development:
@@ -431,8 +427,8 @@ async def send_otp(
     """
     Send OTP to an Indian mobile number.
     Priority:
-      1) Gupshup WhatsApp OTP (if configured; required for India production)
-      2) Twilio Verify (temporary fallback if Gupshup is missing)
+      1) MSG91 SMS OTP (if configured; required for India production)
+      2) Twilio Verify (temporary fallback if MSG91 is missing)
       3) Local dev OTP fallback only when no provider is configured
     Rate limited: max 3 OTP sends per phone per hour (enforced by Cloudflare WAF + this code).
     """
@@ -477,8 +473,8 @@ async def send_otp(
     # Generate cryptographically secure 6-digit OTP
     otp = str(secrets.randbelow(900000) + 100000)  # 100000-999999
 
-    if provider == "gupshup":
-        await _send_gupshup_whatsapp_otp(phone, otp, settings)
+    if provider == "msg91":
+        await _send_msg91_sms_otp(phone, otp, settings)
     else:
         logger.info("dev_otp", phone_last4=phone[-4:], otp=otp)
 
@@ -496,7 +492,7 @@ async def send_otp(
         message="OTP sent successfully",
         expires_in_seconds=OTP_TTL_MINUTES * 60,
         resend_available_in_seconds=OTP_RESEND_COOLDOWN_SECONDS,
-        delivery_channel="whatsapp" if provider == "gupshup" else "local_dev",
+        delivery_channel="sms" if provider == "msg91" else "local_dev",
         dev_otp=otp if provider == "local" else None,
     )
 
@@ -617,6 +613,15 @@ async def verify_otp(
         )
 
     logger.info("otp_verified", user_id=str(user_id), phone_last4=phone[-4:])
+
+    try:
+        await maybe_send_signup_confirmation(
+            db,
+            settings,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.error("signup_confirmation_email_failed", user_id=str(user_id), error=str(exc))
 
     return VerifyOTPResponse(
         message="Phone verified successfully",
@@ -745,6 +750,22 @@ async def save_phone(
             ) from exc
 
     logger.info("phone_saved", user_id=str(user_id), phone_last4=phone[-4:])
+
+    try:
+        email = supabase_user.get("email")
+        name = (
+            supabase_user.get("user_metadata", {}).get("full_name")
+            or supabase_user.get("user_metadata", {}).get("name")
+        )
+        await maybe_send_signup_confirmation(
+            db,
+            settings,
+            user_id=user_id,
+            email=email,
+            full_name=name,
+        )
+    except Exception as exc:
+        logger.error("signup_confirmation_email_failed", user_id=str(user_id), error=str(exc))
 
     return SavePhoneResponse(
         message="Phone number saved",

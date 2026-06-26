@@ -127,6 +127,8 @@ class Settings(BaseSettings):
     sg_template_job_match_alert: str = ""
     sg_template_interview_reminder: str = ""
     sg_template_intro_status: str = ""
+    sg_template_recruiter_invite: str = ""
+    sg_template_recruiter_intro_request: str = ""
 
     # ── NeverBounce ───────────────────────────────────────────────────────────
     neverbounce_api_key: str = ""
@@ -136,13 +138,14 @@ class Settings(BaseSettings):
     sendgrid_from_email: str = "noreply@hireloop.in"
     sendgrid_from_name: str = "Hireloop"
 
-    # ── Gupshup WhatsApp (OTP + transactional templates — R10) ────────────────
-    gupshup_api_key: str = ""
-    gupshup_whatsapp_number: str = ""  # source WABA number, e.g. 919876543210
-    gupshup_app_name: str = "Hireloop"
-    gupshup_otp_template_id: str = ""
-    gupshup_job_match_template_id: str = ""
-    gupshup_intro_status_template_id: str = ""
+    # ── MSG91 (SMS OTP + WhatsApp transactional templates — R10) ──────────────
+    msg91_auth_key: str = ""
+    msg91_sender_id: str = "HLLOOP"
+    msg91_whatsapp_number: str = ""  # integrated WABA number, e.g. 919876543210
+    msg91_otp_template_id: str = ""  # DLT SMS OTP template ID
+    msg91_whatsapp_otp_template: str = ""
+    msg91_job_match_template: str = ""
+    msg91_intro_status_template: str = ""
 
     # Dev-only: when True and is_development, save-phone also sets india_verified.
     allow_phone_save_bypass: bool = False

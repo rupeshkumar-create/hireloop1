@@ -18,7 +18,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
-import { streamAaryaMessage, ensureAaryaSession, readStoredAaryaSession, storeAaryaSession } from "@/lib/chat/aaryaStream";
+import { streamAaryaMessage, ensureAaryaSession, prefetchAaryaWarmup, readStoredAaryaSession, storeAaryaSession } from "@/lib/chat/aaryaStream";
+import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
+import { warmupChatContext } from "@/lib/chat/warmup";
 import { useVoice, getVoiceSupportStatus } from "@/lib/hooks/useVoice";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +48,7 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
     startRecording,
     stopRecording,
     speak,
+    speakFiller,
     stopSpeaking,
     isPlaying,
     interimTranscript,
@@ -60,6 +63,8 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
   const [micMuted, setMicMuted]       = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [streamRecovery, setStreamRecovery] = useState<string | null>(null);
+  const lastJobsRef = useRef<Array<{ title?: string; company_name?: string | null }>>([]);
 
   // Refs (mutable, no re-render needed)
   const sessionIdRef    = useRef<string | null>(null);
@@ -119,7 +124,13 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
         userText,
         "voice",
         {
-          onStatus: (status) => setStreamStatus(status),
+          onStatus: (status, meta) => {
+            setStreamStatus(formatStatusWithEta(status, meta?.etaSec));
+            if (meta?.spokenFiller) speakFiller(meta.spokenFiller);
+          },
+          onJobs: (jobs) => {
+            lastJobsRef.current = jobs;
+          },
           onText: (_chunk, full) => {
             setStreamStatus(null);
             accumulated = full;
@@ -130,12 +141,14 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
         ctrl.signal
       );
       accumulated = result.text;
+      if (result.jobs.length > 0) lastJobsRef.current = result.jobs;
 
       emitCompleteSentences(accumulated, true);
       abortRef.current = null;
+      setStreamRecovery(null);
       return accumulated;
     },
-    []
+    [speakFiller]
   );
 
   /** Open the mic, wait for the user's utterance, then drive the next turn. */
@@ -217,8 +230,12 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
       try {
         await streamAaryaReply(triggerText, conversationId, queueSentence);
       } catch (err) {
-        if ((err as Error).name === "AbortError") return; // user ended call
-        setErrorMsg("Couldn't reach Aarya. Please try again.");
+        if ((err as Error).name === "AbortError") return;
+        setStreamRecovery("Connection dropped — tap the mic when you're ready to continue.");
+        setErrorMsg("Couldn't reach Aarya. Tap the mic to retry.");
+        if (sessionIdRef.current) {
+          await listenForUser(sessionIdRef.current);
+        }
         return;
       }
 
@@ -242,12 +259,11 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
     doTurnRef.current = doTurn;
   }, [doTurn]);
 
-  // Pre-warm on mount (#12): resolve voice config (Deepgram vs Web Speech) and
-  // warm the server's profile/context caches before the first utterance, so the
-  // first real turn doesn't pay those round-trips. Fire-and-forget.
+  // Pre-warm on mount: voice config, profile, top matches, chat session.
   useEffect(() => {
+    void prefetchAaryaWarmup().catch(() => undefined);
+    void warmupChatContext().catch(() => undefined);
     void apiAuthFetch("/api/v1/voice/config").catch(() => undefined);
-    void apiAuthFetch("/api/v1/me/profile").catch(() => undefined);
   }, []);
 
   // ── Call lifecycle ────────────────────────────────────────────────────────
@@ -348,20 +364,45 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
     }
 
     setTurnState("done");
-    setTimeout(() => router.push("/dashboard?panel=jobs"), 1200);
+    try {
+      sessionStorage.setItem(
+        "hireloop_voice_session_summary",
+        JSON.stringify({
+          conversationId: sessionIdRef.current,
+          durationSeconds: duration,
+          jobCount: lastJobsRef.current.length,
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+    setTimeout(() => router.push("/dashboard?voice=done"), 1200);
   }, [elapsedSecs, fromOnboarding, router, stopSpeaking]);
 
-  /** Tap mic button during user_listening to force-stop and send */
+  /** Tap mic: barge-in while Aarya speaks, or force-stop capture while listening */
   const handleMicTap = useCallback(async () => {
+    if (turnState === "aarya_speaking" || (turnState === "processing" && isPlaying)) {
+      stopSpeaking();
+      abortRef.current?.abort();
+      if (sessionIdRef.current) {
+        setTurnState("user_listening");
+        await listenForUser(sessionIdRef.current);
+      }
+      return;
+    }
     if (turnState === "user_listening" && isListening) {
       const text = await stopRecording();
       setIsListening(false);
       setTranscript(text);
       if (text.trim() && sessionIdRef.current) {
         void doTurn(sessionIdRef.current, text);
+      } else if (sessionIdRef.current) {
+        setErrorMsg("I didn't catch that — trying again…");
+        await new Promise<void>((res) => setTimeout(res, 800));
+        await listenForUser(sessionIdRef.current);
       }
     }
-  }, [turnState, isListening, stopRecording, doTurn]);
+  }, [turnState, isListening, isPlaying, stopRecording, stopSpeaking, doTurn, listenForUser]);
 
   const toggleMute = useCallback(() => setMicMuted((v) => !v), []);
 

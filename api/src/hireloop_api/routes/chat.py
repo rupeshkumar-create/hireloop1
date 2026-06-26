@@ -23,6 +23,7 @@ from starlette.background import BackgroundTask
 
 from hireloop_api.agents.aarya.agent import (
     AaryaState,
+    _detect_hinglish,
     _detect_likely_intent,
     get_aarya_graph,
 )
@@ -35,7 +36,13 @@ from hireloop_api.deps import (
     serialize_row,
 )
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
-from hireloop_api.services.chat_stream import sse_done, sse_error, sse_status, sse_text
+from hireloop_api.services.chat_stream import (
+    sse_done,
+    sse_error,
+    sse_jobs,
+    sse_status,
+    sse_text,
+)
 from hireloop_api.services.memory import (
     CandidateMemoryService,
     format_known_facts,
@@ -74,6 +81,46 @@ _VOICE_TOOL_STATUS_LABELS: dict[str, str] = {
     "direct_apply": "I'm logging that application…",
     "update_job_preferences": "I'm updating your filters…",
     "update_profile": "I'm updating your profile…",
+}
+
+# Spoken filler clips + ETA for voice UX (synced to SSE status events).
+_TOOL_STATUS_META: dict[str, dict[str, str | int]] = {
+    "profile_read": {
+        "spoken": "Let me check your profile.",
+        "eta_sec": 4,
+        "text": _TEXT_TOOL_STATUS_LABELS["profile_read"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["profile_read"],
+    },
+    "build_career_path": {
+        "spoken": "I'm mapping your career path.",
+        "eta_sec": 6,
+        "text": _TEXT_TOOL_STATUS_LABELS["build_career_path"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["build_career_path"],
+    },
+    "job_search": {
+        "spoken": "I'm searching India roles for you.",
+        "eta_sec": 8,
+        "text": _TEXT_TOOL_STATUS_LABELS["job_search"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["job_search"],
+    },
+    "get_match_score": {
+        "spoken": "Let me score this role for you.",
+        "eta_sec": 5,
+        "text": _TEXT_TOOL_STATUS_LABELS["get_match_score"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["get_match_score"],
+    },
+    "prepare_application_kit": {
+        "spoken": "I'm preparing your application kit.",
+        "eta_sec": 10,
+        "text": _TEXT_TOOL_STATUS_LABELS["prepare_application_kit"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["prepare_application_kit"],
+    },
+    "update_profile": {
+        "spoken": "I'm updating your profile.",
+        "eta_sec": 3,
+        "text": _TEXT_TOOL_STATUS_LABELS["update_profile"],
+        "voice": _VOICE_TOOL_STATUS_LABELS["update_profile"],
+    },
 }
 
 
@@ -143,8 +190,31 @@ def _build_profile_gap_reply(open_questions: list[str]) -> str:
 
 def tool_status_label(tool_name: str, *, voice_mode: bool = False) -> str:
     """Return the user-facing live status for a tool call."""
+    meta = _TOOL_STATUS_META.get(tool_name)
+    if meta:
+        base = str(meta["voice" if voice_mode else "text"])
+        eta = meta.get("eta_sec")
+        if isinstance(eta, int):
+            return f"{base.rstrip('…')} (~{eta}s)…"
+        return base
     labels = _VOICE_TOOL_STATUS_LABELS if voice_mode else _TEXT_TOOL_STATUS_LABELS
     return labels.get(tool_name, "Working on your request…")
+
+
+def tool_status_spoken_filler(tool_name: str) -> str | None:
+    meta = _TOOL_STATUS_META.get(tool_name)
+    if not meta:
+        return None
+    spoken = meta.get("spoken")
+    return str(spoken) if spoken else None
+
+
+def tool_status_eta(tool_name: str) -> int | None:
+    meta = _TOOL_STATUS_META.get(tool_name)
+    if not meta:
+        return None
+    eta = meta.get("eta_sec")
+    return int(eta) if isinstance(eta, int) else None
 
 
 def _tool_status_from_message(msg: object, *, voice_mode: bool = False) -> str | None:
@@ -160,6 +230,31 @@ def _tool_status_from_message(msg: object, *, voice_mode: bool = False) -> str |
         if isinstance(name, str):
             return tool_status_label(name, voice_mode=voice_mode)
     return None
+
+
+def _tool_name_from_message(msg: object) -> str | None:
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    for tc in tool_calls:
+        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+        if isinstance(name, str):
+            return name
+    chunks = getattr(msg, "tool_call_chunks", None) or []
+    for ch in chunks:
+        name = ch.get("name") if isinstance(ch, dict) else getattr(ch, "name", None)
+        if isinstance(name, str):
+            return name
+    return None
+
+
+def _emit_tool_status(msg: object, *, voice_mode: bool) -> str:
+    """Build one SSE status frame for a tool-call message."""
+    tool_name = _tool_name_from_message(msg) or ""
+    label = _tool_status_from_message(msg, voice_mode=voice_mode) or "Working on your request…"
+    return sse_status(
+        label,
+        spoken_filler=tool_status_spoken_filler(tool_name) if voice_mode else None,
+        eta_sec=tool_status_eta(tool_name),
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -200,6 +295,80 @@ async def _persist_assistant_reply(
             title_hint[:60],
             coerce_uuid(conversation_id),
         )
+
+
+async def _prefetch_top_jobs(
+    db: asyncpg.Connection, candidate_id: str, *, limit: int = 5
+) -> list[dict]:
+    """Load top match cards for voice/chat warmup (reduces first-turn latency)."""
+    from hireloop_api.services.job_present import serialize_job_card
+
+    rows = await db.fetch(
+        """
+        SELECT j.id, j.title, j.location_city, j.location_state,
+               j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+               j.employment_type, j.seniority, j.apply_url,
+               co.name AS company_name,
+               ms.overall_score, ms.explanation
+        FROM public.match_scores ms
+        JOIN public.jobs j ON j.id = ms.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE ms.candidate_id = $1::uuid
+          AND j.is_active = TRUE
+          AND j.country_code = 'IN'
+          AND j.deleted_at IS NULL
+          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+        ORDER BY ms.overall_score DESC NULLS LAST
+        LIMIT $2::integer
+        """,
+        uuid.UUID(candidate_id),
+        limit,
+    )
+    return dedupe_jobs([serialize_job_card(dict(r)) for r in rows])
+
+
+@router.get("/warmup")
+async def chat_warmup(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Prefetch profile context + top matches before the first chat/voice turn.
+    Called on dashboard and /voice mount to hide cold-start latency.
+    """
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+        coerce_uuid(current_user["id"]),
+    )
+    if not candidate:
+        return {
+            "ok": False,
+            "profile_completeness": 0,
+            "prefetched_jobs": [],
+            "match_count": 0,
+        }
+
+    candidate_id = str(candidate["id"])
+    profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
+    prefetched = await _prefetch_top_jobs(db, candidate_id, limit=5)
+    match_count = await db.fetchval(
+        """
+        SELECT count(*) FROM public.match_scores ms
+        JOIN public.jobs j ON j.id = ms.job_id
+        WHERE ms.candidate_id = $1::uuid
+          AND j.is_active = TRUE
+          AND j.country_code = 'IN'
+          AND j.deleted_at IS NULL
+        """,
+        candidate["id"],
+    )
+
+    return {
+        "ok": True,
+        "profile_completeness": profile_completeness,
+        "prefetched_jobs": prefetched,
+        "match_count": int(match_count or 0),
+    }
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=201)
@@ -293,6 +462,7 @@ async def send_message(
         )
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
+        prefetched_jobs = await _prefetch_top_jobs(db, candidate_id, limit=5)
 
         user_msg_id = str(uuid.uuid4())
         await db.execute(
@@ -322,6 +492,19 @@ async def send_message(
             coerce_uuid(conversation_id),
         )
 
+    # Long threads: keep only the latest turns in the LLM window. Older context
+    # lives in the rolling memory summary loaded above.
+    _MAX_HISTORY_MESSAGES = 12
+    if len(history) > _MAX_HISTORY_MESSAGES:
+        history = history[-_MAX_HISTORY_MESSAGES:]
+
+    user_intent = _detect_likely_intent(body.content)
+    include_prefetch = (
+        body.content_type == "voice"
+        or user_intent == "job_search"
+        or bool(prefetched_jobs)
+    )
+
     messages = [
         HumanMessage(content=r["content"])
         if r["role"] == "user"
@@ -330,16 +513,21 @@ async def send_message(
         if r["role"] in ("user", "assistant")
     ]
 
+    hinglish = _detect_hinglish(body.content)
     initial_state: AaryaState = {
         "messages": messages,
         "user_id": str(current_user["id"]),
         "session_id": conversation_id,
         "action_count": 0,
+        "tool_rounds": 0,
+        "ui_job_cards": [],
         "voice_mode": body.content_type == "voice",
+        "hinglish_detected": hinglish,
         "memory": memory_summary or "",
         "known_facts": known_facts,
         "open_questions": open_questions,
         "profile_completeness": profile_completeness,
+        "prefetched_jobs": prefetched_jobs if include_prefetch else [],
     }
 
     graph = get_aarya_graph(settings)
@@ -357,7 +545,14 @@ async def send_message(
         full_response = ""
         last_msg_id: str | None = None
         try:
-            yield sse_status("Thinking…")
+            yield sse_status(
+                "Thinking… (~3s)…" if voice_mode else "Thinking…",
+                spoken_filler="One moment." if voice_mode else None,
+                eta_sec=3,
+                hinglish_hint=hinglish,
+            )
+            if include_prefetch and prefetched_jobs:
+                yield sse_jobs(prefetched_jobs)
 
             async with pool.acquire() as db:
                 config = {"configurable": {"db": db, "thread_id": conversation_id}}
@@ -370,9 +565,12 @@ async def send_message(
                         for node_name, node_out in chunk.items():
                             if node_name == "agent" and isinstance(node_out, dict):
                                 for m in node_out.get("messages", []):
-                                    status = _tool_status_from_message(m, voice_mode=voice_mode)
-                                    if status:
-                                        yield sse_status(status)
+                                    if _tool_status_from_message(m, voice_mode=voice_mode):
+                                        yield _emit_tool_status(m, voice_mode=voice_mode)
+                            if node_name == "tools" and isinstance(node_out, dict):
+                                cards = node_out.get("ui_job_cards") or []
+                                if cards:
+                                    yield sse_jobs(cards)
                         continue
 
                     msg, meta = chunk
@@ -380,9 +578,8 @@ async def send_message(
                     if node != "agent":
                         continue
 
-                    tool_status = _tool_status_from_message(msg, voice_mode=voice_mode)
-                    if tool_status:
-                        yield sse_status(tool_status)
+                    if _tool_status_from_message(msg, voice_mode=voice_mode):
+                        yield _emit_tool_status(msg, voice_mode=voice_mode)
                         continue
 
                     if getattr(msg, "tool_calls", None) or getattr(msg, "tool_call_chunks", None):

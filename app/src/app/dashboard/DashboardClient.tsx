@@ -19,6 +19,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -81,7 +82,7 @@ import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { ChatInterface } from "@/components/chat/ChatInterface";
+import { warmupChatContext, scheduleIdleWarmupRewarm } from "@/lib/chat/warmup";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
 import { CareerPathOptionCards } from "@/components/career/CareerPathOptionCards";
@@ -107,6 +108,19 @@ import {
   EmptyState,
   useToast,
 } from "@/components/ui";
+
+const ChatInterface = dynamic(
+  () =>
+    import("@/components/chat/ChatInterface").then((m) => ({
+      default: m.ChatInterface,
+    })),
+  {
+    loading: () => (
+      <div className="h-full min-h-[320px] rounded-xl bg-ink-50 animate-pulse" />
+    ),
+    ssr: false,
+  }
+);
 
 // ── Panel type ────────────────────────────────────────────────────────────────
 
@@ -185,10 +199,12 @@ export function DashboardClient({
   const [savedJobsRefreshKey, setSavedJobsRefreshKey] = useState(0);
 
   useEffect(() => {
-    router.prefetch("/voice");
     router.prefetch("/resumes");
     router.prefetch("/intros");
     router.prefetch("/dashboard?panel=jobs");
+
+    void warmupChatContext().catch(() => undefined);
+    const stopIdleWarmup = scheduleIdleWarmupRewarm(30_000);
 
     let cancelled = false;
 
@@ -211,6 +227,7 @@ export function DashboardClient({
 
     return () => {
       cancelled = true;
+      stopIdleWarmup();
     };
   }, [router]);
 

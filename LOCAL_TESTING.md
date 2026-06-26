@@ -107,7 +107,7 @@ Run `supabase status` for URL and keys after `supabase start`.
 | **P13** Gmail intro | **Google Cloud OAuth** | **Yes** for send | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
 | **P13** Transactional email | **SendGrid** | Optional | Template IDs in config |
 | **P14** Intro worker | Google + Apify + NeverBounce + DB | **Yes** end-to-end | Nitya worker starts with API if `DATABASE_URL` set |
-| **P15** Voice | **Deepgram** + **ElevenLabs** | **Yes** | `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_AARYA_VOICE_ID` |
+| **P15** Voice | **Deepgram** (STT + TTS) | **Yes** | `DEEPGRAM_API_KEY`, optional `DEEPGRAM_TTS_MODEL` |
 | **P16–P18** Recruiter | **OpenRouter** | **Yes** | Recruiter JWT + seed recruiter row |
 | **P19** WhatsApp | **MSG91** WhatsApp | **Yes** for real WA | Template `job_match_alert` approved; without keys → logged as mock/failed |
 | **P20** Tailor resume | **OpenRouter** | **Yes** | |
@@ -124,8 +124,7 @@ Run `supabase status` for URL and keys after `supabase start`.
 |----------|---------|----------|
 | [Supabase](https://supabase.com) | Free project or CLI local | Auth, DB, Realtime |
 | [OpenRouter](https://openrouter.ai) | API key | Aarya, Nitya, tailor, mock interview, embeddings |
-| [Deepgram](https://deepgram.com) | API key | Voice STT (P15) |
-| [ElevenLabs](https://elevenlabs.io) | API key + voice IDs | Voice TTS (P15) |
+| [Deepgram](https://deepgram.com) | API key | Voice STT + TTS (P15) |
 | [Apify](https://apify.com) | API token | Job scrape (P09), HM enrich (P12) |
 | [NeverBounce](https://neverbounce.com) | API key | HM email verify (P12–P14) |
 | [Google Cloud Console](https://console.cloud.google.com) | OAuth client | Gmail send (P13–P14) |
@@ -347,7 +346,7 @@ Or use **seed** `match_scores` for candidate `ca000000-...`.
 
 ## P15 — Voice (chat mic — not LiveKit)
 
-**Keys:** **Deepgram**, **ElevenLabs**  
+**Keys:** **Deepgram**  
 **Test:**
 
 1. `http://localhost:3001/chat` — tap mic, speak, stop
@@ -487,7 +486,7 @@ With API running: http://localhost:8000/api/docs
 |----------------|--------|----------------|
 | 1 | P03, P04, P08, P11 | Supabase + OpenRouter |
 | 2 | P10, P14 | + Apify, Google, NeverBounce |
-| 3 | P15, P20, P21 | + Deepgram, ElevenLabs |
+| 3 | P15, P20, P21 | + Deepgram |
 | 4 | P16–P18 | OpenRouter + seed recruiter |
 | 5 | P19, P23 | + MSG91 |
 | 6 | P24 | none |
@@ -503,5 +502,5 @@ With API running: http://localhost:8000/api/docs
 | CORS error | Add `http://localhost:3001` to `ALLOWED_ORIGINS` |
 | No matches on dashboard | Run seed or `matches/embed/candidate/{id}` |
 | Recruiter 403 | `users.role=recruiter` + `recruiters` row |
-| Voice 503 | Set ElevenLabs voice IDs |
+| Voice 503 | Set `DEEPGRAM_API_KEY` (and check `DEEPGRAM_TTS_MODEL`) |
 | WhatsApp no send | Expected without MSG91; check `whatsapp_messages.error_message` |

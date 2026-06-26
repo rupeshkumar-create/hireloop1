@@ -16,6 +16,7 @@ Each candidate-session gets a unique thread_id (= conversation.id).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Annotated, Any, Literal, TypedDict
@@ -35,6 +36,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
+from hireloop_api.services.tool_cache import cache_key, get_cached, set_cached
 from hireloop_api.config import Settings
 
 logger = structlog.get_logger()
@@ -120,6 +122,8 @@ Profile improvement vs job search:
   skills, current role/company, experience, city, target roles) — especially when
   you're collecting their details on a call — call update_profile to SAVE it. Don't
   just acknowledge it verbally; persist it so their profile % and matches improve.
+- On voice calls this is mandatory: if they state a fact, call update_profile in
+  the same turn before you reply — never rely on chat memory alone.
 - Profile completeness is a single source of truth: the turn context provides
   `profile_completeness` — the exact % shown in the UI. If you reference how
   complete the profile is, use THAT number verbatim. Never invent or estimate a
@@ -180,6 +184,13 @@ Voice delivery rules:
   say "thirty to forty lakhs", not "30-40 LPA".
 - Spell things out the way they sound. Sound like a friendly Indian career coach
   chatting on the phone, warm and easy.
+- If the candidate mixes Hindi and English (Hinglish), mirror their tone lightly
+  but keep your reply in clear English unless they speak mostly Hindi.
+- After job_search on a voice call: give a brief spoken summary of the top 1-2
+  roles only, then say the full list is in their chat — do NOT read every job aloud.
+- Voice tool budget: you get ONE tool round per turn. Batch related tools together
+  (e.g. profile_read + build_career_path + job_search in one round). After tools
+  return, reply in speech only — no second tool round.
 """
 
 
@@ -263,15 +274,66 @@ def _detect_likely_intent(text: str) -> str:
     if any(token in lowered for token in ("resume", "cv", "linkedin", "profile")):
         return "profile_improvement"
 
+    chit_signals = (
+        "hello",
+        "hi ",
+        "hey",
+        "thanks",
+        "thank you",
+        "what can you do",
+        "who are you",
+        "namaste",
+        "good morning",
+        "good evening",
+        "how are you",
+    )
+    if len(lowered) < 120 and any(signal in lowered for signal in chit_signals):
+        return "chit_chat"
+
     return "general_career_chat"
 
 
 # Conversational / low-complexity intents that don't need the heavy model.
-_FAST_MODEL_INTENTS = frozenset({"general_career_chat", "preference_update"})
+_FAST_MODEL_INTENTS = frozenset({"general_career_chat", "preference_update", "chit_chat"})
+# Greetings and meta questions — answer directly without tool calls.
+_NO_TOOL_INTENTS = frozenset({"chit_chat"})
 _JOB_UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     re.IGNORECASE,
 )
+
+
+def _detect_hinglish(text: str) -> bool:
+    """True when the utterance likely mixes Hindi and English."""
+    if not text.strip():
+        return False
+    # Devanagari script
+    if re.search(r"[\u0900-\u097F]", text):
+        return True
+    lowered = text.lower()
+    hinglish_markers = (
+        "kya",
+        "hai",
+        "nahi",
+        "acha",
+        "theek",
+        "bhai",
+        "yaar",
+        "matlab",
+        "bas",
+        "abhi",
+        "chahiye",
+        "salary kitni",
+        "job chahiye",
+        "kaam",
+        "batao",
+        "samjha",
+    )
+    latin_words = re.findall(r"[a-z']+", lowered)
+    if not latin_words:
+        return False
+    hits = sum(1 for w in latin_words if w in hinglish_markers)
+    return hits >= 2 or (hits >= 1 and len(latin_words) <= 6)
 
 
 def _prefer_fast_model(
@@ -283,14 +345,11 @@ def _prefer_fast_model(
     """
     Choose the fast/cheaper model for low-complexity turns to cut latency.
 
-    The heavy primary model is reserved for turns that need careful tool
-    selection or multi-step reasoning (job_search, intro requests). Voice turns
-    (short, latency-critical) and the summarisation pass after tools have already
-    run both go to the fast model — that's where most of the per-turn wall-clock
-    time was being spent on the big model for no quality gain.
+    Voice: primary for tool selection; fast model only for post-tool synthesis.
+    Text: primary for complex reasoning; fast for simple turns and some synthesis.
     """
     if voice_mode:
-        return True
+        return has_tool_results
     intent = _detect_likely_intent(last_human_text)
     if has_tool_results:
         # Post-tool synthesis: profile/job/intro need careful reasoning; application
@@ -336,9 +395,16 @@ def build_turn_context_prompt(
         )
 
     if likely_intent == "job_search":
-        guidance.append(
-            "- action_policy: build_career_path before job_search; search India roles only."
-        )
+        completeness = profile_completeness or 0
+        if completeness >= 80:
+            guidance.append(
+                "- action_policy: profile is strong (≥80%) — skip build_career_path; "
+                "call job_search directly (use prefetched matches when provided)."
+            )
+        else:
+            guidance.append(
+                "- action_policy: build_career_path before job_search; search India roles only."
+            )
     elif likely_intent == "intro_request":
         guidance.append(
             "- action_policy: require explicit candidate approval before request_intro."
@@ -368,6 +434,15 @@ def build_turn_context_prompt(
             "- delivery: Keep the next reply short and spoken; no markdown, "
             "emoji, bullets, or headings."
         )
+        guidance.append(
+            "- voice_tool_budget: ONE tool round only — batch profile_read, "
+            "build_career_path, and job_search together when finding roles."
+        )
+        if _detect_hinglish(last_text):
+            guidance.append(
+                "- hinglish_detected: candidate used Hindi/English mix — keep reply "
+                "clear; they can switch to text in the app if voice is unclear."
+            )
     else:
         guidance.append(
             "- delivery: Keep the next reply compact and mobile-friendly with "
@@ -400,11 +475,15 @@ class AaryaState(TypedDict, total=False):
     user_id: str
     session_id: str  # = conversation.id
     action_count: int
+    tool_rounds: int  # voice tool-budget counter (max 1 chain per turn)
+    ui_job_cards: list[dict[str, Any]]  # emitted to chat UI via SSE after job_search
     voice_mode: bool  # True when the turn came from the voice call (TTS reply)
+    hinglish_detected: bool
     memory: str  # rolling cross-conversation memory of this candidate
     known_facts: str  # compact line of captured career_facts (don't re-ask)
     open_questions: list[str]  # profile gaps to weave into the conversation
     profile_completeness: int | None  # authoritative % shown in the UI pill
+    prefetched_jobs: list[dict[str, Any]]  # warmup shortlist injected at turn start
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -671,11 +750,28 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
             },
         ).bind_tools(TOOL_DEFINITIONS)  # type: ignore[arg-type]
 
+    def _make_llm_plain(model: str) -> Any:  # noqa: ANN401
+        return ChatOpenAI(
+            model=model,
+            openai_api_key=settings.openrouter_api_key,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=0.3,
+            max_tokens=2048,
+            default_headers={
+                "HTTP-Referer": "https://app.hireloop.in",
+                "X-Title": "Hireloop - Aarya Career AI",
+            },
+        )
+
     # Two tiers: the heavy primary for tool selection / reasoning, and a fast,
     # cheap model for short conversational turns and tool-result summarisation.
     # Routing per turn (see _prefer_fast_model) is the main latency lever.
     llm_primary = _make_llm(settings.openrouter_primary_model)
     llm_fast = _make_llm(settings.openrouter_fallback_model or settings.openrouter_primary_model)
+    llm_primary_plain = _make_llm_plain(settings.openrouter_primary_model)
+    llm_fast_plain = _make_llm_plain(
+        settings.openrouter_fallback_model or settings.openrouter_primary_model
+    )
 
     async def agent_node(state: AaryaState, config: RunnableConfig) -> dict:
         """Main LLM reasoning step."""
@@ -729,23 +825,53 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
             )
             messages = [SystemMessage(content=prompt), *messages]
 
+        prefetched = state.get("prefetched_jobs") or []
+        if prefetched:
+            titles = ", ".join(
+                str(j.get("title") or "role")[:40] for j in prefetched[:3]
+            )
+            messages = [
+                *messages,
+                SystemMessage(
+                    content=(
+                        f"Prefetch hint: top matches already loaded ({titles}). "
+                        "Summarise these for the candidate — call job_search only if "
+                        "they want different roles or filters."
+                    )
+                ),
+            ]
+
         # Route to the fast model for low-complexity / voice / summarisation turns.
         has_tool_results = any(isinstance(m, ToolMessage) for m in state["messages"])
+        last_human = _last_human_text(state["messages"])
+        turn_intent = _detect_likely_intent(last_human)
+        no_tools_turn = turn_intent in _NO_TOOL_INTENTS and not has_tool_results
         use_fast = _prefer_fast_model(
             voice_mode=bool(state.get("voice_mode")),
-            last_human_text=_last_human_text(state["messages"]),
+            last_human_text=last_human,
             has_tool_results=has_tool_results,
         )
+        voice_budget_done = bool(state.get("voice_mode")) and state.get("tool_rounds", 0) >= 1
+        if no_tools_turn:
+            active = llm_fast_plain
+        elif voice_budget_done:
+            active = llm_fast_plain if use_fast else llm_primary_plain
+        elif use_fast:
+            active = llm_fast
+        else:
+            active = llm_primary
         # Resilience: if the fast model errors (e.g. a misconfigured / invalid
         # model ID), fall back to the primary so chat never hard-fails on a turn.
-        if use_fast:
+        if use_fast and not voice_budget_done and not no_tools_turn:
             try:
-                response = await llm_fast.ainvoke(messages)
+                response = await active.ainvoke(messages)
             except Exception as exc:
                 logger.warning("aarya_fast_model_failed_fallback_to_primary", error=str(exc)[:200])
-                response = await llm_primary.ainvoke(messages)
+                response = await (llm_primary_plain if voice_budget_done else llm_primary).ainvoke(
+                    messages
+                )
         else:
-            response = await llm_primary.ainvoke(messages)
+            response = await active.ainvoke(messages)
 
         return {
             "messages": [response],
@@ -753,33 +879,63 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
         }
 
     async def tools_node(state: AaryaState, config: RunnableConfig) -> dict:
-        """Execute tool calls from the LLM response."""
+        """Execute tool calls from the LLM response (parallel when independent)."""
         db: asyncpg.Connection = config["configurable"]["db"]
         last_message = state["messages"][-1]
 
         if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
-            return {"messages": [], "action_count": state["action_count"]}
+            return {
+                "messages": [],
+                "action_count": state["action_count"],
+                "tool_rounds": state.get("tool_rounds", 0),
+            }
 
-        tool_messages: list[ToolMessage] = []
         action_count = state["action_count"]
+        ui_job_cards: list[dict[str, Any]] = list(state.get("ui_job_cards") or [])
 
-        for tool_call in last_message.tool_calls:
+        async def _execute_one(tool_call: dict[str, Any]) -> tuple[ToolMessage, int, list[dict]]:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
             user_id = state["user_id"]
             session_id = state["session_id"]
+            local_actions = 0
+            cards: list[dict] = []
 
             try:
+                cacheable = tool_name in ("profile_read", "job_search")
+                ck = cache_key(session_id, tool_name, tool_args if cacheable else None)
+                if cacheable:
+                    cached = get_cached(ck)
+                    if cached is not None:
+                        result = cached
+                        if tool_name == "job_search" and isinstance(result, dict):
+                            cards = list(result.get("job_cards") or [])
+                        local_actions = 0
+                        return (
+                            ToolMessage(
+                                content=json.dumps(result, default=str),
+                                tool_call_id=tool_call["id"],
+                            ),
+                            local_actions,
+                            cards,
+                        )
+
                 if tool_name == "profile_read":
                     result = await aarya_tools.profile_read(db, user_id, session_id)
                 elif tool_name == "job_search":
                     result = await aarya_tools.job_search(
                         db, user_id, session_id, settings=settings, **tool_args
                     )
+                    if isinstance(result, dict) and isinstance(result.get("job_cards"), list):
+                        cards = result["job_cards"]
                 elif tool_name == "build_career_path":
-                    result = await aarya_tools.build_career_path(db, user_id, session_id, settings)
+                    result = await aarya_tools.build_career_path(
+                        db, user_id, session_id, settings
+                    )
                 elif tool_name == "get_match_score":
-                    result = await aarya_tools.get_match_score(db, user_id, session_id, **tool_args)
+                    result = await aarya_tools.get_match_score(
+                        db, user_id, session_id, **tool_args
+                    )
                 elif tool_name == "request_intro":
                     result = await aarya_tools.request_intro(db, user_id, session_id, **tool_args)
                 elif tool_name == "direct_apply":
@@ -795,29 +951,53 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
                         db, user_id, session_id, **tool_args
                     )
                 elif tool_name == "update_profile":
-                    result = await aarya_tools.update_profile(db, user_id, session_id, **tool_args)
+                    result = await aarya_tools.update_profile(
+                        db, user_id, session_id, **tool_args
+                    )
                 else:
                     result = {"error": f"Unknown tool: {tool_name}"}
 
-                action_count += 1
+                local_actions = 1
 
             except Exception as exc:
                 logger.error("tool_execution_error", tool=tool_name, error=str(exc))
                 result = {"error": str(exc)}
 
-            tool_messages.append(
+            if tool_name in ("profile_read", "job_search") and "error" not in result:
+                set_cached(cache_key(session_id, tool_name, tool_args), result)
+
+            return (
                 ToolMessage(
                     content=json.dumps(result, default=str),
                     tool_call_id=tool_call["id"],
-                )
+                ),
+                local_actions,
+                cards,
             )
 
-        return {"messages": tool_messages, "action_count": action_count}
+        outcomes = await asyncio.gather(
+            *[_execute_one(tc) for tc in last_message.tool_calls]
+        )
+        tool_messages: list[ToolMessage] = []
+        for tm, inc, cards in outcomes:
+            tool_messages.append(tm)
+            action_count += inc
+            if cards:
+                ui_job_cards = cards
+
+        return {
+            "messages": tool_messages,
+            "action_count": action_count,
+            "tool_rounds": state.get("tool_rounds", 0) + 1,
+            "ui_job_cards": ui_job_cards,
+        }
 
     def should_continue(state: AaryaState) -> Literal["tools", "__end__"]:
         """Route: if last message has tool calls → tools, else → end."""
         last = state["messages"][-1]
         if isinstance(last, AIMessage) and last.tool_calls:
+            if state.get("voice_mode") and state.get("tool_rounds", 0) >= 1:
+                return END
             return "tools"
         return END
 

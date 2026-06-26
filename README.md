@@ -48,7 +48,7 @@ cp app/.env.example app/.env.local
 cp api/.env.example api/.env
 ```
 
-Fill in credentials from Supabase dashboard, OpenRouter, ElevenLabs, Deepgram, MSG91, SendGrid, Apify, NeverBounce.
+Fill in credentials from Supabase dashboard, OpenRouter, Deepgram, MSG91, SendGrid, Apify, NeverBounce.
 
 ### Run locally
 
@@ -90,7 +90,7 @@ Current phase: **P01 — Repo & CI scaffold** `in_progress`
 | Backend | FastAPI (Python 3.12), asyncpg, LangGraph |
 | Database | Supabase (Postgres 15 + pgvector) |
 | AI / LLM | OpenRouter → claude-3-5-sonnet |
-| Voice TTS | ElevenLabs |
+| Voice TTS | Deepgram Aura |
 | Voice STT | Deepgram Nova-3 |
 | Auth | Supabase Auth (LinkedIn OAuth + MSG91 OTP) |
 | Job scraping | Apify (LinkedIn Jobs Scraper) |

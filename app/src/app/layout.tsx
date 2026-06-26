@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ToastProvider } from "@/components/ui";
 import { CandidateGate } from "@/components/auth/CandidateGate";
+import { QueryProvider } from "@/components/providers/QueryProvider";
+import { AppWarmup } from "@/components/providers/AppWarmup";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,7 +42,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-paper-0 text-ink-900`}
       >
         <ToastProvider>
-          <CandidateGate>{children}</CandidateGate>
+          <QueryProvider>
+            <AppWarmup />
+            <CandidateGate>{children}</CandidateGate>
+          </QueryProvider>
         </ToastProvider>
       </body>
     </html>

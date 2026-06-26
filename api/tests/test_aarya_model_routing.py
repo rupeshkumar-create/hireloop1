@@ -11,10 +11,15 @@ from __future__ import annotations
 from hireloop_api.agents.aarya.agent import _detect_likely_intent, _prefer_fast_model
 
 
-def test_voice_turns_always_use_fast_model() -> None:
-    # Even a job-search phrasing goes fast in voice — snappy back-and-forth wins.
-    assert _prefer_fast_model(
+def test_voice_tool_selection_uses_primary_model() -> None:
+    assert not _prefer_fast_model(
         voice_mode=True, last_human_text="find me backend jobs", has_tool_results=False
+    )
+
+
+def test_voice_synthesis_uses_fast_model() -> None:
+    assert _prefer_fast_model(
+        voice_mode=True, last_human_text="find me backend jobs", has_tool_results=True
     )
 
 

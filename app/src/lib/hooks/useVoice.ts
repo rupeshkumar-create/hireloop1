@@ -774,7 +774,8 @@ export function useVoice() {
    * voices the OS happens to have for SpeechSynthesis). Throws on any failure
    * so speak() can fall back to the browser voice.
    */
-  const speakDeepgram = useCallback(async (spoken: string): Promise<void> => {
+  const speakDeepgram = useCallback(
+    async (spoken: string, playbackRate = 1.0): Promise<void> => {
     const res = await apiAuthFetch("/api/v1/voice/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -787,6 +788,7 @@ export function useVoice() {
 
     await new Promise<void>((resolve, reject) => {
       const audio = new Audio(url);
+      audio.playbackRate = playbackRate;
       ttsAudioRef.current = audio;
       const cleanup = () => {
         if (ttsAudioRef.current === audio) ttsAudioRef.current = null;
@@ -809,17 +811,17 @@ export function useVoice() {
         reject(err instanceof Error ? err : new Error("TTS play() rejected"));
       });
     });
-  }, []);
+    },
+    []
+  );
 
   const speakBrowser = useCallback(
-    async (spoken: string): Promise<void> => {
-      // Cancel any current speech
+    async (spoken: string, playbackRate = 1.0): Promise<void> => {
       window.speechSynthesis.cancel();
 
       return new Promise((resolve) => {
         const utterance = new SpeechSynthesisUtterance(spoken);
-        // Natural conversational prosody — not chirpy/robotic.
-        utterance.rate   = 0.98;
+        utterance.rate   = Math.min(1.1, 0.98 * playbackRate);
         utterance.pitch  = 1.0;
         utterance.volume = 1.0;
 
@@ -854,27 +856,52 @@ export function useVoice() {
     []
   );
 
+  type SpeakOptions = { hinglish?: boolean };
+
   const speak = useCallback(
-    async (text: string, _voice: "aarya" | "nitya" = "aarya"): Promise<void> => {
-      // Read a clean, speakable version — strip emoji/markdown/symbols.
+    async (
+      text: string,
+      _voice: "aarya" | "nitya" = "aarya",
+      opts?: SpeakOptions
+    ): Promise<void> => {
       const spoken = sanitizeForSpeech(text);
       if (!spoken) return;
 
-      // Stop anything already playing before starting the next line.
       cancelSpeech();
 
-      // Prefer Deepgram Aura (consistent natural female voice everywhere) when
-      // the server has a key; fall back to the browser voice on any failure.
+      const playbackRate = opts?.hinglish ? 0.9 : 1.0;
       const { tts } = await resolveVoiceConfig();
       if (tts === "deepgram") {
         try {
-          await speakDeepgram(spoken);
+          await speakDeepgram(spoken, playbackRate);
           return;
         } catch {
-          // Aura unavailable (network, quota, autoplay block) → browser voice.
+          /* fall through */
         }
       }
-      await speakBrowser(spoken);
+      await speakBrowser(spoken, playbackRate);
+    },
+    [cancelSpeech, speakDeepgram, speakBrowser]
+  );
+
+  /** Short non-blocking filler clip while tools run (does not await playback). */
+  const speakFiller = useCallback(
+    (text: string) => {
+      const spoken = sanitizeForSpeech(text);
+      if (!spoken) return;
+      cancelSpeech();
+      void (async () => {
+        const { tts } = await resolveVoiceConfig();
+        if (tts === "deepgram") {
+          try {
+            await speakDeepgram(spoken);
+            return;
+          } catch {
+            /* fall through */
+          }
+        }
+        await speakBrowser(spoken);
+      })();
     },
     [cancelSpeech, speakDeepgram, speakBrowser]
   );
@@ -934,6 +961,7 @@ export function useVoice() {
     startRecording,
     stopRecording,
     speak,
+    speakFiller,
     stopSpeaking,
   };
 }

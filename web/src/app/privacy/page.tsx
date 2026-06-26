@@ -49,7 +49,7 @@ Every data collection event is logged in our consent_log table with purpose, tim
     content: `We do not sell your personal data. We share data only in the following cases:
 
 • With hiring managers (name, headline, skills summary — when you request an intro)
-• With our technical vendors (Supabase, OpenRouter, ElevenLabs, Deepgram, Apify, SendGrid, Gupshup) solely to provide the service — all are contractually bound by data processing agreements
+• With our technical vendors (Supabase, OpenRouter, Deepgram, Apify, SendGrid, MSG91) solely to provide the service — all are contractually bound by data processing agreements
 • When required by Indian law or a court order
 • In aggregate, anonymised form for research or product improvement
 

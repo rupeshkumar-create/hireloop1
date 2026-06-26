@@ -1,5 +1,5 @@
 """
-Notification orchestration — in-app + WhatsApp (Gupshup) + email hooks.
+Notification orchestration — in-app + WhatsApp (MSG91) + email (SendGrid).
 
 Triggers:
   - New high-quality job match (P19)
@@ -16,7 +16,7 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
-from hireloop_api.services.whatsapp.gupshup import GupshupWhatsApp, resolve_gupshup_template_id
+from hireloop_api.services.whatsapp.msg91 import Msg91Client, resolve_msg91_template_name
 
 logger = structlog.get_logger()
 
@@ -193,16 +193,16 @@ async def send_whatsapp_if_allowed(
     if isinstance(cat_prefs, dict) and cat_prefs.get("whatsapp") is False:
         return {"sent": False, "skipped": "opted_out"}
 
-    wa = GupshupWhatsApp(
-        settings.gupshup_api_key,
-        settings.gupshup_whatsapp_number,
-        app_name=settings.gupshup_app_name,
+    wa = Msg91Client(
+        settings.msg91_auth_key,
+        sender_id=settings.msg91_sender_id,
+        whatsapp_number=settings.msg91_whatsapp_number,
     )
-    template_id = resolve_gupshup_template_id(settings, template_name)
+    template_name = resolve_msg91_template_name(settings, template_name)
     try:
-        result = await wa.send_template(
+        result = await wa.send_whatsapp_template(
             to_phone=user["phone"],
-            template_id=template_id,
+            template_name=template_name,
             body_params=body_params,
         )
     finally:
@@ -383,7 +383,7 @@ async def notify_intro_lifecycle(
         if email_result.get("sent"):
             channels.append("email")
 
-    if settings.gupshup_intro_status_template_id:
+    if settings.msg91_intro_status_template:
         wa_result = await send_whatsapp_if_allowed(
             db,
             settings,

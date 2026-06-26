@@ -19,7 +19,7 @@ Agent framework:         LangGraph (Python), single-threaded master loop
 Database:                Supabase (Postgres 15 + pgvector + pg_cron)
 Storage:                 Supabase Storage (resumes, profile photos)
 AI / LLM:               OpenRouter (claude-3-5-sonnet primary, fallback configured)
-Voice (TTS):             ElevenLabs (Hinglish caveat: auto-detect; offer switch-to-text)
+Voice (TTS):             Deepgram Aura (Hinglish caveat: auto-detect; offer switch-to-text)
 Voice (STT):             Deepgram Nova-3
 Job scraping:            Apify (LinkedIn Jobs Scraper actor)
 HM enrichment:           Apify waterfall — LinkedIn Company Employees → Profile → Email Finder
@@ -62,7 +62,7 @@ Show running count: "Aarya performed 7 actions on your profile."
 Single chat surface. Text input always visible.
 Voice button (mic icon) in bottom-right of input bar.
 Hold-to-talk OR toggle mode. Deepgram STT → text → same LLM pipeline.
-ElevenLabs TTS streams response audio.
+Deepgram TTS streams response audio.
 No separate voice screen — voice IS the chat.
 
 ## R9 — Email discipline (CRITICAL)
@@ -125,4 +125,4 @@ Production DB: real data only.
 16. No job listings with country_code != 'IN'
 17. No Cloudflare bypass in production
 18. No OpenRouter calls without model fallback configured
-19. No ElevenLabs calls without audio timeout guard (max 10s)
+19. No Deepgram TTS calls without audio timeout guard (max 10s)
