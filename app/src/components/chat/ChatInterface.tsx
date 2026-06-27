@@ -45,10 +45,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Route,
+  BookOpen,
   Briefcase,
   Check,
   ChevronRight,
-  IndianRupee,
   Loader2,
   Mic,
   Paperclip,
@@ -60,7 +60,6 @@ import {
   Square,
   TrendingUp,
   Upload,
-  Users,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -1490,79 +1489,45 @@ function buildFindJobsMessage(profile: MyProfileData | null): string {
   return `${parts.join(" ")}.${remote}`.trim();
 }
 
-/** Three starter actions — ranked by what moves the candidate forward right now. */
-function buildSmartStarterCards(
-  profile: MyProfileData | null,
-  findJobsMessage: string,
-  profileSparse: boolean,
-): ActionCardDef[] {
-  const jobMatches: ActionCardDef = {
-    Icon: Briefcase,
-    title: "My job matches",
-    description: "Your top-ranked roles, best first",
-    kind: "message",
-    message: "Show me my best job matches",
-  };
-
-  const findJobs: ActionCardDef = {
-    Icon: Search,
-    title: "Find jobs",
-    description: "Search tuned to your role, skills, and city",
-    kind: "message",
-    message: findJobsMessage,
-  };
-
-  const improveProfile: ActionCardDef = {
-    Icon: TrendingUp,
-    title: "Improve my profile",
-    description: "Close gaps that weaken your match scores",
-    kind: "message",
-    message:
-      "Review my profile and tell me the most impactful gaps to fix to rank higher in matches.",
-  };
-
-  const salary: ActionCardDef = {
-    Icon: IndianRupee,
-    title: "What could I earn?",
-    description: "Realistic CTC range for your next move",
-    kind: "message",
-    message:
-      "Based on my profile, experience, and the India market, what CTC range could I realistically target next?",
-  };
-
-  const intros: ActionCardDef = {
-    Icon: Users,
-    title: "Hiring manager intros",
-    description: "Warm intros to decision makers",
-    kind: "message",
-    message: "Help me connect with hiring managers for roles I'm interested in",
-  };
-
-  const careerPaths: ActionCardDef = {
-    Icon: Route,
-    title: "My career paths",
-    description: "Top 3 directions — pick one to prioritize",
-    kind: "message",
-    message:
-      "Show me my top 3 career paths and help me pick one to prioritize before searching jobs.",
-  };
-
-  if (profileSparse) {
-    return [
-      { ...improveProfile, primary: true },
-      findJobs,
-      { ...jobMatches, description: "See what's matching while you finish up" },
-    ];
-  }
-
-  const c = profile?.candidate;
-  const hasTarget = Boolean(c?.looking_for?.trim() || c?.current_title?.trim());
-
+/**
+ * Opening options shown first in the chat — "what brings you here?". These are
+ * the candidate goals that used to live in onboarding; surfacing them here makes
+ * the goal the first thing Aarya asks, and each chip seeds the right prompt.
+ */
+function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
   return [
-    { ...careerPaths, primary: true },
-    { ...jobMatches, primary: false },
-    intros,
-    hasTarget ? findJobs : salary,
+    {
+      Icon: Search,
+      title: "Find a new role",
+      description: "Your top-ranked matches, best first",
+      kind: "message",
+      message: findJobsMessage,
+      primary: true,
+    },
+    {
+      Icon: Briefcase,
+      title: "Discuss a job I saw",
+      description: "Paste a role and I'll score your fit",
+      kind: "message",
+      message:
+        "I saw a job I'm interested in. Help me evaluate how well it fits my profile.",
+    },
+    {
+      Icon: TrendingUp,
+      title: "Know my market value",
+      description: "Realistic CTC range for your next move",
+      kind: "message",
+      message:
+        "Based on my profile, experience, and the India market, what CTC range could I realistically target next?",
+    },
+    {
+      Icon: BookOpen,
+      title: "Improve my resume",
+      description: "Tailored fixes before you apply",
+      kind: "message",
+      message:
+        "Review my resume and profile and tell me the most impactful improvements to rank higher in matches.",
+    },
   ];
 }
 
@@ -1602,16 +1567,10 @@ function EmptyState({
     !c.current_title?.trim() ||
     (c.skills ?? []).filter((s) => s.trim()).length < 3;
 
-  const cards: ActionCardDef[] = buildSmartStarterCards(
-    profile,
-    findJobsMessage,
-    profileSparse,
-  );
+  const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage);
 
   const firstName = (profile?.user?.full_name || "").trim().split(" ")[0] || "there";
-  const greeting = profileSparse
-    ? `Hi ${firstName}, I'm Aarya — your recruiter here. Your profile's almost there; let's close the last gaps so your matches sharpen.`
-    : `Hi ${firstName}, I'm Aarya — your recruiter here. Pick a career path or jump straight to matches.`;
+  const greeting = `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
 
   const handlePathSelect = (opt: CareerPathOption) => {
     onPick(

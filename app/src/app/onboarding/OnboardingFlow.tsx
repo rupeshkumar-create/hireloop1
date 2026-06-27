@@ -318,28 +318,16 @@ function ActivationStep({
   const router = useRouter();
   const firstName = candidateName?.split(" ")[0] ?? "there";
 
-  const [selectedGoal, setSelectedGoal] = useState<string>("find_new_role");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const goalMeta = GOALS.find((g) => g.id === selectedGoal);
 
   async function handleActivate() {
     if (!tosAccepted || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const profileRes = await apiAuthFetch("/api/v1/me/profile", {
-        method: "PATCH",
-        body: JSON.stringify({ looking_for: goalToLookingFor(selectedGoal) }),
-      });
-      if (!profileRes.ok) {
-        const data = (await profileRes.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail ?? "Couldn't save your goal.");
-      }
-
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",
         body: JSON.stringify({
@@ -390,46 +378,15 @@ function ActivationStep({
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">
-              Almost there, {firstName}! Tell me what you&apos;re looking for and
-              accept the terms — then I&apos;ll show matches based on your
-              LinkedIn right away.
+              Almost there, {firstName}! Accept the terms and I&apos;ll show
+              matches based on your LinkedIn right away — then tell me what
+              you&apos;re after in the chat.
             </p>
           </Bubble>
         </div>
 
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
-          <div>
-            <span className="text-small font-medium text-ink-700">
-              What brings you here?
-            </span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {GOALS.slice(0, 4).map((goal) => {
-                const Icon = goal.icon;
-                const active = selectedGoal === goal.id;
-                return (
-                  <button
-                    key={goal.id}
-                    type="button"
-                    onClick={() => setSelectedGoal(goal.id)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-micro font-medium transition-colors",
-                      active
-                        ? "border-ink-900 bg-ink-900 text-paper-0"
-                        : "border-ink-200 text-ink-600 hover:border-ink-400",
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    {goal.label}
-                  </button>
-                );
-              })}
-            </div>
-            {goalMeta && (
-              <p className="mt-2 text-micro text-ink-500">{goalMeta.benefit}</p>
-            )}
-          </div>
-
-          <div className="space-y-3 pt-1 border-t border-ink-100">
+          <div className="space-y-3">
             <label className="flex items-start gap-3 cursor-pointer group">
               <div className="relative mt-0.5 shrink-0">
                 <input
