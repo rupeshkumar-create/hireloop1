@@ -223,6 +223,7 @@ async def get_tailored_resume(
 @router.get("/tailored/{resume_id}/download")
 async def download_tailored_resume(
     resume_id: uuid.UUID,
+    print_dialog: bool = True,
     current_user: dict = Depends(get_india_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
@@ -247,7 +248,9 @@ async def download_tailored_resume(
 
     name = (row["full_name"] or "").strip()
     title = f"{name} — Resume" if name else "Resume"
-    html_doc = wrap_print_document(row["html_content"], title=title, auto_print=True)
+    # print_dialog=False is used by the in-app preview (rendered in an iframe),
+    # where auto-opening the browser print dialog would be disruptive.
+    html_doc = wrap_print_document(row["html_content"], title=title, auto_print=print_dialog)
     return Response(
         content=html_doc,
         media_type="text/html",

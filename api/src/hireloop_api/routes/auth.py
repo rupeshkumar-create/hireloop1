@@ -416,6 +416,49 @@ async def bootstrap_user(
     return {"ok": True, "role": effective_role, "is_new_user": is_new_user}
 
 
+class RoleSwitchRequest(BaseModel):
+    role: Literal["candidate", "recruiter"]
+
+
+@router.post("/role")
+async def switch_active_role(
+    body: RoleSwitchRequest,
+    current_user: dict = Depends(get_current_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Switch the signed-in account's active role, provisioning the target
+    profile on demand. This lets a single login test both the candidate and
+    recruiter experiences (public.users.role is the authoritative active role —
+    see _resolve_user_role)."""
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    if body.role == "candidate":
+        await db.execute(
+            """
+            INSERT INTO public.candidates (user_id, headline, profile_complete)
+            VALUES ($1, NULL, FALSE)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            user_id,
+        )
+    else:
+        await db.execute(
+            """
+            INSERT INTO public.recruiters (user_id, title)
+            VALUES ($1, 'Hiring Manager')
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            user_id,
+        )
+
+    await db.execute(
+        "UPDATE public.users SET role = $2, updated_at = NOW() WHERE id = $1::uuid",
+        user_id,
+        body.role,
+    )
+    return {"ok": True, "role": body.role}
+
+
 @router.post("/send-otp", response_model=SendOTPResponse, status_code=200)
 async def send_otp(
     body: SendOTPRequest,

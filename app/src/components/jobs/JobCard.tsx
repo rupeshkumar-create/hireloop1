@@ -41,6 +41,9 @@ interface JobCardProps {
   tailorStatus?: "idle" | "loading" | "ready" | "error";
   isSaved?: boolean;
   onSavedChange?: (jobId: string, saved: boolean) => void;
+  /** When true, intro / apply are disabled until profile is ready (UI gate only). */
+  applyLocked?: boolean;
+  onApplyLocked?: () => void;
   /** chat = compact actions for Aarya thread; feed = full matches panel */
   variant?: "feed" | "chat";
   className?: string;
@@ -77,6 +80,8 @@ export function JobCard({
   isSaved = false,
   onSavedChange,
   variant = "feed",
+  applyLocked = false,
+  onApplyLocked,
   className,
 }: JobCardProps) {
   const { toast } = useToast();
@@ -100,11 +105,19 @@ export function JobCard({
       .join(", ") || (job.is_remote ? null : "India");
 
   const handleIntro = () => {
+    if (applyLocked) {
+      onApplyLocked?.();
+      return;
+    }
     setIntroSent(true);
     onRequestIntro?.(job);
   };
 
   const handleApply = () => {
+    if (applyLocked) {
+      onApplyLocked?.();
+      return;
+    }
     onDirectApply?.(job);
     if (job.apply_url) {
       window.open(job.apply_url, "_blank", "noopener,noreferrer");
@@ -178,6 +191,12 @@ export function JobCard({
 
       {/* ── Tags row ───────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        {job.action_label && (
+          <Badge tone="accent">
+            <Check className="h-3 w-3 mr-0.5 inline" strokeWidth={2.5} />
+            {job.action_label}
+          </Badge>
+        )}
         {job.tier_label && (
           <Badge
             tone={
@@ -271,6 +290,7 @@ export function JobCard({
           size="sm"
           onClick={handleIntro}
           disabled={introSent}
+          title={applyLocked ? "Upload a resume or add city + CTC to request intros" : undefined}
           leftIcon={
             introSent ? (
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
@@ -287,7 +307,8 @@ export function JobCard({
           variant="secondary"
           size="sm"
           onClick={handleApply}
-          disabled={!job.apply_url}
+          disabled={!applyLocked && !job.apply_url}
+          title={applyLocked ? "Upload a resume or add city + CTC to apply" : undefined}
           leftIcon={<ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />}
           className="flex-1"
         >

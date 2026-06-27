@@ -64,11 +64,13 @@ export function storeAaryaSession(id: string): void {
 }
 
 export function readVoiceSendOnPause(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") return true;
   try {
-    return localStorage.getItem(VOICE_SEND_ON_PAUSE_KEY) === "1";
+    const v = localStorage.getItem(VOICE_SEND_ON_PAUSE_KEY);
+    if (v === null) return true;
+    return v === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 

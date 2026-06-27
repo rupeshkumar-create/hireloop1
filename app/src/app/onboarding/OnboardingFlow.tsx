@@ -12,15 +12,12 @@
  *   2. After DPDP consent (Legal step), LinkDAPI enrichment runs in the
  *      background from that URL — no separate LinkedIn form in the wizard.
  *
- * The wizard below continues that same fixed order on the client:
+ * Activation v2 — two client steps, then dashboard with jobs open:
  *
  * Step 0  Welcome          Full-screen intro with Aarya avatar
- * Step 1  Phone            Collect +91 mobile (saved for WhatsApp alerts)
- * Step 2  Goal             What kind of help are you looking for?
- * Step 3  Legal / DPDP     ToS + marketing consent — triggers LinkedIn import
- * Step 4  Resume / CV      Parse the candidate's CV
- * Step 5  Preferences      Salary, remote, location defaults
- * Step 6  Voice call       Talk to Aarya to round out the profile
+ * Step 1  Activate         Phone + goal + DPDP consent (single screen)
+ *
+ * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *
  * Design: mirrors Jack & Jill AI aesthetic — conversational bubbles, hand-drawn
  * Aarya avatar, two-column layout on desktop (content left, illustration right).
@@ -28,7 +25,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -93,14 +90,7 @@ const GOALS = [
   },
 ] as const;
 
-const PROGRESS_STEPS = [
-  { step: 1, label: "Phone" },
-  { step: 2, label: "Goal" },
-  { step: 3, label: "Consent" },
-  { step: 4, label: "CV" },
-  { step: 5, label: "Preferences" },
-  { step: 6, label: "Call" },
-] as const;
+const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
 
 type ParsedResumeHint = {
   current_title?: string;
@@ -119,7 +109,7 @@ function defaultSalaryLpa(years?: number): { min: number; max: number } {
   return { min: 25, max: 50 };
 }
 
-const ONBOARDING_STORAGE_KEY = "hireloop_onboarding_v1";
+const ONBOARDING_STORAGE_KEY = "hireloop_onboarding_v2";
 
 function clearOnboardingProgress() {
   try {
@@ -292,9 +282,9 @@ function WelcomeStep({
       <div className="mt-8 max-w-sm">
         <Bubble>
           <p className="text-body text-ink-900 leading-relaxed">
-            {greeting} I&apos;m Aarya. I&apos;m importing your LinkedIn profile
-            in the background. One quick question, then your CV — and I&apos;ll
-            line up India-only matches for you.
+            {greeting} I&apos;m Aarya. I&apos;m pulling matches from your
+            LinkedIn profile now. One quick screen — then your job matches are
+            ready on the dashboard.
           </p>
         </Bubble>
       </div>
@@ -315,6 +305,255 @@ function WelcomeStep({
     </div>
   );
 }
+
+// ── Step 1: Activation (phone + goal + consent) ─────────────────────────────
+
+function ActivationStep({
+  onBack,
+  candidateName,
+}: {
+  onBack: () => void;
+  candidateName?: string;
+}) {
+  const router = useRouter();
+  const firstName = candidateName?.split(" ")[0] ?? "there";
+
+  const [phone, setPhone] = useState("");
+  const [selectedGoal, setSelectedGoal] = useState<string>("find_new_role");
+  const [tosAccepted, setTosAccepted] = useState(false);
+  const [marketingConsent, setMarketing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const validPhone = /^[6-9]\d{9}$/.test(phone);
+  const fullPhone = `+91${phone}`;
+  const goalMeta = GOALS.find((g) => g.id === selectedGoal);
+
+  async function handleActivate() {
+    if (!validPhone || !tosAccepted || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const phoneRes = await apiAuthFetch("/api/v1/auth/save-phone", {
+        method: "POST",
+        body: JSON.stringify({ phone: fullPhone }),
+      });
+      if (!phoneRes.ok) {
+        const data = (await phoneRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? "Couldn't save your number.");
+      }
+
+      const profileRes = await apiAuthFetch("/api/v1/me/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ looking_for: goalToLookingFor(selectedGoal) }),
+      });
+      if (!profileRes.ok) {
+        const data = (await profileRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? "Couldn't save your goal.");
+      }
+
+      const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
+        method: "POST",
+        body: JSON.stringify({
+          tos_accepted: true,
+          marketing_emails: marketingConsent,
+        }),
+      });
+      if (!consentRes.ok) {
+        const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? "Couldn't save consent.");
+      }
+
+      const completeRes = await apiAuthFetch("/api/v1/me/complete-onboarding", {
+        method: "POST",
+        body: JSON.stringify({
+          skipped_voice: true,
+          skipped_resume: true,
+        }),
+      });
+      if (!completeRes.ok) {
+        const data = (await completeRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? "Couldn't finish activation.");
+      }
+
+      clearOnboardingProgress();
+      router.push("/dashboard?panel=jobs");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-paper-0 flex items-center px-6 py-12">
+      <div className="max-w-lg mx-auto w-full">
+        <OnboardingProgress currentStep={1} />
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-small text-ink-500 hover:text-ink-900 mb-8 transition-colors"
+        >
+          ← Back
+        </button>
+
+        <div className="flex items-start gap-3 mb-6">
+          <AaryaFace size="md" />
+          <Bubble>
+            <p className="text-body text-ink-900">
+              Almost there, {firstName}! Your +91 number, what you&apos;re
+              looking for, and consent — then I&apos;ll show matches based on
+              LinkedIn right away.
+            </p>
+          </Bubble>
+        </div>
+
+        <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
+          <label className="block space-y-2">
+            <span className="text-small font-medium text-ink-700">
+              +91 mobile (WhatsApp alerts)
+            </span>
+            <div className="flex">
+              <span className="inline-flex items-center gap-1.5 px-3 rounded-l-md border border-r-0 border-ink-100 bg-ink-50 text-ink-500 text-body">
+                <Phone className="h-4 w-4" strokeWidth={1.5} />
+                +91
+              </span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={phone}
+                onChange={(e) =>
+                  setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
+                }
+                placeholder="98765 43210"
+                autoComplete="tel-national"
+                className="flex-1 min-w-0 rounded-r-md border border-ink-100 bg-paper-0 px-3 py-3 text-body text-ink-900 placeholder:text-ink-300 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+            </div>
+          </label>
+
+          <div>
+            <span className="text-small font-medium text-ink-700">
+              What brings you here?
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {GOALS.slice(0, 4).map((goal) => {
+                const Icon = goal.icon;
+                const active = selectedGoal === goal.id;
+                return (
+                  <button
+                    key={goal.id}
+                    type="button"
+                    onClick={() => setSelectedGoal(goal.id)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-micro font-medium transition-colors",
+                      active
+                        ? "border-ink-900 bg-ink-900 text-paper-0"
+                        : "border-ink-200 text-ink-600 hover:border-ink-400",
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    {goal.label}
+                  </button>
+                );
+              })}
+            </div>
+            {goalMeta && (
+              <p className="mt-2 text-micro text-ink-500">{goalMeta.benefit}</p>
+            )}
+          </div>
+
+          <div className="space-y-3 pt-1 border-t border-ink-100">
+            <label className="flex items-start gap-3 cursor-pointer group">
+              <div className="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={tosAccepted}
+                  onChange={(e) => setTosAccepted(e.target.checked)}
+                  className="sr-only"
+                />
+                <div
+                  className={cn(
+                    "w-5 h-5 rounded flex items-center justify-center border-2 transition-colors",
+                    tosAccepted
+                      ? "bg-ink-900 border-ink-900"
+                      : "border-ink-300 bg-paper-0 group-hover:border-ink-500",
+                  )}
+                >
+                  {tosAccepted && (
+                    <svg viewBox="0 0 12 10" fill="none" className="w-3 h-2.5">
+                      <path d="M1 5l3 3 7-7" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </div>
+              </div>
+              <p className="text-small text-ink-700 leading-relaxed">
+                I agree to the{" "}
+                <Link href="/privacy" target="_blank" className="underline text-ink-900 hover:text-accent">
+                  privacy policy
+                </Link>
+                {" "}and{" "}
+                <Link href="/terms" target="_blank" className="underline text-ink-900 hover:text-accent">
+                  terms of service
+                </Link>
+                .
+              </p>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer group">
+              <div className="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={marketingConsent}
+                  onChange={(e) => setMarketing(e.target.checked)}
+                  className="sr-only"
+                />
+                <div
+                  className={cn(
+                    "w-5 h-5 rounded flex items-center justify-center border-2 transition-colors",
+                    marketingConsent
+                      ? "bg-ink-900 border-ink-900"
+                      : "border-ink-300 bg-paper-0 group-hover:border-ink-500",
+                  )}
+                >
+                  {marketingConsent && (
+                    <svg viewBox="0 0 12 10" fill="none" className="w-3 h-2.5">
+                      <path d="M1 5l3 3 7-7" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </div>
+              </div>
+              <p className="text-small text-ink-700 leading-relaxed">
+                Send me job alerts and updates (optional).
+              </p>
+            </label>
+          </div>
+
+          {error && <p className="text-small text-ink-700">{error}</p>}
+
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={saving}
+            disabled={!validPhone || !tosAccepted || saving}
+            onClick={() => void handleActivate()}
+            rightIcon={
+              validPhone && tosAccepted && !saving ? (
+                <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
+              ) : undefined
+            }
+          >
+            {saving ? "Activating…" : "See my matches"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Legacy steps (resume / prefs / voice — kept for reference, unused in v2) ──
 
 // ── Step 1: Goal ──────────────────────────────────────────────────────────────
 
@@ -1134,7 +1373,7 @@ function VoiceCallStep({
 
         <div className="ml-0 md:ml-[68px]">
           <Link
-            href="/voice?from=onboarding"
+            href="/dashboard?voice=deep&panel=jobs"
             onClick={() => clearOnboardingProgress()}
             className="group flex flex-col rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1 transition-shadow duration-fast ease-out-soft hover:shadow-2"
           >
@@ -1179,19 +1418,16 @@ function VoiceCallStep({
 
 export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
   const [step, setStep] = useState(0);
-  const [goal, setGoal] = useState("find_new_role");
-  const [parsedResume, setParsedResume] = useState<ParsedResumeHint | undefined>();
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(ONBOARDING_STORAGE_KEY);
       if (raw) {
-        const saved = JSON.parse(raw) as { step?: number; goal?: string };
-        if (typeof saved.step === "number" && saved.step >= 0 && saved.step <= 6) {
+        const saved = JSON.parse(raw) as { step?: number };
+        if (typeof saved.step === "number" && saved.step >= 0 && saved.step <= 1) {
           setStep(saved.step);
         }
-        if (typeof saved.goal === "string") setGoal(saved.goal);
       }
     } catch {
       /* ignore */
@@ -1203,23 +1439,11 @@ export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      sessionStorage.setItem(
-        ONBOARDING_STORAGE_KEY,
-        JSON.stringify({ step, goal }),
-      );
+      sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({ step }));
     } catch {
       /* ignore */
     }
-  }, [step, goal, hydrated]);
-
-  const handleGoalNext = useCallback((g: string) => {
-    if (g === "__back") {
-      setStep(1);
-      return;
-    }
-    setGoal(g);
-    setStep(3);
-  }, []);
+  }, [step, hydrated]);
 
   if (!hydrated) {
     return (
@@ -1229,8 +1453,6 @@ export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
     );
   }
 
-  // Each step fades up on entry (keyed by step so transitions re-animate) —
-  // makes the flow feel like one continuous, guided motion.
   const content = (() => {
     switch (step) {
     case 0:
@@ -1243,50 +1465,8 @@ export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
 
     case 1:
       return (
-        <PhoneStep
+        <ActivationStep
           onBack={() => setStep(0)}
-          onNext={() => setStep(2)}
-        />
-      );
-
-    case 2:
-      return <GoalStep onNext={handleGoalNext} />;
-
-    case 3:
-      return (
-        <LegalStep
-          onBack={() => setStep(2)}
-          onNext={() => setStep(4)}
-        />
-      );
-
-    case 4:
-      return (
-        <ResumeStep
-          onBack={() => setStep(3)}
-          onNext={(parsed) => {
-            setParsedResume(parsed);
-            setStep(5);
-          }}
-          goal={goal}
-          candidateName={candidateName}
-        />
-      );
-
-    case 5:
-      return (
-        <JobPreferencesStep
-          onBack={() => setStep(4)}
-          onNext={() => setStep(6)}
-          parsed={parsedResume}
-          candidateName={candidateName}
-        />
-      );
-
-    case 6:
-      return (
-        <VoiceCallStep
-          onBack={() => setStep(5)}
           candidateName={candidateName}
         />
       );

@@ -38,6 +38,10 @@ export type MatchedJob = {
   // Presentation layer — confidence badge from the API ranking layer.
   tier?: string | null;
   tier_label?: string | null;
+  // Action-state — what's already been done for this role (kit prepared, intro
+  // requested/sent…). null when the candidate hasn't acted on it yet.
+  action_state?: "kit_ready" | "intro" | null;
+  action_label?: string | null;
 };
 
 export type MatchFeedFilters = {

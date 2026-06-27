@@ -499,11 +499,7 @@ async def send_message(
         history = history[-_MAX_HISTORY_MESSAGES:]
 
     user_intent = _detect_likely_intent(body.content)
-    include_prefetch = (
-        body.content_type == "voice"
-        or user_intent == "job_search"
-        or bool(prefetched_jobs)
-    )
+    include_prefetch = user_intent == "job_search"
 
     messages = [
         HumanMessage(content=r["content"])

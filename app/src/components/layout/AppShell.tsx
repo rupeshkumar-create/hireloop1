@@ -16,6 +16,7 @@ import {
 } from "@/lib/candidate-nav";
 import { Avatar } from "@/components/ui";
 import { BackToAaryaLink, ContextHeader } from "@/components/ux";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { cn } from "@/lib/utils";
 
 export type AppShellProps = {
@@ -111,7 +112,10 @@ export function AppShell({
               )}
               <h1 className="truncate text-h2 text-ink-900">{title}</h1>
             </div>
-            {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+            <div className="flex shrink-0 items-center gap-2">
+              <RoleSwitchButton to="recruiter" target="/recruiter" />
+              {action}
+            </div>
           </header>
           <main className="flex-1 overflow-y-auto bg-paper-0 px-4 pb-24 pt-6 md:px-6 md:pb-10">
             <div className={cn("mx-auto w-full", contentWidth)}>{children}</div>

@@ -38,11 +38,19 @@ type TurnState =
 interface VoiceSessionProps {
   candidateName?: string;
   fromOnboarding?: boolean;
+  /** When set, render inside a modal/sheet and call back instead of navigating away. */
+  embedded?: boolean;
+  onComplete?: () => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProps) {
+export function VoiceSession({
+  candidateName,
+  fromOnboarding,
+  embedded = false,
+  onComplete,
+}: VoiceSessionProps) {
   const router = useRouter();
   const {
     startRecording,
@@ -376,8 +384,14 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
     } catch {
       /* ignore */
     }
-    setTimeout(() => router.push("/dashboard?voice=done"), 1200);
-  }, [elapsedSecs, fromOnboarding, router, stopSpeaking]);
+    setTimeout(() => {
+      if (embedded && onComplete) {
+        onComplete();
+      } else {
+        router.push("/dashboard?voice=done");
+      }
+    }, 1200);
+  }, [elapsedSecs, embedded, fromOnboarding, onComplete, router, stopSpeaking]);
 
   /** Tap mic: barge-in while Aarya speaks, or force-stop capture while listening */
   const handleMicTap = useCallback(async () => {
@@ -429,14 +443,19 @@ export function VoiceSession({ candidateName, fromOnboarding }: VoiceSessionProp
     user_listening: "Your turn — speak now",
     processing:     "Aarya is thinking…",
     ending:         "Saving session…",
-    done:           "Session complete — heading to dashboard",
+    done:           embedded ? "Session complete" : "Session complete — heading to dashboard",
   };
   const visibleStatus = streamStatus ?? statusLabel[turnState];
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-paper-0 flex flex-col items-center justify-center px-5 py-12">
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center px-5 py-12",
+        embedded ? "min-h-0 py-6" : "min-h-screen bg-paper-0",
+      )}
+    >
       <div className="max-w-sm w-full flex flex-col items-center gap-8">
 
         {/* ── Aarya avatar + animated rings ────────────────────────────── */}

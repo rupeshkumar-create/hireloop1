@@ -266,12 +266,16 @@ async def _resolve_user_role(
     stored_role: str,
 ) -> str:
     """
-    Return the effective app role. Recruiters row wins over a stale users.role
-    (bootstrap with the wrong signup tab can mark recruiters as candidate).
-    Self-heals public.users.role when we detect a recruiters row.
+    Return the effective app role.
+
+    public.users.role is the *active* role and is authoritative — this lets a
+    dual-role account (one that has both a candidate and a recruiter profile)
+    flip between sides via POST /auth/role without the resolver fighting it back.
+    We only fall back to inferring from a recruiters row when the stored role is
+    missing/invalid (defensive).
     """
-    if stored_role == "admin":
-        return "admin"
+    if stored_role in ("admin", "candidate", "recruiter"):
+        return stored_role
     is_recruiter = await db.fetchval(
         """
         SELECT 1 FROM public.recruiters
@@ -279,18 +283,7 @@ async def _resolve_user_role(
         """,
         user_id,
     )
-    if is_recruiter:
-        if stored_role != "recruiter":
-            await db.execute(
-                """
-                UPDATE public.users
-                SET role = 'recruiter', updated_at = NOW()
-                WHERE id = $1::uuid AND deleted_at IS NULL
-                """,
-                user_id,
-            )
-        return "recruiter"
-    return stored_role
+    return "recruiter" if is_recruiter else "candidate"
 
 
 async def get_current_user(

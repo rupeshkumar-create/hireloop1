@@ -7,14 +7,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Download, FileText, RefreshCw } from "lucide-react";
+import { Eye, FileText, RefreshCw } from "lucide-react";
 import {
   listTailoredResumes,
-  openTailoredDownload,
   type TailoredResumeRow,
 } from "@/lib/api/tailored";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
+import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 
 const STATUS_META: Record<
   string,
@@ -30,6 +30,7 @@ export default function ResumesPage() {
   const [rows, setRows]       = useState<TailoredResumeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const [preview, setPreview] = useState<TailoredResumeRow | null>(null);
 
   function load() {
     setLoading(true);
@@ -112,10 +113,10 @@ export default function ResumesPage() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => openTailoredDownload(r.id)}
-                      leftIcon={<Download className="h-3.5 w-3.5" strokeWidth={1.5} />}
+                      onClick={() => setPreview(r)}
+                      leftIcon={<Eye className="h-3.5 w-3.5" strokeWidth={1.5} />}
                     >
-                      Download
+                      Preview
                     </Button>
                   )}
                 </div>
@@ -124,6 +125,14 @@ export default function ResumesPage() {
           );
         })}
       </div>
+
+      <ResumePreviewModal
+        open={!!preview}
+        onClose={() => setPreview(null)}
+        resumeId={preview?.id ?? null}
+        jobId={preview?.job_id ?? null}
+        jobTitle={preview?.job_title ?? null}
+      />
     </AppShell>
   );
 }

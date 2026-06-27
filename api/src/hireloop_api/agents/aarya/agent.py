@@ -434,9 +434,15 @@ def build_turn_context_prompt(
             "- delivery: Keep the next reply short and spoken; no markdown, "
             "emoji, bullets, or headings."
         )
+        if likely_intent not in ("job_search", "job_application", "intro_request"):
+            guidance.append(
+                "- action_policy: voice turn — respond directly. Do NOT call "
+                "job_search or build_career_path unless the candidate explicitly "
+                "asks to see jobs, roles, openings, or matches."
+            )
         guidance.append(
-            "- voice_tool_budget: ONE tool round only — batch profile_read, "
-            "build_career_path, and job_search together when finding roles."
+            "- voice_tool_budget: ONE tool round only — batch tools when needed; "
+            "let the candidate ask before searching roles."
         )
         if _detect_hinglish(last_text):
             guidance.append(

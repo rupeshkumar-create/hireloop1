@@ -61,3 +61,32 @@ export function openTailoredDownload(resumeId: string) {
   const url = `${getApiBaseUrl()}/api/v1/tailored-resumes/tailored/${resumeId}/download`;
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+/**
+ * Fetch the rendered resume HTML for in-app preview (no auto-print dialog).
+ * Goes through apiAuthFetch so the bearer token is attached — the endpoint is
+ * auth-protected, so a bare window.open / iframe src would 401.
+ */
+export async function fetchTailoredResumeHtml(resumeId: string): Promise<string> {
+  const res = await apiAuthFetch(
+    `/api/v1/tailored-resumes/tailored/${resumeId}/download?print_dialog=false`
+  );
+  if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
+  return res.text();
+}
+
+/**
+ * Authenticated download — opens the print-ready resume in a new tab with the
+ * bearer token attached (via a blob URL), unlike the bare openTailoredDownload.
+ */
+export async function downloadTailoredResume(resumeId: string): Promise<void> {
+  const res = await apiAuthFetch(
+    `/api/v1/tailored-resumes/tailored/${resumeId}/download`
+  );
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+  // Revoke after the new tab has had time to load the document.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

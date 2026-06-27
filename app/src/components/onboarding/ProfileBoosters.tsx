@@ -1,0 +1,146 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import { FileText, Mic, MapPin, IndianRupee, ChevronRight } from "lucide-react";
+import { ResumeUpload } from "@/components/resume/ResumeUpload";
+import { Button, Card, CardBody } from "@/components/ui";
+import { updateMyProfile } from "@/lib/api/profile";
+import { cn } from "@/lib/utils";
+
+type ProfileBoostersProps = {
+  hasResume: boolean;
+  hasVoiceSession: boolean;
+  canApply: boolean;
+  onProfileUpdated?: () => void;
+  className?: string;
+};
+
+export function ProfileBoosters({
+  hasResume,
+  hasVoiceSession,
+  canApply,
+  onProfileUpdated,
+  className,
+}: ProfileBoostersProps) {
+  const [locationCity, setLocationCity] = useState("");
+  const [ctcMinLpa, setCtcMinLpa] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedPrefs, setSavedPrefs] = useState(false);
+
+  async function saveMinimalProfile() {
+    const city = locationCity.trim();
+    const lpa = Number.parseFloat(ctcMinLpa);
+    if (!city || !Number.isFinite(lpa) || lpa <= 0) {
+      setError("Add your city and expected CTC (LPA) to unlock apply and intros.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await updateMyProfile({
+        location_city: city,
+        expected_ctc_min: Math.round(lpa * 100_000),
+      });
+      setSavedPrefs(true);
+      onProfileUpdated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save preferences.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (canApply && hasResume && hasVoiceSession) return null;
+
+  return (
+    <Card className={cn("border-accent/20 bg-accent/5", className)}>
+      <CardBody className="space-y-4 p-4">
+        <div>
+          <p className="text-small font-semibold text-ink-900">
+            {canApply ? "Boost your matches" : "Unlock apply & intros"}
+          </p>
+          <p className="mt-0.5 text-micro text-ink-500 leading-relaxed">
+            {canApply
+              ? "Add a CV or talk to Aarya to sharpen your match scores."
+              : "Upload a resume or add city + expected CTC — then you can request intros and apply."}
+          </p>
+        </div>
+
+        {!hasResume && (
+          <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-2">
+            <div className="flex items-center gap-2 text-small font-medium text-ink-900">
+              <FileText className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
+              Upload resume
+            </div>
+            <ResumeUpload
+              autoApply
+              onDone={() => onProfileUpdated?.()}
+            />
+          </div>
+        )}
+
+        {!canApply && !savedPrefs && (
+          <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-3">
+            <div className="flex items-center gap-2 text-small font-medium text-ink-900">
+              <MapPin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
+              Or add city &amp; CTC
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block space-y-1">
+                <span className="text-micro text-ink-500">City</span>
+                <input
+                  value={locationCity}
+                  onChange={(e) => setLocationCity(e.target.value)}
+                  placeholder="Bangalore"
+                  className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-micro text-ink-500 flex items-center gap-1">
+                  <IndianRupee className="h-3 w-3" />
+                  Expected CTC (LPA)
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={ctcMinLpa}
+                  onChange={(e) => setCtcMinLpa(e.target.value)}
+                  placeholder="18"
+                  className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+                />
+              </label>
+            </div>
+            {error && <p className="text-micro text-destructive">{error}</p>}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
+              loading={saving}
+              onClick={() => void saveMinimalProfile()}
+            >
+              Save & unlock apply
+            </Button>
+          </div>
+        )}
+
+        {!hasVoiceSession && (
+          <Link
+            href="/dashboard?voice=deep&panel=jobs"
+            className="group flex items-center justify-between rounded-lg border border-ink-100 bg-paper-0 px-3 py-2.5 hover:border-ink-200 transition-colors"
+          >
+            <span className="flex items-center gap-2 text-small font-medium text-ink-900">
+              <Mic className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
+              15-min call with Aarya
+            </span>
+            <ChevronRight
+              className="h-4 w-4 text-ink-400 group-hover:translate-x-0.5 transition-transform"
+              strokeWidth={1.5}
+            />
+          </Link>
+        )}
+      </CardBody>
+    </Card>
+  );
+}

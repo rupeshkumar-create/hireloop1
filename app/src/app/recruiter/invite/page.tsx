@@ -14,6 +14,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, CheckCircle, UserPlus } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
+import {
+  createRole,
+  updateRecruiterProfile,
+} from "@/lib/api/recruiter";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button, Card, CardBody, EmptyState } from "@/components/ui";
 
@@ -68,6 +72,24 @@ function InviteInner() {
       await apiFetch(`/api/v1/recruiter/invite/${encodeURIComponent(token)}/accept`, {
         method: "POST",
       });
+
+      // Door A: minimal onboarding — company from invite, straight to inbox.
+      if (preview) {
+        try {
+          await updateRecruiterProfile({
+            company_name: preview.company_name ?? undefined,
+            onboarding_complete: true,
+          });
+          if (preview.job_title) {
+            await createRole({
+              title: preview.job_title,
+            });
+          }
+        } catch {
+          /* non-fatal — user can finish profile later */
+        }
+      }
+
       setAccepted(true);
     } catch (e) {
       setError((e as Error).message);

@@ -37,6 +37,10 @@ import { JobCard } from "./JobCard";
 interface MatchFeedProps {
   conversationId?: string;
   onRequestIntro?: (job: MatchedJob) => void;
+  onDirectApply?: (job: MatchedJob) => void;
+  applyLocked?: boolean;
+  /** Shows a "Based on LinkedIn" hint when matches predate a resume upload. */
+  matchSourceBadge?: "linkedin";
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   className?: string;
@@ -102,6 +106,9 @@ function applyLocalFilters(
 export function MatchFeed({
   conversationId,
   onRequestIntro,
+  onDirectApply,
+  applyLocked = false,
+  matchSourceBadge,
   savedJobIds = new Set(),
   onSavedChange,
   className,
@@ -244,6 +251,14 @@ export function MatchFeed({
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
+      {matchSourceBadge === "linkedin" && (
+        <p className="text-micro text-ink-500 mb-3 shrink-0">
+          <span className="inline-flex items-center rounded-full bg-ink-100 px-2 py-0.5 font-medium text-ink-700">
+            Based on LinkedIn
+          </span>
+          {" "}— upload a CV to sharpen scores.
+        </p>
+      )}
       {/* ── Filter bar ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3 pb-4 mb-4 border-b border-ink-100 shrink-0">
         {/* Min score */}
@@ -352,10 +367,15 @@ export function MatchFeed({
                       job={job}
                       conversationId={conversationId}
                       onRequestIntro={onRequestIntro}
-                      onDirectApply={(j) => {
-                        if (j.apply_url)
-                          window.open(j.apply_url, "_blank", "noopener,noreferrer");
-                      }}
+                      onDirectApply={
+                        onDirectApply ??
+                        ((j) => {
+                          if (j.apply_url) {
+                            window.open(j.apply_url, "_blank", "noopener,noreferrer");
+                          }
+                        })
+                      }
+                      applyLocked={applyLocked}
                       onTailorResume={handleTailorResume}
                       tailorStatus={tailorByJob[job.job_id] ?? "idle"}
                       isSaved={savedJobIds.has(job.job_id)}

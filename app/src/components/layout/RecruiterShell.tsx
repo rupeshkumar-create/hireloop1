@@ -4,16 +4,21 @@
  * RecruiterShell — persistent nav for the recruiter workspace.
  */
 
+import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
+  ArrowLeftRight,
   Briefcase,
   Inbox,
   Kanban,
+  Loader2,
   Plus,
   Settings,
   type LucideIcon,
 } from "lucide-react";
+import { switchActiveRole } from "@/lib/api/role";
+import { useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 type NavId = "inbox" | "roles" | "settings";
@@ -43,9 +48,24 @@ type RecruiterShellProps = {
 
 export function RecruiterShell({ children }: RecruiterShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { toast } = useToast();
+  const [switching, setSwitching] = useState(false);
   const fullBleed = Boolean(
     pathname?.match(/\/recruiter\/roles\/[^/]+\/(intake|pipeline)/)
   );
+
+  const switchToCandidate = async () => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      await switchActiveRole("candidate");
+      router.push("/dashboard");
+    } catch {
+      toast.error("Couldn't switch roles — try again");
+      setSwitching(false);
+    }
+  };
 
   const isActive = (item: NavItem) =>
     pathname === item.href ||
@@ -83,6 +103,20 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
         </nav>
 
         <div className="mt-2 flex flex-col items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void switchToCandidate()}
+            disabled={switching}
+            title="Switch to candidate view"
+            aria-label="Switch to candidate view"
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-ink-400 hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-50"
+          >
+            {switching ? (
+              <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
+            ) : (
+              <ArrowLeftRight className="h-[18px] w-[18px]" strokeWidth={1.5} />
+            )}
+          </button>
           <Link
             href="/recruiter/roles/new"
             title="New role"

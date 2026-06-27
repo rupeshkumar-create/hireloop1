@@ -1,0 +1,15 @@
+# Railway only builds the api/ service (Root Directory = api). Exclude the JS
+# workspace and everything the Python image doesn't need — this keeps the upload
+# small and keeps Railway's dependency CVE scanner off the frontend's
+# pnpm-lock.yaml (next.js advisories that don't apply to the Python backend).
+app/
+web/
+node_modules/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package.json
+.next/
+.vercel/
+.git/
+supabase/
+*.md

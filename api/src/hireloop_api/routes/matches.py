@@ -481,7 +481,18 @@ async def _fetch_cached_match_rows(
             ms.explanation,
             ms.llm_rationale,
             ms.llm_rationale_at,
-            ms.computed_at
+            ms.computed_at,
+            -- Action-state: surface what the candidate (or Aarya) has already done
+            -- for this role, so an acted-on match no longer looks untouched.
+            EXISTS (
+                SELECT 1 FROM public.job_application_kits k
+                WHERE k.candidate_id = ms.candidate_id AND k.job_id = ms.job_id
+            ) AS has_kit,
+            (
+                SELECT ir.status FROM public.intro_requests ir
+                WHERE ir.candidate_id = ms.candidate_id AND ir.job_id = ms.job_id
+                ORDER BY ir.created_at DESC LIMIT 1
+            ) AS intro_status
         FROM public.match_scores ms
         JOIN public.jobs j ON j.id = ms.job_id
         LEFT JOIN public.companies co ON co.id = j.company_id
@@ -514,20 +525,54 @@ async def _fetch_cached_match_rows(
     )
 
 
+# Maps the latest intro_requests.status to a candidate-facing feed label.
+_INTRO_STATUS_LABELS = {
+    "pending": "Intro requested",
+    "enriching": "Intro requested",
+    "drafting": "Intro requested",
+    "sent": "Intro sent",
+    "opened": "Intro opened",
+    "replied": "HM replied",
+    "declined": "Intro declined",
+    "cancelled": None,  # treat as no active action
+}
+
+
+def _action_state(*, has_kit: bool, intro_status: str | None) -> tuple[str | None, str | None]:
+    """Return (state, label) describing what's already been done for this role.
+
+    Intro progress takes precedence over a prepared kit, since it's the later
+    step in the apply funnel. Returns (None, None) when nothing actionable.
+    """
+    if intro_status:
+        label = _INTRO_STATUS_LABELS.get(intro_status)
+        if label:
+            return "intro", label
+    if has_kit:
+        return "kit_ready", "Kit ready"
+    return None, None
+
+
 def _serialize_cached_match_row(row: asyncpg.Record | dict) -> dict:
     data = dict(row)
     # A cached LLM rationale is usable only if it was generated AFTER the latest
     # score (otherwise the row was re-scored and the rationale may be stale).
     llm = data.pop("llm_rationale", None)
     llm_at = data.pop("llm_rationale_at", None)
+    has_kit = bool(data.pop("has_kit", False))
+    intro_status = data.pop("intro_status", None)
     computed_at = data["computed_at"]
     fresh = bool(llm) and (llm_at is None or computed_at is None or llm_at >= computed_at)
+
+    action_state, action_label = _action_state(has_kit=has_kit, intro_status=intro_status)
 
     item = {
         **data,
         "job_id": str(row["job_id"]),
         "skills_required": row["skills_required"] or [],
         "computed_at": computed_at.isoformat() if computed_at else None,
+        "action_state": action_state,
+        "action_label": action_label,
         # Internal flag (stripped before the response): True when a fresh LLM
         # rationale is already cached, so the overlay can skip regenerating it.
         "_rationale_cached": fresh,

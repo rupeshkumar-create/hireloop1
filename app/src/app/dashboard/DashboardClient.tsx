@@ -90,9 +90,9 @@ import { NextBestStep } from "@/components/dashboard/NextBestStep";
 import { fetchCareerPath } from "@/lib/api/career";
 import { CareerIntelligencePanel } from "@/components/profile/CareerIntelligencePanel";
 import { GoogleConnectCard } from "@/components/profile/GoogleConnectCard";
+import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import {
   IntelligenceHero,
-  MatchesUnlockGate,
   NotificationDrawer,
 } from "@/components/ux";
 import { fetchCareerIntelligence } from "@/lib/api/career";
@@ -171,10 +171,14 @@ interface DashboardClientProps {
   conversationId?: string;
   candidateName?: string;
   initialInput?: string;
-  /** Panel to open on first render (e.g. when arriving from /matches). */
+  /** Panel to open on first render (defaults to jobs). */
   initialPanel?: PanelId;
-  /** When true, show the "resume upload or 15-min call" CTA. */
-  showUnlockJobsCta?: boolean;
+  /** When false, apply / intro actions are gated in the UI only. */
+  canApplyOrIntro?: boolean;
+  hasResume?: boolean;
+  hasVoiceSession?: boolean;
+  showProfileBoosters?: boolean;
+  initialVoiceDeepDive?: boolean;
   /** When true, show an Admin button in the top nav (super admin only). */
   showAdminLink?: boolean;
 }
@@ -183,16 +187,21 @@ export function DashboardClient({
   conversationId: initialConvoId,
   candidateName,
   initialInput,
-  initialPanel,
-  showUnlockJobsCta = false,
+  initialPanel = "jobs",
+  canApplyOrIntro = true,
+  hasResume = false,
+  hasVoiceSession = false,
+  showProfileBoosters = false,
+  initialVoiceDeepDive = false,
   showAdminLink = false,
 }: DashboardClientProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const [activeConvoId, setActiveConvoId] = useState<string | null>(
     initialConvoId ?? null
   );
   const [pendingIntros, setPendingIntros] = useState(false);
-  const [activePanel, setActivePanel]     = useState<PanelId | null>(initialPanel ?? null);
+  const [activePanel, setActivePanel]     = useState<PanelId | null>(initialPanel ?? "jobs");
   const [signingOut, setSigningOut]       = useState(false);
   const [injected, setInjected]           = useState<{ text: string; nonce: number } | null>(null);
   const [savedJobIds, setSavedJobIds]     = useState<Set<string>>(new Set());
@@ -251,11 +260,31 @@ export function DashboardClient({
   // "Request intro" from a job card → close the Jobs panel and pre-fill the
   // chat so Aarya picks up the request with full context.
   function handleRequestIntro(job: MatchedJob) {
+    if (!canApplyOrIntro) {
+      toast.error("Upload a resume or add city + CTC to request intros.");
+      setActivePanel("jobs");
+      return;
+    }
     sendToChat(
       `I'd like to request an intro for the "${job.title}" role at ${
         job.company_name ?? "this company"
       } (job ID: ${job.job_id}).`
     );
+  }
+
+  function handleDirectApply(job: MatchedJob) {
+    if (!canApplyOrIntro) {
+      toast.error("Upload a resume or add city + CTC to apply.");
+      setActivePanel("jobs");
+      return;
+    }
+    if (job.apply_url) {
+      window.open(job.apply_url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  function handleProfileBoosted() {
+    router.refresh();
   }
 
   // Sign out client-side so we never get caught by <Link> prefetch firing the
@@ -305,13 +334,6 @@ export function DashboardClient({
         signingOut={signingOut}
       />
 
-      {/* Unlock CTA — only shown when no panel is open */}
-      {!activePanel && showUnlockJobsCta && (
-        <div className="shrink-0 px-4 py-2 border-b border-ink-100">
-          <MatchesUnlockGate onUploadResume={() => setActivePanel("profile")} />
-        </div>
-      )}
-
       {/* ── Content split: preview LEFT, chat RIGHT ─────────────────── */}
       {/* `relative` anchors the mobile overlay panel below. */}
       <main className="flex-1 min-h-0 flex overflow-hidden relative">
@@ -347,7 +369,11 @@ export function DashboardClient({
               {activePanel === "home"     && (
                 <HomePanel
                   candidateName={candidateName}
-                  showUnlockCta={showUnlockJobsCta}
+                  showProfileBoosters={showProfileBoosters}
+                  hasResume={hasResume}
+                  hasVoiceSession={hasVoiceSession}
+                  canApply={canApplyOrIntro}
+                  onProfileBoosted={handleProfileBoosted}
                   onSendToChat={sendToChat}
                   onOpenPanel={setActivePanel}
                 />
@@ -357,9 +383,13 @@ export function DashboardClient({
               {activePanel === "jobs"     && (
                 <JobsPanel
                   conversationId={activeConvoId ?? undefined}
-                  locked={showUnlockJobsCta}
+                  canApplyOrIntro={canApplyOrIntro}
+                  showProfileBoosters={showProfileBoosters}
+                  hasResume={hasResume}
+                  hasVoiceSession={hasVoiceSession}
+                  onProfileBoosted={handleProfileBoosted}
                   onRequestIntro={handleRequestIntro}
-                  onUnlock={() => setActivePanel("profile")}
+                  onDirectApply={handleDirectApply}
                   savedJobIds={savedJobIds}
                   onSavedChange={handleSavedChange}
                   savedJobsRefreshKey={savedJobsRefreshKey}
@@ -375,7 +405,8 @@ export function DashboardClient({
           <ChatInterface
             conversationId={activeConvoId}
             initialInput={initialInput}
-            isLocked={showUnlockJobsCta}
+            candidateName={candidateName}
+            initialVoiceDeepDive={initialVoiceDeepDive}
             injectedMessage={injected}
             className="h-full"
             onSessionCreated={(id) => setActiveConvoId(id)}
@@ -561,12 +592,20 @@ function SetupChecklist({
 
 function HomePanel({
   candidateName,
-  showUnlockCta,
+  showProfileBoosters,
+  hasResume,
+  hasVoiceSession,
+  canApply,
+  onProfileBoosted,
   onSendToChat,
   onOpenPanel,
 }: {
   candidateName?: string;
-  showUnlockCta?: boolean;
+  showProfileBoosters?: boolean;
+  hasResume?: boolean;
+  hasVoiceSession?: boolean;
+  canApply?: boolean;
+  onProfileBoosted?: () => void;
   onSendToChat: (text: string) => void;
   onOpenPanel: (id: PanelId) => void;
 }) {
@@ -723,41 +762,14 @@ function HomePanel({
         ))}
       </div>
 
-      {/* Unlock CTA (when locked) */}
-      {showUnlockCta && (
-        <Card>
-          <CardBody className="space-y-2.5">
-            <div className="flex items-center gap-2">
-              <Bell className="h-4 w-4 text-accent" strokeWidth={1.5} />
-              <p className="text-small font-semibold text-ink-900">Unlock job matches</p>
-            </div>
-            <p className="text-micro text-ink-600">
-              Upload your resume or start a 15‑min voice session with Aarya.
-              Either path unlocks personalised matches.
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onOpenPanel("profile")}
-              >
-                Upload resume
-              </Button>
-              <Link
-                href="/voice"
-                className={cn(
-                  "inline-flex items-center justify-center font-medium",
-                  "transition-colors duration-fast ease-out-soft",
-                  "bg-accent text-accent-fg hover:bg-accent-hover",
-                  "h-8 px-3 text-small gap-1.5 rounded-md"
-                )}
-              >
-                <Phone className="h-3.5 w-3.5" strokeWidth={2} />
-                15‑min call
-              </Link>
-            </div>
-          </CardBody>
-        </Card>
+      {/* Profile boosters */}
+      {showProfileBoosters && (
+        <ProfileBoosters
+          hasResume={hasResume ?? false}
+          hasVoiceSession={hasVoiceSession ?? false}
+          canApply={canApply ?? true}
+          onProfileUpdated={onProfileBoosted}
+        />
       )}
 
       {/* Talk to Aarya */}
@@ -777,7 +789,7 @@ function HomePanel({
             or get help with your job search.
           </p>
           <Link
-            href="/voice"
+            href="/dashboard?voice=deep&panel=jobs"
             className={cn(
               "inline-flex items-center justify-center font-medium",
               "transition-colors duration-fast ease-out-soft",
@@ -1711,67 +1723,44 @@ type JobsTab = "matches" | "path" | "saved";
 
 function JobsPanel({
   conversationId,
-  locked,
+  canApplyOrIntro,
+  showProfileBoosters,
+  hasResume,
+  hasVoiceSession,
+  onProfileBoosted,
   onRequestIntro,
-  onUnlock,
+  onDirectApply,
   savedJobIds,
   onSavedChange,
   savedJobsRefreshKey,
 }: {
   conversationId?: string;
-  locked?: boolean;
+  canApplyOrIntro?: boolean;
+  showProfileBoosters?: boolean;
+  hasResume?: boolean;
+  hasVoiceSession?: boolean;
+  onProfileBoosted?: () => void;
   onRequestIntro: (job: MatchedJob) => void;
-  onUnlock: () => void;
+  onDirectApply: (job: MatchedJob) => void;
   savedJobIds: Set<string>;
   onSavedChange: (jobId: string, saved: boolean) => void;
   savedJobsRefreshKey: number;
 }) {
   const [tab, setTab] = useState<JobsTab>("matches");
-  // Locked users have no matches yet — show the unlock paths instead of an
-  // empty feed, mirroring the dashboard's unlock CTA.
-  if (locked) {
-    return (
-      <div className="p-5 space-y-4">
-        <Card>
-          <CardBody>
-            <div className="flex flex-col items-center gap-4 py-6 text-center">
-              <div className="w-14 h-14 rounded-xl bg-ink-100 flex items-center justify-center">
-                <Briefcase className="h-7 w-7 text-ink-500" strokeWidth={1.5} />
-              </div>
-              <div className="space-y-1">
-                <p className="text-small font-semibold text-ink-900">
-                  Unlock your job matches
-                </p>
-                <p className="text-micro text-ink-500 max-w-xs">
-                  Upload your resume or do a 15‑min call with Aarya — either
-                  path unlocks personalised matches.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={onUnlock}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-paper-0 text-ink-700 text-small font-medium px-4 py-2 hover:border-ink-300 hover:bg-ink-50 hover:text-ink-900 transition-colors"
-                >
-                  Upload resume
-                </button>
-                <Link
-                  href="/voice"
-                  className="inline-flex items-center gap-1.5 rounded-full bg-ink-900 text-paper-0 text-small font-medium px-4 py-2 hover:bg-ink-800 transition-colors"
-                >
-                  15‑min call
-                  <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
-                </Link>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full">
+      {showProfileBoosters && (
+        <div className="p-5 pb-0 shrink-0">
+          <ProfileBoosters
+            hasResume={hasResume ?? false}
+            hasVoiceSession={hasVoiceSession ?? false}
+            canApply={canApplyOrIntro ?? true}
+            onProfileUpdated={onProfileBoosted}
+          />
+        </div>
+      )}
+
       <div className="flex items-center gap-1 px-5 pt-4 border-b border-ink-100 shrink-0">
         <button
           type="button"
@@ -1821,6 +1810,9 @@ function JobsPanel({
           <MatchFeed
             conversationId={conversationId}
             onRequestIntro={onRequestIntro}
+            onDirectApply={onDirectApply}
+            applyLocked={!canApplyOrIntro}
+            matchSourceBadge={!hasResume ? "linkedin" : undefined}
             savedJobIds={savedJobIds}
             onSavedChange={onSavedChange}
             className="h-full p-5"

@@ -33,6 +33,10 @@ export default async function DashboardPage({
     ? (panelValue as PanelId)
     : undefined;
 
+  const voiceRaw = sp.voice;
+  const voiceParam = Array.isArray(voiceRaw) ? voiceRaw[0] : voiceRaw;
+  const initialVoiceDeepDive = voiceParam === "deep";
+
   const supabase = await createClient();
 
   const {
@@ -84,20 +88,29 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: candidateRaw } = await (supabase as any)
     .from("candidates")
-    .select("id")
+    .select("id, location_city, expected_ctc_min, expected_ctc_max")
     .eq("user_id", user.id)
     .is("deleted_at", null)
-    .maybeSingle() as { data: { id: string } | null };
+    .maybeSingle() as {
+    data: {
+      id: string;
+      location_city: string | null;
+      expected_ctc_min: number | null;
+      expected_ctc_max: number | null;
+    } | null;
+  };
 
   if (!candidateRaw) {
     redirect("/onboarding");
   }
 
-  const candidateId = (candidateRaw as { id: string }).id;
+  const candidateId = candidateRaw.id;
+  const hasMinimalProfile =
+    Boolean(candidateRaw.location_city?.trim()) &&
+    ((candidateRaw.expected_ctc_min ?? 0) > 0 ||
+      (candidateRaw.expected_ctc_max ?? 0) > 0);
 
-  // ── Gate hint (resume OR completed voice session) ───────────────────────
-  // Jobs feed (/matches) is access-gated. We surface the same two unlock
-  // paths on the dashboard so users don't miss it.
+  // ── Profile readiness (frontend gates only — match APIs unchanged) ────────
   const [resumeResult, voiceResult] = await Promise.all([
     // Any resume uploaded for this candidate
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,7 +130,9 @@ export default async function DashboardPage({
 
   const hasResume = (resumeResult.count ?? 0) > 0;
   const hasVoiceSession = (voiceResult.count ?? 0) > 0;
-  const isUnlocked = hasResume || hasVoiceSession;
+  const canApplyOrIntro = hasResume || hasMinimalProfile;
+  const showProfileBoosters =
+    !canApplyOrIntro || !hasResume || !hasVoiceSession;
 
   // Try to surface a pre-existing session so returning users see their history.
   // This is best-effort: if the Supabase server-side session isn't available yet
@@ -165,8 +180,12 @@ export default async function DashboardPage({
       conversationId={conversationId}
       candidateName={profile?.full_name ?? undefined}
       initialInput={initMessage}
-      initialPanel={initialPanel}
-      showUnlockJobsCta={!isUnlocked}
+      initialPanel={initialPanel ?? "jobs"}
+      canApplyOrIntro={canApplyOrIntro}
+      hasResume={hasResume}
+      hasVoiceSession={hasVoiceSession}
+      showProfileBoosters={showProfileBoosters}
+      initialVoiceDeepDive={initialVoiceDeepDive}
       showAdminLink={canSeeAdmin}
     />
   );

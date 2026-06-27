@@ -261,7 +261,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <Link
-            href="/voice"
+            href="/dashboard?voice=deep&panel=jobs"
             className="group rounded-xl border border-ink-200 bg-paper-1 p-3 text-left transition-colors hover:border-ink-300 hover:bg-ink-50"
           >
             <Phone className="h-5 w-5 text-ink-900" strokeWidth={1.5} />
