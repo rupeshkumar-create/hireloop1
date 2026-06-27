@@ -25,7 +25,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -37,6 +37,7 @@ import {
   Phone,
   Search,
   TrendingUp,
+  Upload,
 } from "lucide-react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
@@ -44,6 +45,11 @@ import {
   type LocationScope,
   type RemotePreference,
 } from "@/lib/api/profile";
+import {
+  isValidLinkedInUrl,
+  saveLinkedInUrl,
+  uploadResumeAndApply,
+} from "@/lib/api/onboardingProfile";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
@@ -318,16 +324,32 @@ function ActivationStep({
   const router = useRouter();
   const firstName = candidateName?.split(" ")[0] ?? "there";
 
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const validUrl = isValidLinkedInUrl(linkedinUrl);
+  const hasProfileSource = validUrl || resumeFile !== null;
 
   async function handleActivate() {
     if (!tosAccepted || saving) return;
+    if (!hasProfileSource) {
+      setError(
+        "Add your LinkedIn URL or upload your CV — LinkedIn sign-in alone can't see your experience.",
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
+      // Profile source first, so the post-consent enrichment picks it up.
+      if (validUrl) await saveLinkedInUrl(linkedinUrl);
+      if (resumeFile) await uploadResumeAndApply(resumeFile);
+
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",
         body: JSON.stringify({
@@ -344,7 +366,7 @@ function ActivationStep({
         method: "POST",
         body: JSON.stringify({
           skipped_voice: true,
-          skipped_resume: true,
+          skipped_resume: resumeFile === null,
         }),
       });
       if (!completeRes.ok) {
@@ -378,15 +400,50 @@ function ActivationStep({
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">
-              Almost there, {firstName}! Accept the terms and I&apos;ll show
-              matches based on your LinkedIn right away — then tell me what
-              you&apos;re after in the chat.
+              Almost there, {firstName}! LinkedIn sign-in only shares your name
+              and email — add your profile link or CV so I can pull your
+              experience and show real matches.
             </p>
           </Bubble>
         </div>
 
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
           <div className="space-y-3">
+            <span className="text-small font-medium text-ink-700">Add your profile</span>
+            <input
+              type="url"
+              inputMode="url"
+              value={linkedinUrl}
+              onChange={(e) => setLinkedinUrl(e.target.value)}
+              placeholder="linkedin.com/in/your-profile"
+              autoComplete="url"
+              className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-3 text-body text-ink-900 placeholder:text-ink-300 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15"
+            />
+            <div className="flex items-center gap-2 text-micro text-ink-400">
+              <span className="h-px flex-1 bg-ink-100" />
+              or
+              <span className="h-px flex-1 bg-ink-100" />
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex w-full items-center gap-2 rounded-md border border-dashed border-ink-200 px-3 py-3 text-small text-ink-600 hover:border-ink-400 hover:bg-ink-50 transition-colors"
+            >
+              <Upload className="h-4 w-4 shrink-0 text-ink-500" strokeWidth={1.5} />
+              <span className="truncate">
+                {resumeFile ? resumeFile.name : "Upload your CV (PDF or DOCX)"}
+              </span>
+            </button>
+          </div>
+
+          <div className="space-y-3 pt-1 border-t border-ink-100">
             <label className="flex items-start gap-3 cursor-pointer group">
               <div className="relative mt-0.5 shrink-0">
                 <input
@@ -459,10 +516,10 @@ function ActivationStep({
             size="lg"
             fullWidth
             loading={saving}
-            disabled={!tosAccepted || saving}
+            disabled={!tosAccepted || !hasProfileSource || saving}
             onClick={() => void handleActivate()}
             rightIcon={
-              tosAccepted && !saving ? (
+              tosAccepted && hasProfileSource && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }

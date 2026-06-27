@@ -441,6 +441,29 @@ async def run_career_intelligence_update(
                 existing = await CareerIntelligenceService.get(db, candidate_id)
             if existing:
                 return
+        # Don't fabricate intelligence from an empty profile. Require at least one
+        # real signal (skills, a current title, parsed experience, or a scraped
+        # LinkedIn profile) before invoking the LLM — otherwise the output is made
+        # up. The candidate populates this via the onboarding LinkedIn-URL/CV step.
+        async with pool.acquire() as db:
+            has_profile_data = await db.fetchval(
+                """
+                SELECT
+                    COALESCE(array_length(skills, 1), 0) > 0
+                    OR NULLIF(TRIM(COALESCE(current_title, '')), '') IS NOT NULL
+                    OR (career_profile ? 'experience_career_history')
+                    OR (linkedin_data ? 'apify_profile')
+                FROM public.candidates
+                WHERE id = $1::uuid AND deleted_at IS NULL
+                """,
+                candidate_id,
+            )
+        if not has_profile_data:
+            logger.info(
+                "career_intelligence_skipped_no_profile_data",
+                candidate_id=candidate_id,
+            )
+            return
         await CareerIntelligenceService.generate(pool, candidate_id, settings)
     except Exception as exc:
         logger.warning(
