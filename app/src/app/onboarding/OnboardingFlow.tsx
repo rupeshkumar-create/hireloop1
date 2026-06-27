@@ -45,11 +45,7 @@ import {
   type LocationScope,
   type RemotePreference,
 } from "@/lib/api/profile";
-import {
-  isValidLinkedInUrl,
-  saveLinkedInUrl,
-  uploadResumeAndApply,
-} from "@/lib/api/onboardingProfile";
+import { uploadResumeAndApply } from "@/lib/api/onboardingProfile";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
@@ -324,7 +320,6 @@ function ActivationStep({
   const router = useRouter();
   const firstName = candidateName?.split(" ")[0] ?? "there";
 
-  const [linkedinUrl, setLinkedinUrl] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
@@ -332,23 +327,22 @@ function ActivationStep({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const validUrl = isValidLinkedInUrl(linkedinUrl);
-  const hasProfileSource = validUrl || resumeFile !== null;
+  const hasResume = resumeFile !== null;
 
   async function handleActivate() {
     if (!tosAccepted || saving) return;
-    if (!hasProfileSource) {
+    if (!resumeFile) {
       setError(
-        "Add your LinkedIn URL or upload your CV — LinkedIn sign-in alone can't see your experience.",
+        "Upload your CV — LinkedIn sign-in alone can't see your experience. (You can add your LinkedIn URL later from the dashboard.)",
       );
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      // Profile source first, so the post-consent enrichment picks it up.
-      if (validUrl) await saveLinkedInUrl(linkedinUrl);
-      if (resumeFile) await uploadResumeAndApply(resumeFile);
+      // CV parsed + applied to the profile before consent, so enrichment and
+      // matching have real data to work with.
+      await uploadResumeAndApply(resumeFile);
 
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",
@@ -401,29 +395,15 @@ function ActivationStep({
           <Bubble>
             <p className="text-body text-ink-900">
               Almost there, {firstName}! LinkedIn sign-in only shares your name
-              and email — add your profile link or CV so I can pull your
-              experience and show real matches.
+              and email — upload your CV so I can pull your experience and show
+              real matches.
             </p>
           </Bubble>
         </div>
 
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
-          <div className="space-y-3">
-            <span className="text-small font-medium text-ink-700">Add your profile</span>
-            <input
-              type="url"
-              inputMode="url"
-              value={linkedinUrl}
-              onChange={(e) => setLinkedinUrl(e.target.value)}
-              placeholder="linkedin.com/in/your-profile"
-              autoComplete="url"
-              className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-3 text-body text-ink-900 placeholder:text-ink-300 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15"
-            />
-            <div className="flex items-center gap-2 text-micro text-ink-400">
-              <span className="h-px flex-1 bg-ink-100" />
-              or
-              <span className="h-px flex-1 bg-ink-100" />
-            </div>
+          <div className="space-y-2">
+            <span className="text-small font-medium text-ink-700">Upload your CV</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -438,9 +418,13 @@ function ActivationStep({
             >
               <Upload className="h-4 w-4 shrink-0 text-ink-500" strokeWidth={1.5} />
               <span className="truncate">
-                {resumeFile ? resumeFile.name : "Upload your CV (PDF or DOCX)"}
+                {resumeFile ? resumeFile.name : "Choose a PDF or DOCX"}
               </span>
             </button>
+            <p className="text-micro text-ink-400">
+              Aarya reads your CV to build your profile and matches. You can add
+              your LinkedIn URL later from the dashboard.
+            </p>
           </div>
 
           <div className="space-y-3 pt-1 border-t border-ink-100">
@@ -516,10 +500,10 @@ function ActivationStep({
             size="lg"
             fullWidth
             loading={saving}
-            disabled={!tosAccepted || !hasProfileSource || saving}
+            disabled={!tosAccepted || !hasResume || saving}
             onClick={() => void handleActivate()}
             rightIcon={
-              tosAccepted && hasProfileSource && !saving ? (
+              tosAccepted && hasResume && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }

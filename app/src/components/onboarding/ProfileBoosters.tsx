@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { FileText, Mic, MapPin, IndianRupee, ChevronRight } from "lucide-react";
+import { FileText, Linkedin, Mic, MapPin, IndianRupee, ChevronRight } from "lucide-react";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { Button, Card, CardBody } from "@/components/ui";
 import { updateMyProfile } from "@/lib/api/profile";
+import { isValidLinkedInUrl, saveLinkedInUrl } from "@/lib/api/onboardingProfile";
 import { cn } from "@/lib/utils";
 
 type ProfileBoostersProps = {
@@ -28,6 +29,28 @@ export function ProfileBoosters({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedPrefs, setSavedPrefs] = useState(false);
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [savingLi, setSavingLi] = useState(false);
+  const [savedLi, setSavedLi] = useState(false);
+  const [liError, setLiError] = useState<string | null>(null);
+
+  async function saveLinkedin() {
+    if (!isValidLinkedInUrl(linkedinUrl)) {
+      setLiError("Enter a valid LinkedIn profile URL (linkedin.com/in/…).");
+      return;
+    }
+    setSavingLi(true);
+    setLiError(null);
+    try {
+      await saveLinkedInUrl(linkedinUrl);
+      setSavedLi(true);
+      onProfileUpdated?.();
+    } catch (err) {
+      setLiError(err instanceof Error ? err.message : "Couldn't save your LinkedIn URL.");
+    } finally {
+      setSavingLi(false);
+    }
+  }
 
   async function saveMinimalProfile() {
     const city = locationCity.trim();
@@ -66,6 +89,39 @@ export function ProfileBoosters({
               ? "Add a CV or talk to Aarya to sharpen your match scores."
               : "Upload a resume or add city + expected CTC — then you can request intros and apply."}
           </p>
+        </div>
+
+        <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-2">
+          <div className="flex items-center gap-2 text-small font-medium text-ink-900">
+            <Linkedin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
+            Add your LinkedIn URL
+          </div>
+          {savedLi ? (
+            <p className="text-micro text-ink-500">
+              Saved — Aarya is pulling your LinkedIn profile in the background.
+            </p>
+          ) : (
+            <>
+              <input
+                type="url"
+                inputMode="url"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                placeholder="linkedin.com/in/your-profile"
+                className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+              />
+              {liError && <p className="text-micro text-destructive">{liError}</p>}
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                loading={savingLi}
+                onClick={() => void saveLinkedin()}
+              >
+                Save &amp; enrich from LinkedIn
+              </Button>
+            </>
+          )}
         </div>
 
         {!hasResume && (
