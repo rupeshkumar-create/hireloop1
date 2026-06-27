@@ -318,31 +318,19 @@ function ActivationStep({
   const router = useRouter();
   const firstName = candidateName?.split(" ")[0] ?? "there";
 
-  const [phone, setPhone] = useState("");
   const [selectedGoal, setSelectedGoal] = useState<string>("find_new_role");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validPhone = /^[6-9]\d{9}$/.test(phone);
-  const fullPhone = `+91${phone}`;
   const goalMeta = GOALS.find((g) => g.id === selectedGoal);
 
   async function handleActivate() {
-    if (!validPhone || !tosAccepted || saving) return;
+    if (!tosAccepted || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const phoneRes = await apiAuthFetch("/api/v1/auth/save-phone", {
-        method: "POST",
-        body: JSON.stringify({ phone: fullPhone }),
-      });
-      if (!phoneRes.ok) {
-        const data = (await phoneRes.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail ?? "Couldn't save your number.");
-      }
-
       const profileRes = await apiAuthFetch("/api/v1/me/profile", {
         method: "PATCH",
         body: JSON.stringify({ looking_for: goalToLookingFor(selectedGoal) }),
@@ -402,37 +390,14 @@ function ActivationStep({
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">
-              Almost there, {firstName}! Your +91 number, what you&apos;re
-              looking for, and consent — then I&apos;ll show matches based on
+              Almost there, {firstName}! Tell me what you&apos;re looking for and
+              accept the terms — then I&apos;ll show matches based on your
               LinkedIn right away.
             </p>
           </Bubble>
         </div>
 
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
-          <label className="block space-y-2">
-            <span className="text-small font-medium text-ink-700">
-              +91 mobile (WhatsApp alerts)
-            </span>
-            <div className="flex">
-              <span className="inline-flex items-center gap-1.5 px-3 rounded-l-md border border-r-0 border-ink-100 bg-ink-50 text-ink-500 text-body">
-                <Phone className="h-4 w-4" strokeWidth={1.5} />
-                +91
-              </span>
-              <input
-                type="tel"
-                inputMode="numeric"
-                value={phone}
-                onChange={(e) =>
-                  setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
-                }
-                placeholder="98765 43210"
-                autoComplete="tel-national"
-                className="flex-1 min-w-0 rounded-r-md border border-ink-100 bg-paper-0 px-3 py-3 text-body text-ink-900 placeholder:text-ink-300 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15"
-              />
-            </div>
-          </label>
-
           <div>
             <span className="text-small font-medium text-ink-700">
               What brings you here?
@@ -537,10 +502,10 @@ function ActivationStep({
             size="lg"
             fullWidth
             loading={saving}
-            disabled={!validPhone || !tosAccepted || saving}
+            disabled={!tosAccepted || saving}
             onClick={() => void handleActivate()}
             rightIcon={
-              validPhone && tosAccepted && !saving ? (
+              tosAccepted && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }
