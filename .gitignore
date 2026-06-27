@@ -71,3 +71,4 @@ infra/*.tfvars
 # env backups (contain secrets)
 .env.bak*
 *.env.bak*
+.vercel
