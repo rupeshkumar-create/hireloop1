@@ -27,6 +27,9 @@ export function SignupForm() {
   const [infoMessage, setInfoMessage] = useState("");
   const [devEmail, setDevEmail] = useState("");
   const [devPassword, setDevPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -76,6 +79,84 @@ export function SignupForm() {
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Authentication failed");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleSendCode(e: React.FormEvent) {
+    e.preventDefault();
+    const addr = email.trim();
+    if (!addr) return;
+    setIsLoading(true);
+    setErrorMessage("");
+    setInfoMessage("");
+    // Same role cookie as LinkedIn so /auth/bootstrap provisions the right side.
+    document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: addr,
+        options: {
+          shouldCreateUser: true, // same flow signs up new users and signs in returning ones
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+      setOtpSent(true);
+      setInfoMessage(`We emailed a 6-digit login code to ${addr}.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    const token = otpCode.trim();
+    if (token.length < 6) return;
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token,
+        type: "email",
+      });
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setErrorMessage("Verified, but no session was created. Please try again.");
+        return;
+      }
+      // Mirror the OAuth callback: bootstrap the profile + route by role / new-user.
+      const res = await fetch(`${API_URL}/api/v1/auth/bootstrap`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        role?: string;
+        is_new_user?: boolean;
+      };
+      if (data.role === "recruiter") {
+        router.push("/recruiter");
+      } else {
+        router.push(data.is_new_user ? "/onboarding" : "/dashboard");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Verification failed.");
     } finally {
       setIsLoading(false);
     }
@@ -156,12 +237,63 @@ export function SignupForm() {
           <div className="w-full border-t border-ink-100" />
         </div>
         <div className="relative flex justify-center bg-paper-1 px-2 text-xs text-ink-500">
-          Next: answer a few basics and upload your resume
+          or continue with email
         </div>
       </div>
 
+      {!otpSent ? (
+        <form onSubmit={handleSendCode} className="space-y-3">
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !email.trim()}
+            className="w-full rounded-lg border border-ink-200 bg-paper-0 py-3 font-semibold text-ink-900 transition-colors hover:bg-ink-50 disabled:opacity-60"
+          >
+            {isLoading ? "Sending…" : "Email me a login code"}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyCode} className="space-y-3">
+          <Input
+            type="text"
+            inputMode="numeric"
+            value={otpCode}
+            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="6-digit code"
+            autoComplete="one-time-code"
+            required
+          />
+          <button
+            type="submit"
+            disabled={isLoading || otpCode.length < 6}
+            className="w-full rounded-lg bg-ink-900 py-3 font-semibold text-paper-0 transition-colors hover:bg-ink-800 disabled:opacity-60"
+          >
+            {isLoading ? "Verifying…" : "Verify & continue"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOtpSent(false);
+              setOtpCode("");
+              setInfoMessage("");
+            }}
+            className="w-full text-xs text-ink-500 hover:text-ink-900"
+          >
+            Use a different email
+          </button>
+        </form>
+      )}
+
       <p className="text-xs text-ink-500 text-center">
-        LinkedIn gives us your identity basics. We&apos;ll collect experience via resume upload and onboarding.
+        The same code signs you up or logs you in. We&apos;ll collect your experience via resume
+        upload in onboarding.
       </p>
 
       {DEV_EMAIL_LOGIN && (
