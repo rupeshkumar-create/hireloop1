@@ -277,6 +277,13 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
             await svc.close()
         engine = MatchingEngine(conn)
         await engine.score_candidate(candidate_id, limit=200)
+        # Best-effort job-match email (Resend; self-throttled, no-op if unconfigured).
+        try:
+            from hireloop_api.services.email.transactional import send_job_match_alert
+
+            await send_job_match_alert(conn, settings, candidate_id)
+        except Exception as exc:
+            logger.warning("job_match_alert_failed", error=str(exc)[:200])
 
 
 async def _handle_career_intelligence_update(settings: Settings, payload: dict[str, Any]) -> None:

@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = "noreply@hireloop.in"
     sendgrid_from_name: str = "Hireloop"
+    # Resend — preferred transactional provider (welcome + job-match emails).
+    # Also used as Supabase's custom SMTP for magic-link deliverability.
+    resend_api_key: str = ""
+    resend_from_email: str = "noreply@hireloop.in"
+    resend_from_name: str = "Hireloop"
 
     # ── MSG91 (SMS OTP + WhatsApp transactional templates — R10) ──────────────
     msg91_auth_key: str = ""

@@ -14,11 +14,25 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
+from hireloop_api.services.email.resend_service import ResendService
 from hireloop_api.services.email.sendgrid_service import SendGridService
 
 logger = structlog.get_logger()
 
 _SIGNUP_EMAIL_PURPOSE = "signup_confirmation_email"
+
+
+def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> str:
+    """Minimal, client-safe HTML wrapper for Resend emails (inline styles)."""
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:480px;margin:0 auto;color:#1a1a1a">
+  <h2 style="font-size:20px;margin:0 0 12px">{heading}</h2>
+  {body_html}
+  <p style="margin:24px 0">
+    <a href="{cta_url}" style="background:#111;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">{cta_label}</a>
+  </p>
+  <p style="font-size:12px;color:#888;margin-top:24px">Hireloop — India-first AI recruiting</p>
+</div>"""
 
 
 async def _signup_email_already_sent(db: asyncpg.Connection, user_id: uuid.UUID) -> bool:
@@ -57,8 +71,10 @@ async def maybe_send_signup_confirmation(
     Welcome email after phone verification / save-phone (once per user).
     Best-effort — never raises.
     """
-    if not settings.sendgrid_api_key or not settings.sg_template_signup_confirmation:
-        return {"sent": False, "skipped": "sendgrid_unconfigured"}
+    use_resend = bool(settings.resend_api_key)
+    use_sendgrid = bool(settings.sendgrid_api_key and settings.sg_template_signup_confirmation)
+    if not (use_resend or use_sendgrid):
+        return {"sent": False, "skipped": "email_unconfigured"}
 
     if db is not None:
         if await _signup_email_already_sent(db, user_id):
@@ -80,19 +96,38 @@ async def maybe_send_signup_confirmation(
         return {"sent": False, "skipped": "no_email"}
 
     display_name = full_name or "there"
-    svc = SendGridService(
-        settings.sendgrid_api_key,
-        settings.sendgrid_from_email,
-        settings.sendgrid_from_name,
-    )
-    try:
-        sent = await svc.send_signup_confirmation(
-            to_email=email,
-            full_name=display_name,
-            template_id=settings.sg_template_signup_confirmation,
+    if use_resend:
+        svc = ResendService(
+            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
         )
-    finally:
-        await svc.close()
+        try:
+            sent = await svc.send(
+                to_email=email,
+                subject="Welcome to Hireloop",
+                html=_email_shell(
+                    f"Welcome, {display_name} 👋",
+                    "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
+                    "looking for and she'll surface live India roles that fit your profile.</p>",
+                    f"{settings.public_app_url.rstrip('/')}/dashboard",
+                    "Open Hireloop",
+                ),
+            )
+        finally:
+            await svc.close()
+    else:
+        sg = SendGridService(
+            settings.sendgrid_api_key,
+            settings.sendgrid_from_email,
+            settings.sendgrid_from_name,
+        )
+        try:
+            sent = await sg.send_signup_confirmation(
+                to_email=email,
+                full_name=display_name,
+                template_id=settings.sg_template_signup_confirmation,
+            )
+        finally:
+            await sg.close()
 
     if sent and db is not None:
         try:
@@ -101,3 +136,109 @@ async def maybe_send_signup_confirmation(
             logger.error("signup_email_consent_log_failed", user_id=str(user_id), error=str(exc))
 
     return {"sent": bool(sent)}
+
+
+async def send_job_match_alert(
+    db: asyncpg.Connection,
+    settings: Settings,
+    candidate_id: str,
+    *,
+    min_score: float = 0.55,
+    limit: int = 3,
+    cooldown_hours: int = 20,
+) -> dict[str, Any]:
+    """Email a candidate a digest of their strongest new matches.
+
+    Best-effort and self-throttling: skips if Resend isn't configured, the
+    candidate has no email, there are no strong matches, or a job-match email
+    went out within `cooldown_hours` (deduped via the notifications table).
+    """
+    if not settings.resend_api_key:
+        return {"sent": False, "skipped": "resend_unconfigured"}
+
+    row = await db.fetchrow(
+        """
+        SELECT u.id AS user_id, u.email, u.full_name
+        FROM public.candidates c
+        JOIN public.users u ON u.id = c.user_id
+        WHERE c.id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        uuid.UUID(candidate_id),
+    )
+    if not row or not row["email"]:
+        return {"sent": False, "skipped": "no_email"}
+    user_id = row["user_id"]
+
+    recent = await db.fetchval(
+        """
+        SELECT 1 FROM public.notifications
+        WHERE user_id = $1 AND type = 'job_match'
+          AND created_at > NOW() - make_interval(hours => $2)
+        LIMIT 1
+        """,
+        user_id,
+        cooldown_hours,
+    )
+    if recent:
+        return {"sent": False, "skipped": "cooldown"}
+
+    jobs = await db.fetch(
+        """
+        SELECT j.title, co.name AS company, ms.overall_score
+        FROM public.match_scores ms
+        JOIN public.jobs j ON j.id = ms.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE ms.candidate_id = $1::uuid AND ms.overall_score >= $2
+          AND j.is_active = TRUE AND j.deleted_at IS NULL AND j.expires_at > NOW()
+        ORDER BY ms.overall_score DESC
+        LIMIT $3
+        """,
+        uuid.UUID(candidate_id),
+        min_score,
+        limit,
+    )
+    if not jobs:
+        return {"sent": False, "skipped": "no_matches"}
+
+    name = row["full_name"] or "there"
+    rows_html = "".join(
+        f"<li style='margin:6px 0;font-size:14px'><b>{j['title']}</b>"
+        f"{(' · ' + j['company']) if j['company'] else ''} "
+        f"<span style='color:#16a34a'>({round(float(j['overall_score']) * 100)}% match)</span></li>"
+        for j in jobs
+    )
+    html = _email_shell(
+        f"{len(jobs)} new role{'s' if len(jobs) != 1 else ''} that fit you, {name}",
+        f"<ul style='padding-left:18px;margin:0'>{rows_html}</ul>",
+        f"{settings.public_app_url.rstrip('/')}/dashboard?panel=jobs",
+        "View your matches",
+    )
+
+    svc = ResendService(
+        settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+    )
+    try:
+        sent = await svc.send(
+            to_email=row["email"],
+            subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireloop",
+            html=html,
+        )
+    finally:
+        await svc.close()
+
+    if sent:
+        try:
+            await db.execute(
+                """
+                INSERT INTO public.notifications
+                  (user_id, type, title, body, channels, sent_at)
+                VALUES ($1, 'job_match', $2, $3, ARRAY['email','in_app'], NOW())
+                """,
+                user_id,
+                f"{len(jobs)} new job matches",
+                "We found roles that fit your profile — open Hireloop to view them.",
+            )
+        except Exception as exc:
+            logger.error("job_match_notification_log_failed", error=str(exc)[:200])
+
+    return {"sent": bool(sent), "count": len(jobs)}
