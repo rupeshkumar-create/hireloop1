@@ -242,7 +242,9 @@ async def get_match_feed(
             screen_size=min(limit, 8),
             fuse_signals=("overall_score", "skills_score"),
         )
-        await _overlay_llm_rationale(db, result, candidate=dict(candidate), limit=limit)
+        # Off the serve path: snapshot the screen and generate/persist rationales
+        # on a background connection so the feed returns immediately.
+        _schedule_rationale_overlay(dict(candidate), [dict(i) for i in result], limit)
         # #33: log impressions for the learned re-ranker. Best-effort — feed
         # latency and correctness never depend on analytics writes.
         try:
@@ -287,6 +289,33 @@ async def _fetch_saved_job_signals(db: asyncpg.Connection, candidate_id) -> list
         candidate_id,
     )
     return [dict(r) for r in rows]
+
+
+# Holds references to fire-and-forget rationale tasks so they aren't GC'd.
+_rationale_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_rationale_overlay(candidate: dict, items: list[dict], limit: int) -> None:
+    """Generate + persist match rationales OFF the request path.
+
+    The feed must never block on an LLM call. We snapshot the opening screen and
+    run the overlay on its own pooled connection; the rationales persist to
+    match_scores and surface (from cache) on the candidate's next load.
+    """
+
+    async def _run() -> None:
+        try:
+            from hireloop_api.deps import get_db_pool
+
+            pool = await get_db_pool(get_settings())
+            async with pool.acquire() as bg_db:
+                await _overlay_llm_rationale(bg_db, items, candidate=candidate, limit=limit)
+        except Exception as exc:  # never surface background failures
+            logger.warning("bg_rationale_overlay_failed", error=str(exc)[:200])
+
+    task = asyncio.create_task(_run())
+    _rationale_tasks.add(task)
+    task.add_done_callback(_rationale_tasks.discard)
 
 
 async def _overlay_llm_rationale(

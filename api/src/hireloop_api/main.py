@@ -13,6 +13,7 @@ Run locally:
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -166,6 +167,33 @@ async def _security_headers(
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+# ── Request timing / slow-request logging ───────────────────────────────────────
+# Measures every request and logs the slow ones (p95-hunting). Adds a Server-Timing
+# header so latency is visible in the browser network panel too. Cheap: one clock
+# read per request.
+_SLOW_REQUEST_MS = 1000.0
+
+
+@app.middleware("http")
+async def _request_timing(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.0f}"
+    if elapsed_ms >= _SLOW_REQUEST_MS and request.url.path != "/api/v1/health":
+        logger.warning(
+            "slow_request",
+            method=request.method,
+            path=request.url.path,
+            duration_ms=round(elapsed_ms),
+            status_code=response.status_code,
+        )
     return response
 
 

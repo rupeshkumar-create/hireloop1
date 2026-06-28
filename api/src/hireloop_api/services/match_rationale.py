@@ -115,7 +115,8 @@ def _build_openrouter_llm(settings: Settings) -> LLMComplete:
         from langchain_openai import ChatOpenAI
 
         llm = ChatOpenAI(
-            model=settings.openrouter_primary_model,
+            # Short per-card rationales — use the fast lane, not the strong model.
+            model=settings.openrouter_fast_model,
             openai_api_key=settings.openrouter_api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.2,

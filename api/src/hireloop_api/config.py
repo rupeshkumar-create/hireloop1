@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     openrouter_primary_model: str = "anthropic/claude-opus-4.7"
     # Fallback: fast + cheap for quick/utility turns and tool-result summaries.
     openrouter_fallback_model: str = "anthropic/claude-haiku-4.5"
+    # Fast lane: cheap/low-latency model for short, high-volume utility calls
+    # (match-feed rationales, classification) where the strong model is overkill.
+    openrouter_fast_model: str = "anthropic/claude-haiku-4.5"
     # Opt-in: generate Aarya's per-card "why you fit" rationale on the match feed
     # via an LLM call (top of the first screen only). Off by default so it never
     # fires in tests/dev without an explicit MATCH_RATIONALE_ENABLED=true.

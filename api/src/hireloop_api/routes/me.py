@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_optional, get_india_verified_user
 from hireloop_api.services.consent import log_consent
+from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     apply_negative_preference,
@@ -388,6 +389,9 @@ async def set_linkedin_url(
     """
     from hireloop_api.services.background_jobs import LINKDAPI_ENRICH, enqueue_job
     from hireloop_api.services.linkdapi_profile import extract_linkedin_username
+
+    # Each save kicks off an Apify/LinkDAPI scrape (external cost) — cap it.
+    check_rate_limit(str(current_user["id"]), "linkedin_enrich", max_per_hour=5)
 
     url = (body.linkedin_url or "").strip()
     if not extract_linkedin_username(url):

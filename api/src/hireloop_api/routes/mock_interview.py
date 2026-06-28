@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.services.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/mock-interview", tags=["mock-interview"])
@@ -90,6 +91,9 @@ async def start_mock_session(
     current_user: dict = Depends(get_india_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
+    # Each mock session drives multiple LLM turns — cap per user per hour.
+    check_rate_limit(str(current_user["id"]), "mock_interview", max_per_hour=10)
+
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
         current_user["id"],

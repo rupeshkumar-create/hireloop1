@@ -80,6 +80,19 @@ class CareerPathService:
         if profile is None:
             raise ValueError("Candidate profile not found")
 
+        # Don't fabricate career paths from an empty profile — require a real
+        # signal (skills, a current title, or years of experience). The candidate
+        # populates this by uploading a CV or adding their LinkedIn URL.
+        has_signal = bool(
+            (profile.get("skills") or [])
+            or (profile.get("current_title") or "").strip()
+            or profile.get("years_experience")
+        )
+        if not has_signal:
+            raise ValueError(
+                "Add your experience or skills first — there isn't enough yet to map career paths."
+            )
+
         model = settings.openrouter_primary_model
         parsed: dict[str, Any] | None = None
 

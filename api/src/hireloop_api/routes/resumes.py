@@ -26,6 +26,7 @@ from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
 logger = structlog.get_logger()
@@ -192,6 +193,9 @@ async def upload_resume(
     Upload a resume, parse it with Affinda, and store the result.
     The candidate can then choose to apply parsed data to their profile.
     """
+    # Parsing is a multi-tier LLM job — cap per user per hour (cost guard).
+    check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15)
+
     # Validate file type
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
