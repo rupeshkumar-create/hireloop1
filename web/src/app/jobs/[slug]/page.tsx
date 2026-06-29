@@ -81,7 +81,13 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
     <main className="max-w-3xl mx-auto px-6 py-16">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        // Escape `<` (and `&`) so job-supplied text containing "</script>" can't
+        // break out of the JSON-LD block — XSS-safe serialization.
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(jsonLd)
+            .replace(/</g, "\\u003c")
+            .replace(/&/g, "\\u0026"),
+        }}
       />
 
       <nav className="text-sm text-ink-500" aria-label="Breadcrumb">

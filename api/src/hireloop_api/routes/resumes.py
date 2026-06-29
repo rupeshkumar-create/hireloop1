@@ -211,6 +211,16 @@ async def upload_resume(
             detail="File too large. Maximum size is 10MB.",
         )
 
+    # Defense-in-depth: the client-supplied content_type is spoofable, so verify
+    # the file's magic bytes actually match an allowed document type (PDF / DOCX
+    # zip / legacy DOC OLE) before we store or parse it.
+    magic = file_bytes[:4]
+    if magic not in (b"%PDF", b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File content doesn't look like a PDF or DOCX.",
+        )
+
     user_id = current_user["id"]
 
     candidate = await _ensure_candidate_for_resume_upload(

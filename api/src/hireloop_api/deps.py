@@ -375,6 +375,27 @@ async def get_india_verified_user(
     return current_user
 
 
+async def get_current_candidate_id(
+    current_user: dict = Depends(get_india_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> uuid.UUID:
+    """Resolve the signed-in user's candidate id, or 404.
+
+    Centralized tenant/ownership scoping: routes that read or write candidate-
+    owned resources should depend on this (or filter by it) so access control
+    can't be forgotten per-route. The backend connects as a privileged role
+    (RLS bypassed), so this app-level scoping is the primary safeguard against
+    horizontal access (IDOR) between candidates.
+    """
+    row = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+    return row["id"]
+
+
 async def get_recruiter_user(
     current_user: dict = Depends(get_india_verified_user),
     db: asyncpg.Connection = Depends(get_db),
