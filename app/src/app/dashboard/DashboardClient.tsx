@@ -1746,7 +1746,34 @@ function JobsPanel({
   onSavedChange: (jobId: string, saved: boolean) => void;
   savedJobsRefreshKey: number;
 }) {
-  const [tab, setTab] = useState<JobsTab>("matches");
+  const [tab, setTab] = useState<JobsTab>("path");
+  const [pathChosen, setPathChosen] = useState<boolean | null>(null);
+
+  function refreshPathChosen() {
+    fetchCareerPath()
+      .then((p) => setPathChosen(!!p?.prioritized_title))
+      .catch(() => setPathChosen(false));
+  }
+
+  // Career-path-first: returning users (a path already prioritized) land on
+  // their matches; new users stay on "Career paths" until they pick one, so we
+  // never open with a generic job list.
+  useEffect(() => {
+    let cancelled = false;
+    fetchCareerPath()
+      .then((p) => {
+        if (cancelled) return;
+        const chosen = !!p?.prioritized_title;
+        setPathChosen(chosen);
+        if (chosen) setTab("matches");
+      })
+      .catch(() => {
+        if (!cancelled) setPathChosen(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="flex flex-col h-full">
@@ -1764,7 +1791,10 @@ function JobsPanel({
       <div className="flex items-center gap-1 px-5 pt-4 border-b border-ink-100 shrink-0">
         <button
           type="button"
-          onClick={() => setTab("matches")}
+          onClick={() => {
+            setTab("matches");
+            refreshPathChosen();
+          }}
           className={cn(
             "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
             tab === "matches"
@@ -1807,16 +1837,32 @@ function JobsPanel({
 
       <div key={tab} className="flex-1 min-h-0 overflow-hidden animate-fade-in">
         {tab === "matches" ? (
-          <MatchFeed
-            conversationId={conversationId}
-            onRequestIntro={onRequestIntro}
-            onDirectApply={onDirectApply}
-            applyLocked={!canApplyOrIntro}
-            matchSourceBadge={!hasResume ? "linkedin" : undefined}
-            savedJobIds={savedJobIds}
-            onSavedChange={onSavedChange}
-            className="h-full p-5"
-          />
+          pathChosen === false ? (
+            <div className="h-full p-5 flex flex-col items-center justify-center text-center gap-3">
+              <p className="text-h3 text-ink-900">Pick a career path first</p>
+              <p className="text-small text-ink-500 max-w-xs">
+                Choose a direction and I&apos;ll show the roles that fit it — not a generic list.
+              </p>
+              <button
+                type="button"
+                onClick={() => setTab("path")}
+                className="rounded-lg bg-ink-900 px-4 py-2 text-small font-medium text-paper-0 hover:bg-ink-800"
+              >
+                View career paths
+              </button>
+            </div>
+          ) : (
+            <MatchFeed
+              conversationId={conversationId}
+              onRequestIntro={onRequestIntro}
+              onDirectApply={onDirectApply}
+              applyLocked={!canApplyOrIntro}
+              matchSourceBadge={!hasResume ? "linkedin" : undefined}
+              savedJobIds={savedJobIds}
+              onSavedChange={onSavedChange}
+              className="h-full p-5"
+            />
+          )
         ) : tab === "path" ? (
           <CareerPathPanel
             conversationId={conversationId}
