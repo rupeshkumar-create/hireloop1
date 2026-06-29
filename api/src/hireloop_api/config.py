@@ -145,6 +145,15 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     resend_from_email: str = "noreply@hireloop.in"
     resend_from_name: str = "Hireloop"
+    # Generic SMTP — free path to email ANY recipient without a verified domain.
+    # For a free Gmail account: smtp_host=smtp.gmail.com, smtp_port=587,
+    # smtp_user=<the gmail>, smtp_password=<a Google App Password>. Preferred
+    # over Resend when configured (Resend free tier only mails the account owner).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""  # defaults to smtp_user
 
     # ── MSG91 (SMS OTP + WhatsApp transactional templates — R10) ──────────────
     msg91_auth_key: str = ""

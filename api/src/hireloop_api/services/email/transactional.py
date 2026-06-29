@@ -16,10 +16,47 @@ import structlog
 from hireloop_api.config import Settings
 from hireloop_api.services.email.resend_service import ResendService
 from hireloop_api.services.email.sendgrid_service import SendGridService
+from hireloop_api.services.email.smtp_service import SmtpService
 
 logger = structlog.get_logger()
 
 _SIGNUP_EMAIL_PURPOSE = "signup_confirmation_email"
+
+
+def _html_email_configured(settings: Settings) -> bool:
+    """True when we can send a raw-HTML email (SMTP or Resend)."""
+    smtp = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+    return smtp or bool(settings.resend_api_key)
+
+
+async def _send_html_email(
+    settings: Settings, *, to_email: str, subject: str, html: str
+) -> bool:
+    """Send one HTML email via the best configured provider.
+
+    Order: generic SMTP (free, e.g. Gmail — delivers to any recipient) → Resend
+    (free tier mails only the account owner). Best-effort; returns False if no
+    provider is configured or the send fails.
+    """
+    if settings.smtp_host and settings.smtp_user and settings.smtp_password:
+        svc = SmtpService(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            user=settings.smtp_user,
+            password=settings.smtp_password,
+            from_email=settings.smtp_from,
+            from_name=settings.resend_from_name,
+        )
+        return await svc.send(to_email=to_email, subject=subject, html=html)
+    if settings.resend_api_key:
+        svc = ResendService(
+            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+        )
+        try:
+            return await svc.send(to_email=to_email, subject=subject, html=html)
+        finally:
+            await svc.close()
+    return False
 
 
 def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> str:
@@ -71,9 +108,9 @@ async def maybe_send_signup_confirmation(
     Welcome email after phone verification / save-phone (once per user).
     Best-effort — never raises.
     """
-    use_resend = bool(settings.resend_api_key)
+    use_html = _html_email_configured(settings)  # SMTP (free, any recipient) or Resend
     use_sendgrid = bool(settings.sendgrid_api_key and settings.sg_template_signup_confirmation)
-    if not (use_resend or use_sendgrid):
+    if not (use_html or use_sendgrid):
         return {"sent": False, "skipped": "email_unconfigured"}
 
     if db is not None:
@@ -96,24 +133,19 @@ async def maybe_send_signup_confirmation(
         return {"sent": False, "skipped": "no_email"}
 
     display_name = full_name or "there"
-    if use_resend:
-        svc = ResendService(
-            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+    if use_html:
+        sent = await _send_html_email(
+            settings,
+            to_email=email,
+            subject="Welcome to Hireloop",
+            html=_email_shell(
+                f"Welcome, {display_name} 👋",
+                "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
+                "looking for and she'll surface live India roles that fit your profile.</p>",
+                f"{settings.public_app_url.rstrip('/')}/dashboard",
+                "Open Hireloop",
+            ),
         )
-        try:
-            sent = await svc.send(
-                to_email=email,
-                subject="Welcome to Hireloop",
-                html=_email_shell(
-                    f"Welcome, {display_name} 👋",
-                    "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
-                    "looking for and she'll surface live India roles that fit your profile.</p>",
-                    f"{settings.public_app_url.rstrip('/')}/dashboard",
-                    "Open Hireloop",
-                ),
-            )
-        finally:
-            await svc.close()
     else:
         sg = SendGridService(
             settings.sendgrid_api_key,
@@ -149,12 +181,12 @@ async def send_job_match_alert(
 ) -> dict[str, Any]:
     """Email a candidate a digest of their strongest new matches.
 
-    Best-effort and self-throttling: skips if Resend isn't configured, the
-    candidate has no email, there are no strong matches, or a job-match email
+    Best-effort and self-throttling: skips if no email provider is configured,
+    the candidate has no email, there are no strong matches, or a job-match email
     went out within `cooldown_hours` (deduped via the notifications table).
     """
-    if not settings.resend_api_key:
-        return {"sent": False, "skipped": "resend_unconfigured"}
+    if not _html_email_configured(settings):
+        return {"sent": False, "skipped": "email_unconfigured"}
 
     row = await db.fetchrow(
         """
@@ -214,17 +246,12 @@ async def send_job_match_alert(
         "View your matches",
     )
 
-    svc = ResendService(
-        settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+    sent = await _send_html_email(
+        settings,
+        to_email=row["email"],
+        subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireloop",
+        html=html,
     )
-    try:
-        sent = await svc.send(
-            to_email=row["email"],
-            subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireloop",
-            html=html,
-        )
-    finally:
-        await svc.close()
 
     if sent:
         try:
