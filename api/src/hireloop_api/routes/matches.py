@@ -437,11 +437,15 @@ async def get_match_feed_count(
             )
 
     if total == 0:
+        # No real scored matches above the floor. Fall back to the quick lexical
+        # pool, but cap it at a believable number — the old limit=500 reported the
+        # whole active-job pool as "matches", which read as fake. 50 aligns with
+        # the feed's page size so the count matches what the candidate can browse.
         fallback = await _fetch_fallback_match_rows(
             db,
             candidate=dict(candidate),
             min_score=min_score,
-            limit=500,
+            limit=50,
             offset=0,
             remote_preference=remote_pref,
         )
