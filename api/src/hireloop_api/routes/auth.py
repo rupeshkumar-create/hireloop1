@@ -411,6 +411,21 @@ async def bootstrap_user(
                 user_id,
             )
 
+    # Welcome email on signup. bootstrap runs on every login, but
+    # maybe_send_signup_confirmation is idempotent (consent_log dedupe), so this
+    # fires exactly once per user — and no-ops if no email provider is set.
+    # Wired here because the old phone-flow trigger is no longer in the path.
+    try:
+        await maybe_send_signup_confirmation(
+            db,
+            settings,
+            user_id=user_id,
+            email=current_user.get("email"),
+            full_name=current_user.get("full_name"),
+        )
+    except Exception as exc:  # never block signup on email
+        logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
+
     # `is_new_user` lets /auth/callback route first-time candidates into the
     # onboarding wizard while sending returning users straight to their home.
     return {"ok": True, "role": effective_role, "is_new_user": is_new_user}
