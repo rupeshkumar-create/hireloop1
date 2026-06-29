@@ -142,9 +142,10 @@ export function JobsPanel({
         {tab === "matches" ? (
           pathChosen === false ? (
             <div className="h-full p-5 flex flex-col items-center justify-center text-center gap-3">
-              <p className="text-h3 text-ink-900">Pick a career path first</p>
+              <p className="text-h3 text-ink-900">Let&apos;s aim your search</p>
               <p className="text-small text-ink-500 max-w-xs">
-                Choose a direction and I&apos;ll show the roles that fit it — not a generic list.
+                Pick a career direction and I&apos;ll surface roles tailored to it — sharper than a
+                generic list.
               </p>
               <button
                 type="button"

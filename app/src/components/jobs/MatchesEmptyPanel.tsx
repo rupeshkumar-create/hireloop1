@@ -16,8 +16,8 @@ export function MatchesEmptyPanel({
         <AaryaFace size="md" />
         <AaryaBubble className="flex-1 min-w-0">
           <p className="text-small text-ink-800 leading-relaxed">
-            I&apos;m still ranking India-only roles for your profile. Ask me to search now, or
-            check back in a few hours.
+            I&apos;m still ranking India-only roles for your profile. Ask me to search now — or
+            add your LinkedIn URL / upload your CV to sharpen the results.
           </p>
         </AaryaBubble>
       </div>
