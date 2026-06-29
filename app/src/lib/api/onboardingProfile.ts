@@ -26,8 +26,18 @@ export async function saveLinkedInUrl(url: string): Promise<void> {
   }
 }
 
-/** Upload a CV and apply the parsed fields to the candidate profile. */
-export async function uploadResumeAndApply(file: File): Promise<void> {
+/** What the CV parser pulled out — shown back to the candidate to confirm. */
+export type ParsedResumeSummary = {
+  full_name?: string | null;
+  current_title?: string | null;
+  current_company?: string | null;
+  years_experience?: number | null;
+  skills?: string[];
+};
+
+/** Upload a CV, apply the parsed fields to the profile, and return the parse
+ *  summary so onboarding can show "here's what I found" for confirmation. */
+export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSummary> {
   const fd = new FormData();
   fd.append("file", file);
   const res = await apiAuthFetch("/api/v1/resumes/upload", {
@@ -38,7 +48,10 @@ export async function uploadResumeAndApply(file: File): Promise<void> {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Resume upload failed");
   }
-  const data = (await res.json()) as { resume_id: string };
+  const data = (await res.json()) as {
+    resume_id: string;
+    parsed?: ParsedResumeSummary;
+  };
   // Apply parsed fields to the profile (best-effort — don't fail activation).
   try {
     await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
@@ -47,4 +60,5 @@ export async function uploadResumeAndApply(file: File): Promise<void> {
   } catch {
     /* non-fatal */
   }
+  return data.parsed ?? {};
 }

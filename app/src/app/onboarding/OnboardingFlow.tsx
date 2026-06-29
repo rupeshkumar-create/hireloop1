@@ -45,7 +45,10 @@ import {
   type LocationScope,
   type RemotePreference,
 } from "@/lib/api/profile";
-import { uploadResumeAndApply } from "@/lib/api/onboardingProfile";
+import {
+  uploadResumeAndApply,
+  type ParsedResumeSummary,
+} from "@/lib/api/onboardingProfile";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { markDashboardWelcomePending } from "@/lib/dashboard-welcome";
@@ -272,6 +275,7 @@ function ActivationStep({
   const firstName = candidateName?.split(" ")[0] ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [parsed, setParsed] = useState<ParsedResumeSummary | null>(null);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -280,21 +284,41 @@ function ActivationStep({
 
   const hasResume = resumeFile !== null;
 
-  async function handleActivate() {
-    if (!tosAccepted || saving) return;
+  // Phase 1: upload + parse the CV, then show "here's what I found" for review.
+  async function handleUploadAndReview() {
+    if (saving) return;
     if (!resumeFile) {
       setError(
         "Upload your CV — LinkedIn sign-in alone can't see your experience. (You can add your LinkedIn URL later from the dashboard.)",
       );
       return;
     }
+    if (!tosAccepted) {
+      setError("Please accept the privacy policy and terms to continue.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      // CV parsed + applied to the profile before consent, so enrichment and
-      // matching have real data to work with.
-      await uploadResumeAndApply(resumeFile);
+      const summary = await uploadResumeAndApply(resumeFile);
+      setParsed(summary);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't read that file. Try another CV.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
+  // Phase 2: candidate confirmed the parse — record consent + finish onboarding.
+  async function handleConfirm() {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",
         body: JSON.stringify({
@@ -346,13 +370,14 @@ function ActivationStep({
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">
-              Almost there, {firstName}! LinkedIn sign-in only shares your name
-              and email — upload your CV so I can pull your experience and show
-              real matches.
+              {parsed
+                ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll start finding your matches.`
+                : `Almost there, ${firstName}! LinkedIn sign-in only shares your name and email — upload your CV so I can pull your experience and show real matches.`}
             </p>
           </Bubble>
         </div>
 
+        {!parsed ? (
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
           <div className="space-y-2">
             <span className="text-small font-medium text-ink-700">Upload your CV</span>
@@ -453,16 +478,99 @@ function ActivationStep({
             fullWidth
             loading={saving}
             disabled={!tosAccepted || !hasResume || saving}
-            onClick={() => void handleActivate()}
+            onClick={() => void handleUploadAndReview()}
             rightIcon={
               tosAccepted && hasResume && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }
           >
-            {saving ? "Activating…" : "See my matches"}
+            {saving ? "Reading your CV…" : "Review my CV"}
           </Button>
         </div>
+        ) : (
+        <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
+          <div className="space-y-1">
+            <p className="text-small font-medium text-ink-700">
+              Here&apos;s what I read from your CV
+            </p>
+            <p className="text-micro text-ink-400">
+              Looks off? Re-upload below — you can also refine details later in
+              your profile.
+            </p>
+          </div>
+
+          <div className="space-y-2 text-small text-ink-800">
+            {parsed?.current_title && (
+              <p>
+                <span className="text-accent">✓</span>{" "}
+                <span className="font-medium">{parsed.current_title}</span>
+                {parsed.current_company ? ` · ${parsed.current_company}` : ""}
+              </p>
+            )}
+            {typeof parsed?.years_experience === "number" &&
+              parsed.years_experience > 0 && (
+                <p>
+                  <span className="text-accent">✓</span> {parsed.years_experience}{" "}
+                  years of experience
+                </p>
+              )}
+            {parsed?.skills && parsed.skills.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {parsed.skills.slice(0, 8).map((s) => (
+                  <span
+                    key={s}
+                    className="text-micro px-2 py-0.5 rounded-sm bg-ink-100 text-ink-700"
+                  >
+                    {s}
+                  </span>
+                ))}
+                {parsed.skills.length > 8 && (
+                  <span className="text-micro text-ink-400 px-1 py-0.5">
+                    +{parsed.skills.length - 8} more
+                  </span>
+                )}
+              </div>
+            )}
+            {!parsed?.current_title &&
+              !(parsed?.skills && parsed.skills.length > 0) && (
+                <p className="text-ink-500">
+                  I couldn&apos;t pull much from this file. Re-upload a clearer
+                  CV, or continue and finish your profile from the dashboard.
+                </p>
+              )}
+          </div>
+
+          {error && <p className="text-small text-ink-700">{error}</p>}
+
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={saving}
+            onClick={() => void handleConfirm()}
+            rightIcon={
+              !saving ? (
+                <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
+              ) : undefined
+            }
+          >
+            {saving ? "Finishing…" : "Looks good — show my matches"}
+          </Button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setParsed(null);
+              setResumeFile(null);
+              setError(null);
+            }}
+            className="w-full text-micro text-ink-500 hover:text-ink-900 transition-colors"
+          >
+            Re-upload a different CV
+          </button>
+        </div>
+        )}
       </div>
     </div>
   );
