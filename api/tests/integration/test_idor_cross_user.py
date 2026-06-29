@@ -3,11 +3,12 @@
 Proves candidate A cannot read candidate B's owned resources by id. This is the
 single most important B2B-safety test for this app: the backend connects as a
 privileged role (RLS bypassed), so app-level ownership filters are the ONLY
-access control. If any route drops its `WHERE … user_id = caller` filter, this
-test should fail.
+access control. If any route drops its `WHERE … user_id/candidate_id = caller`
+filter, these tests should fail.
 
 Runs in the integration suite (real Postgres). api_client is authed as
-candidate A (the `candidate_user` fixture); we seed candidate B directly.
+candidate A (the `candidate_user` fixture); we seed candidate B directly and
+confirm A is denied (404) on B's resources.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ import pytest
 from httpx import AsyncClient
 
 
-async def _seed_victim_with_resume(db: asyncpg.Connection) -> str:
-    """Create a second candidate (B) who owns a tailored resume. Returns its id."""
+async def _seed_victim_candidate(db: asyncpg.Connection) -> str:
+    """Create a second candidate (B). Returns the candidate id."""
     user_b = uuid.uuid4()
     email_b = f"idor-b-{user_b.hex[:8]}@hireloop.test"
     await db.execute(
@@ -37,24 +38,13 @@ async def _seed_victim_with_resume(db: asyncpg.Connection) -> str:
         user_b,
         email_b,
     )
-    cand_b = await db.fetchval(
-        "INSERT INTO public.candidates (user_id, headline) VALUES ($1, 'Victim B') RETURNING id",
-        user_b,
+    return str(
+        await db.fetchval(
+            "INSERT INTO public.candidates (user_id, headline) VALUES ($1, 'Victim B') "
+            "RETURNING id",
+            user_b,
+        )
     )
-    job_id = await db.fetchval(
-        "INSERT INTO public.jobs (title) VALUES ('IDOR Test Role') RETURNING id"
-    )
-    resume_b = await db.fetchval(
-        """
-        INSERT INTO public.tailored_resumes
-          (candidate_id, job_id, template, file_path, status, html_content)
-        VALUES ($1::uuid, $2::uuid, 'modern', 'idor/x', 'ready', '<html>B private resume</html>')
-        RETURNING id
-        """,
-        cand_b,
-        job_id,
-    )
-    return str(resume_b)
 
 
 @pytest.mark.asyncio
@@ -62,16 +52,43 @@ async def test_candidate_cannot_read_another_candidates_tailored_resume(
     api_client: AsyncClient,  # authed as candidate A
     db_conn: asyncpg.Connection,
 ) -> None:
-    resume_b = await _seed_victim_with_resume(db_conn)
-
-    # A requests B's resume metadata by id → must be denied (ownership scoping).
-    meta = await api_client.get(f"/api/v1/tailored-resumes/tailored/{resume_b}")
-    assert meta.status_code == 404, (
-        f"IDOR: candidate A read candidate B's resume metadata (got {meta.status_code})"
+    cand_b = await _seed_victim_candidate(db_conn)
+    job_id = await db_conn.fetchval(
+        "INSERT INTO public.jobs (title) VALUES ('IDOR Test Role') RETURNING id"
+    )
+    resume_b = await db_conn.fetchval(
+        """
+        INSERT INTO public.tailored_resumes
+          (candidate_id, job_id, template, file_path, status, html_content)
+        VALUES ($1::uuid, $2::uuid, 'modern', 'idor/x', 'ready', '<html>B private</html>')
+        RETURNING id
+        """,
+        cand_b,
+        job_id,
     )
 
-    # A requests B's resume download (the actual PII payload) → must be denied.
+    meta = await api_client.get(f"/api/v1/tailored-resumes/tailored/{resume_b}")
+    assert meta.status_code == 404, (
+        f"IDOR: A read B's resume metadata (got {meta.status_code})"
+    )
     dl = await api_client.get(f"/api/v1/tailored-resumes/tailored/{resume_b}/download")
     assert dl.status_code == 404, (
-        f"IDOR: candidate A downloaded candidate B's resume HTML (got {dl.status_code})"
+        f"IDOR: A downloaded B's resume HTML (got {dl.status_code})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_candidate_cannot_read_another_candidates_mock_interview(
+    api_client: AsyncClient,  # authed as candidate A
+    db_conn: asyncpg.Connection,
+) -> None:
+    cand_b = await _seed_victim_candidate(db_conn)
+    mock_b = await db_conn.fetchval(
+        "INSERT INTO public.mock_interviews (candidate_id) VALUES ($1::uuid) RETURNING id",
+        cand_b,
+    )
+
+    res = await api_client.get(f"/api/v1/mock-interview/sessions/{mock_b}")
+    assert res.status_code == 404, (
+        f"IDOR: A read B's mock interview session (got {res.status_code})"
     )
