@@ -63,6 +63,24 @@ export function storeAaryaSession(id: string): void {
   }
 }
 
+/** Forget the stored conversation id (e.g. after a 404 — it was deleted). */
+export function clearAaryaSession(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(AARYA_SESSION_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Thrown when the conversation no longer exists server-side; callers retry. */
+export class StaleSessionError extends Error {
+  constructor() {
+    super("Conversation not found");
+    this.name = "StaleSessionError";
+  }
+}
+
 export function readVoiceSendOnPause(): boolean {
   if (typeof window === "undefined") return true;
   try {
@@ -154,6 +172,12 @@ export async function streamAaryaMessage(
   );
 
   if (!res.ok || !res.body) {
+    // The stored conversation was deleted (e.g. data reset) — forget it so the
+    // caller can create a fresh session and retry instead of dead-ending.
+    if (res.status === 404) {
+      clearAaryaSession();
+      throw new StaleSessionError();
+    }
     const errBody = await res.json().catch(() => ({}));
     const detail =
       typeof (errBody as { detail?: unknown }).detail === "string"

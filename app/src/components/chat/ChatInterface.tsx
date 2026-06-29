@@ -78,12 +78,15 @@ import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
 import {
+  createAaryaSession,
   ensureAaryaSession,
   readStoredAaryaSession,
   readVoiceSendOnPause,
+  StaleSessionError,
   storeAaryaSession,
   storeVoiceSendOnPause,
   streamAaryaMessage,
+  type AaryaStreamCallbacks,
 } from "@/lib/chat/aaryaStream";
 import {
   readChatCoachSeen,
@@ -112,7 +115,6 @@ import {
 } from "@/lib/api/profile";
 import { AgentThinkingIndicator } from "./AgentThinkingIndicator";
 import { ActivityTimeline, type AgentAction } from "./ActivityTimeline";
-import { ChatContextBar } from "./ChatContextBar";
 import { ProfileCompletionFlow } from "./ProfileCompletionFlow";
 import { ChatJobCards } from "./ChatJobCards";
 import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
@@ -613,7 +615,7 @@ export function ChatInterface({
       };
 
       try {
-        const currentSessionId = await ensureAaryaSession(
+        let currentSessionId = await ensureAaryaSession(
           sessionIdRef.current ?? readStoredAaryaSession(),
           (id) => {
             sessionIdRef.current = id;
@@ -623,11 +625,7 @@ export function ChatInterface({
           }
         );
 
-        const streamResult = await streamAaryaMessage(
-          currentSessionId,
-          trimmed,
-          contentType,
-          {
+        const streamCallbacks: AaryaStreamCallbacks = {
             onStatus: (status, meta) => {
               setThinkingStatus(formatStatusWithEta(status, meta?.etaSec));
               if (
@@ -682,9 +680,36 @@ export function ChatInterface({
                 }
               }
             },
-          },
-          abortRef.current.signal
-        );
+        };
+
+        const abortSignal = abortRef.current?.signal;
+        const runStream = (sid: string) =>
+          streamAaryaMessage(
+            sid,
+            trimmed,
+            contentType,
+            streamCallbacks,
+            abortSignal
+          );
+
+        let streamResult;
+        try {
+          streamResult = await runStream(currentSessionId);
+        } catch (streamErr) {
+          // Stored conversation was deleted server-side (e.g. data reset). The
+          // stale id is already cleared; create a fresh session and retry once
+          // so the user (text or voice) isn't stuck on "Conversation not found".
+          if (streamErr instanceof StaleSessionError) {
+            currentSessionId = await createAaryaSession();
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+            storeAaryaSession(currentSessionId);
+            onSessionCreated?.(currentSessionId);
+            streamResult = await runStream(currentSessionId);
+          } else {
+            throw streamErr;
+          }
+        }
 
         if (streamResult.hinglishHint) {
           setHinglishHint(true);
@@ -1095,13 +1120,6 @@ export function ChatInterface({
       {/* ── Composer ──────────────────────────────────────────────────── */}
       <div className="shrink-0 bg-paper-0 px-4 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
         <div className="max-w-2xl mx-auto space-y-2">
-          <ChatContextBar
-            profile={warmup?.profile ?? null}
-            matchCount={warmup?.matchCount ?? null}
-            profileCompleteness={warmup?.profileCompleteness ?? null}
-            onChipClick={() => setShowProfileFlow(true)}
-          />
-
           {showCoachMark && (
             <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
               <p className="text-micro text-ink-700 leading-relaxed">
