@@ -214,7 +214,7 @@ export function JobCard({
             {job.action_label}
           </Badge>
         )}
-        {job.tier_label && (
+        {(job.tier || job.tier_label) && (
           <Badge
             tone={
               job.tier === "strong"
@@ -224,7 +224,11 @@ export function JobCard({
                   : "muted"
             }
           >
-            {job.tier_label}
+            {job.tier === "strong"
+              ? "Strong match"
+              : job.tier === "good"
+                ? "Promising"
+                : (job.tier_label ?? "Worth exploring")}
           </Badge>
         )}
         {job.seniority && (
@@ -253,7 +257,13 @@ export function JobCard({
             <div className="mb-3 space-y-2">
               {hasMatchData && (
                 <p className="text-micro font-medium text-ink-600">
-                  ✓ {matched.size} of {job.skills_required.length} skills matched
+                  ✓ {matched.size} matching skill{matched.size !== 1 ? "s" : ""}
+                  {gaps.length > 0 && (
+                    <span className="font-normal text-ink-400">
+                      {" "}
+                      · {gaps.length} to grow into
+                    </span>
+                  )}
                 </p>
               )}
               <div className="flex flex-wrap gap-1">
@@ -282,7 +292,7 @@ export function JobCard({
               </div>
               {gaps.length > 0 && (
                 <p className="text-micro text-ink-500">
-                  <span className="font-medium text-ink-600">Gaps to close: </span>
+                  <span className="font-medium text-ink-600">Worth building: </span>
                   {gaps.slice(0, 4).join(", ")}
                   {gaps.length > 4 ? ` +${gaps.length - 4} more` : ""}
                 </p>
