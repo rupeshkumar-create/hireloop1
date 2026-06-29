@@ -834,7 +834,50 @@ async def get_single_match(
             job_uuid,
         )
         if not row:
-            raise HTTPException(status_code=500, detail="Score computed but not persisted")
+            # Score was computed but fell below the persist threshold, so it's not
+            # in match_scores. Return the live computed result instead of 500 so
+            # the job detail page always renders.
+            job_row = await db.fetchrow(
+                """
+                SELECT j.id AS job_id, j.title, co.name AS company_name,
+                       j.location_city, j.location_state, j.is_remote,
+                       j.employment_type, j.seniority, j.ctc_min, j.ctc_max,
+                       j.skills_required, j.apply_url, j.description,
+                       j.requirements, j.scraped_at
+                FROM public.jobs j
+                LEFT JOIN public.companies co ON co.id = j.company_id
+                WHERE j.id = $1::uuid AND j.is_active = TRUE AND j.deleted_at IS NULL
+                """,
+                job_uuid,
+            )
+            if not job_row:
+                raise HTTPException(status_code=404, detail="Job not found")
+            full_cand = await db.fetchrow(
+                """
+                SELECT id, skills, current_title, years_experience,
+                       location_city, location_state
+                FROM public.candidates WHERE id = $1::uuid
+                """,
+                candidate["id"],
+            )
+            computed = _serialize_fallback_match_row(
+                dict(job_row), candidate=dict(full_cand or {})
+            )
+            job_skills_live = job_row["skills_required"] or []
+            cand_canon_live = {canonical_skill(s) for s in (candidate["skills"] or [])}
+            scraped_live = job_row["scraped_at"]
+            return {
+                **computed,
+                "description": job_row.get("description"),
+                "requirements": job_row.get("requirements"),
+                "posted_at": scraped_live.isoformat() if scraped_live else None,
+                "skills_matched": [
+                    s for s in job_skills_live if canonical_skill(s) in cand_canon_live
+                ],
+                "skills_gap": [
+                    s for s in job_skills_live if canonical_skill(s) not in cand_canon_live
+                ],
+            }
 
     # Split required skills into "you have" vs "gap" using the shared canonical
     # taxonomy, so the score breakdown is actionable (this is what powers the
