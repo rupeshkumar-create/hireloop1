@@ -11,6 +11,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { ProductPreview } from "@/components/marketing/ProductPreview";
 
 export const metadata: Metadata = {
   title: "For Candidates — AI Career Partner",
@@ -75,23 +76,26 @@ export default function CandidatesPage() {
   return (
     <main>
       <section className="border-b border-ink-100 bg-paper-0 py-24">
-        <div className="max-w-page mx-auto px-4 sm:px-6 text-center">
-          <Badge tone="accent" className="mb-6 normal-case">
-            For Job Seekers
-          </Badge>
-          <h1 className="text-display text-ink-900 mb-6">
-            Meet <span className="text-ink-500">Aarya</span> — your personal career AI
-          </h1>
-          <p className="text-h3 text-ink-500 font-normal mb-10 max-w-2xl mx-auto">
-            She builds your career graph, finds the right jobs in India, and makes the
-            warm intro to the hiring manager — all from a single chat.
-          </p>
-          <Link
-            href={`${APP_URL}/signup?role=candidate`}
-            className="inline-flex h-12 items-center justify-center rounded-md bg-accent px-6 text-body font-medium text-accent-fg hover:bg-accent-hover transition-colors"
-          >
-            Chat with Aarya — free
-          </Link>
+        <div className="max-w-page mx-auto px-4 sm:px-6">
+          <div className="text-center mb-12">
+            <Badge tone="accent" className="mb-6 normal-case">
+              For Job Seekers
+            </Badge>
+            <h1 className="text-display text-ink-900 mb-6">
+              Meet <span className="text-ink-500">Aarya</span> — your personal career AI
+            </h1>
+            <p className="text-h3 text-ink-500 font-normal mb-10 max-w-2xl mx-auto">
+              She builds your career graph, finds the right jobs in India, and makes the
+              warm intro to the hiring manager — all from a single chat.
+            </p>
+            <Link
+              href={`${APP_URL}/signup?role=candidate`}
+              className="inline-flex h-12 items-center justify-center rounded-md bg-accent px-6 text-body font-medium text-accent-fg hover:bg-accent-hover transition-colors"
+            >
+              Chat with Aarya — start free
+            </Link>
+          </div>
+          <ProductPreview variant="candidate" />
         </div>
       </section>
 

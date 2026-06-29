@@ -77,8 +77,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         "inline-flex items-center justify-center font-medium",
         "transition-colors duration-fast ease-out-soft",
         "disabled:cursor-not-allowed",
-        // hide the global focus ring on mouse-only clicks, show on keyboard
-        "focus:outline-none",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper-0",
         VARIANT[variant],
         SIZE[size],
         fullWidth && "w-full",

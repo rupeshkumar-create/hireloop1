@@ -18,7 +18,6 @@ import {
   createRole,
   updateRecruiterProfile,
 } from "@/lib/api/recruiter";
-import { AppShell } from "@/components/layout/AppShell";
 import { Button, Card, CardBody, EmptyState } from "@/components/ui";
 
 type InvitePreview = {
@@ -104,8 +103,14 @@ function InviteInner() {
     preview != null && ["accepted", "cancelled"].includes(preview.status);
 
   return (
-    <AppShell title="Intro invite" activeNav="intros">
-      <div className="max-w-lg">
+    <div className="min-h-screen bg-paper-0 flex flex-col">
+      <header className="flex h-14 shrink-0 items-center border-b border-ink-100 bg-paper-1 px-6">
+        <Link href="/recruiter" className="text-h3 font-semibold text-ink-900">
+          Hireloop <span className="text-ink-400 font-normal">for recruiters</span>
+        </Link>
+      </header>
+      <main className="flex flex-1 items-center justify-center p-6">
+      <div className="max-w-lg w-full">
         {loading && (
           <div className="h-40 rounded-lg bg-ink-100 animate-skeleton" />
         )}
@@ -207,7 +212,8 @@ function InviteInner() {
           </Card>
         )}
       </div>
-    </AppShell>
+      </main>
+    </div>
   );
 }
 

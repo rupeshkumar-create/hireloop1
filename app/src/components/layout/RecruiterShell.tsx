@@ -9,38 +9,19 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeftRight,
-  Briefcase,
-  Inbox,
   Kanban,
   Loader2,
   Plus,
   Settings,
-  type LucideIcon,
 } from "lucide-react";
 import { switchActiveRole } from "@/lib/api/role";
+import {
+  RECRUITER_NAV,
+  type RecruiterNavItem,
+} from "@/lib/recruiter-nav";
+import { RecruiterMobileNav } from "@/components/layout/RecruiterMobileNav";
 import { useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
-
-type NavId = "inbox" | "roles" | "settings";
-
-type NavItem = {
-  id: NavId;
-  label: string;
-  href: string;
-  Icon: LucideIcon;
-  match?: string[];
-};
-
-const NAV_ITEMS: NavItem[] = [
-  { id: "inbox", label: "Inbox", href: "/recruiter/inbox", Icon: Inbox },
-  {
-    id: "roles",
-    label: "Roles",
-    href: "/recruiter/roles",
-    Icon: Briefcase,
-    match: ["/recruiter/roles"],
-  },
-];
 
 type RecruiterShellProps = {
   children: React.ReactNode;
@@ -67,7 +48,7 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
     }
   };
 
-  const isActive = (item: NavItem) =>
+  const isActive = (item: RecruiterNavItem) =>
     pathname === item.href ||
     (item.match?.some((m) => pathname?.startsWith(m)) ?? false);
 
@@ -83,10 +64,10 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
         </Link>
 
         <nav className="flex flex-1 flex-col items-center gap-1">
-          {NAV_ITEMS.map((item) => (
+          {RECRUITER_NAV.map((item) => (
             <Link
               key={item.id}
-              href={item.href}
+              href={item.href!}
               title={item.label}
               aria-label={item.label}
               aria-current={isActive(item) ? "page" : undefined}
@@ -149,31 +130,7 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
         )}
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 flex h-16 items-center justify-around border-t border-ink-100 bg-paper-1 md:hidden">
-        {NAV_ITEMS.map((item) => {
-          const active = isActive(item);
-          return (
-            <Link
-              key={item.id}
-              href={item.href}
-              className={cn(
-                "flex flex-col items-center gap-0.5 px-2 py-1",
-                active ? "text-ink-900" : "text-ink-400"
-              )}
-            >
-              <item.Icon className="h-5 w-5" strokeWidth={1.5} />
-              <span className="text-micro font-medium">{item.label}</span>
-            </Link>
-          );
-        })}
-        <Link
-          href="/recruiter/roles/new"
-          className="flex flex-col items-center gap-0.5 px-2 py-1 text-ink-400"
-        >
-          <Plus className="h-5 w-5" strokeWidth={1.5} />
-          <span className="text-micro font-medium">New</span>
-        </Link>
-      </nav>
+      <RecruiterMobileNav />
     </div>
   );
 }

@@ -98,7 +98,7 @@ export function invalidateMatchFeedCache(): void {
   _matchFeedCountInFlight.clear();
 }
 
-/** Default filters shared by Home stat card and Jobs → For you tab. */
+/** Default filters shared by Home stat card and Jobs → Matches tab. */
 export const DEFAULT_MATCH_FEED_FILTERS: MatchFeedFilters = {
   min_score: 0.45,
   limit: 10,

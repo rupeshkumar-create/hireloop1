@@ -149,14 +149,31 @@ export function JobCard({
     }
   };
 
+  const tierBandClass =
+    job.tier === "strong"
+      ? "bg-accent"
+      : job.tier === "good"
+        ? "bg-amber-400"
+        : "bg-ink-200";
+
   return (
     <Card
       className={cn(
-        "hover:shadow-2 transition-shadow duration-fast",
+        "relative overflow-hidden hover:shadow-2 transition-shadow duration-fast",
         isChat ? "p-4" : "p-5",
         className
       )}
     >
+      <div
+        className={cn("absolute left-0 top-0 bottom-0 w-1", tierBandClass)}
+        aria-hidden
+      />
+
+      {applyLocked && (
+        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-micro text-amber-900">
+          Upload a resume or add city + expected CTC to apply or request intros.
+        </div>
+      )}
       {/* ── Top row: company + title + score ──────────────────────────── */}
       {/* The title/company block is a real link to the full job detail page,
           opened in a new tab so the user keeps their chat / feed context. Using

@@ -9,8 +9,8 @@ import { type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
+import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import {
-  CANDIDATE_MOBILE_NAV,
   CANDIDATE_NAV,
   type CandidateNavId,
 } from "@/lib/candidate-nav";
@@ -117,31 +117,13 @@ export function AppShell({
               {action}
             </div>
           </header>
-          <main className="flex-1 overflow-y-auto bg-paper-0 px-4 pb-24 pt-6 md:px-6 md:pb-10">
+          <main id="main-content" className="flex-1 overflow-y-auto bg-paper-0 px-4 pb-24 pt-6 md:px-6 md:pb-10">
             <div className={cn("mx-auto w-full", contentWidth)}>{children}</div>
           </main>
         </div>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 flex h-16 items-center justify-around border-t border-ink-100 bg-paper-1 md:hidden">
-        {CANDIDATE_MOBILE_NAV.map((item) => {
-          const active = isActive(item);
-          return (
-            <Link
-              key={item.id}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={cn(
-                "flex flex-col items-center gap-0.5 px-2 py-1 transition-colors duration-fast",
-                active ? "text-ink-900" : "text-ink-500 hover:text-ink-900",
-              )}
-            >
-              <item.Icon className="h-5 w-5" strokeWidth={1.5} />
-              <span className="text-micro font-medium">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
+      <CandidateMobileNav />
     </div>
   );
 }

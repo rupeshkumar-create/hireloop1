@@ -6,6 +6,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
+import { VALID_JOBS_TABS, VALID_PANELS, type JobsTab, type PanelId } from "@/lib/dashboard/panel-types";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -27,8 +28,6 @@ export default async function DashboardPage({
   // from the legacy /matches route → opens the Jobs panel).
   const panelRaw = sp.panel;
   const panelValue = Array.isArray(panelRaw) ? panelRaw[0] : panelRaw;
-  const VALID_PANELS = ["home", "inbox", "profile", "jobs", "coaching"] as const;
-  type PanelId = (typeof VALID_PANELS)[number];
   const initialPanel = VALID_PANELS.includes(panelValue as PanelId)
     ? (panelValue as PanelId)
     : undefined;
@@ -36,6 +35,12 @@ export default async function DashboardPage({
   const voiceRaw = sp.voice;
   const voiceParam = Array.isArray(voiceRaw) ? voiceRaw[0] : voiceRaw;
   const initialVoiceDeepDive = voiceParam === "deep";
+
+  const tabRaw = sp.tab;
+  const tabValue = Array.isArray(tabRaw) ? tabRaw[0] : tabRaw;
+  const initialJobsTab = VALID_JOBS_TABS.includes(tabValue as JobsTab)
+    ? (tabValue as JobsTab)
+    : undefined;
 
   const supabase = await createClient();
 
@@ -186,6 +191,7 @@ export default async function DashboardPage({
       hasVoiceSession={hasVoiceSession}
       showProfileBoosters={showProfileBoosters}
       initialVoiceDeepDive={initialVoiceDeepDive}
+      initialJobsTab={initialJobsTab}
       showAdminLink={canSeeAdmin}
     />
   );

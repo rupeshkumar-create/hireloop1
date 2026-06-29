@@ -61,7 +61,7 @@ export function Navbar() {
               href={APP_URL + "/signup"}
               className="bg-accent hover:bg-accent-hover text-paper-0 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
             >
-              Get started free
+              Start chatting — it&apos;s free
             </Link>
           </div>
 
@@ -71,6 +71,8 @@ export function Navbar() {
             className="md:hidden p-2 rounded-lg text-ink-700 hover:bg-ink-100 transition-colors"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-nav-menu"
           >
             {mobileOpen ? (
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -87,7 +89,7 @@ export function Navbar() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-ink-100 bg-paper-1 px-4 py-4 space-y-1">
+        <div id="mobile-nav-menu" className="md:hidden border-t border-ink-100 bg-paper-1 px-4 py-4 space-y-1">
           {NAV_LINKS.map((link) => (
             <Link
               key={link.href}
@@ -114,7 +116,7 @@ export function Navbar() {
               href={APP_URL + "/signup"}
               className="block text-center bg-accent hover:bg-accent-hover text-paper-0 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
             >
-              Get started free
+              Start chatting — it&apos;s free
             </Link>
           </div>
         </div>

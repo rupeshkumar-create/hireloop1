@@ -9,6 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { ProductPreview } from "@/components/marketing/ProductPreview";
 
 export const metadata: Metadata = {
   title: "For Recruiters — AI Hiring Intelligence",
@@ -61,23 +62,26 @@ export default function RecruitersPage() {
   return (
     <main>
       <section className="border-b border-ink-100 bg-paper-0 py-24">
-        <div className="max-w-page mx-auto px-4 sm:px-6 text-center">
-          <Badge tone="accent" className="mb-6 normal-case">
-            For Recruiters & Hiring Managers
-          </Badge>
-          <h1 className="text-display text-ink-900 mb-6">
-            Meet <span className="text-ink-500">Nitya</span> — your AI recruiter
-          </h1>
-          <p className="text-h3 text-ink-500 font-normal mb-10 max-w-2xl mx-auto">
-            Describe the role. Nitya builds the brief, surfaces ranked candidates,
-            and manages intros in your inbox — built for India hiring teams.
-          </p>
-          <Link
-            href={`${APP_URL}/signup?role=recruiter`}
-            className="inline-flex h-12 items-center justify-center rounded-md bg-accent px-6 text-body font-medium text-accent-fg hover:bg-accent-hover transition-colors"
-          >
-            Talk to Nitya — free
-          </Link>
+        <div className="max-w-page mx-auto px-4 sm:px-6">
+          <div className="text-center mb-12">
+            <Badge tone="accent" className="mb-6 normal-case">
+              For Recruiters & Hiring Managers
+            </Badge>
+            <h1 className="text-display text-ink-900 mb-6">
+              Meet <span className="text-ink-500">Nitya</span> — your AI recruiter
+            </h1>
+            <p className="text-h3 text-ink-500 font-normal mb-10 max-w-2xl mx-auto">
+              Describe the role. Nitya builds the brief, surfaces ranked candidates,
+              and manages intros in your inbox — built for India hiring teams.
+            </p>
+            <Link
+              href={`${APP_URL}/signup?role=recruiter`}
+              className="inline-flex h-12 items-center justify-center rounded-md bg-accent px-6 text-body font-medium text-accent-fg hover:bg-accent-hover transition-colors"
+            >
+              Talk to Nitya — free
+            </Link>
+          </div>
+          <ProductPreview variant="recruiter" />
         </div>
       </section>
 
@@ -109,7 +113,7 @@ export default function RecruitersPage() {
             href={`${APP_URL}/signup?role=recruiter`}
             className="inline-flex h-12 items-center justify-center rounded-md bg-paper-0 px-6 text-body font-medium text-ink-900 hover:bg-ink-50 transition-colors"
           >
-            Get started free
+            Talk to Nitya — free
           </Link>
         </div>
       </section>

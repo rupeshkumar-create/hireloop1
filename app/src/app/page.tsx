@@ -83,8 +83,8 @@ export default async function RootPage() {
             <p className="max-w-md text-body text-ink-700 leading-relaxed">
               Hireloop replaces the job-board grind with one conversation. Type
               or talk — Aarya finds live roles in India, scores your fit, and
-              requests warm intros for you. No dashboards to learn, no résumé
-              black holes.
+              requests warm intros for you. One chat — matches, intros, and prep
+              in the same place.
             </p>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

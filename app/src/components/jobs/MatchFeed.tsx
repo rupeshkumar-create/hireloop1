@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Search } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MATCH_FEED_FILTERS,
@@ -33,6 +33,7 @@ import {
 import { Button, Card, EmptyState, Select } from "@/components/ui";
 import { Stagger, StaggerItem } from "@/components/ui/motion";
 import { JobCard } from "./JobCard";
+import { MatchesEmptyPanel } from "./MatchesEmptyPanel";
 
 interface MatchFeedProps {
   conversationId?: string;
@@ -43,6 +44,7 @@ interface MatchFeedProps {
   matchSourceBadge?: "linkedin";
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
+  onAskAarya?: () => void;
   className?: string;
 }
 
@@ -111,6 +113,7 @@ export function MatchFeed({
   matchSourceBadge,
   savedJobIds = new Set(),
   onSavedChange,
+  onAskAarya,
   className,
 }: MatchFeedProps) {
   const initialJobs = getCachedMatchFeed(DEFAULT_MATCH_FEED_FILTERS);
@@ -335,11 +338,7 @@ export function MatchFeed({
         )}
 
         {!loading && !error && jobs.length === 0 && (
-          <EmptyState
-            icon={<Search strokeWidth={1.5} />}
-            title="No matches yet"
-            description="Aarya is finding the best roles for your profile. Check back in a few hours or ask Aarya to search for specific roles."
-          />
+          <MatchesEmptyPanel onAskAarya={onAskAarya} />
         )}
 
         {!loading &&

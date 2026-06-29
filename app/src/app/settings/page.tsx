@@ -9,14 +9,11 @@
  */
 
 import { useEffect, useState } from "react";
-import { LogOut, Shield } from "lucide-react";
+import Link from "next/link";
+import { LogOut, Shield, User } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { createClient } from "@/lib/supabase/client";
-import {
-  applyProfileToForm,
-  fetchMyProfile,
-  type MyProfileData,
-} from "@/lib/api/profile";
+import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
 import {
   Button,
   Card,
@@ -26,51 +23,8 @@ import {
   useToast,
 } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
+import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { cn } from "@/lib/utils";
-
-// ── Notification categories ────────────────────────────────────────────────────
-// IMPORTANT: the list is defined here — never derived from Object.keys(apiResponse).
-// The API only stores toggle state; the labels live in this file.
-
-type NotifCat = { id: string; label: string; desc: string };
-
-const NOTIFICATION_CATEGORIES: NotifCat[] = [
-  {
-    id:    "job_match_alerts",
-    label: "Job match alerts",
-    desc:  "New jobs matching your profile",
-  },
-  {
-    id:    "intro_updates",
-    label: "Intro request updates",
-    desc:  "When a recruiter responds to your intro",
-  },
-  {
-    id:    "interview_reminders",
-    label: "Interview reminders",
-    desc:  "Upcoming scheduled interviews",
-  },
-  {
-    id:    "aarya_digest",
-    label: "Weekly digest",
-    desc:  "Your career progress summary from Aarya",
-  },
-  {
-    id:    "profile_views",
-    label: "Profile viewed",
-    desc:  "When recruiters view your profile",
-  },
-  {
-    id:    "application_updates",
-    label: "Application updates",
-    desc:  "Status changes on your applications",
-  },
-  {
-    id:    "platform_updates",
-    label: "Platform updates",
-    desc:  "New Hireloop features and improvements",
-  },
-];
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -91,14 +45,10 @@ export default function SettingsPage() {
     }
   }
 
-  // Profile state
-  const [profile,       setProfile]       = useState<MyProfileData | null>(null);
-  const [fullName,      setFullName]       = useState("");
-  const [headline,      setHeadline]       = useState("");
-  const [currentTitle,  setCurrentTitle]   = useState("");
+  // Profile (read-only — career edits live in dashboard Profile panel)
+  const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [profileError,  setProfileError]  = useState("");
-  const [savingProfile, setSavingProfile]  = useState(false);
+  const [profileError, setProfileError] = useState("");
 
   // Notification prefs state — keyed by category id, value = { whatsapp: bool }
   const [prefs,       setPrefs]       = useState<Record<string, Record<string, boolean>>>({});
@@ -110,12 +60,7 @@ export default function SettingsPage() {
       setProfileError("");
       try {
         const d = await fetchMyProfile();
-        applyProfileToForm(d, {
-          setProfile,
-          setFullName,
-          setHeadline,
-          setCurrentTitle,
-        });
+        setProfile(d);
       } catch (err) {
         setProfileError(
           err instanceof Error ? err.message : "Couldn't load profile"
@@ -132,33 +77,6 @@ export default function SettingsPage() {
       .then((d) => setPrefs(d.prefs ?? {}))
       .catch(() => {});
   }, []);
-
-  async function saveProfile() {
-    setSavingProfile(true);
-    try {
-      await apiFetch("/api/v1/me/profile", {
-        method: "PATCH",
-        body: JSON.stringify({
-          full_name:     fullName.trim() || undefined,
-          headline:      headline.trim() || undefined,
-          current_title: currentTitle.trim() || undefined,
-        }),
-      });
-      const refreshed = await fetchMyProfile();
-      applyProfileToForm(refreshed, {
-        setProfile,
-        setFullName,
-        setHeadline,
-        setCurrentTitle,
-      });
-      setProfileError("");
-      toast.success("Profile updated");
-    } catch {
-      toast.error("Couldn't update profile");
-    } finally {
-      setSavingProfile(false);
-    }
-  }
 
   async function savePrefs() {
     setSavingPrefs(true);
@@ -192,116 +110,54 @@ export default function SettingsPage() {
     }
   }
 
-  const inputClass =
-    "w-full px-3 py-2 rounded-md border border-ink-200 bg-paper-0 text-small text-ink-900 " +
-    "placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-900 transition-shadow";
+  const displayName =
+    profile?.user?.full_name?.trim() ||
+    profile?.candidate?.headline?.trim() ||
+    "Your profile";
 
   return (
     <AppShell title="Settings">
       <div className="space-y-4">
-
-        {/* Profile */}
         <Card>
           <CardHeader
-            title="My profile"
-            description={
-              profile?.user?.email ?? (loadingProfile ? "Loading…" : undefined)
-            }
+            title="Career profile"
+            description="Headline, experience, resume, and career story"
           />
           <CardBody className="space-y-3 !pt-0">
             {profileError && (
               <p className="text-small text-destructive">{profileError}</p>
             )}
-            {profile?.user?.phone && (
-              <p className="text-small text-ink-600">
-                Phone: <span className="text-ink-900">{profile.user.phone}</span>
-              </p>
-            )}
-            <label className="block space-y-1">
-              <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
-                Full name
-              </span>
-              <input
-                className={inputClass}
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Your full name"
-              />
-            </label>
-
-            <label className="block space-y-1">
-              <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
-                Headline
-              </span>
-              <input
-                className={inputClass}
-                value={headline}
-                onChange={(e) => setHeadline(e.target.value)}
-                placeholder="e.g. Senior Software Engineer"
-              />
-            </label>
-
-            <label className="block space-y-1">
-              <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
-                Current role
-              </span>
-              <input
-                className={inputClass}
-                value={currentTitle}
-                onChange={(e) => setCurrentTitle(e.target.value)}
-                placeholder="e.g. Software Engineer at Google"
-              />
-            </label>
-
-            {profile?.candidate?.skills && profile.candidate.skills.length > 0 && (
-              <div className="space-y-1.5 pt-1">
-                <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
-                  Skills
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {profile.candidate.skills.slice(0, 15).map((s) => (
-                    <span
-                      key={s}
-                      className="px-2 py-0.5 rounded-full bg-ink-100 text-micro text-ink-700 font-medium"
-                    >
-                      {s}
-                    </span>
-                  ))}
-                  {profile.candidate.skills.length > 15 && (
-                    <span className="px-2 py-0.5 rounded-full bg-ink-100 text-micro text-ink-500">
-                      +{profile.candidate.skills.length - 15} more
-                    </span>
-                  )}
+            {loadingProfile ? (
+              <p className="text-small text-ink-500">Loading…</p>
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-ink-100 flex items-center justify-center shrink-0">
+                    <User className="h-5 w-5 text-ink-500" strokeWidth={1.5} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-small font-medium text-ink-900 truncate">{displayName}</p>
+                    <p className="text-micro text-ink-500 truncate">
+                      {profile?.user?.email ?? "—"}
+                    </p>
+                  </div>
                 </div>
-                <p className="text-micro text-ink-400 pt-0.5">
-                  Skills are updated automatically when you upload a resume or complete a voice session.
-                </p>
-              </div>
-            )}
-
-            {profile?.candidate?.location_city && (
-              <p className="text-micro text-ink-500">
-                Location: {profile.candidate.location_city}
-                {profile.candidate.location_state && `, ${profile.candidate.location_state}`}
-              </p>
-            )}
-
-            {profile?.candidate?.years_experience != null && (
-              <p className="text-micro text-ink-500">
-                Experience: {profile.candidate.years_experience} year
-                {profile.candidate.years_experience !== 1 ? "s" : ""}
-              </p>
+                {profile?.candidate?.headline && (
+                  <p className="text-small text-ink-600">{profile.candidate.headline}</p>
+                )}
+                {profile?.user?.phone && (
+                  <p className="text-micro text-ink-500">Phone: {profile.user.phone}</p>
+                )}
+              </>
             )}
           </CardBody>
           <CardFooter>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void saveProfile()}
-              loading={savingProfile}
+            <Link
+              href="/dashboard?panel=profile"
+              className="inline-flex items-center justify-center font-medium h-9 px-3 text-small rounded-md bg-ink-50 text-ink-900 hover:bg-ink-100 transition-colors"
             >
-              Save profile
-            </Button>
+              Edit in Profile
+            </Link>
           </CardFooter>
         </Card>
 
