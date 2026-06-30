@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Bookmark } from "lucide-react";
 import { fetchSavedJobs } from "@/lib/api/saved-jobs";
 import type { MatchedJob } from "@/lib/api/matches";
+import {
+  openTailoredDownload,
+  pollTailoredResume,
+  requestTailoredResume,
+} from "@/lib/api/tailored";
 import { Button, EmptyState } from "@/components/ui";
 import { JobCard } from "./JobCard";
 
@@ -27,6 +32,33 @@ export function SavedJobsPanel({
   const [jobs, setJobs] = useState<MatchedJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Per-job tailored-resume state (mirrors MatchFeed).
+  const [tailorByJob, setTailorByJob] = useState<
+    Record<string, "idle" | "loading" | "ready" | "error">
+  >({});
+
+  const handleTailorResume = useCallback(async (job: MatchedJob) => {
+    setTailorByJob((s) => ({ ...s, [job.job_id]: "loading" }));
+    try {
+      const started = await requestTailoredResume(job.job_id);
+      if (started.status === "ready" && started.download_path) {
+        const id = started.download_path.split("/").pop();
+        if (id) openTailoredDownload(id);
+        setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
+        return;
+      }
+      const resumeId = started.resume_id;
+      if (!resumeId) {
+        throw new Error(started.message ?? "No resume id returned");
+      }
+      const ready = await pollTailoredResume(resumeId);
+      openTailoredDownload(ready.id);
+      setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
+    } catch {
+      setTailorByJob((s) => ({ ...s, [job.job_id]: "error" }));
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +119,8 @@ export function SavedJobsPanel({
               job={job}
               conversationId={conversationId}
               onRequestIntro={onRequestIntro}
+              onTailorResume={handleTailorResume}
+              tailorStatus={tailorByJob[job.job_id] ?? "idle"}
               isSaved={savedJobIds.has(job.job_id)}
               onSavedChange={onSavedChange}
               variant="feed"
