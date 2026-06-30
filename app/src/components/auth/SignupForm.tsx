@@ -106,7 +106,7 @@ export function SignupForm() {
         return;
       }
       setOtpSent(true);
-      setInfoMessage(`We emailed a 6-digit login code to ${addr}.`);
+      setInfoMessage(`We emailed a login code to ${addr}.`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
     } finally {
@@ -265,8 +265,8 @@ export function SignupForm() {
             type="text"
             inputMode="numeric"
             value={otpCode}
-            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder="6-digit code"
+            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+            placeholder="Login code"
             autoComplete="one-time-code"
             required
           />
