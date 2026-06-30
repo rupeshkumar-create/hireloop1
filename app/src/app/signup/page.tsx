@@ -28,16 +28,6 @@ export default function SignupPage() {
         <Suspense fallback={<SignupFormSkeleton />}>
           <SignupForm />
         </Suspense>
-
-        <p className="text-micro text-ink-500 text-center uppercase">
-          India only (+91) · DPDP Act 2023 ·{" "}
-          <a
-            href="mailto:privacy@hireloop.in"
-            className="underline hover:text-ink-900 transition-colors duration-fast normal-case"
-          >
-            privacy@hireloop.in
-          </a>
-        </p>
       </div>
     </main>
   );
