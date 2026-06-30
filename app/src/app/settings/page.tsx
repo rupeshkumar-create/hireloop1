@@ -203,9 +203,6 @@ export default function SettingsPage() {
             description="Your data, on your terms. DPDP Act 2023 compliant."
           />
           <CardBody className="space-y-2 !pt-0">
-            <p className="text-small text-ink-500">
-              Data Protection Officer: privacy@hireloop.in
-            </p>
             <div className="flex flex-col gap-2 pt-1">
               <button
                 onClick={() =>

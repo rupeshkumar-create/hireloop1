@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  Briefcase,
   MessageSquare,
   Mic,
   Search,
@@ -165,13 +164,8 @@ export default async function RootPage() {
 
       {/* ── Trust strip ──────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-page px-6 py-16 md:py-20">
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2">
           {[
-            {
-              Icon: Briefcase,
-              title: "Live roles in India only",
-              body: "Every match is a real, open role in India — no recycled global listings.",
-            },
             {
               Icon: Zap,
               title: "See every action",
@@ -180,7 +174,7 @@ export default async function RootPage() {
             {
               Icon: ShieldCheck,
               title: "Your data stays yours",
-              body: "Each profile is fully isolated and DPDP-aligned. We never cold-spam recruiters.",
+              body: "Each profile is fully isolated. We never cold-spam recruiters.",
             },
           ].map(({ Icon, title, body }) => (
             <div key={title} className="flex gap-3">
