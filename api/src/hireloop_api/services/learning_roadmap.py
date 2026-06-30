@@ -41,6 +41,8 @@ Rules:
 - Be specific to THIS candidate and THIS job — reference their actual skills/gaps.
 - Never invent the candidate's experience.
 - Prefer free or widely-available resources; name concrete topics, not vague advice.
+- When you know a real, canonical documentation or course URL for a resource, \
+include it in "url" (e.g. official docs, a well-known free course). If unsure, omit url.
 - 3 to 5 phases, ordered from foundations to job-ready, paced for ~1 hour/day.
 - Output ONLY valid JSON (no markdown fences) matching the requested schema.
 """
@@ -58,7 +60,7 @@ _SCHEMA_HINT = """Return JSON with exactly this shape:
       "focus": "one-line focus for this phase",
       "milestones": ["concrete, checkable task", ...],
       "skills": ["skill covered", ...],
-      "resources": [{"label": "resource or topic", "note": "what/why"}]
+      "resources": [{"label": "resource or topic", "url": "https://real-link-if-known (else omit)", "note": "what/why"}]
     }
   ],
   "stretch_goals": ["optional advanced goal", ...]
@@ -164,7 +166,8 @@ def render_roadmap_html(
             milestone_index += 1
             total_milestones += 1
             mrows.append(
-                f"<label class='milestone'><input type='checkbox' data-id='{mid}'>"
+                f"<label class='milestone'>"
+                f"<input type='checkbox' data-id='{mid}' data-phase='{pi}'>"
                 f"<span>{_E(str(m))}</span></label>"
             )
         resources = phase.get("resources") or []
@@ -173,19 +176,23 @@ def render_roadmap_html(
             if isinstance(r, dict):
                 label = _E(str(r.get("label") or ""))
                 note = _E(str(r.get("note") or ""))
+                url = str(r.get("url") or "").strip()
                 if label:
-                    rrows.append(
-                        f"<li><strong>{label}</strong>"
-                        + (f" — {note}" if note else "")
-                        + "</li>"
+                    link = (
+                        f"<a href='{_E(url)}' target='_blank' rel='noopener noreferrer'>"
+                        f"{label} ↗</a>"
+                        if url.startswith("http")
+                        else f"<strong>{label}</strong>"
                     )
+                    rrows.append(f"<li>{link}" + (f" — {note}" if note else "") + "</li>")
             elif str(r).strip():
                 rrows.append(f"<li>{_E(str(r))}</li>")
 
         phase_blocks.append(
-            f"""<section class="phase">
+            f"""<section class="phase" data-phase="{pi}">
   <div class="phase-head">
-    <h3>{title}</h3>{f'<span class="duration">{duration}</span>' if duration else ''}
+    <div class="phase-title"><span class="phase-num">{pi + 1}</span><h3>{title}</h3></div>
+    <div class="phase-meta">{f'<span class="duration">{duration}</span>' if duration else ''}<span class="phase-status" id="status-{pi}"></span></div>
   </div>
   {f'<p class="focus">{focus}</p>' if focus else ''}
   {f'<div class="chips">{skill_chips}</div>' if skill_chips else ''}
@@ -262,11 +269,22 @@ _DOC_TEMPLATE = """<!DOCTYPE html>
     color: #6b7280; margin: 0 0 8px; }}
   .card ul {{ margin: 0; padding-left: 18px; }} .card li {{ font-size: 14px; margin: 3px 0; }}
   .phase {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
-    padding: 18px 20px; margin-bottom: 14px; }}
-  .phase-head {{ display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }}
-  .phase-head h3 {{ font-size: 17px; margin: 0; }}
+    padding: 18px 20px; margin-bottom: 14px; transition: border-color .2s, box-shadow .2s; }}
+  .phase.phase-done {{ border-color: #bbf7d0; box-shadow: 0 0 0 1px #bbf7d0 inset; }}
+  .phase-head {{ display: flex; align-items: center; justify-content: space-between; gap: 10px; }}
+  .phase-title {{ display: flex; align-items: center; gap: 11px; min-width: 0; }}
+  .phase-title h3 {{ font-size: 17px; margin: 0; }}
+  .phase-num {{ flex: none; width: 28px; height: 28px; border-radius: 9px; color: #fff;
+    font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #6366f1, #2563eb); }}
+  .phase-done .phase-num {{ background: linear-gradient(135deg, #16a34a, #22c55e); }}
+  .phase-meta {{ display: flex; align-items: center; gap: 8px; white-space: nowrap; }}
+  .phase-status {{ font-size: 12px; font-weight: 600; color: #6b7280; }}
+  .phase-status.complete {{ color: #16a34a; }}
   .duration {{ font-size: 12px; font-weight: 600; color: #2563eb; background: #eff4ff;
     padding: 3px 9px; border-radius: 999px; white-space: nowrap; }}
+  .resources a {{ color: #2563eb; text-decoration: none; font-weight: 600; }}
+  .resources a:hover {{ text-decoration: underline; }}
   .focus {{ color: #555; font-size: 14px; margin: 6px 0 10px; }}
   .chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }}
   .chip {{ font-size: 12px; background: #f1f3f5; color: #374151; padding: 3px 9px; border-radius: 6px; }}
@@ -323,6 +341,21 @@ _DOC_TEMPLATE = """<!DOCTYPE html>
     document.getElementById('done').textContent = done;
     var pct = TOTAL ? Math.round((done / TOTAL) * 100) : 0;
     document.getElementById('bar').style.width = pct + '%';
+    // Per-phase completion (the "skill tree" reward).
+    document.querySelectorAll('.phase[data-phase]').forEach(function (sec) {{
+      var pi = sec.getAttribute('data-phase');
+      var pboxes = sec.querySelectorAll('.milestone input');
+      if (!pboxes.length) return;
+      var pdone = 0;
+      pboxes.forEach(function (b) {{ if (b.checked) pdone++; }});
+      var status = document.getElementById('status-' + pi);
+      var complete = pdone === pboxes.length;
+      sec.classList.toggle('phase-done', complete);
+      if (status) {{
+        status.textContent = complete ? '✓ Complete' : pdone + '/' + pboxes.length;
+        status.classList.toggle('complete', complete);
+      }}
+    }});
   }}
   function resetProgress() {{ save({{}}); document.querySelectorAll('.milestone input').forEach(function (b) {{ b.checked = false; }}); refresh(); }}
   (function init() {{
