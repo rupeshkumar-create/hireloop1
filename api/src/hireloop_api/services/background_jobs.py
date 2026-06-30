@@ -33,6 +33,7 @@ CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
 CAREER_PATH_UPDATE = "career_path_update"
 PROFILE_COMPLETENESS = "profile_completeness"
 TAILORED_RESUME = "tailored_resume"
+LEARNING_ROADMAP = "learning_roadmap"
 MATCH_EMBED_ALL = "match_embed_all"
 MATCH_RECOMPUTE_ALL = "match_recompute_all"
 MATCH_EMBED_CANDIDATE = "match_embed_candidate"
@@ -319,6 +320,16 @@ async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -
     )
 
 
+async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.routes.learning_roadmaps import _run_roadmap_task
+
+    await _run_roadmap_task(
+        uuid.UUID(str(payload["candidate_id"])),
+        uuid.UUID(str(payload["job_id"])),
+        settings,
+    )
+
+
 async def _handle_match_embed_all(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.embeddings import EmbeddingService
@@ -431,6 +442,7 @@ _HANDLERS: dict[str, Handler] = {
     CAREER_PATH_UPDATE: _handle_career_path_update,
     PROFILE_COMPLETENESS: _handle_profile_completeness,
     TAILORED_RESUME: _handle_tailored_resume,
+    LEARNING_ROADMAP: _handle_learning_roadmap,
     MATCH_EMBED_ALL: _handle_match_embed_all,
     MATCH_RECOMPUTE_ALL: _handle_match_recompute_all,
     MATCH_EMBED_CANDIDATE: _handle_match_embed_candidate,

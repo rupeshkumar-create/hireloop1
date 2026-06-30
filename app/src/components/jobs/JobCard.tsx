@@ -24,6 +24,7 @@ import {
   Check,
   ExternalLink,
   FileText,
+  GraduationCap,
   Heart,
   Loader2,
   Send,
@@ -39,6 +40,8 @@ interface JobCardProps {
   onDirectApply?: (job: MatchedJob) => void;
   onTailorResume?: (job: MatchedJob) => void;
   tailorStatus?: "idle" | "loading" | "ready" | "error";
+  onLearningRoadmap?: (job: MatchedJob) => void;
+  roadmapStatus?: "idle" | "loading" | "ready" | "error";
   isSaved?: boolean;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   /** When true, intro / apply are disabled until profile is ready (UI gate only). */
@@ -77,6 +80,8 @@ export function JobCard({
   onDirectApply,
   onTailorResume,
   tailorStatus = "idle",
+  onLearningRoadmap,
+  roadmapStatus = "idle",
   isSaved = false,
   onSavedChange,
   variant = "feed",
@@ -91,6 +96,8 @@ export function JobCard({
 
   const tailoring = tailorStatus === "loading";
   const tailoredReady = tailorStatus === "ready";
+  const roadmapBuilding = roadmapStatus === "loading";
+  const roadmapReady = roadmapStatus === "ready";
 
   const ctcLabel =
     job.ctc_min && job.ctc_max
@@ -122,6 +129,11 @@ export function JobCard({
     if (job.apply_url) {
       window.open(job.apply_url, "_blank", "noopener,noreferrer");
     }
+  };
+
+  const handleRoadmap = () => {
+    if (roadmapBuilding || roadmapReady || !onLearningRoadmap) return;
+    onLearningRoadmap(job);
   };
 
   const handleTailor = () => {
@@ -362,6 +374,28 @@ export function JobCard({
             className="flex-1"
           >
             {tailoring ? "Tailoring" : tailoredReady ? "Ready" : "Tailor"}
+          </Button>
+        )}
+
+        {!isChat && onLearningRoadmap && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleRoadmap}
+            disabled={roadmapBuilding || roadmapReady}
+            leftIcon={
+              roadmapBuilding ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
+              ) : roadmapReady ? (
+                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+              ) : (
+                <GraduationCap className="h-3.5 w-3.5" strokeWidth={1.5} />
+              )
+            }
+            className="flex-1"
+            title="Generate a personal AI learning roadmap for this role"
+          >
+            {roadmapBuilding ? "Building" : roadmapReady ? "Open" : "Roadmap"}
           </Button>
         )}
 

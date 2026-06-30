@@ -9,6 +9,11 @@ import {
   pollTailoredResume,
   requestTailoredResume,
 } from "@/lib/api/tailored";
+import {
+  openLearningRoadmap,
+  pollLearningRoadmap,
+  requestLearningRoadmap,
+} from "@/lib/api/learningRoadmap";
 import { Button, EmptyState } from "@/components/ui";
 import { JobCard } from "./JobCard";
 
@@ -57,6 +62,33 @@ export function SavedJobsPanel({
       setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
     } catch {
       setTailorByJob((s) => ({ ...s, [job.job_id]: "error" }));
+    }
+  }, []);
+
+  // Per-job learning-roadmap state.
+  const [roadmapByJob, setRoadmapByJob] = useState<
+    Record<string, "idle" | "loading" | "ready" | "error">
+  >({});
+
+  const handleLearningRoadmap = useCallback(async (job: MatchedJob) => {
+    setRoadmapByJob((s) => ({ ...s, [job.job_id]: "loading" }));
+    try {
+      const started = await requestLearningRoadmap(job.job_id);
+      if (started.status === "ready" && started.download_path) {
+        const id = started.download_path.split("/").pop();
+        if (id) await openLearningRoadmap(id);
+        setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
+        return;
+      }
+      const roadmapId = started.roadmap_id;
+      if (!roadmapId) {
+        throw new Error(started.message ?? "No roadmap id returned");
+      }
+      const ready = await pollLearningRoadmap(roadmapId);
+      await openLearningRoadmap(ready.id);
+      setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
+    } catch {
+      setRoadmapByJob((s) => ({ ...s, [job.job_id]: "error" }));
     }
   }, []);
 
@@ -121,6 +153,8 @@ export function SavedJobsPanel({
               onRequestIntro={onRequestIntro}
               onTailorResume={handleTailorResume}
               tailorStatus={tailorByJob[job.job_id] ?? "idle"}
+              onLearningRoadmap={handleLearningRoadmap}
+              roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
               isSaved={savedJobIds.has(job.job_id)}
               onSavedChange={onSavedChange}
               variant="feed"

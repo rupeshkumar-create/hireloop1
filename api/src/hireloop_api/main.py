@@ -42,6 +42,7 @@ from hireloop_api.routes.recruiter import router as recruiter_router
 from hireloop_api.routes.resumes import router as resumes_router
 from hireloop_api.routes.skills import router as skills_router
 from hireloop_api.routes.super_admin import router as super_admin_router
+from hireloop_api.routes.learning_roadmaps import router as learning_roadmaps_router
 from hireloop_api.routes.tailored_resumes import router as tailored_resumes_router
 from hireloop_api.routes.voice import router as voice_router
 from hireloop_api.routes.voice_sessions import router as voice_sessions_router
@@ -254,6 +255,8 @@ app.include_router(application_kits_router, prefix="/api/v1")
 
 # P20: Tailored resumes
 app.include_router(tailored_resumes_router, prefix="/api/v1")
+# Learning roadmaps (per-job AI upskilling plan)
+app.include_router(learning_roadmaps_router, prefix="/api/v1")
 
 # P21: Mock interviews
 app.include_router(mock_interview_router, prefix="/api/v1")
