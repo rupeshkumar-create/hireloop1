@@ -27,11 +27,21 @@ ROADMAP_SYSTEM = """You are a career coach who builds personalized upskilling \
 plans. Given a candidate's profile and a specific job, design a realistic \
 learning roadmap that closes the gap between them.
 
+These three inputs are FIXED and already known — never ask the learner for them:
+- Background & level: infer entirely from the candidate's resume/profile below. \
+Set the starting point, sequence, and depth from what they already know — skip \
+what they've clearly mastered, go deeper where they're weak.
+- Time available: assume ~1 hour per day (~7 hours/week). Size every phase's \
+duration and weekly workload to that budget — be realistic, not aspirational.
+- Goal: become job-ready for the specific TARGET job provided. Every phase must \
+move them toward that exact role's requirements; the final phase is a capstone \
+that proves readiness for it.
+
 Rules:
 - Be specific to THIS candidate and THIS job — reference their actual skills/gaps.
 - Never invent the candidate's experience.
 - Prefer free or widely-available resources; name concrete topics, not vague advice.
-- 3 to 5 phases, each a couple of weeks, ordered from foundations to job-ready.
+- 3 to 5 phases, ordered from foundations to job-ready, paced for ~1 hour/day.
 - Output ONLY valid JSON (no markdown fences) matching the requested schema.
 """
 
@@ -64,16 +74,21 @@ async def generate_roadmap(
     """LLM produces a structured learning roadmap as a dict."""
     prompt = f"""{_SCHEMA_HINT}
 
-Candidate profile:
+Fixed inputs (do not ask — calibrate to these):
+- Background/level: infer from the candidate resume below.
+- Time budget: ~1 hour/day (~7 hours/week).
+- Goal: become job-ready for the TARGET job below.
+
+Candidate resume / profile (this is their background):
 {json.dumps(candidate_profile, default=str, indent=2)[:6000]}
 
-Job:
+TARGET job (this is the goal):
 Title: {job.get("title")}
 Company: {job.get("company_name", "Company")}
 Required skills: {job.get("skills_required")}
 Description: {(job.get("description") or "")[:4000]}
 
-Produce the roadmap JSON now."""
+Produce the roadmap JSON now, paced for ~1 hour/day."""
 
     resp = await llm.ainvoke(
         [
@@ -229,6 +244,9 @@ _DOC_TEMPLATE = """<!DOCTYPE html>
   header.top {{ margin-bottom: 20px; }}
   header.top h1 {{ font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }}
   header.top .sub {{ color: #555; font-size: 14px; }}
+  .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
+  .pill {{ font-size: 12px; font-weight: 600; background: #eff4ff; color: #2563eb;
+    padding: 4px 11px; border-radius: 999px; }}
   .summary {{ font-size: 15px; margin: 14px 0 22px; }}
   .progress-wrap {{
     position: sticky; top: 0; background: #f3f4f6; padding: 12px 0; z-index: 5;
@@ -277,6 +295,11 @@ _DOC_TEMPLATE = """<!DOCTYPE html>
     <header class="top">
       <h1>Your learning roadmap to {target}</h1>
       <div class="sub">{header_sub}</div>
+      <div class="meta">
+        <span class="pill">Based on your resume</span>
+        <span class="pill">~1 hour/day · 7 hrs/week</span>
+        <span class="pill">Target: {target}</span>
+      </div>
     </header>
     {summary_block}
     <div class="progress-wrap no-print">
