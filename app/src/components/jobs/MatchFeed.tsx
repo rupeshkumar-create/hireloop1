@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MATCH_FEED_FILTERS,
@@ -133,6 +133,7 @@ export function MatchFeed({
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [seniority, setSeniority] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
 
   // Per-job tailored-resume state
   const [tailorByJob, setTailorByJob] = useState<
@@ -262,62 +263,93 @@ export function MatchFeed({
           {" "}— upload a CV to sharpen scores.
         </p>
       )}
-      {/* ── Filter bar ─────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3 pb-4 mb-4 border-b border-ink-100 shrink-0">
-        {/* Min score */}
-        <div className="flex items-center gap-2">
-          <span className="text-small text-ink-500 whitespace-nowrap">
-            Min match
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={80}
-            step={10}
-            value={minScore * 100}
-            onChange={(e) => setMinScore(Number(e.target.value) / 100)}
-            className="w-24 accent-accent"
-            aria-label="Minimum match score"
-          />
-          <span className="text-small font-medium text-ink-900 w-8">
-            {Math.round(minScore * 100)}%
-          </span>
-        </div>
+      {/* ── Filter bar (collapsed behind a toggle) ─────────────────────── */}
+      {(() => {
+        const activeFilterCount =
+          (remoteOnly ? 1 : 0) +
+          (seniority ? 1 : 0) +
+          (minScore !== MATCH_FEED_RELEVANCE_FLOOR ? 1 : 0);
+        return (
+          <div className="pb-4 mb-4 border-b border-ink-100 shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowFilters((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1.5 text-small px-3 py-1.5 rounded-full border transition-colors duration-fast",
+                  showFilters || activeFilterCount > 0
+                    ? "border-ink-300 text-ink-900"
+                    : "border-ink-100 text-ink-500 hover:text-ink-900 hover:border-ink-300"
+                )}
+                aria-expanded={showFilters}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.5} />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="min-w-[1.25rem] h-5 px-1 rounded-full bg-ink-900 text-micro font-medium text-paper-0 flex items-center justify-center">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              <span className="ml-auto text-small text-ink-500">{countLabel}</span>
+            </div>
 
-        {/* Remote toggle */}
-        <button
-          type="button"
-          onClick={() => setRemoteOnly((v) => !v)}
-          className={cn(
-            "flex items-center gap-1.5 text-small px-3 py-1.5 rounded-full border transition-colors duration-fast",
-            remoteOnly
-              ? "bg-ink-900 text-paper-0 border-ink-900 font-medium"
-              : "border-ink-100 text-ink-500 hover:text-ink-900 hover:border-ink-300"
-          )}
-          aria-pressed={remoteOnly}
-        >
-          <span
-            className={cn(
-              "w-1.5 h-1.5 rounded-full",
-              remoteOnly ? "bg-paper-0" : "bg-ink-300"
+            {showFilters && (
+              <div className="flex flex-wrap items-center gap-3 mt-3 animate-fade-in">
+                {/* Min score */}
+                <div className="flex items-center gap-2">
+                  <span className="text-small text-ink-500 whitespace-nowrap">
+                    Min match
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={80}
+                    step={10}
+                    value={minScore * 100}
+                    onChange={(e) => setMinScore(Number(e.target.value) / 100)}
+                    className="w-24 accent-accent"
+                    aria-label="Minimum match score"
+                  />
+                  <span className="text-small font-medium text-ink-900 w-8">
+                    {Math.round(minScore * 100)}%
+                  </span>
+                </div>
+
+                {/* Remote toggle */}
+                <button
+                  type="button"
+                  onClick={() => setRemoteOnly((v) => !v)}
+                  className={cn(
+                    "flex items-center gap-1.5 text-small px-3 py-1.5 rounded-full border transition-colors duration-fast",
+                    remoteOnly
+                      ? "bg-ink-900 text-paper-0 border-ink-900 font-medium"
+                      : "border-ink-100 text-ink-500 hover:text-ink-900 hover:border-ink-300"
+                  )}
+                  aria-pressed={remoteOnly}
+                >
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      remoteOnly ? "bg-paper-0" : "bg-ink-300"
+                    )}
+                  />
+                  Remote only
+                </button>
+
+                {/* Seniority */}
+                <Select
+                  value={seniority}
+                  onChange={(e) => setSeniority(e.target.value)}
+                  options={SENIORITY_OPTIONS}
+                  className="text-small h-8 py-0 rounded-full px-3 w-auto"
+                  aria-label="Seniority filter"
+                />
+              </div>
             )}
-          />
-          Remote only
-        </button>
-
-        {/* Seniority */}
-        <Select
-          value={seniority}
-          onChange={(e) => setSeniority(e.target.value)}
-          options={SENIORITY_OPTIONS}
-          className="text-small h-8 py-0 rounded-full px-3 w-auto"
-          aria-label="Seniority filter"
-        />
-
-        <span className="ml-auto text-small text-ink-500">
-          {countLabel}
-        </span>
-      </div>
+          </div>
+        );
+      })()}
 
       {/* ── Content ────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 pb-6">
