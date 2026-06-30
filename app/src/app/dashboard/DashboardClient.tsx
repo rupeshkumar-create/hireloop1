@@ -282,7 +282,7 @@ export function DashboardClient({
                 />
               )}
               {activePanel === "inbox" && <IntrosList variant="panel" />}
-              {activePanel === "profile" && <ProfilePanel />}
+              {activePanel === "profile" && <ProfilePanel onSendToChat={sendToChat} />}
               {activePanel === "jobs" && (
                 <JobsPanel
                   conversationId={activeConvoId ?? undefined}

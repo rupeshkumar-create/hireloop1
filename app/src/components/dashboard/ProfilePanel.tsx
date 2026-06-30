@@ -73,7 +73,12 @@ function ProfileSkeleton() {
   );
 }
 
-export function ProfilePanel() {
+export function ProfilePanel({
+  onSendToChat,
+}: {
+  /** Forwarded to Career Intelligence so its insights can trigger Aarya actions. */
+  onSendToChat?: (message: string) => void;
+} = {}) {
   const { toast } = useToast();
 
   const [tab, setTab] = useState<ProfileTab>("overview");
@@ -486,7 +491,7 @@ export function ProfilePanel() {
           </>
         )}
 
-        {tab === "intelligence" && <CareerIntelligencePanel />}
+        {tab === "intelligence" && <CareerIntelligencePanel onAskAarya={onSendToChat} />}
 
         {tab === "preferences" && (
           <>

@@ -143,7 +143,13 @@ function pct(n: number | null | undefined): string | null {
 
 // ── Composite sub-renderers ──────────────────────────────────────────────────
 
-function MobilityList({ items }: { items?: MobilityOption[] }) {
+function MobilityList({
+  items,
+  onAskAarya,
+}: {
+  items?: MobilityOption[];
+  onAskAarya?: (message: string) => void;
+}) {
   if (!items || items.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -169,6 +175,19 @@ function MobilityList({ items }: { items?: MobilityOption[] }) {
               <p className="text-micro text-ink-400">Skills to build:</p>
               <Chips items={opt.skill_gap} />
             </div>
+          )}
+          {onAskAarya && (
+            <button
+              type="button"
+              onClick={() =>
+                onAskAarya(
+                  `Show me current India roles for "${opt.role}" and what it would take for me to move into it.`,
+                )
+              }
+              className="text-micro font-medium text-accent hover:underline"
+            >
+              Explore this move →
+            </button>
           )}
         </div>
       ))}
@@ -359,7 +378,12 @@ function isPlaceholderIntelligence(i: CareerIntelligence | null): boolean {
   return !hasLayers;
 }
 
-export function CareerIntelligencePanel() {
+export function CareerIntelligencePanel({
+  onAskAarya,
+}: {
+  /** Send a prompt to Aarya (closes the panel + runs the action in chat). */
+  onAskAarya?: (message: string) => void;
+} = {}) {
   const [intel, setIntel] = useState<CareerIntelligence | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -650,6 +674,50 @@ export function CareerIntelligencePanel() {
             <Stat label="Career momentum" value={momentum} />
             <Stat label="Experience" value={totalYears} />
           </div>
+
+          {onAskAarya && (nextRole || marketValue || hasGaps) && (
+            <div className="flex flex-wrap gap-2">
+              {nextRole && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() =>
+                    onAskAarya(
+                      `Find me current India jobs matching the "${nextRole}" direction, strongest fit first.`,
+                    )
+                  }
+                >
+                  See matching roles
+                </Button>
+              )}
+              {marketValue && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    onAskAarya(
+                      `Based on my market value of ${marketValue}, find me roles that pay in that range.`,
+                    )
+                  }
+                >
+                  Roles at my market value
+                </Button>
+              )}
+              {hasGaps && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    onAskAarya(
+                      "Based on my career intelligence, what are my biggest gaps and a concrete plan to close them?",
+                    )
+                  }
+                >
+                  Plan my gaps
+                </Button>
+              )}
+            </div>
+          )}
 
           {i.career_dna?.rationale && (
             <p className="text-small text-ink-600 leading-relaxed">
@@ -1012,21 +1080,21 @@ export function CareerIntelligencePanel() {
                   i.mobility.adjacent_roles.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-micro text-ink-400">Adjacent roles</p>
-                      <MobilityList items={i.mobility.adjacent_roles} />
+                      <MobilityList items={i.mobility.adjacent_roles} onAskAarya={onAskAarya} />
                     </div>
                   )}
                 {i.mobility.stretch_roles &&
                   i.mobility.stretch_roles.length > 0 && (
                     <div className="space-y-2 pt-1">
                       <p className="text-micro text-ink-400">Stretch roles</p>
-                      <MobilityList items={i.mobility.stretch_roles} />
+                      <MobilityList items={i.mobility.stretch_roles} onAskAarya={onAskAarya} />
                     </div>
                   )}
                 {i.mobility.pivot_roles &&
                   i.mobility.pivot_roles.length > 0 && (
                     <div className="space-y-2 pt-1">
                       <p className="text-micro text-ink-400">Pivot roles</p>
-                      <MobilityList items={i.mobility.pivot_roles} />
+                      <MobilityList items={i.mobility.pivot_roles} onAskAarya={onAskAarya} />
                     </div>
                   )}
               </Layer>
