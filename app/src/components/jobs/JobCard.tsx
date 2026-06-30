@@ -133,6 +133,8 @@ export function JobCard({
     if (saving) return;
     setSaving(true);
     const next = !isSaved;
+    // Optimistic: flip the heart immediately via parent state, revert on error.
+    onSavedChange?.(job.job_id, next);
     try {
       if (next) {
         await saveJob(job.job_id);
@@ -141,8 +143,8 @@ export function JobCard({
         await unsaveJob(job.job_id);
         toast.success("Removed from saved");
       }
-      onSavedChange?.(job.job_id, next);
     } catch {
+      onSavedChange?.(job.job_id, !next);
       toast.error(next ? "Couldn't save job" : "Couldn't remove saved job");
     } finally {
       setSaving(false);
@@ -373,15 +375,11 @@ export function JobCard({
           title={isSaved ? "Saved" : "Save job"}
           className={cn("shrink-0 px-2", isSaved && "text-accent")}
           leftIcon={
-            saving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
-            ) : (
-              <Heart
-                className="h-3.5 w-3.5"
-                strokeWidth={1.5}
-                fill={isSaved ? "currentColor" : "none"}
-              />
-            )
+            <Heart
+              className="h-3.5 w-3.5"
+              strokeWidth={1.5}
+              fill={isSaved ? "currentColor" : "none"}
+            />
           }
         />
       </div>
