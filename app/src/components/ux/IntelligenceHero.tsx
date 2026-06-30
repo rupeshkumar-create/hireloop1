@@ -50,6 +50,19 @@ export function IntelligenceHero({
         )}
       </div>
       <div className="flex flex-wrap gap-2">
+        {nextRole && onAskAarya && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() =>
+              onAskAarya(
+                `Find me current India jobs matching the "${nextRole}" direction, strongest fit first.`,
+              )
+            }
+          >
+            See matching roles
+          </Button>
+        )}
         {onOpenIntelligence && (
           <Button variant="secondary" size="sm" onClick={onOpenIntelligence}>
             View intelligence

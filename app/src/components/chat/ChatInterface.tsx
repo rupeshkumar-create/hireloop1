@@ -49,6 +49,7 @@ import {
   Briefcase,
   Check,
   ChevronRight,
+  GraduationCap,
   Loader2,
   Mic,
   Paperclip,
@@ -1545,6 +1546,22 @@ function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
       kind: "message",
       message:
         "Review my resume and profile and tell me the most impactful improvements to rank higher in matches.",
+    },
+    {
+      Icon: GraduationCap,
+      title: "Practice a mock interview",
+      description: "Role-specific questions with feedback",
+      kind: "message",
+      message:
+        "Run a mock interview tailored to my target role and seniority, and give me detailed feedback.",
+    },
+    {
+      Icon: Sparkles,
+      title: "Coach me on my career",
+      description: "Plan a move, negotiate, or reflect",
+      kind: "message",
+      message:
+        "I'd like some career coaching — help me think through my next move, an offer, or a recent setback.",
     },
   ];
 }

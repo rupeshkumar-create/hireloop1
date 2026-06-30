@@ -80,7 +80,7 @@ export const CANDIDATE_MOBILE_PRIMARY_NAV: CandidateNavItem[] = CANDIDATE_NAV.fi
 
 /** Items shown in the mobile More sheet. */
 export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
-  ...CANDIDATE_NAV.filter((n) => ["coaching", "resumes"].includes(n.id)),
+  ...CANDIDATE_NAV.filter((n) => ["resumes"].includes(n.id)),
   {
     id: "settings",
     label: "Settings",

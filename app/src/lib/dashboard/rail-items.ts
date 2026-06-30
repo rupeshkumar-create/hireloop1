@@ -8,7 +8,7 @@ const NAV_TO_PANEL: Record<string, PanelId> = {
   matches: "jobs",
   intros: "inbox",
   profile: "profile",
-  coaching: "coaching",
+  // Coaching folded into the chat as starter chips — no longer a nav destination.
 };
 
 /** Desktop top-nav pills — aligned with CANDIDATE_NAV panel items. */
