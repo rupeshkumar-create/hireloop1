@@ -154,3 +154,31 @@ API calls from the browser must send **`Authorization: Bearer <supabase_access_t
 - Multi-region marketplace: market-scoped jobs + phone verify per region (R4).
 
 See also: `LOCAL_TESTING.md` (phase-by-phase tests), `PHASE_TRACKER.md`.
+
+---
+
+## 10. Vercel deploy (hireloop1-app)
+
+**Project settings** (Vercel dashboard → hireloop1-app → Settings → General):
+
+| Setting | Value |
+|---------|--------|
+| Root Directory | `app` |
+| Framework | Next.js |
+| Install Command | `cd .. && pnpm install --no-frozen-lockfile` |
+| Build Command | `pnpm build` |
+
+**Environment variables** — add for **Production**, **Preview**, and **Development** (GitHub pushes use Preview unless the branch is `main`):
+
+| Variable | Example |
+|----------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key from Dashboard |
+| `NEXT_PUBLIC_API_URL` | public API URL (not `localhost` for prod) |
+| `NEXT_PUBLIC_WEB_URL` | `https://hireloop1-app-orcin.vercel.app` |
+| `NEXT_PUBLIC_DEMO_MODE` | `false` |
+| `NEXT_PUBLIC_DEV_EMAIL_LOGIN` | `true` (staging) / `false` (prod) |
+
+Without Supabase vars, `next build` used to fail on `/signup` prerender. The app now tolerates missing vars at build time, but **auth still requires real values at runtime**.
+
+Also add production redirect URL in Supabase Auth: `https://hireloop1-app-orcin.vercel.app/auth/callback`.

@@ -2,6 +2,9 @@ import { Metadata } from "next";
 import { Suspense } from "react";
 import { SignupForm } from "@/components/auth/SignupForm";
 
+// Auth page — skip static prerender so builds succeed without Supabase env at compile time.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Sign up",
 };
