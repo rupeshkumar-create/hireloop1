@@ -6,11 +6,11 @@ REVOKE EXECUTE ON FUNCTION public.purge_deleted_users() FROM PUBLIC, anon, authe
 REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
 -- user_role() is used inside RLS policies for authenticated users — keep their grant,
 -- but anon has no business calling it.
-REVOKE EXECUTE ON FUNCTION public.user_role() FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION auth.user_role() FROM PUBLIC, anon;
 
 -- 2) Pin search_path on all flagged functions (prevents search-path hijack in
 --    SECURITY DEFINER / trigger contexts).
 ALTER FUNCTION public.set_updated_at() SET search_path = public;
-ALTER FUNCTION public.user_role() SET search_path = public;
+ALTER FUNCTION auth.user_role() SET search_path = public;
 ALTER FUNCTION public.purge_deleted_users() SET search_path = public;
 ALTER FUNCTION public.notify_intro_requested() SET search_path = public;
