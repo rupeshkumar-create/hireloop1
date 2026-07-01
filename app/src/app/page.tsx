@@ -86,7 +86,7 @@ export default async function RootPage() {
           className="pointer-events-none absolute -top-24 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full opacity-[0.14] blur-3xl"
           style={{
             background:
-              "radial-gradient(closest-side, var(--color-accent, #6366f1), transparent)",
+              "radial-gradient(closest-side, #B9F84C, transparent)",
           }}
         />
         <div className="relative mx-auto max-w-page px-6 pt-16 pb-16 md:pt-24">

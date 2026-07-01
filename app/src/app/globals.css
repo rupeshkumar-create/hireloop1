@@ -14,28 +14,28 @@
    are always available regardless of scan quirks.
    ------------------------------------------------------------------------- */
 @layer utilities {
-  /* paper */
-  .bg-paper-0   { background-color: #FAFAF7; }
-  .bg-paper-1   { background-color: #FFFFFF; }
-  .text-paper-0 { color: #FAFAF7; }
-  .text-paper-1 { color: #FFFFFF; }
+  /* paper (v2: dark charcoal) */
+  .bg-paper-0   { background-color: #141414; }
+  .bg-paper-1   { background-color: #1C1C1C; }
+  .text-paper-0 { color: #141414; }
+  .text-paper-1 { color: #1C1C1C; }
 
-  /* accent */
-  .bg-accent        { background-color: #3B5BFD; }
-  .bg-accent-hover  { background-color: #2F4BE6; }
-  .text-accent      { color: #3B5BFD; }
-  .text-accent-fg   { color: #FFFFFF; }
-  .border-accent    { border-color: #3B5BFD; }
-  .ring-accent      { --tw-ring-color: #3B5BFD; }
-  .ring-accent-ring { --tw-ring-color: rgba(59, 91, 253, 0.15); }
-  .hover\:bg-accent-hover:hover { background-color: #2F4BE6; }
-  .focus\:border-accent:focus   { border-color: #3B5BFD; }
-  .focus\:ring-accent-ring:focus { --tw-ring-color: rgba(59, 91, 253, 0.15); }
+  /* accent (v2: electric lime) */
+  .bg-accent        { background-color: #B9F84C; }
+  .bg-accent-hover  { background-color: #A8EA3A; }
+  .text-accent      { color: #B9F84C; }
+  .text-accent-fg   { color: #0F1400; }
+  .border-accent    { border-color: #B9F84C; }
+  .ring-accent      { --tw-ring-color: #B9F84C; }
+  .ring-accent-ring { --tw-ring-color: rgba(185, 248, 76, 0.30); }
+  .hover\:bg-accent-hover:hover { background-color: #A8EA3A; }
+  .focus\:border-accent:focus   { border-color: #B9F84C; }
+  .focus\:ring-accent-ring:focus { --tw-ring-color: rgba(185, 248, 76, 0.30); }
 
-  /* destructive */
-  .bg-destructive-bg { background-color: #FEE2E2; }
-  .text-destructive  { color: #B91C1C; }
-  .border-destructive { border-color: #B91C1C; }
+  /* destructive (v2: lighter red for dark) */
+  .bg-destructive-bg { background-color: rgba(247, 109, 109, 0.14); }
+  .text-destructive  { color: #F76D6D; }
+  .border-destructive { border-color: #F76D6D; }
 }
 
 @layer base {
@@ -50,8 +50,8 @@
    * falls back to browser-default serif.
    */
   body {
-    background-color: #FAFAF7;
-    color: #0E0E10;
+    background-color: #141414;
+    color: #FAFAFA;
     font-family: var(--font-geist-sans), "Inter", -apple-system,
                  BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 14px;
@@ -71,7 +71,7 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    color: #0E0E10;
+    color: #FAFAFA;
     letter-spacing: -0.01em;
   }
 
@@ -83,21 +83,21 @@
 
   /* Universal placeholder colour */
   ::placeholder {
-    color: #B5B5BA;
+    color: #6B6B6B;
     opacity: 1; /* Firefox normalisation */
   }
 
   /* Strong focus ring — always visible, never removed */
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #FAFAF7, 0 0 0 4px #3B5BFD;
+    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #B9F84C;
     border-radius: 6px;
   }
 
   /* Selection */
   ::selection {
-    background-color: rgba(59, 91, 253, 0.18);
-    color: #0E0E10;
+    background-color: rgba(185, 248, 76, 0.22);
+    color: #FAFAFA;
   }
 }
 
@@ -109,12 +109,12 @@
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background-color: #E6E6E4;       /* ink-100 */
+    background-color: #2A2A2A;       /* ink-100 */
     border-radius: 9999px;
-    border: 2px solid #FAFAF7;       /* paper-0 inset */
+    border: 2px solid #141414;       /* paper-0 inset */
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: #B5B5BA;       /* ink-300 */
+    background-color: #4D4D4D;       /* ink-300 */
   }
 }
 

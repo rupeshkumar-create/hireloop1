@@ -23,33 +23,35 @@ const config: Config = {
       inherit: "inherit",
       white: "#FFFFFF",
       black: "#000000",
+      // v2 charcoal + lime (DESIGN.md). The `ink` scale is INVERTED for dark:
+      // ink-900 = primary light text, ink-100 = dark hairline border.
       ink: {
-        50:  "#F1F1EE",
-        100: "#E6E6E4",
-        200: "#D4D4D0",
-        300: "#B5B5BA",
-        400: "#8E8E94",
-        500: "#6B6B72",
-        600: "#4A4A50",
-        700: "#36363B",
-        800: "#1F1F23",
-        900: "#0E0E10",
+        50:  "#1B1B1B",  // faint surface / subtle hover on the page
+        100: "#2A2A2A",  // hairline borders
+        200: "#333333",  // stronger border
+        300: "#4D4D4D",  // faint / disabled
+        400: "#6B6B6B",  // tertiary text, placeholder
+        500: "#A3A3A3",  // muted / secondary text
+        600: "#C4C4C4",
+        700: "#E0E0E0",
+        800: "#F0F0F0",
+        900: "#FAFAFA",  // primary text
       },
       paper: {
-        DEFAULT: "#FAFAF7",
-        "0":     "#FAFAF7",
-        "1":     "#FFFFFF",
+        DEFAULT: "#141414",  // page canvas
+        "0":     "#141414",
+        "1":     "#1C1C1C",  // cards / surface (lighter than page)
       },
       accent: {
-        DEFAULT: "#3B5BFD",
-        hover:   "#2F4BE6",
-        fg:      "#FFFFFF",
+        DEFAULT: "#B9F84C",  // electric lime
+        hover:   "#A8EA3A",
+        fg:      "#0F1400",  // near-black text on lime
         // Reserved low-emphasis tint for focus rings only.
-        ring:    "rgba(59, 91, 253, 0.15)",
+        ring:    "rgba(185, 248, 76, 0.30)",
       },
       destructive: {
-        DEFAULT: "#B91C1C",
-        bg:      "#FEE2E2",
+        DEFAULT: "#F76D6D",  // lighter red reads on dark
+        bg:      "rgba(247, 109, 109, 0.14)",
       },
     },
     extend: {
@@ -75,10 +77,10 @@ const config: Config = {
       },
       boxShadow: {
         // Two shadows. Two.
-        "1": "0 1px 2px rgba(14,14,16,0.04), 0 1px 1px rgba(14,14,16,0.02)",
-        "2": "0 4px 16px rgba(14,14,16,0.06), 0 2px 4px rgba(14,14,16,0.04)",
+        "1": "0 1px 2px rgba(0,0,0,0.30), 0 1px 1px rgba(0,0,0,0.20)",
+        "2": "0 4px 16px rgba(0,0,0,0.40), 0 2px 4px rgba(0,0,0,0.30)",
         // Focus ring (used by primitives — not a "real" shadow)
-        focus: "0 0 0 2px #FAFAF7, 0 0 0 4px #3B5BFD",
+        focus: "0 0 0 2px #141414, 0 0 0 4px #B9F84C",
       },
       transitionTimingFunction: {
         "out-soft": "cubic-bezier(0.16, 1, 0.3, 1)",
