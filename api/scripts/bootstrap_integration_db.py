@@ -60,6 +60,13 @@ STABLE
 AS $$
   SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'anon');
 $$;
+
+DO $$
+BEGIN
+  CREATE PUBLICATION supabase_realtime;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 """
 
 
