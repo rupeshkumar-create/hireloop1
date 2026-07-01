@@ -94,11 +94,14 @@ export function SignupForm() {
     // Same role cookie as LinkedIn so /auth/bootstrap provisions the right side.
     document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
     try {
+      // Pure 6-digit OTP flow — no emailRedirectTo, so Supabase does NOT mint a
+      // PKCE magic link (which fails with "code challenge does not match code
+      // verifier" when the link is opened by an email scanner or another tab).
+      // The user types the code; verifyOtp validates it without PKCE.
       const { error } = await supabase.auth.signInWithOtp({
         email: addr,
         options: {
           shouldCreateUser: true, // same flow signs up new users and signs in returning ones
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
       if (error) {
