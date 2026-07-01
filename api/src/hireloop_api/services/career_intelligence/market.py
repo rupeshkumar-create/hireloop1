@@ -38,6 +38,7 @@ logger = structlog.get_logger()
 _MIN_CORPUS = 8  # total live IN jobs before we trust demand scores
 _MIN_COMP_SAMPLE = 5  # postings with a salary band before we trust comp percentiles
 
+
 # Shared predicate for a "live" posting in the candidate's market.
 def _live_sql(market: str, *, job_alias: str = "j") -> str:
     from hireloop_api.markets import job_visible_for_market_sql

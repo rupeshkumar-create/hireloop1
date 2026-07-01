@@ -359,9 +359,7 @@ async def enrich_candidate_via_linkdapi(
     inferred_years = _infer_years_experience(roles)
     existing_years = row["years_experience"]
     new_years = (
-        existing_years
-        if existing_years is not None and int(existing_years) > 0
-        else inferred_years
+        existing_years if existing_years is not None and int(existing_years) > 0 else inferred_years
     )
 
     # Merge experience + education into career_profile (fill, don't clobber).

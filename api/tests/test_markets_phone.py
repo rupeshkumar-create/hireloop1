@@ -1,4 +1,3 @@
-
 from hireloop_api.markets import (
     dial_prefix_for_market,
     phone_matches_market,

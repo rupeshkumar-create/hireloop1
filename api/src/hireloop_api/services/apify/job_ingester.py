@@ -359,9 +359,7 @@ class JobIngester:
             [row["location_city"]] if row["location_city"] else None
         )
         candidate_time_range = time_range or (
-            self._settings.fantastic_jobs_candidate_time_range
-            if self._settings
-            else "7d"
+            self._settings.fantastic_jobs_candidate_time_range if self._settings else "7d"
         )
         desc_search = description_search_for_candidate(
             list(row["skills"] or []),

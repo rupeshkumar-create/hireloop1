@@ -29,9 +29,7 @@ def _html_email_configured(settings: Settings) -> bool:
     return smtp or bool(settings.resend_api_key)
 
 
-async def _send_html_email(
-    settings: Settings, *, to_email: str, subject: str, html: str
-) -> bool:
+async def _send_html_email(settings: Settings, *, to_email: str, subject: str, html: str) -> bool:
     """Send one HTML email via the best configured provider.
 
     Order: generic SMTP (free, e.g. Gmail — delivers to any recipient) → Resend

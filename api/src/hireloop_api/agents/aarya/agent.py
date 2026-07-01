@@ -851,9 +851,7 @@ def build_aarya_graph(settings: Settings) -> Any:
 
         prefetched = state.get("prefetched_jobs") or []
         if prefetched:
-            titles = ", ".join(
-                str(j.get("title") or "role")[:40] for j in prefetched[:3]
-            )
+            titles = ", ".join(str(j.get("title") or "role")[:40] for j in prefetched[:3])
             messages = [
                 *messages,
                 SystemMessage(
@@ -953,13 +951,9 @@ def build_aarya_graph(settings: Settings) -> Any:
                     if isinstance(result, dict) and isinstance(result.get("job_cards"), list):
                         cards = result["job_cards"]
                 elif tool_name == "build_career_path":
-                    result = await aarya_tools.build_career_path(
-                        db, user_id, session_id, settings
-                    )
+                    result = await aarya_tools.build_career_path(db, user_id, session_id, settings)
                 elif tool_name == "get_match_score":
-                    result = await aarya_tools.get_match_score(
-                        db, user_id, session_id, **tool_args
-                    )
+                    result = await aarya_tools.get_match_score(db, user_id, session_id, **tool_args)
                 elif tool_name == "request_intro":
                     result = await aarya_tools.request_intro(db, user_id, session_id, **tool_args)
                 elif tool_name == "direct_apply":
@@ -975,9 +969,7 @@ def build_aarya_graph(settings: Settings) -> Any:
                         db, user_id, session_id, **tool_args
                     )
                 elif tool_name == "update_profile":
-                    result = await aarya_tools.update_profile(
-                        db, user_id, session_id, **tool_args
-                    )
+                    result = await aarya_tools.update_profile(db, user_id, session_id, **tool_args)
                 else:
                     result = {"error": f"Unknown tool: {tool_name}"}
 
@@ -999,9 +991,7 @@ def build_aarya_graph(settings: Settings) -> Any:
                 cards,
             )
 
-        outcomes = await asyncio.gather(
-            *[_execute_one(tc) for tc in last_message.tool_calls]
-        )
+        outcomes = await asyncio.gather(*[_execute_one(tc) for tc in last_message.tool_calls])
         tool_messages: list[ToolMessage] = []
         for tm, inc, cards in outcomes:
             tool_messages.append(tm)

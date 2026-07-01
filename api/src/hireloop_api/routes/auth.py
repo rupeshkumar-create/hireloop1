@@ -834,7 +834,7 @@ async def save_phone(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "This phone number is already linked to another Hireloop "
-                                            "account. Use a different number."
+                        "account. Use a different number."
                     ),
                 ) from exc
             raise
@@ -849,10 +849,9 @@ async def save_phone(
 
     try:
         email = supabase_user.get("email")
-        name = (
-            supabase_user.get("user_metadata", {}).get("full_name")
-            or supabase_user.get("user_metadata", {}).get("name")
-        )
+        name = supabase_user.get("user_metadata", {}).get("full_name") or supabase_user.get(
+            "user_metadata", {}
+        ).get("name")
         await maybe_send_signup_confirmation(
             db,
             settings,

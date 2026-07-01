@@ -69,10 +69,7 @@ def _year_from_value(value: Any) -> int | None:
 
 def _map_experience_item(item: dict[str, Any]) -> dict[str, Any] | None:
     title = _clean(
-        item.get("title")
-        or item.get("jobTitle")
-        or item.get("position")
-        or item.get("role")
+        item.get("title") or item.get("jobTitle") or item.get("position") or item.get("role")
     )
     company = _clean(
         item.get("companyName")
@@ -89,10 +86,7 @@ def _map_experience_item(item: dict[str, Any]) -> dict[str, Any] | None:
         or item.get("start")
     )
     end = _clean(
-        item.get("jobEndedOn")
-        or item.get("endDate")
-        or item.get("ends_at")
-        or item.get("end")
+        item.get("jobEndedOn") or item.get("endDate") or item.get("ends_at") or item.get("end")
     )
     still = item.get("jobStillWorking")
     is_current = bool(still) if still is not None else not end
@@ -154,7 +148,7 @@ def normalize_apify_profile(raw: dict[str, Any]) -> dict[str, Any]:
             mapped = _map_experience_item(item)
             if not mapped:
                 continue
-            dedupe = f"{mapped.get('title','')}|{mapped.get('company','')}".casefold()
+            dedupe = f"{mapped.get('title', '')}|{mapped.get('company', '')}".casefold()
             if dedupe in seen_exp:
                 continue
             seen_exp.add(dedupe)
@@ -392,9 +386,7 @@ async def enrich_candidate_via_apify(
     inferred_years = _infer_years_experience(roles)
     existing_years = row["years_experience"]
     new_years = (
-        existing_years
-        if existing_years is not None and int(existing_years) > 0
-        else inferred_years
+        existing_years if existing_years is not None and int(existing_years) > 0 else inferred_years
     )
 
     cp: dict[str, Any] = {}

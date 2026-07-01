@@ -57,7 +57,9 @@ async def test_send_whatsapp_template_posts_to_msg91(monkeypatch: pytest.MonkeyP
         await wa.close()
 
     assert result["sent"] is True
-    assert captured["url"] == "https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/"
+    assert (
+        captured["url"] == "https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/"
+    )
     assert captured["json"]["recipient_whatsapp"] == "919876543210"
 
 

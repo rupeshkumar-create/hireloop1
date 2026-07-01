@@ -896,9 +896,7 @@ async def get_single_match(
                 """,
                 candidate["id"],
             )
-            computed = _serialize_fallback_match_row(
-                dict(job_row), candidate=dict(full_cand or {})
-            )
+            computed = _serialize_fallback_match_row(dict(job_row), candidate=dict(full_cand or {}))
             job_skills_live = job_row["skills_required"] or []
             cand_canon_live = {canonical_skill(s) for s in (candidate["skills"] or [])}
             scraped_live = job_row["scraped_at"]

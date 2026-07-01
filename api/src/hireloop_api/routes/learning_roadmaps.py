@@ -79,9 +79,7 @@ async def _run_roadmap_task(
         profile = dict(cand)
         job_d = dict(job)
         try:
-            roadmap = await generate_roadmap(
-                llm=llm, candidate_profile=profile, job=job_d
-            )
+            roadmap = await generate_roadmap(llm=llm, candidate_profile=profile, job=job_d)
             html_doc = render_roadmap_html(
                 roadmap,
                 job_title=str(job_d.get("title") or "this role"),

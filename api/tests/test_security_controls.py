@@ -98,7 +98,8 @@ class _FakeDb:
 async def test_ownership_helper_404_when_no_candidate() -> None:
     with pytest.raises(HTTPException) as exc:
         await deps.get_current_candidate_id(
-            {"id": str(uuid.uuid4())}, _FakeDb(None)  # type: ignore[arg-type]
+            {"id": str(uuid.uuid4())},
+            _FakeDb(None),  # type: ignore[arg-type]
         )
     assert exc.value.status_code == 404
 
@@ -107,7 +108,8 @@ async def test_ownership_helper_404_when_no_candidate() -> None:
 async def test_ownership_helper_returns_candidate_id() -> None:
     cid = uuid.uuid4()
     got = await deps.get_current_candidate_id(
-        {"id": str(uuid.uuid4())}, _FakeDb({"id": cid})  # type: ignore[arg-type]
+        {"id": str(uuid.uuid4())},
+        _FakeDb({"id": cid}),  # type: ignore[arg-type]
     )
     assert got == cid
 

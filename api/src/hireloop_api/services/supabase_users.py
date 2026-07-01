@@ -176,9 +176,7 @@ async def log_consent_rest(
         )
 
 
-async def fetch_candidate(
-    settings: Settings, user_id: uuid.UUID | str
-) -> dict[str, Any] | None:
+async def fetch_candidate(settings: Settings, user_id: uuid.UUID | str) -> dict[str, Any] | None:
     if not settings.supabase_url or not settings.supabase_service_key:
         return None
     async with httpx.AsyncClient(timeout=15.0) as http:

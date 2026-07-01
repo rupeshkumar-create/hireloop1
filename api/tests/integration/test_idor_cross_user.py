@@ -68,13 +68,9 @@ async def test_candidate_cannot_read_another_candidates_tailored_resume(
     )
 
     meta = await api_client.get(f"/api/v1/tailored-resumes/tailored/{resume_b}")
-    assert meta.status_code == 404, (
-        f"IDOR: A read B's resume metadata (got {meta.status_code})"
-    )
+    assert meta.status_code == 404, f"IDOR: A read B's resume metadata (got {meta.status_code})"
     dl = await api_client.get(f"/api/v1/tailored-resumes/tailored/{resume_b}/download")
-    assert dl.status_code == 404, (
-        f"IDOR: A downloaded B's resume HTML (got {dl.status_code})"
-    )
+    assert dl.status_code == 404, f"IDOR: A downloaded B's resume HTML (got {dl.status_code})"
 
 
 @pytest.mark.asyncio

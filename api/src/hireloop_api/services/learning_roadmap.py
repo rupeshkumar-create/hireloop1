@@ -192,19 +192,18 @@ def render_roadmap_html(
             f"""<section class="phase" data-phase="{pi}">
   <div class="phase-head">
     <div class="phase-title"><span class="phase-num">{pi + 1}</span><h3>{title}</h3></div>
-    <div class="phase-meta">{f'<span class="duration">{duration}</span>' if duration else ''}<span class="phase-status" id="status-{pi}"></span></div>
+    <div class="phase-meta">{f'<span class="duration">{duration}</span>' if duration else ""}<span class="phase-status" id="status-{pi}"></span></div>
   </div>
-  {f'<p class="focus">{focus}</p>' if focus else ''}
-  {f'<div class="chips">{skill_chips}</div>' if skill_chips else ''}
-  {f'<div class="milestones">{"".join(mrows)}</div>' if mrows else ''}
-  {f'<div class="resources"><h4>Resources</h4><ul>{"".join(rrows)}</ul></div>' if rrows else ''}
+  {f'<p class="focus">{focus}</p>' if focus else ""}
+  {f'<div class="chips">{skill_chips}</div>' if skill_chips else ""}
+  {f'<div class="milestones">{"".join(mrows)}</div>' if mrows else ""}
+  {f'<div class="resources"><h4>Resources</h4><ul>{"".join(rrows)}</ul></div>' if rrows else ""}
 </section>"""
         )
 
     phases_html = "\n".join(phase_blocks) or "<p>No phases generated.</p>"
     header_sub = _E(
-        f"{candidate_name} → {job_title}"
-        + (f" at {company_name}" if company_name else "")
+        f"{candidate_name} → {job_title}" + (f" at {company_name}" if company_name else "")
     ).strip(" →")
 
     return _DOC_TEMPLATE.format(

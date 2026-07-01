@@ -68,9 +68,9 @@ async def _send_recruiter_invite_email(
     cta_url = f"{_app_base_url()}/recruiter/invite?token={token}"
 
     api_key = getattr(settings, "sendgrid_api_key", "") or ""
-    template_id = (
-        getattr(settings, "sg_template_recruiter_invite", "") or ""
-    ) or (getattr(settings, "sg_template_intro_status", "") or "")
+    template_id = (getattr(settings, "sg_template_recruiter_invite", "") or "") or (
+        getattr(settings, "sg_template_intro_status", "") or ""
+    )
     if not api_key or not template_id:
         logger.info(
             "recruiter_invite_email_skipped",
@@ -130,9 +130,9 @@ async def _notify_registered_recruiter_intro(
 
     settings = get_settings()
     api_key = getattr(settings, "sendgrid_api_key", "") or ""
-    template_id = (
-        getattr(settings, "sg_template_recruiter_intro_request", "") or ""
-    ) or (getattr(settings, "sg_template_intro_status", "") or "")
+    template_id = (getattr(settings, "sg_template_recruiter_intro_request", "") or "") or (
+        getattr(settings, "sg_template_intro_status", "") or ""
+    )
     cta_url = f"{_app_base_url()}/recruiter/inbox"
     if not api_key or not template_id:
         logger.info(

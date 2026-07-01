@@ -29,4 +29,3 @@ async def test_patch_me_market_updates_user_and_candidate(
     )
     assert cand_row is not None
     assert cand_row["market"] == "US"
-

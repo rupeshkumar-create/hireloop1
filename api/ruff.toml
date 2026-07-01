@@ -6,27 +6,38 @@ line-length = 100
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
-    "F",    # pyflakes
+    "F",    # pyflakes (real bugs: undefined names, unused vars/imports)
     "I",    # isort
     "B",    # flake8-bugbear
     "C4",   # flake8-comprehensions
     "UP",   # pyupgrade
     "N",    # pep8-naming
-    "ANN",  # flake8-annotations (type hints)
     "S",    # flake8-bandit (security)
     "T20",  # flake8-print (no print statements)
     "RUF",  # ruff-specific rules
 ]
+# Type-hint coverage is enforced by mypy (see setup.cfg), so we don't also run
+# flake8-annotations (ANN) here — it flags legitimate `Any` and internal helpers
+# as noise. The ignores below are false-positives or intentional patterns.
 ignore = [
-    "ANN101",  # Missing type annotation for `self`
-    "ANN102",  # Missing type annotation for `cls`
-    "S101",    # Use of `assert` (needed in tests)
-    "B008",    # Do not perform function calls in default argument (needed for FastAPI Depends)
+    "E501",    # Line length — long SQL / user copy; not hard-wrapped.
+    "E402",    # Module import not at top — intentional lazy imports avoid circular deps.
+    "N806",    # Non-lowercase locals — occasional SQL/const-style names.
+    "S105",    # "hardcoded password" — false positives on config field NAMES (secret_key…).
+    "S106",    # same, as function args.
+    "S603",    # subprocess — controlled, internal, no shell.
+    "S607",    # partial executable path — internal tooling only.
+    "S608",    # SQL via f-string — values bind with $1/$2 params (asyncpg), not interpolation.
+    "B008",    # Function call in arg default — required for FastAPI Depends().
+    "RUF001",  # Ambiguous unicode — em-dashes / smart punctuation in copy are intentional.
+    "RUF002",  # docstring variant of RUF001.
+    "RUF003",  # comment variant of RUF001.
+    "RUF006",  # Dangling asyncio task — deliberate fire-and-forget background work.
 ]
 
 [lint.per-file-ignores]
-# Test fixtures use fake tokens/passwords; these are not real secrets.
-"tests/**" = ["S105", "S106"]
+# Tests: asserts and fake tokens/passwords are expected; broad assert-raises is fine.
+"tests/**" = ["S101", "S105", "S106", "B017"]
 # CLI helper scripts legitimately print to stdout and use throwaway tokens.
 "scripts/**" = ["T201", "S105", "S106"]
 
