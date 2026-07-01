@@ -32,6 +32,11 @@ class _CaptureDB:
         # enqueue_job: idempotency SELECT -> no existing job; INSERT RETURNING id -> a uuid.
         return uuid.uuid4() if "INSERT" in query else None
 
+    async def fetchrow(self, query: str, *args: object) -> dict[str, str] | None:
+        if "market" in query.lower():
+            return {"market": "IN"}
+        return None
+
 
 async def test_relocation_preference_persists() -> None:
     db = _CaptureDB()

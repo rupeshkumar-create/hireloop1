@@ -30,7 +30,7 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
-from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.market_db import fetch_candidate_market, fetch_user_market
 from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
@@ -216,7 +216,7 @@ async def update_job_preferences(
                 bits.append(preference_label(pref))
             effective_scope = summary.get("location_scope")
             if effective_scope:
-                market = await fetch_candidate_market(db, user_id)
+                market = await fetch_user_market(db, uuid.UUID(user_id))
                 bits.append(location_scope_labels(market)[effective_scope])
             result = {
                 **summary,
