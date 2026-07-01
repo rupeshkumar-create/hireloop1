@@ -34,11 +34,15 @@ export function SignupForm() {
   useEffect(() => {
     const error = searchParams.get("error");
     const message = searchParams.get("message");
-    if (message) {
-      setInfoMessage(decodeURIComponent(message.replace(/\+/g, " ")));
-    }
+    const decodedMessage = message
+      ? decodeURIComponent(message.replace(/\+/g, " "))
+      : null;
+
     if (error) {
-      setErrorMessage(decodeAuthError(error, message));
+      setErrorMessage(decodeAuthError(error, decodedMessage));
+      setInfoMessage("");
+    } else if (decodedMessage) {
+      setInfoMessage(decodedMessage);
     }
 
     // Supabase sometimes returns OAuth errors in the URL hash (client-only).
@@ -358,6 +362,15 @@ export function SignupForm() {
 
 function decodeAuthError(errorCode: string, message: string | null): string {
   if (
+    message?.toLowerCase().includes("code challenge") ||
+    message?.toLowerCase().includes("code verifier")
+  ) {
+    return (
+      "Sign-in session expired or was interrupted. Close other Hireloop tabs, " +
+      "clear cookies for this site, then try LinkedIn again in the same browser window."
+    );
+  }
+  if (
     message?.toLowerCase().includes("external provider") ||
     message?.toLowerCase().includes("user profile")
   ) {
@@ -366,7 +379,8 @@ function decodeAuthError(errorCode: string, message: string | null): string {
       "Providers → LinkedIn (OIDC) is enabled with valid Client ID/Secret, " +
       "(2) LinkedIn app has “Sign In with LinkedIn using OpenID Connect” product, " +
       "(3) LinkedIn redirect URL is https://blwudfxurykzyutkqkoi.supabase.co/auth/v1/callback, " +
-      "(4) Supabase redirect URLs include http://localhost:3001/auth/callback. " +
+      "(4) Supabase redirect URLs include https://hireloop1-app-orcin.vercel.app/auth/callback " +
+      "and http://localhost:3001/auth/callback. " +
       "If config looks correct, upgrade GoTrue in Supabase → Settings → Infrastructure (≥ v2.149)."
     );
   }

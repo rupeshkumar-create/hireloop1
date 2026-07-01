@@ -4,6 +4,12 @@ import { updateSession } from "@/lib/supabase/middleware";
 export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
+  // OAuth/email callback — must NOT run session refresh before exchangeCodeForSession.
+  // getUser() here clears or rotates PKCE cookies → "code challenge does not match".
+  if (pathname.startsWith("/auth/callback")) {
+    return NextResponse.next();
+  }
+
   // OAuth callback safety net. Supabase redirects to its configured Site URL
   // (the domain root) instead of our redirectTo (/auth/callback) when the
   // redirect URL isn't allow-listed for this deployment's domain. In that case
