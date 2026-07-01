@@ -37,6 +37,8 @@ jobs:
         run: uv sync --frozen --extra dev
       - name: Ruff lint
         run: uv run ruff check .
+      - name: Bootstrap integration database
+        run: uv run python scripts/bootstrap_integration_db.py
       - name: Tests (unit + integration IDOR)
         run: uv run pytest -q
 

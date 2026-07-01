@@ -43,6 +43,23 @@ CREATE TABLE IF NOT EXISTS auth.users (
   email TEXT,
   raw_user_meta_data JSONB DEFAULT '{}'::jsonb
 );
+
+-- Stubs for Supabase RLS policies (auth.uid / auth.role) in plain Postgres CI.
+CREATE OR REPLACE FUNCTION auth.uid()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.role()
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'anon');
+$$;
 """
 
 
