@@ -22,7 +22,7 @@ async def test_prioritize_career_path_via_api(
     await db_conn.execute(
         """
         INSERT INTO public.career_paths
-          (id, candidate_id, current_role, summary, steps, target_titles,
+          (id, candidate_id, "current_role", summary, steps, target_titles,
            target_locations, model)
         VALUES ($1, $2::uuid, 'Engineer', 'Growing', $3::jsonb, $4::text[], $5::text[], 'test')
         """,
@@ -72,7 +72,7 @@ async def test_find_jobs_requires_prioritized_path(
     await db_conn.execute(
         """
         INSERT INTO public.career_paths
-          (id, candidate_id, current_role, summary, steps, target_titles,
+          (id, candidate_id, "current_role", summary, steps, target_titles,
            target_locations, model)
         VALUES ($1, $2::uuid, 'Engineer', 'Growing', '[]'::jsonb, $3::text[], $4::text[], 'test')
         """,

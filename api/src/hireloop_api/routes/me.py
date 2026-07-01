@@ -284,7 +284,7 @@ async def update_my_market(
     await db.execute(
         """
         UPDATE public.users
-        SET market = $2, updated_at = NOW()
+        SET market = $2, phone_country = $2, updated_at = NOW()
         WHERE id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,

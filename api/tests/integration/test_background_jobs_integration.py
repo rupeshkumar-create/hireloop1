@@ -63,7 +63,7 @@ async def test_find_jobs_enqueues_career_ingest(
     await db_conn.execute(
         """
         INSERT INTO public.career_paths
-          (id, candidate_id, current_role, summary, steps, target_titles,
+          (id, candidate_id, "current_role", summary, steps, target_titles,
            target_locations, model, prioritized_title)
         VALUES (
           $1, $2::uuid, 'Engineer', 'Growing', '[]'::jsonb,
