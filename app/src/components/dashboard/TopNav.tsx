@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { HelpCircle, LogOut, Shield } from "lucide-react";
+import { HelpCircle, LogOut, Settings, Shield } from "lucide-react";
 import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
@@ -17,6 +17,12 @@ export type TopNavProps = {
   signingOut: boolean;
 };
 
+/**
+ * Left icon rail — the single navigation chrome shared with AppShell (DESIGN.md
+ * §6: one shell). Nav items toggle the dashboard's preview panels; utility
+ * actions (notifications, admin, settings, help, sign out) sit at the bottom.
+ * Hidden on mobile, where CandidateMobileNav takes over.
+ */
 export function TopNav({
   activePanel,
   onTogglePanel,
@@ -25,78 +31,83 @@ export function TopNav({
   onSignOut,
   signingOut,
 }: TopNavProps) {
+  const utilityClass =
+    "flex h-10 w-10 items-center justify-center rounded-lg text-ink-500 " +
+    "hover:bg-ink-50 hover:text-ink-900 transition-colors duration-fast";
+
   return (
-    <header className="shrink-0 h-16 flex items-center gap-3 px-4 md:px-5 border-b border-ink-100 bg-paper-0">
+    <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
       <Link
         href="/dashboard"
-        className="flex items-center gap-2 shrink-0"
         aria-label="Hireloop home"
         title="Hireloop"
+        className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-ink-900"
       >
-        <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center">
-          <span className="text-paper-0 text-small font-semibold">H</span>
-        </div>
-        <span className="hidden lg:block text-small font-semibold text-ink-900">Hireloop</span>
+        <span className="text-small font-semibold text-paper-0">H</span>
       </Link>
 
-      <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+      <nav className="flex flex-1 flex-col items-center gap-1">
         {RAIL_ITEMS.map((item) => {
           const isActive = activePanel === item.id;
           const showDot = item.id === "inbox" && pendingIntros;
-
           return (
             <button
               key={item.id}
+              type="button"
               aria-pressed={isActive}
               onClick={() => onTogglePanel(item.id)}
+              title={item.label}
+              aria-label={item.label}
               className={cn(
-                "relative inline-flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0",
-                "text-small font-medium transition-colors duration-fast",
+                "relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-fast",
                 isActive
                   ? "bg-ink-900 text-paper-0"
-                  : "text-ink-500 hover:text-ink-900 hover:bg-ink-50",
+                  : "text-ink-500 hover:bg-ink-50 hover:text-ink-900",
               )}
             >
-              <item.Icon className="h-[17px] w-[17px]" strokeWidth={1.5} />
-              <span>{item.label}</span>
-              {showDot && <span className="w-[7px] h-[7px] rounded-full bg-accent" />}
+              <item.Icon className="h-[18px] w-[18px]" strokeWidth={1.5} />
+              {showDot && (
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-accent" />
+              )}
             </button>
           );
         })}
       </nav>
 
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="mt-2 flex flex-col items-center gap-1">
         <NotificationDrawer
           pendingIntros={pendingIntros}
           categories={NOTIFICATION_CATEGORIES}
         />
         {showAdminLink && (
-          <Link
-            href="/admin"
-            title="Admin"
-            className="w-9 h-9 rounded-full flex items-center justify-center text-ink-400 hover:text-ink-900 hover:bg-ink-50 transition-colors duration-fast"
-          >
+          <Link href="/admin" title="Admin" aria-label="Admin" className={utilityClass}>
             <Shield className="h-[18px] w-[18px]" strokeWidth={1.5} />
           </Link>
         )}
+        <Link href="/settings" title="Settings" aria-label="Settings" className={utilityClass}>
+          <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
+        </Link>
         <a
           href="https://hireloop.in/help"
           target="_blank"
           rel="noopener noreferrer"
           title="Help"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-ink-400 hover:text-ink-900 hover:bg-ink-50 transition-colors duration-fast"
+          aria-label="Help"
+          className={utilityClass}
         >
           <HelpCircle className="h-[18px] w-[18px]" strokeWidth={1.5} />
         </a>
         <button
+          type="button"
           onClick={onSignOut}
           disabled={signingOut}
           title="Sign out"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-ink-400 hover:text-ink-900 hover:bg-ink-50 transition-colors duration-fast disabled:opacity-50"
+          aria-label="Sign out"
+          className={cn(utilityClass, "disabled:opacity-50")}
         >
           <LogOut className="h-[18px] w-[18px]" strokeWidth={1.5} />
         </button>
       </div>
-    </header>
+    </aside>
   );
 }

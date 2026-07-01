@@ -231,6 +231,7 @@ export function DashboardClient({
 
   return (
     <div className="flex flex-col h-screen bg-paper-0 overflow-hidden pb-16 md:pb-0">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
       <TopNav
         activePanel={activePanel}
         onTogglePanel={togglePanel}
@@ -240,7 +241,7 @@ export function DashboardClient({
         signingOut={signingOut}
       />
 
-      <main id="main-content" className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+      <main id="main-content" className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
         <DashboardWelcomeBanner
           firstName={candidateName?.split(" ")[0]}
         />
@@ -329,6 +330,7 @@ export function DashboardClient({
         </div>
         </div>
       </main>
+      </div>
 
       {activePanel && (
         <ChatPeekStrip onOpenChat={() => openPanel(null)} />
