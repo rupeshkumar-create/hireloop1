@@ -184,7 +184,7 @@ def test_explanation_weak_match_wording() -> None:
 class _FakeConn:
     """Routes the queries score_pair issues to canned rows; records writes."""
 
-    def __init__(self, *, candidate, job, skills_sim=1.0, profile_sim=1.0) -> None:  # noqa: ANN001
+    def __init__(self, *, candidate, job, skills_sim=1.0, profile_sim=1.0) -> None:
         self.executed: list[str] = []
         self._candidate = candidate
         self._job = job
@@ -436,7 +436,7 @@ async def test_career_path_target_title_lifts_aspirational_role() -> None:
 class _CountingConn(_FakeConn):
     """Counts candidate-row fetches to prove they're cached across pairs."""
 
-    def __init__(self, **kw) -> None:  # noqa: ANN003
+    def __init__(self, **kw) -> None:
         super().__init__(**kw)
         self.candidate_fetches = 0
 

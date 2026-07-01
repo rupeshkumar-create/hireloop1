@@ -71,7 +71,7 @@ export function VoiceSession({
   const [micMuted, setMicMuted]       = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
-  const [streamRecovery, setStreamRecovery] = useState<string | null>(null);
+  const [, setStreamRecovery] = useState<string | null>(null);
   const lastJobsRef = useRef<Array<{ title?: string; company_name?: string | null }>>([]);
 
   // Refs (mutable, no re-render needed)

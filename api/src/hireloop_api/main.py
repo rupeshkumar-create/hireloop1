@@ -35,6 +35,7 @@ from hireloop_api.routes.health import router as health_router
 from hireloop_api.routes.hiring_managers import router as hiring_managers_router
 from hireloop_api.routes.intros import router as intros_router
 from hireloop_api.routes.jobs import router as jobs_router
+from hireloop_api.routes.learning_roadmaps import router as learning_roadmaps_router
 from hireloop_api.routes.matches import router as matches_router
 from hireloop_api.routes.me import router as me_router
 from hireloop_api.routes.mock_interview import router as mock_interview_router
@@ -42,7 +43,6 @@ from hireloop_api.routes.recruiter import router as recruiter_router
 from hireloop_api.routes.resumes import router as resumes_router
 from hireloop_api.routes.skills import router as skills_router
 from hireloop_api.routes.super_admin import router as super_admin_router
-from hireloop_api.routes.learning_roadmaps import router as learning_roadmaps_router
 from hireloop_api.routes.tailored_resumes import router as tailored_resumes_router
 from hireloop_api.routes.voice import router as voice_router
 from hireloop_api.routes.voice_sessions import router as voice_sessions_router

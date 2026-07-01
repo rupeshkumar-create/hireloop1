@@ -7,7 +7,7 @@ from typing import Any
 
 
 def serialize_job_card(
-    row: Any,  # noqa: ANN401
+    row: Any,
     *,
     explanation: str | None = None,
     computed_at: datetime | None = None,

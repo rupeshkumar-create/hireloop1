@@ -153,7 +153,7 @@ class ProfileUpdateRequest(BaseModel):
     notice_period_days: int | None = None
 
 
-def _serialize_value(value: Any) -> Any:  # noqa: ANN401
+def _serialize_value(value: Any) -> Any:
     if isinstance(value, uuid.UUID):
         return str(value)
     if isinstance(value, datetime):
@@ -702,7 +702,7 @@ async def update_my_profile(
                         """.strip()
                     )
                 query = (
-                    f"UPDATE public.candidates SET {', '.join(set_clauses)} "  # noqa: S608
+                    f"UPDATE public.candidates SET {', '.join(set_clauses)} "
                     "WHERE id = $1::uuid AND deleted_at IS NULL"
                 )
                 await db.execute(query, *values)
@@ -810,7 +810,7 @@ async def list_saved_jobs(
           AND j.deleted_at IS NULL
           AND {vis}
         ORDER BY sj.saved_at DESC
-        """,  # noqa: S608
+        """,
         candidate["id"],
         market,
     )
@@ -859,7 +859,7 @@ async def save_job_for_later(
           SELECT 1 FROM public.jobs
           WHERE id = $1::uuid AND deleted_at IS NULL AND {vis}
         )
-        """,  # noqa: S608
+        """,
         uuid.UUID(job_id),
         market,
     )
@@ -955,7 +955,7 @@ async def record_onboarding_consent(
                     run_linkedin_profile_enrichment,
                 )
 
-                asyncio.create_task(  # noqa: RUF006
+                asyncio.create_task(
                     run_linkedin_profile_enrichment(settings, str(user_id), str(linkedin_url))
                 )
                 enrichment = {
@@ -1018,7 +1018,7 @@ async def record_onboarding_consent(
                     run_linkedin_profile_enrichment,
                 )
 
-                asyncio.create_task(  # noqa: RUF006 — fire-and-forget; errors logged in enrichment
+                asyncio.create_task(
                     run_linkedin_profile_enrichment(
                         settings,
                         str(user_id),

@@ -157,7 +157,7 @@ async def draft_intro_email(
     session_id: str,
     intro_id: str,
     intro_context: dict,
-    llm_client: Any,  # noqa: ANN401 — ChatOpenAI instance (duck-typed across LC versions)
+    llm_client: Any,
 ) -> dict[str, Any]:
     """
     Use the LLM to draft a personalised intro email.

@@ -329,7 +329,7 @@ async def bootstrap_user(
         # DPDP note: we redact any token-like fields before persisting.
         supabase_user: dict[str, Any] = current_user.get("_supabase_user") or {}
 
-        def _redact(value: Any) -> Any:  # noqa: ANN401
+        def _redact(value: Any) -> Any:
             if isinstance(value, dict):
                 out: dict[str, Any] = {}
                 for raw_k, v in value.items():

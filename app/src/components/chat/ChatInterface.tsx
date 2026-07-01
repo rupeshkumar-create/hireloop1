@@ -60,9 +60,7 @@ import {
   Settings,
   Square,
   TrendingUp,
-  Upload,
   Volume2,
-  VolumeX,
 } from "lucide-react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
@@ -299,7 +297,6 @@ export function ChatInterface({
     speakFiller,
     stopSpeaking,
     interimTranscript,
-    audioLevel,
   } = useVoice();
 
   const messagesEndRef  = useRef<HTMLDivElement>(null);

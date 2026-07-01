@@ -124,7 +124,7 @@ async def test_invalid_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
             return {}
 
     class _Client:
-        async def __aenter__(self) -> "_Client":
+        async def __aenter__(self) -> _Client:
             return self
 
         async def __aexit__(self, *args: object) -> bool:

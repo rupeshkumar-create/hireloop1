@@ -352,7 +352,7 @@ class CandidateMemoryService:
 
         values.append(uuid.UUID(candidate_id))
         query = (
-            "UPDATE public.candidates SET "  # noqa: S608 - field names are a fixed allowlist
+            "UPDATE public.candidates SET "
             + ", ".join(set_clauses)
             + ", updated_at = NOW() "
             + f"WHERE id = ${len(values)} AND deleted_at IS NULL"

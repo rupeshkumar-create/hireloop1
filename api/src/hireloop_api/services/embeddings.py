@@ -358,7 +358,7 @@ class EmbeddingService:
         return success, failed
 
 
-async def run_job_embedding(settings: Any, job_id: str) -> None:  # noqa: ANN401
+async def run_job_embedding(settings: Any, job_id: str) -> None:
     """
     Fire-and-forget (re)embedding of a single job on its own pooled connection.
     Used after a recruiter publishes a role into the jobs feed so it can rank in

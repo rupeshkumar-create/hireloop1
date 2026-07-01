@@ -324,7 +324,7 @@ async def _prefetch_top_jobs(
           AND (j.expires_at IS NULL OR j.expires_at > NOW())
         ORDER BY ms.overall_score DESC NULLS LAST
         LIMIT $2::integer
-        """,  # noqa: S608
+        """,
         uuid.UUID(candidate_id),
         limit,
         market,
@@ -366,7 +366,7 @@ async def chat_warmup(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-        """,  # noqa: S608
+        """,
         candidate["id"],
         market,
     )

@@ -30,7 +30,7 @@ import structlog
 logger = structlog.get_logger()
 
 _GMAIL_API = "https://www.googleapis.com/gmail/v1"
-_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — URL, not a secret
+_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 class GmailOAuthService:

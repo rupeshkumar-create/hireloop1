@@ -714,7 +714,7 @@ class MatchingEngine:
             WHERE j.id = $1::uuid
               AND {vis}
               AND j.deleted_at IS NULL
-            """,  # noqa: S608
+            """,
             job_id,
             market,
         )
@@ -883,7 +883,7 @@ class MatchingEngine:
               AND j.expires_at > NOW()
             ORDER BY j.scraped_at DESC
             LIMIT $2
-            """,  # noqa: S608
+            """,
             candidate_id,
             max(limit * 2, 400),
             market,
@@ -1083,7 +1083,7 @@ async def rank_candidates_for_job(
     ]
 
 
-async def run_job_scoring(settings: Any, job_id: str, limit: int = 500) -> None:  # noqa: ANN401
+async def run_job_scoring(settings: Any, job_id: str, limit: int = 500) -> None:
     """
     Fire-and-forget: score a freshly published/ingested job against active
     candidates so it surfaces in their match feed immediately — not only after

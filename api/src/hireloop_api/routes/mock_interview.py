@@ -47,7 +47,7 @@ Scoring guide: 8-10 strong, 6-7 solid, below 6 needs work. Be honest and encoura
 """
 
 
-def _normalize_feedback(raw: Any) -> dict[str, Any]:  # noqa: ANN401
+def _normalize_feedback(raw: Any) -> dict[str, Any]:
     """Coerce the model's end-of-session JSON into the exact shape the UI renders
     (overall_score 0-10, string lists), tolerating scale/format drift."""
     fb: dict[str, Any] = raw if isinstance(raw, dict) else {"summary": str(raw)[:2000]}

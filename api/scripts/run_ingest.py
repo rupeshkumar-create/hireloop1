@@ -34,7 +34,7 @@ from hireloop_api.services.apify.job_ingester import JobIngester
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper
 
 
-async def _dry_run(settings, queries, locations, max_results, time_range) -> None:  # noqa: ANN001
+async def _dry_run(settings, queries, locations, max_results, time_range) -> None:
     scraper = ApifyJobsScraper(settings.apify_token, actor=settings.apify_linkedin_jobs_actor)
     raw, records, stats = await scraper.scrape(
         queries=queries,
@@ -52,7 +52,7 @@ async def _dry_run(settings, queries, locations, max_results, time_range) -> Non
         )
 
 
-async def _live_run(settings, queries, locations, max_results, time_range, source) -> None:  # noqa: ANN001
+async def _live_run(settings, queries, locations, max_results, time_range, source) -> None:
     use_career_site = source in ("fantastic", "both")
     use_linkedin = source in ("linkedin", "both")
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -78,7 +78,7 @@ async def _live_run(settings, queries, locations, max_results, time_range, sourc
         await conn.close()
 
 
-async def _candidate_run(settings, candidate, max_results, time_range, source) -> None:  # noqa: ANN001
+async def _candidate_run(settings, candidate, max_results, time_range, source) -> None:
     use_career_site = source in ("fantastic", "both")
     use_linkedin = source in ("linkedin", "both")
     """Scrape scoped to ONE candidate's career-path target roles."""

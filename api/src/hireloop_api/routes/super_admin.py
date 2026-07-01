@@ -130,7 +130,7 @@ async def list_users(
       WHERE {" AND ".join(where)}
       ORDER BY u.created_at DESC
       LIMIT ${idx} OFFSET ${idx + 1}
-    """  # noqa: S608
+    """
 
     rows = await db.fetch(query, *params)
     out: list[dict] = []
@@ -190,7 +190,7 @@ async def update_user(
         # Safe: `sets` holds only constant column assignments with $-placeholders;
         # all values are bound as asyncpg parameters via *params.
         await db.execute(
-            f"UPDATE public.users SET {', '.join(sets)} WHERE id = $1",  # noqa: S608
+            f"UPDATE public.users SET {', '.join(sets)} WHERE id = $1",
             *params,
         )
 
@@ -342,7 +342,7 @@ async def list_candidates(
       WHERE {" AND ".join(where)}
       ORDER BY c.created_at DESC
       LIMIT ${idx} OFFSET ${idx + 1}
-    """  # noqa: S608
+    """
     rows = await db.fetch(query, *params)
     return [
         {
@@ -446,7 +446,7 @@ async def list_recruiters(
       WHERE {" AND ".join(where)}
       ORDER BY r.created_at DESC
       LIMIT ${idx} OFFSET ${idx + 1}
-    """  # noqa: S608
+    """
     rows = await db.fetch(query, *params)
     return [
         {

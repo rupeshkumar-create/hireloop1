@@ -32,7 +32,7 @@ logger = structlog.get_logger()
 APIFY_API_BASE = "https://api.apify.com/v2"
 
 
-def _pick(raw: dict[str, Any], *keys: str) -> Any:  # noqa: ANN401 — raw API values are genuinely dynamic
+def _pick(raw: dict[str, Any], *keys: str) -> Any:
     """Return the first present key (supports 2026 field renames + legacy fallbacks)."""
     for key in keys:
         val = raw.get(key)

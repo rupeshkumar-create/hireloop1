@@ -213,5 +213,5 @@ SAMPLE_RAW_ITEMS: list[dict] = [
 
 def sample_job_records() -> list[JobRecord]:
     """Normalise the sample raw items through the real LinkedIn scraper path."""
-    scraper = ApifyJobsScraper(api_token="sample")  # noqa: S106 - normalise-only, no network call
+    scraper = ApifyJobsScraper(api_token="sample")
     return scraper.normalise_batch(SAMPLE_RAW_ITEMS)

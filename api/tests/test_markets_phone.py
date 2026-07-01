@@ -1,4 +1,3 @@
-import pytest
 
 from hireloop_api.markets import (
     dial_prefix_for_market,

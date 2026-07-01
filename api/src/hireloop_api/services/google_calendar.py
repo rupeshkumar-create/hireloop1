@@ -31,7 +31,7 @@ from pydantic import BaseModel
 logger = structlog.get_logger()
 
 _CALENDAR_API = "https://www.googleapis.com/calendar/v3"
-_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — URL, not a secret
+_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 IST = ZoneInfo("Asia/Kolkata")

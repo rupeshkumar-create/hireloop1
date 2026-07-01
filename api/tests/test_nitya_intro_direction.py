@@ -46,7 +46,7 @@ async def test_missing_intro_id_still_errors_before_direction() -> None:
 async def test_candidate_to_hm_is_not_skipped() -> None:
     # The HM path must fall through to the real pipeline. With db=None the first DB
     # call raises — proving it did NOT take the skip branch (which never touches db).
-    with pytest.raises(Exception):  # noqa: B017 — any DB access on None is fine to assert
+    with pytest.raises(Exception):
         await _handler().handle(
             {"id": "33333333-3333-3333-3333-333333333333", "direction": "candidate_to_hm"}
         )

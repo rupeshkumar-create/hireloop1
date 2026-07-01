@@ -35,7 +35,7 @@ DEFAULT_LINKEDIN_PROFILE_ACTOR = "dev_fusion/linkedin-profile-scraper"
 _LEGACY_PROFILE_ACTOR = "2SyF0bVxmgGr8IVCZ"
 
 
-def _clean(value: Any) -> str | None:  # noqa: ANN401
+def _clean(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -57,7 +57,7 @@ def build_actor_input(actor: str, profile_url: str) -> dict[str, Any]:
     }
 
 
-def _year_from_value(value: Any) -> int | None:  # noqa: ANN401
+def _year_from_value(value: Any) -> int | None:
     if isinstance(value, int) and 1900 <= value <= 2100:
         return value
     text = _clean(value)
@@ -129,7 +129,7 @@ def _map_education_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _map_skill_item(item: Any) -> str | None:  # noqa: ANN401
+def _map_skill_item(item: Any) -> str | None:
     if isinstance(item, str):
         return _clean(item)
     if isinstance(item, dict):
@@ -372,7 +372,7 @@ async def enrich_candidate_via_apify(
     if not row:
         return {"status": "skipped", "reason": "no_candidate"}
 
-    def _fill(existing: Any, incoming: str | None) -> Any:  # noqa: ANN401
+    def _fill(existing: Any, incoming: str | None) -> Any:
         cur = _clean(existing)
         if cur and cur.lower() != "new candidate":
             return existing

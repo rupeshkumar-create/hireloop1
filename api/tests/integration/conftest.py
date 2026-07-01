@@ -61,7 +61,7 @@ def bootstrap_integration_db() -> None:
     except Exception:
         return
 
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [sys.executable, str(BOOTSTRAP)],
         cwd=API_ROOT,
         env=env,

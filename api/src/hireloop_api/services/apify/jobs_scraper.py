@@ -612,7 +612,7 @@ class ApifyJobsScraper:
 
         # LPA pattern: "20-30 LPA" or "20L to 30L"
         lpa_match = re.search(
-            r"(?:₹\s*)?(\d+(?:\.\d+)?)\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*(?:LPA|L\b|lakh|lac)",  # noqa: RUF001
+            r"(?:₹\s*)?(\d+(?:\.\d+)?)\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*(?:LPA|L\b|lakh|lac)",
             text,
             re.IGNORECASE,
         )

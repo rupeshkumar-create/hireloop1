@@ -66,7 +66,7 @@ Produce tailored resume HTML."""
     return content
 
 
-def json_dumps_safe(obj: Any) -> str:  # noqa: ANN401 — serialises arbitrary JSON-able values
+def json_dumps_safe(obj: Any) -> str:
     import json
 
     return json.dumps(obj, default=str, indent=2)[:8000]

@@ -284,7 +284,7 @@ def _annotate_skill_match(result: list[dict], candidate_skills: object) -> None:
         item["skills_gap"] = [s for s in job_skills if canonical_skill(s) not in cand_canon]
 
 
-async def _fetch_saved_job_signals(db: asyncpg.Connection, candidate_id) -> list[dict]:  # noqa: ANN001
+async def _fetch_saved_job_signals(db: asyncpg.Connection, candidate_id) -> list[dict]:
     """Title/company/seniority/city of the candidate's saved jobs — the signal
     `boost_by_saved` uses to surface more of what they've shown interest in."""
     rows = await db.fetch(
@@ -493,7 +493,7 @@ async def _count_cached_match_rows(
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
-        """,  # noqa: S608
+        """,
         candidate_id,
         min_score,
         market,
@@ -573,7 +573,7 @@ async def _fetch_cached_match_rows(
             END
         ) DESC
         LIMIT $3 OFFSET $4
-        """,  # noqa: S608
+        """,
         candidate_id,
         min_score,
         limit,
@@ -699,7 +699,7 @@ async def _fetch_fallback_match_rows(
           END DESC,
           j.scraped_at DESC
         LIMIT $3
-        """,  # noqa: S608
+        """,
         candidate_skills,
         current_title,
         rows_to_rank,
@@ -846,7 +846,7 @@ async def get_single_match(
           AND ms.job_id = $2::uuid
           AND j.is_active = TRUE
           AND {vis}
-        """,  # noqa: S608 — detail_cols is a fixed literal, not user input
+        """,
         candidate["id"],
         job_uuid,
         market,
@@ -865,7 +865,7 @@ async def get_single_match(
             JOIN public.jobs j ON j.id = ms.job_id
             LEFT JOIN public.companies co ON co.id = j.company_id
             WHERE ms.candidate_id = $1::uuid AND ms.job_id = $2::uuid
-            """,  # noqa: S608 — detail_cols is a fixed literal, not user input
+            """,
             candidate["id"],
             job_uuid,
         )

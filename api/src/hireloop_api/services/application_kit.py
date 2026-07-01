@@ -14,6 +14,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.job_present import serialize_job_card
@@ -313,7 +314,7 @@ async def prepare_application_kit(
         LEFT JOIN public.companies co ON co.id = j.company_id
         WHERE j.id = $1::uuid AND j.is_active = TRUE AND {vis}
           AND j.deleted_at IS NULL
-        """,  # noqa: S608
+        """,
         uuid.UUID(job_id),
         market,
     )

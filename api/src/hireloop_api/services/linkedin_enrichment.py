@@ -124,7 +124,7 @@ async def enrich_linkedin_profile_background(
     await run_linkedin_profile_enrichment(settings, user_id, linkedin_url)
 
 
-def _coerce_linkedin_data(raw: Any) -> dict[str, Any]:  # noqa: ANN401
+def _coerce_linkedin_data(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
@@ -239,7 +239,7 @@ async def backfill_linkedin_profiles(
 def should_schedule_linkedin_enrichment(
     *,
     linkedin_url: str | None,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     settings: Settings | None = None,
     retry_after_hours: float = 6.0,
 ) -> tuple[bool, str | None]:

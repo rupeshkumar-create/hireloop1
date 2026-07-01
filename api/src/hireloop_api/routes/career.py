@@ -128,7 +128,7 @@ async def _fetch_path_jobs(
           (CASE WHEN j.title ILIKE ANY($2::text[]) THEN 0 ELSE 1 END),
           ms.overall_score DESC
         LIMIT $3
-        """,  # noqa: S608
+        """,
         uuid.UUID(candidate_id),
         patterns,
         limit,

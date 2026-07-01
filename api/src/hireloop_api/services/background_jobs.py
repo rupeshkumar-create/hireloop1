@@ -227,7 +227,7 @@ async def list_background_jobs(
         WHERE {where}
         ORDER BY created_at DESC
         LIMIT ${limit_idx}
-        """,  # noqa: S608
+        """,
         *args,
     )
     out: list[dict[str, Any]] = []

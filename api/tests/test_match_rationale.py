@@ -49,7 +49,7 @@ def _settings() -> Settings:
     return Settings(environment="development", openrouter_api_key="")
 
 
-def _fake_llm(payload: dict):  # noqa: ANN202
+def _fake_llm(payload: dict):
     async def _complete(system: str, user: str) -> str:
         return json.dumps(payload)
 

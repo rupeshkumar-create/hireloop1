@@ -120,7 +120,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
     market = normalize_market(ctx.get("market"))
     live = _live_sql(market)
 
-    total_live = await db.fetchval(f"SELECT count(*) FROM public.jobs j WHERE {live}")  # noqa: S608
+    total_live = await db.fetchval(f"SELECT count(*) FROM public.jobs j WHERE {live}")
     facts.total_live_jobs = int(total_live or 0)
     if facts.total_live_jobs < _MIN_CORPUS:
         return facts  # corpus too thin to ground anything
@@ -135,7 +135,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
             WHERE {live} AND lower(s) = ANY($1::text[])
             GROUP BY 1
             ORDER BY n DESC
-            """,  # noqa: S608
+            """,
             skills,
         )
         facts.in_demand_skills = [r["skill"] for r in matched]
@@ -161,7 +161,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
             GROUP BY 1
             ORDER BY n DESC
             LIMIT 10
-            """,  # noqa: S608
+            """,
             skills,
         )
         facts.top_missing_skills = [r["skill"] for r in missing]
@@ -169,7 +169,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
     # ── Role demand: live postings matching the candidate's title ──────────────
     if role_term:
         role_count = await db.fetchval(
-            f"SELECT count(*) FROM public.jobs j WHERE {live} AND j.title ILIKE '%' || $1 || '%'",  # noqa: S608
+            f"SELECT count(*) FROM public.jobs j WHERE {live} AND j.title ILIKE '%' || $1 || '%'",
             role_term,
         )
         role_count = int(role_count or 0)
@@ -203,7 +203,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
               OR ($2::text IS NOT NULL AND j.title ILIKE '%' || $2 || '%')
             )
         ) t
-        """,  # noqa: S608
+        """,
         skills,
         role_term,
     )

@@ -281,7 +281,7 @@ async def list_jobs(
         WHERE {where_clause}
         ORDER BY j.scraped_at DESC
         LIMIT ${param_idx} OFFSET ${param_idx + 1}
-    """  # noqa: S608
+    """
 
     rows = await db.fetch(query, *params)
 
@@ -353,7 +353,7 @@ async def get_job(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-        """,  # noqa: S608
+        """,
         job_uuid,
         user_market,
     )

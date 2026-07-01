@@ -752,7 +752,7 @@ TOOL_DEFINITIONS = [
 # ── Agent builder ─────────────────────────────────────────────────────────────
 
 
-def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
+def build_aarya_graph(settings: Settings) -> Any:
     """
     Build and compile the Aarya LangGraph state machine.
     Returns a compiled graph ready to .ainvoke() or .astream().
@@ -761,7 +761,7 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
     # OpenRouter as the LLM provider (R3)
     # extra_headers: identifies this app to OpenRouter (required for rate limits
     # and analytics — see openrouter.ai/docs#headers)
-    def _make_llm(model: str) -> Any:  # noqa: ANN401
+    def _make_llm(model: str) -> Any:
         return ChatOpenAI(
             model=model,
             openai_api_key=settings.openrouter_api_key,
@@ -774,7 +774,7 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
             },
         ).bind_tools(TOOL_DEFINITIONS)  # type: ignore[arg-type]
 
-    def _make_llm_plain(model: str) -> Any:  # noqa: ANN401
+    def _make_llm_plain(model: str) -> Any:
         return ChatOpenAI(
             model=model,
             openai_api_key=settings.openrouter_api_key,
@@ -1040,7 +1040,7 @@ def build_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
 _aarya_graph = None
 
 
-def get_aarya_graph(settings: Settings) -> Any:  # noqa: ANN401
+def get_aarya_graph(settings: Settings) -> Any:
     global _aarya_graph
     if _aarya_graph is None:
         _aarya_graph = build_aarya_graph(settings)

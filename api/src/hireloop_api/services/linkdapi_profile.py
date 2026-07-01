@@ -54,7 +54,7 @@ def extract_linkedin_username(url: str | None) -> str | None:
     return slug or None
 
 
-def _clean(value: Any) -> str | None:  # noqa: ANN401
+def _clean(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -69,7 +69,7 @@ def _first(d: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def _unwrap(payload: Any) -> Any:  # noqa: ANN401
+def _unwrap(payload: Any) -> Any:
     """LinkDAPI commonly wraps the result in {success, data:{...}}; peel it."""
     if isinstance(payload, dict):
         for key in ("data", "result", "profile", "response"):
@@ -78,7 +78,7 @@ def _unwrap(payload: Any) -> Any:  # noqa: ANN401
     return payload
 
 
-def _as_list(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+def _as_list(payload: Any) -> list[dict[str, Any]]:
     data = _unwrap(payload)
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
@@ -91,7 +91,7 @@ def _as_list(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401
     return []
 
 
-def _year(value: Any) -> int | None:  # noqa: ANN401
+def _year(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int) and 1900 <= value <= 2100:
@@ -120,7 +120,7 @@ class LinkdAPIClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def _get(self, path: str, params: dict[str, str]) -> Any:  # noqa: ANN401
+    async def _get(self, path: str, params: dict[str, str]) -> Any:
         resp = await self._http.get(f"{self._base}{path}", params=params)
         if resp.status_code != 200:
             logger.warning(
@@ -342,7 +342,7 @@ async def enrich_candidate_via_linkdapi(
     if not row:
         return {"status": "skipped", "reason": "no_candidate"}
 
-    def _fill(existing: Any, incoming: str | None) -> Any:  # noqa: ANN401
+    def _fill(existing: Any, incoming: str | None) -> Any:
         cur = _clean(existing)
         if cur and cur.lower() != "new candidate":
             return existing
@@ -473,7 +473,7 @@ async def enrich_candidate_via_linkdapi(
     }
 
 
-async def run_linkdapi_enrichment(settings: Any, user_id: str, profile_url: str) -> None:  # noqa: ANN401
+async def run_linkdapi_enrichment(settings: Any, user_id: str, profile_url: str) -> None:
     """Backward-compatible alias — runs Apify-first LinkedIn enrichment."""
     from hireloop_api.services.linkedin_enrichment import run_linkedin_profile_enrichment
 

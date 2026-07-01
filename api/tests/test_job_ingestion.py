@@ -356,7 +356,7 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     captured: dict = {}
     ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
 
-    async def _fake_ingest(  # noqa: ANN001, ANN202
+    async def _fake_ingest(
         *,
         queries,
         locations,

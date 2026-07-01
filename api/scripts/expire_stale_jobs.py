@@ -39,7 +39,7 @@ async def main() -> None:
                  OR (scraped_at IS NOT NULL
                      AND scraped_at < NOW() - INTERVAL '{STALE_DAYS} days')
               )
-            """  # noqa: S608 — STALE_DAYS is a module constant, not user input
+            """
         )
         print(f"Stale/expired active jobs: {len(rows)}")
         if rows and not dry_run:

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # ── App ──────────────────────────────────────────────────────────────────
     environment: Literal["development", "staging", "production", "test"] = "development"
-    secret_key: str = "change-me"  # noqa: S105
+    secret_key: str = "change-me"
     allowed_origins: list[str] = [
         "http://localhost:3001",
         "http://localhost:3000",
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     require_phone_verification: bool = False
 
     # ── Internal service secret ───────────────────────────────────────────────
-    service_secret: str = "change-me"  # noqa: S105
+    service_secret: str = "change-me"
 
     @field_validator("allowed_origins", mode="before")
     @classmethod

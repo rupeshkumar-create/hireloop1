@@ -399,7 +399,7 @@ async def _apply_parsed_profile_fields(
                 values.append(value)
         # Field names come only from the fixed resume-profile update builder.
         update_query = (
-            "UPDATE public.candidates SET "  # noqa: S608
+            "UPDATE public.candidates SET "
             f"{', '.join(set_clauses)}, updated_at = NOW() WHERE id = $1"
         )
         await db.execute(

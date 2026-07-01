@@ -370,7 +370,7 @@ async def apply_to_profile(
                 values.append(value)
         # Field names come only from the fixed update builder above.
         update_query = (
-            "UPDATE public.candidates SET "  # noqa: S608
+            "UPDATE public.candidates SET "
             f"{', '.join(set_clauses)}, updated_at = NOW() WHERE id = $1"
         )
         await db.execute(

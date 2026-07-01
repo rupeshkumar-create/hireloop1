@@ -12,7 +12,6 @@ Both tiers return the same `ParsedResume` model mapped to our candidates schema.
 is a sparse ParsedResume so onboarding still proceeds.
 """
 
-# ruff: noqa: RUF001
 # (en/em dashes are intentional here: resume date ranges and title/company
 #  separators use unicode dashes, which we must match and strip literally.)
 

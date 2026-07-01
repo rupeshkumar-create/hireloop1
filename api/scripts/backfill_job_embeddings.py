@@ -20,7 +20,7 @@ import asyncpg
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-from hireloop_api.services.embeddings import EmbeddingService  # noqa: E402
+from hireloop_api.services.embeddings import EmbeddingService
 
 
 def _dsn() -> str:

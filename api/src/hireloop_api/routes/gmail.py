@@ -49,7 +49,7 @@ _CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 _EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
 _GOOGLE_SCOPE = f"openid {_EMAIL_SCOPE} {_GMAIL_SCOPE} {_CALENDAR_SCOPE}"
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — URL, not a secret
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 

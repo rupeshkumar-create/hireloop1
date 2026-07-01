@@ -21,7 +21,7 @@ _HEADLINE_KEYS = (
 _NAME_KEYS = ("full_name", "name", "preferred_username")
 
 
-def _walk(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+def _walk(payload: Any) -> list[dict[str, Any]]:
     """Flatten nested OAuth blobs into dict nodes to search."""
     nodes: list[dict[str, Any]] = []
     if isinstance(payload, dict):
@@ -34,7 +34,7 @@ def _walk(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401
     return nodes
 
 
-def _first_string(payload: Any, keys: tuple[str, ...]) -> str | None:  # noqa: ANN401
+def _first_string(payload: Any, keys: tuple[str, ...]) -> str | None:
     for node in _walk(payload):
         for key in keys:
             raw = node.get(key)
@@ -56,7 +56,7 @@ def is_valid_linkedin_profile_url(url: str | None) -> bool:
     return "/in/" in lower or "/pub/" in lower
 
 
-def extract_linkedin_profile_url(payload: Any) -> str | None:  # noqa: ANN401
+def extract_linkedin_profile_url(payload: Any) -> str | None:
     """
     Best-effort public LinkedIn profile URL from OAuth user_metadata / identities.
     """
@@ -113,7 +113,7 @@ def extract_linkedin_profile_url(payload: Any) -> str | None:  # noqa: ANN401
     return None
 
 
-def _coerce_linkedin_blob(linkedin_data: Any) -> dict[str, Any]:  # noqa: ANN401
+def _coerce_linkedin_blob(linkedin_data: Any) -> dict[str, Any]:
     if isinstance(linkedin_data, dict):
         return linkedin_data
     if isinstance(linkedin_data, str):
@@ -125,14 +125,14 @@ def _coerce_linkedin_blob(linkedin_data: Any) -> dict[str, Any]:  # noqa: ANN401
     return {}
 
 
-def candidate_has_apify_profile(linkedin_data: Any) -> bool:  # noqa: ANN401
+def candidate_has_apify_profile(linkedin_data: Any) -> bool:
     """True only when Apify returned a non-empty profile payload."""
     blob = _coerce_linkedin_blob(linkedin_data)
     apify = blob.get("apify_profile")
     return isinstance(apify, dict) and bool(apify)
 
 
-def candidate_has_linkdapi_profile(linkedin_data: Any) -> bool:  # noqa: ANN401
+def candidate_has_linkdapi_profile(linkedin_data: Any) -> bool:
     """True when LinkDAPI returned experience/overview data."""
     blob = _coerce_linkedin_blob(linkedin_data)
     linkd = blob.get("linkdapi_profile")
@@ -144,7 +144,7 @@ def candidate_has_linkdapi_profile(linkedin_data: Any) -> bool:  # noqa: ANN401
 
 
 def linkedin_scrape_cooldown_elapsed(
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     *,
     retry_after_hours: float = 6.0,
 ) -> bool:
@@ -173,7 +173,7 @@ def linkedin_scrape_cooldown_elapsed(
 def candidate_needs_linkedin_extraction(
     *,
     linkedin_url: str | None,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     force_retry: bool = False,
     retry_after_hours: float = 6.0,
 ) -> tuple[bool, str | None]:
@@ -198,7 +198,7 @@ def candidate_needs_linkedin_extraction(
 
 def resolve_linkedin_profile_url(
     linkedin_url: str | None,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
 ) -> str | None:
     """Prefer explicit column URL, then OAuth blob (skips invalid /oauth links)."""
     if is_valid_linkedin_profile_url(linkedin_url):
@@ -206,7 +206,7 @@ def resolve_linkedin_profile_url(
     return extract_linkedin_profile_url(linkedin_data)
 
 
-def extract_linkedin_display_name(linkedin_data: Any) -> str | None:  # noqa: ANN401
+def extract_linkedin_display_name(linkedin_data: Any) -> str | None:
     """Best-effort display name from Supabase LinkedIn user_metadata / identities."""
     if not linkedin_data:
         return None
@@ -224,7 +224,7 @@ def extract_linkedin_display_name(linkedin_data: Any) -> str | None:  # noqa: AN
     return None
 
 
-def extract_linkedin_headline(linkedin_data: Any) -> str | None:  # noqa: ANN401
+def extract_linkedin_headline(linkedin_data: Any) -> str | None:
     """
     LinkedIn professional headline (not the member's name).
 
@@ -248,7 +248,7 @@ async def heal_candidate_headline_from_linkedin(
     db: asyncpg.Connection,
     *,
     user_id: uuid.UUID | str,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     user_full_name: str | None,
 ) -> str | None:
     """

@@ -13,7 +13,7 @@ from typing import Any
 from hireloop_api.services.linkedin_oauth import extract_linkedin_headline
 
 
-def best_linkedin_headline(linkedin_data: Any) -> str | None:  # noqa: ANN401
+def best_linkedin_headline(linkedin_data: Any) -> str | None:
     """Prefer Apify professional headline, then LinkedIn OAuth metadata."""
     blob = linkedin_data if isinstance(linkedin_data, dict) else {}
     apify = blob.get("apify_profile") if isinstance(blob.get("apify_profile"), dict) else {}
@@ -27,7 +27,7 @@ def best_linkedin_headline(linkedin_data: Any) -> str | None:  # noqa: ANN401
 def build_merged_experience(
     *,
     resume_experience: list[dict[str, Any]] | None,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     career_profile: dict[str, Any] | None,
     career_intelligence: dict[str, Any] | None,
     candidate: dict[str, Any] | None,
@@ -92,7 +92,7 @@ def build_merged_experience(
 def build_merged_education(
     *,
     resume_education: list[dict[str, Any]] | None,
-    linkedin_data: Any,  # noqa: ANN401
+    linkedin_data: Any,
     career_profile: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     """
@@ -134,7 +134,7 @@ def build_merged_education(
     return merged
 
 
-def _linkedin_education(linkedin_data: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+def _linkedin_education(linkedin_data: Any) -> list[dict[str, Any]]:
     blob = linkedin_data if isinstance(linkedin_data, dict) else {}
     apify = blob.get("apify_profile") if isinstance(blob.get("apify_profile"), dict) else {}
     out: list[dict[str, Any]] = []
@@ -242,7 +242,7 @@ def _merge_education_fields(existing: dict[str, Any], incoming: dict[str, Any]) 
             existing[field] = incoming[field]
 
 
-def _linkedin_experiences(linkedin_data: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+def _linkedin_experiences(linkedin_data: Any) -> list[dict[str, Any]]:
     blob = linkedin_data if isinstance(linkedin_data, dict) else {}
     apify = blob.get("apify_profile") if isinstance(blob.get("apify_profile"), dict) else {}
     out: list[dict[str, Any]] = []

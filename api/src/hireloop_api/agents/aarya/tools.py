@@ -205,7 +205,7 @@ async def update_job_preferences(
             UPDATE public.candidates
             SET {", ".join(set_clauses)}, updated_at = NOW()
             WHERE user_id = $1::uuid AND deleted_at IS NULL
-            """,  # noqa: S608 — clauses are fixed strings, values are parameterized
+            """,
             *values,
         )
         if updated == "UPDATE 0":
@@ -316,7 +316,7 @@ async def update_profile(
             UPDATE public.candidates
             SET {", ".join(set_clauses)}, updated_at = NOW()
             WHERE user_id = $1::uuid AND deleted_at IS NULL
-            """,  # noqa: S608 — columns are fixed identifiers; values parameterized
+            """,
             *values,
         )
         result = (
@@ -494,7 +494,7 @@ async def job_search(
               AND ($5::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $5::integer)
             ORDER BY ms.overall_score DESC
             LIMIT $6::integer
-            """,  # noqa: S608
+            """,
             candidate["id"],
             query_text,
             skills_filter,
@@ -530,7 +530,7 @@ async def job_search(
               {remote_clause}
             ORDER BY ms.overall_score DESC
             LIMIT $2::integer
-            """,  # noqa: S608
+            """,
             candidate["id"],
             limit,
             market,
@@ -563,7 +563,7 @@ async def job_search(
               AND ($4::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $4::integer)
             ORDER BY j.scraped_at DESC
             LIMIT $5::integer
-            """,  # noqa: S608
+            """,
             query_text,
             skills_filter,
             location_city,

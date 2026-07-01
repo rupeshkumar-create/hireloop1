@@ -225,8 +225,8 @@ def _normalize_extraction(
 
 
 async def apply_extraction_to_role(
-    db: Any,  # noqa: ANN401
-    role_id: Any,  # noqa: ANN401
+    db: Any,
+    role_id: Any,
     extraction: dict[str, Any],
 ) -> None:
     """Persist extracted fields onto public.roles."""

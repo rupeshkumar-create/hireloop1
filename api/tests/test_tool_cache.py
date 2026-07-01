@@ -1,4 +1,3 @@
-import pytest
 
 from hireloop_api.services.tool_cache import cache_key, get_cached, set_cached
 
