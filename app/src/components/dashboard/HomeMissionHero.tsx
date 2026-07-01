@@ -96,11 +96,10 @@ function ProgressRing({ percent }: { percent: number | null }) {
           fill="none"
           stroke="currentColor"
           strokeWidth="4"
-          className="text-accent"
+          className="text-accent transition-[stroke-dashoffset] duration-base ease-out-soft"
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={offset}
-          className="transition-[stroke-dashoffset] duration-base ease-out-soft"
         />
       </svg>
       <span className="absolute inset-0 flex items-center justify-center text-micro font-semibold text-ink-900">
