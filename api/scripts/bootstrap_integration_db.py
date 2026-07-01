@@ -103,6 +103,11 @@ async def bootstrap() -> None:
     dsn = _dsn()
     conn = await asyncpg.connect(dsn)
     try:
+        already = await conn.fetchval("SELECT to_regclass('public.users') IS NOT NULL")
+        if already:
+            print("Schema already present — skipping migrations.")
+            return
+
         print("Applying test prelude (extensions + auth.users stub)…")
         await _apply_sql(conn, TEST_PRELUDE, "prelude")
 
