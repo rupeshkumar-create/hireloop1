@@ -5,14 +5,14 @@ import { Badge } from "@/components/ui/Badge";
 export const metadata: Metadata = {
   title: "How It Works",
   description:
-    "Step-by-step: how Aarya and Nitya work together to match candidates to jobs and make warm introductions to hiring managers in India.",
+    "Step-by-step: how Aarya and Nitya work together to match candidates to jobs and make warm introductions to hiring managers.",
 };
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
 
 const CANDIDATE_STEPS = [
   { n: 1, title: "Sign in with LinkedIn", detail: "One click. Aarya reads your profile, work history, skills and education. No manual form filling." },
-  { n: 2, title: "Verify your +91 number", detail: "India geo-lock. OTP via SMS. Takes 30 seconds. Required for DPDP compliance and Indian-only access." },
+  { n: 2, title: "Verify your phone", detail: "Pick your market (India, US, or UK) and verify via SMS OTP (+91 MSG91, +1/+44 Twilio). Takes 30 seconds. Required for DPDP compliance and account security." },
   { n: 3, title: "Chat with Aarya", detail: "Tell her what you're looking for — role, company type, city, CTC. She builds your preference graph in real time." },
   { n: 4, title: "Review your match feed", detail: "Aarya surfaces the top 10 roles daily, ranked by semantic match score. Each card shows role, company, CTC, and your fit score." },
   { n: 5, title: "Pick an action on each role", detail: "Three options: Direct Apply (via the job's native link), Request Intro (warm intro via your Gmail), or Save for Later." },

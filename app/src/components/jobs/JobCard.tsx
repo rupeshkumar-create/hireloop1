@@ -29,7 +29,8 @@ import {
   Loader2,
   Send,
 } from "lucide-react";
-import { cn, formatLPA } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatSalaryRange } from "@/lib/salary";
 import type { MatchedJob } from "@/lib/api/matches";
 import { Avatar, Badge, Button, Card, ScoreDot, useToast } from "@/components/ui";
 
@@ -99,17 +100,14 @@ export function JobCard({
   const roadmapBuilding = roadmapStatus === "loading";
   const roadmapReady = roadmapStatus === "ready";
 
-  const ctcLabel =
-    job.ctc_min && job.ctc_max
-      ? formatLPA(job.ctc_min, job.ctc_max)
-      : job.ctc_min
-      ? `${Math.round(job.ctc_min / 100_000)}+ LPA`
-      : null;
+  const ctcLabel = formatSalaryRange(job.ctc_min, job.ctc_max, {
+    currency: job.salary_currency,
+  });
 
   const locationLabel =
     [job.location_city, job.location_state]
       .filter(Boolean)
-      .join(", ") || (job.is_remote ? null : "India");
+      .join(", ") || (job.is_remote ? null : "Onsite");
 
   const handleIntro = () => {
     if (applyLocked) {

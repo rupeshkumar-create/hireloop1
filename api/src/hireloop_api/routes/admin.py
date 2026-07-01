@@ -73,7 +73,7 @@ async def admin_dashboard(
           (SELECT count(*) FROM public.users WHERE deleted_at IS NULL) AS total_users,
           (SELECT count(*) FROM public.candidates WHERE deleted_at IS NULL) AS candidates,
           (SELECT count(*) FROM public.recruiters WHERE deleted_at IS NULL) AS recruiters,
-          (SELECT count(*) FROM public.jobs WHERE is_active AND country_code = 'IN') AS active_jobs,
+          (SELECT count(*) FROM public.jobs WHERE is_active AND deleted_at IS NULL) AS active_jobs,
           (SELECT count(*) FROM public.intro_requests WHERE created_at > $1) AS intros_7d,
           (SELECT count(*) FROM public.intro_requests
              WHERE status = 'sent' AND created_at > $1) AS intros_sent_7d,
@@ -148,7 +148,7 @@ async def admin_ingestion(
           count(*) FILTER (WHERE is_active) AS active,
           count(*) FILTER (WHERE scraped_at > NOW() - INTERVAL '6 hours') AS refreshed_6h,
           count(DISTINCT apify_job_id) AS unique_apify
-        FROM public.jobs WHERE country_code = 'IN'
+        FROM public.jobs WHERE deleted_at IS NULL
         """
     )
     embeddings = await db.fetchrow(

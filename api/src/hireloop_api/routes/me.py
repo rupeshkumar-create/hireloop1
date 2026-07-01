@@ -17,9 +17,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_db_optional, get_india_verified_user
+from hireloop_api.deps import get_db, get_db_optional, get_phone_verified_user
+from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.markets import (
+    MARKET_LABELS,
+    SUPPORTED_MARKETS,
+    dial_prefix_for_market,
+    job_visible_for_market_sql,
+    normalize_market,
+    phone_matches_market,
+)
 from hireloop_api.services.consent import log_consent
-from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     apply_negative_preference,
@@ -35,6 +43,7 @@ from hireloop_api.services.profile_experience import (
     build_merged_education,
     build_merged_experience,
 )
+from hireloop_api.services.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/me", tags=["me"])
@@ -52,6 +61,11 @@ class OnboardingConsentRequest(BaseModel):
 class CompleteOnboardingRequest(BaseModel):
     skipped_voice: bool = False
     skipped_resume: bool = False
+    market: str | None = None
+
+
+class MarketUpdateRequest(BaseModel):
+    market: str
 
 
 async def _schedule_post_consent_enrichment(
@@ -161,7 +175,7 @@ async def _ensure_candidate_row(
 ) -> asyncpg.Record:
     existing = await db.fetchrow(
         """
-        SELECT id, headline, summary, current_title, current_company,
+        SELECT id, market, headline, summary, current_title, current_company,
                years_experience, location_city, location_state, skills,
                profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
                open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
@@ -177,9 +191,9 @@ async def _ensure_candidate_row(
 
     return await db.fetchrow(
         """
-        INSERT INTO public.candidates (user_id, headline, profile_complete)
-        VALUES ($1::uuid, $2, FALSE)
-        RETURNING id, headline, summary, current_title, current_company,
+        INSERT INTO public.candidates (user_id, market, headline, profile_complete)
+        VALUES ($1::uuid, 'IN', $2, FALSE)
+        RETURNING id, market, headline, summary, current_title, current_company,
                   years_experience, location_city, location_state, skills,
                   profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
                   open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
@@ -193,7 +207,7 @@ async def _ensure_candidate_row(
 
 @router.get("/access")
 async def get_access_status(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
@@ -229,9 +243,91 @@ async def get_access_status(
     }
 
 
+@router.patch("/market")
+async def update_my_market(
+    body: MarketUpdateRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Update the user's home market (IN / US / GB).
+
+    This controls job visibility/scoping. We also mirror the value onto the candidate row.
+    """
+    raw = (body.market or "").strip()
+    market = normalize_market(raw)
+    if market not in SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail="Unsupported market")
+
+    user_id = uuid.UUID(str(current_user["id"]))
+
+    user_row = await db.fetchrow(
+        """
+        SELECT phone, phone_verified
+        FROM public.users
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if user_row and user_row["phone_verified"] and user_row["phone"]:
+        if not phone_matches_market(str(user_row["phone"]), market):
+            label = MARKET_LABELS.get(market, market)
+            dial = dial_prefix_for_market(market)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Your verified phone doesn't match {label}. "
+                    f"Re-verify with a {dial} number before switching markets."
+                ),
+            )
+
+    await db.execute(
+        """
+        UPDATE public.users
+        SET market = $2, updated_at = NOW()
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        market,
+    )
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET market = $2, updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        market,
+    )
+
+    candidate_row = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        user_id,
+    )
+    if candidate_row:
+        from hireloop_api.services.background_jobs import MATCH_EMBED_CANDIDATE, enqueue_job
+
+        await enqueue_job(
+            db,
+            kind=MATCH_EMBED_CANDIDATE,
+            payload={"candidate_id": str(candidate_row["id"])},
+            idempotency_key=f"match_embed_market:{candidate_row['id']}:{market}",
+        )
+
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'market_update', TRUE)
+        """,
+        user_id,
+    )
+
+    return {"ok": True, "market": market}
+
+
 @router.get("/profile")
 async def get_my_profile(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
@@ -239,7 +335,7 @@ async def get_my_profile(
 
     user_row = await db.fetchrow(
         """
-        SELECT id, email, phone, full_name, role, india_verified, avatar_url
+        SELECT id, email, phone, full_name, role, phone_verified, avatar_url, market, phone_country
         FROM public.users
         WHERE id = $1::uuid AND deleted_at IS NULL
         """,
@@ -379,7 +475,7 @@ class LinkedInUrlRequest(BaseModel):
 @router.post("/linkedin")
 async def set_linkedin_url(
     body: LinkedInUrlRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
@@ -423,7 +519,7 @@ async def set_linkedin_url(
 @router.patch("/profile")
 async def update_my_profile(
     body: ProfileUpdateRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection | None = Depends(get_db_optional),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -667,7 +763,7 @@ async def update_my_profile(
 
 @router.get("/saved-jobs")
 async def list_saved_jobs(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Return jobs the candidate bookmarked, newest first."""
@@ -678,8 +774,11 @@ async def list_saved_jobs(
     if not candidate:
         return []
 
+    market = await fetch_candidate_market(db, candidate["id"])
+    vis = job_visible_for_market_sql(market_param="$2")
+
     rows = await db.fetch(
-        """
+        f"""
         SELECT
             j.id AS job_id,
             j.title,
@@ -691,6 +790,7 @@ async def list_saved_jobs(
             j.seniority,
             j.ctc_min,
             j.ctc_max,
+            j.salary_currency,
             j.skills_required,
             j.apply_url,
             ms.overall_score,
@@ -708,17 +808,18 @@ async def list_saved_jobs(
           ON ms.job_id = j.id AND ms.candidate_id = sj.candidate_id
         WHERE sj.candidate_id = $1::uuid
           AND j.deleted_at IS NULL
-          AND j.country_code = 'IN'
+          AND {vis}
         ORDER BY sj.saved_at DESC
-        """,
+        """,  # noqa: S608
         candidate["id"],
+        market,
     )
     return [serialize_job_card(r) for r in rows]
 
 
 @router.get("/saved-jobs/ids")
 async def list_saved_job_ids(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, list[str]]:
     """Lightweight list of saved job IDs for heart-button state."""
@@ -739,7 +840,7 @@ async def list_saved_job_ids(
 @router.post("/saved-jobs/{job_id}", status_code=201)
 async def save_job_for_later(
     job_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, bool]:
     candidate = await db.fetchrow(
@@ -749,14 +850,18 @@ async def save_job_for_later(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate profile not found")
 
+    market = await fetch_candidate_market(db, candidate["id"])
+    vis = job_visible_for_market_sql(market_param="$2")
+
     job_exists = await db.fetchval(
-        """
+        f"""
         SELECT EXISTS(
           SELECT 1 FROM public.jobs
-          WHERE id = $1::uuid AND deleted_at IS NULL AND country_code = 'IN'
+          WHERE id = $1::uuid AND deleted_at IS NULL AND {vis}
         )
-        """,
+        """,  # noqa: S608
         uuid.UUID(job_id),
+        market,
     )
     if not job_exists:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -776,7 +881,7 @@ async def save_job_for_later(
 @router.delete("/saved-jobs/{job_id}", status_code=200)
 async def unsave_job(
     job_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, bool]:
     candidate = await db.fetchrow(
@@ -801,7 +906,7 @@ async def unsave_job(
 async def record_onboarding_consent(
     body: OnboardingConsentRequest,
     request: Request,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection | None = Depends(get_db_optional),
 ) -> dict:
@@ -933,7 +1038,7 @@ async def record_onboarding_consent(
 async def complete_onboarding(
     body: CompleteOnboardingRequest,
     request: Request,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Mark candidate onboarding wizard complete (server-side gate)."""
@@ -952,13 +1057,27 @@ async def complete_onboarding(
             detail="Accept terms and privacy policy before finishing onboarding.",
         )
 
+    market = normalize_market(body.market or current_user.get("market"))
+    if body.market and market not in SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail="Unsupported market")
+
+    await db.execute(
+        """
+        UPDATE public.users
+        SET market = $2, updated_at = NOW()
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        market,
+    )
     await db.execute(
         """
         UPDATE public.candidates
-        SET onboarding_complete = TRUE, updated_at = NOW()
+        SET market = $2, onboarding_complete = TRUE, updated_at = NOW()
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
+        market,
     )
     purpose = "onboarding_complete_voice_skip" if body.skipped_voice else "onboarding_complete"
     await log_consent(db, user_id=user_id, purpose=purpose, granted=True, request=request)
@@ -970,12 +1089,12 @@ async def complete_onboarding(
             granted=True,
             request=request,
         )
-    return {"ok": True, "onboarding_complete": True}
+    return {"ok": True, "onboarding_complete": True, "market": market}
 
 
 @router.get("/notification-prefs")
 async def get_notification_prefs(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     row = await db.fetchrow(
@@ -994,7 +1113,7 @@ class ExcludePreferenceRequest(BaseModel):
 @router.post("/preferences/exclude")
 async def set_negative_preference(
     body: ExcludePreferenceRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
@@ -1027,7 +1146,7 @@ async def set_negative_preference(
 @router.patch("/notification-prefs")
 async def update_notification_prefs(
     body: NotificationPrefsUpdate,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     await db.execute(
@@ -1094,7 +1213,7 @@ async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[st
 
 @router.get("/dpdp/export")
 async def dpdp_export(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> JSONResponse:
     """Synchronous export for MVP (<60s for typical user)."""
@@ -1118,7 +1237,7 @@ async def dpdp_export(
 
 @router.delete("")
 async def dpdp_delete_account(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """

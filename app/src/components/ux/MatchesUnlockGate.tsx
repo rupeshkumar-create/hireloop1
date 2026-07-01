@@ -32,7 +32,7 @@ export function MatchesUnlockGate({
           <h2 className="text-h2 text-ink-900">You&apos;re one step from matches</h2>
           <p className="text-small text-ink-500">
             Upload a resume or complete a 15-minute call with Aarya. We&apos;ll unlock your
-            ranked India job feed.
+            ranked job feed in your market.
           </p>
           <div className="flex flex-col sm:flex-row gap-2 justify-center">
             {onUploadResume ? (

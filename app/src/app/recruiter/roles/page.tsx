@@ -22,6 +22,8 @@ import {
   updateRole,
   type RoleListItem,
 } from "@/lib/api/recruiter";
+import { getCachedProfile } from "@/lib/api/profile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -42,6 +44,7 @@ const STATUS_TONE: Record<string, "muted" | "strong" | "accent"> = {
 
 export default function RecruiterRolesPage() {
   const { toast } = useToast();
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [roles, setRoles] = useState<RoleListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +63,8 @@ export default function RecruiterRolesPage() {
   }, []);
 
   useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
     void load();
   }, [load]);
 
@@ -168,7 +173,10 @@ export default function RecruiterRolesPage() {
                         <Badge tone={tone}>{label}</Badge>
                       </div>
                       <p className="text-micro text-ink-500 mt-0.5">
-                        {[role.location_city, formatCompRange(role.comp_min, role.comp_max)]
+                        {[
+                          role.location_city,
+                          formatCompRange(role.comp_min, role.comp_max, { market }),
+                        ]
                           .filter((x) => x && x !== "Not set")
                           .join(" · ") || "Details in intake"}
                       </p>

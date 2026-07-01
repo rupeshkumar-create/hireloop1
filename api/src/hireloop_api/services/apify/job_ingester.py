@@ -17,6 +17,11 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
+from hireloop_api.markets import MARKET_SCRAPE_LOCATIONS, SUPPORTED_MARKETS
+from hireloop_api.services.apify.fantastic_jobs_config import (
+    description_search_for_candidate,
+    merge_ingest_run_params,
+)
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 from hireloop_api.services.job_validator import validate_job_record
 
@@ -60,6 +65,17 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "marketing": ("Marketing Manager", "Performance Marketing Manager"),
     "product manager": ("Product Manager",),
 }
+
+
+def _ingest_locations(settings: Settings | None, locations: list[str] | None) -> list[str]:
+    if locations:
+        return locations
+    enabled = {m.upper() for m in (settings.enabled_markets if settings else ["IN"])}
+    out: list[str] = []
+    for market in SUPPORTED_MARKETS:
+        if market in enabled:
+            out.extend(MARKET_SCRAPE_LOCATIONS[market][:5])
+    return out or MARKET_SCRAPE_LOCATIONS["IN"]
 
 
 def _expand_title(title: str) -> list[str]:
@@ -138,10 +154,11 @@ class JobIngester:
         queries: list[str] | None = None,
         locations: list[str] | None = None,
         max_results_per_query: int = 25,
-        time_range: str = "24h",
+        time_range: str | None = None,
         *,
         use_career_site: bool | None = None,
         use_linkedin: bool = False,
+        description_search: list[str] | None = None,
     ) -> dict:
         """
         Full ingestion pipeline:
@@ -158,6 +175,10 @@ class JobIngester:
         """
         start = datetime.now(UTC)
         logger.info("job_ingestion_started")
+        scrape_locations = _ingest_locations(self._settings, locations)
+        effective_time_range = time_range or (
+            self._settings.fantastic_jobs_time_range if self._settings else "24h"
+        )
 
         all_records: list[JobRecord] = []
         source_stats: dict[str, dict] = {}
@@ -181,12 +202,15 @@ class JobIngester:
                     api_token=self._apify_token,
                     actor=self._career_site_actor,
                 )
-                run_id_fj = await fantastic.trigger_run(
+                fj_params = merge_ingest_run_params(
+                    self._settings,
                     title_search=queries,
-                    locations=["India"] if not locations else locations,
+                    location_search=scrape_locations,
                     limit=max(10, min(5000, max_results_per_query * 40)),
-                    time_range=time_range,
+                    time_range=effective_time_range,
+                    description_search=description_search,
                 )
+                run_id_fj = await fantastic.trigger_run(run_params=fj_params)
                 dataset_id_fj = await fantastic.wait_for_run(run_id_fj)
                 raw_items_fj = await fantastic.fetch_dataset(dataset_id_fj)
                 records_fj = fantastic.normalise_batch(raw_items_fj)
@@ -210,9 +234,9 @@ class JobIngester:
             try:
                 _, records, li_stats = await self._scraper.scrape(
                     queries=queries,
-                    locations=locations,
+                    locations=scrape_locations,
                     max_results_per_query=max_results_per_query,
-                    time_range=time_range,
+                    time_range=effective_time_range,
                 )
                 all_records.extend(records)
                 source_stats["linkedin_jobs"] = li_stats
@@ -332,19 +356,30 @@ class JobIngester:
             skills=list(row["skills"] or []),
         )
         locations = list(row["target_locations"] or []) or (
-            [row["location_city"]] if row["location_city"] else ["India"]
+            [row["location_city"]] if row["location_city"] else None
+        )
+        candidate_time_range = time_range or (
+            self._settings.fantastic_jobs_candidate_time_range
+            if self._settings
+            else "7d"
+        )
+        desc_search = description_search_for_candidate(
+            list(row["skills"] or []),
+            self._settings,
         )
         logger.info(
             "job_ingestion_for_candidate_started",
             candidate_id=candidate_id,
             queries=queries,
             locations=locations,
+            description_search=desc_search,
         )
         return await self.ingest(
             queries=queries or None,
             locations=locations,
             max_results_per_query=max_results_per_query,
-            time_range=time_range,
+            time_range=candidate_time_range,
+            description_search=desc_search,
         )
 
     async def ingest_records(self, records: list[JobRecord]) -> dict:
@@ -417,13 +452,14 @@ class JobIngester:
                         INSERT INTO public.jobs (
                             id, title, description, requirements,
                             location_city, location_state, country_code,
+                            salary_currency, allowed_regions,
                             is_remote, employment_type, seniority,
                             ctc_min, ctc_max, skills_required,
                             apify_job_id, apply_url, source,
                             is_active, scraped_at, expires_at, raw_data
                         ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                            $11, $12, $13, $14, $15, $16, TRUE, $17, $18, $19::jsonb
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                            $13, $14, $15, $16, $17, $18, TRUE, $19, $20, $21::jsonb
                         )
                         """,
                         uuid.uuid4(),
@@ -433,6 +469,8 @@ class JobIngester:
                         rec.location_city,
                         rec.location_state,
                         rec.country_code,
+                        rec.salary_currency,
+                        rec.allowed_regions,
                         rec.is_remote,
                         rec.employment_type,
                         rec.seniority,
@@ -525,12 +563,13 @@ class JobIngester:
                     await self._db.execute(
                         """
                         INSERT INTO public.companies (id, name, linkedin_url, country_code)
-                        VALUES ($1, $2, $3, 'IN')
+                        VALUES ($1, $2, $3, $4)
                         ON CONFLICT DO NOTHING
                         """,
                         uuid.uuid4(),
                         rec.company_name,
                         rec.company_linkedin_url,
+                        rec.country_code,
                     )
                 except Exception as exc:
                     # Duplicate/constraint races are expected when two jobs from

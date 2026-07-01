@@ -18,6 +18,9 @@ import {
   listRoles,
   type RoleListItem,
 } from "@/lib/api/recruiter";
+import { getCachedProfile } from "@/lib/api/profile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
+import { compFieldLabel } from "@/lib/salary";
 import { Button, Card, CardBody, CardHeader, Field, Input } from "@/components/ui";
 
 const REMOTE_OPTIONS = [
@@ -30,6 +33,7 @@ const REMOTE_OPTIONS = [
 
 export default function NewRolePage() {
   const router = useRouter();
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [title, setTitle] = useState("");
   const [jd, setJd] = useState("");
   const [compMin, setCompMin] = useState("");
@@ -43,6 +47,8 @@ export default function NewRolePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
     listRoles()
       .then(setPastRoles)
       .catch(() => setPastRoles([]));
@@ -156,7 +162,7 @@ export default function NewRolePage() {
                 </Field>
 
                 <div className="grid sm:grid-cols-2 gap-3">
-                  <Field label="Comp min (LPA)" htmlFor="comp-min">
+                  <Field label={compFieldLabel(market, "min")} htmlFor="comp-min">
                     <Input
                       id="comp-min"
                       type="number"
@@ -166,7 +172,7 @@ export default function NewRolePage() {
                       placeholder="25"
                     />
                   </Field>
-                  <Field label="Comp max (LPA)" htmlFor="comp-max">
+                  <Field label={compFieldLabel(market, "max")} htmlFor="comp-max">
                     <Input
                       id="comp-max"
                       type="number"

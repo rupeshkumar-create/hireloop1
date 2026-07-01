@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user, verify_service_secret
+from hireloop_api.deps import get_db, get_phone_verified_user, verify_service_secret
 from hireloop_api.services.notifications import send_whatsapp_if_allowed
 
 logger = structlog.get_logger()
@@ -88,7 +88,7 @@ async def msg91_whatsapp_webhook(
 @router.post("/test-whatsapp")
 async def test_whatsapp_send(
     body: SendTestNotification,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:

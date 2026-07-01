@@ -24,7 +24,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_db_pool, get_india_verified_user
+from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
+from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.routes.matches import MatchedJob, _serialize_cached_match_row
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
@@ -97,12 +99,14 @@ async def _fetch_path_jobs(
     limit: int,
     *,
     remote_preference: str = "any",
+    market: str = "IN",
 ) -> list[asyncpg.Record]:
     """Scored jobs for this candidate, path-matching titles first."""
     from hireloop_api.services.job_preferences import remote_filter_sql
 
     patterns = [f"%{t}%" for t in target_titles] or ["%"]
     remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$4")
     return await db.fetch(
         f"""
         SELECT ms.job_id, j.title, co.name AS company_name,
@@ -116,7 +120,7 @@ async def _fetch_path_jobs(
         LEFT JOIN public.companies co ON co.id = j.company_id
         WHERE ms.candidate_id = $1::uuid
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
@@ -128,6 +132,7 @@ async def _fetch_path_jobs(
         uuid.UUID(candidate_id),
         patterns,
         limit,
+        market,
     )
 
 
@@ -216,7 +221,7 @@ async def _ingest_and_rescore(
 
 @router.get("/path", response_model=CareerPathResponse)
 async def get_career_path(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Return the candidate's latest career path, or null if none generated yet."""
@@ -227,7 +232,7 @@ async def get_career_path(
 
 @router.post("/path/generate", response_model=CareerPathResponse)
 async def generate_career_path(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
@@ -246,7 +251,7 @@ async def generate_career_path(
 @router.post("/path/prioritize", response_model=CareerPathResponse)
 async def prioritize_career_path(
     body: PrioritizePathRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Set which career path title the candidate wants to prioritize for job search."""
@@ -265,7 +270,7 @@ async def prioritize_career_path(
 
 @router.post("/path/find-jobs", response_model=FindJobsResponse)
 async def find_jobs_for_path(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
@@ -297,10 +302,16 @@ async def find_jobs_for_path(
 
     target_titles: list[str] = path.get("target_titles") or []
     target_locations: list[str] = path.get("target_locations") or []
+    market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
 
     # Immediate: existing scored jobs (path titles first).
     rows = await _fetch_path_jobs(
-        db, candidate_id, target_titles, limit=20, remote_preference=remote_pref
+        db,
+        candidate_id,
+        target_titles,
+        limit=20,
+        remote_preference=remote_pref,
+        market=market,
     )
 
     # No cached scores yet → score now so the first click isn't empty.
@@ -308,7 +319,12 @@ async def find_jobs_for_path(
         engine = MatchingEngine(db)
         await engine.score_candidate(candidate_id, limit=80)
         rows = await _fetch_path_jobs(
-            db, candidate_id, target_titles, limit=20, remote_preference=remote_pref
+            db,
+            candidate_id,
+            target_titles,
+            limit=20,
+            remote_preference=remote_pref,
+            market=market,
         )
 
     # If we have nothing to show yet, confirm the upstream source is even
@@ -348,7 +364,7 @@ async def find_jobs_for_path(
 
 @router.get("/intelligence")
 async def get_career_intelligence(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Return the candidate's stored Career Intelligence, or null if not computed."""
@@ -365,7 +381,7 @@ async def get_career_intelligence(
 
 @router.post("/intelligence/generate")
 async def generate_career_intelligence(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """

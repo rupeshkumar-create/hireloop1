@@ -220,9 +220,7 @@ verify each one renders correctly:
 ### Onboarding flow
 - [ ] `app/signup/page.tsx`
 - [ ] `app/onboarding/page.tsx`
-- [ ] `app/onboarding/phone/page.tsx`
 - [ ] `components/auth/SignupForm.tsx`
-- [ ] `components/auth/PhoneVerifyForm.tsx`
 - [ ] `components/onboarding/ExperienceEnrichmentForm.tsx`
 - [ ] `components/resume/ResumeUpload.tsx`
 

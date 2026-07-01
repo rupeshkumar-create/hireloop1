@@ -1,8 +1,8 @@
--- Performance indexes for India job feed and agent checkpoints.
+-- Performance indexes for job feed and agent actions (multi-market).
 
-CREATE INDEX IF NOT EXISTS idx_jobs_in_active
+CREATE INDEX IF NOT EXISTS idx_jobs_active_market
   ON public.jobs (country_code, is_active)
-  WHERE deleted_at IS NULL AND country_code = 'IN';
+  WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_match_scores_candidate_score
   ON public.match_scores (candidate_id, overall_score DESC);
@@ -12,3 +12,4 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
 
 CREATE INDEX IF NOT EXISTS idx_agent_actions_session_created
   ON public.agent_actions (session_id, created_at DESC);
+

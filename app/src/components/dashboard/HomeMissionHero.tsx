@@ -68,7 +68,7 @@ function deriveNextAction({
   if ((matchCount ?? 0) === 0) {
     return {
       label: "Ask Aarya to find roles",
-      hint: "She'll search India-only jobs ranked for your profile.",
+      hint: "She'll search jobs in your market, ranked for your profile.",
       onClick: () => onSendToChat("Find me the best matching jobs for my profile right now."),
     };
   }

@@ -38,17 +38,6 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // India geo-lock: block non-IN users (Cloudflare WAF is layer 1;
-  // this is layer 5 — defense-in-depth for direct-to-Vercel traffic)
-  const cfCountry = request.headers.get("cf-ipcountry");
-  if (cfCountry && cfCountry !== "IN" && cfCountry !== "XX") {
-    // XX = Cloudflare test mode; allow in dev
-    return new NextResponse(
-      JSON.stringify({ error: "This service is available in India only." }),
-      { status: 403, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
   const pathname = request.nextUrl.pathname;
 
   // Protected routes: redirect unauthenticated users to /signup

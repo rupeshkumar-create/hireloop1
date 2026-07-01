@@ -37,6 +37,7 @@ from typing import Any
 import asyncpg
 import structlog
 
+from hireloop_api.markets import job_visible_for_market_sql, normalize_market
 from hireloop_api.services.domain_fit import (
     detect_domains,
     domain_fit_multiplier,
@@ -650,6 +651,7 @@ class MatchingEngine:
                 c.remote_preference,
                 c.open_to_relocation,
                 c.location_scope,
+                COALESCE(NULLIF(c.market, ''), NULLIF(u.market, ''), 'IN') AS market,
                 ce.profile_embedding,
                 ce.skills_embedding,
                 ce.resume_embedding,
@@ -684,9 +686,13 @@ class MatchingEngine:
         first-feed scoring path).
         """
         cand_row = await self._candidate_row(candidate_id)
+        if not cand_row:
+            return None
+        market = normalize_market(cand_row.get("market"))
+        vis = job_visible_for_market_sql(market_param="$2")
 
         job_row = await self._db.fetchrow(
-            """
+            f"""
             SELECT
                 j.id,
                 j.title,
@@ -706,10 +712,11 @@ class MatchingEngine:
             LEFT JOIN public.job_embeddings je ON je.job_id = j.id
             LEFT JOIN public.companies co ON co.id = j.company_id
             WHERE j.id = $1::uuid
-              AND j.country_code = 'IN'
+              AND {vis}
               AND j.deleted_at IS NULL
-            """,
+            """,  # noqa: S608
             job_id,
+            market,
         )
         # NOTE: scoring is deliberately independent of is_active. Feed visibility
         # is enforced by the feed queries and the bulk score_candidate selector
@@ -850,8 +857,11 @@ class MatchingEngine:
         if cand_row is None:
             return 0
 
+        market = normalize_market(cand_row.get("market"))
+        vis = job_visible_for_market_sql(market_param="$3")
+
         jobs = await self._db.fetch(
-            """
+            f"""
             SELECT j.id, j.title, j.description, j.seniority, j.skills_required,
                    j.is_remote, j.location_city, j.location_state, j.ctc_min,
                    j.ctc_max, co.name AS company_name,
@@ -868,14 +878,15 @@ class MatchingEngine:
             LEFT JOIN public.companies co ON co.id = j.company_id
             LEFT JOIN public.candidate_embeddings ce ON ce.candidate_id = $1::uuid
             WHERE j.is_active = TRUE
-              AND j.country_code = 'IN'
+              AND {vis}
               AND j.deleted_at IS NULL
               AND j.expires_at > NOW()
             ORDER BY j.scraped_at DESC
             LIMIT $2
-            """,
+            """,  # noqa: S608
             candidate_id,
             max(limit * 2, 400),
+            market,
         )
         if not jobs:
             logger.info("score_candidate_done", candidate_id=candidate_id, scored=0)

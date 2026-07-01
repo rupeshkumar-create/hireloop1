@@ -18,12 +18,14 @@ import {
 import {
   formatCompRange,
   getRole,
-  inrToLpa,
   startRoleSearch,
   updateRole,
   type RecruiterRole,
   type RoleReadiness,
 } from "@/lib/api/recruiter";
+import { getCachedProfile } from "@/lib/api/profile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
+import { compFieldLabel, profileSalaryFromStorage } from "@/lib/salary";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
 import { Button, Card, CardBody, CardHeader, Field, Input } from "@/components/ui";
 
@@ -32,6 +34,7 @@ export default function RoleBriefPage() {
   const router = useRouter();
 
   const [role, setRole] = useState<RecruiterRole | null>(null);
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [readiness, setReadiness] = useState<RoleReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,16 +49,24 @@ export default function RoleBriefPage() {
   const [city, setCity] = useState("");
   const [remote, setRemote] = useState("");
 
-  const hydrate = useCallback((r: RecruiterRole) => {
-    setRole(r);
-    setTitle(r.title);
-    setHiringBrief(r.hiring_brief || "");
-    setMustHaves((r.must_haves || []).join(", "));
-    setCompMin(inrToLpa(r.comp_min)?.toString() || "");
-    setCompMax(inrToLpa(r.comp_max)?.toString() || "");
-    setCity(r.location_city || "");
-    setRemote(r.remote_policy || "");
-    if (r.readiness) setReadiness(r.readiness);
+  const hydrate = useCallback(
+    (r: RecruiterRole) => {
+      setRole(r);
+      setTitle(r.title);
+      setHiringBrief(r.hiring_brief || "");
+      setMustHaves((r.must_haves || []).join(", "));
+      setCompMin(profileSalaryFromStorage(r.comp_min, market));
+      setCompMax(profileSalaryFromStorage(r.comp_max, market));
+      setCity(r.location_city || "");
+      setRemote(r.remote_policy || "");
+      if (r.readiness) setReadiness(r.readiness);
+    },
+    [market],
+  );
+
+  useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
   }, []);
 
   useEffect(() => {
@@ -181,7 +192,7 @@ export default function RoleBriefPage() {
             </Field>
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Comp min (LPA)" htmlFor="comp-min">
+              <Field label={compFieldLabel(market, "min")} htmlFor="comp-min">
                 <Input
                   id="comp-min"
                   type="number"
@@ -191,7 +202,7 @@ export default function RoleBriefPage() {
                   placeholder="e.g. 25"
                 />
               </Field>
-              <Field label="Comp max (LPA)" htmlFor="comp-max">
+              <Field label={compFieldLabel(market, "max")} htmlFor="comp-max">
                 <Input
                   id="comp-max"
                   type="number"
@@ -230,7 +241,8 @@ export default function RoleBriefPage() {
 
             {role && (
               <p className="text-micro text-ink-500 bg-paper-1 rounded-md px-3 py-2">
-                Current comp: {formatCompRange(role.comp_min, role.comp_max)}
+                Current comp:{" "}
+                {formatCompRange(role.comp_min, role.comp_max, { market })}
                 {role.candidate_pitch && (
                   <>
                     {" · "}

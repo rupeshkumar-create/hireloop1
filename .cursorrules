@@ -30,12 +30,12 @@ Infra:                   AWS ap-south-1 (ECS Fargate + RDS Postgres read replica
 CDN / WAF:               Cloudflare (non-IN ASN block at WAF level)
 CI/CD:                   GitHub Actions
 
-## R4 — India geo-lock (5 layers, all required)
-1. +91 phone OTP mandatory at signup (MSG91)
-2. Cloudflare WAF rule: block non-IN ASN (CF-IPCountry header)
-3. All prices in INR only
-4. Job DB filter: country_code = 'IN' always
-5. AWS ap-south-1 region for all compute
+## R4 — Multi-region marketplace (IN / US / GB v1)
+1. Each user has `market` (IN default); candidates and jobs scoped by market
+2. Phone: IN → +91/MSG91; US → +1/Twilio; GB → +44/Twilio (`phone_verified` gate)
+3. Prices shown in local currency (INR / USD / GBP) per market
+4. Job visibility: onsite = same `country_code`; remote = `allowed_regions` or worldwide
+5. AWS ap-south-1 remains primary compute; Cloudflare WAF may still geo-gate marketing site
 
 ## R5 — Intro handshake via DB state only (NO agent-to-agent RPC)
 Flow: candidate clicks "Request Intro" → row in intro_requests table →

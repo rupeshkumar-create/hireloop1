@@ -22,12 +22,12 @@ const STATUS_META: Record<
     spoken: "I'm mapping your career path.",
     etaSec: 6,
   },
-  "Searching India roles…": {
-    spoken: "I'm searching India roles for you.",
+  "Searching roles in your market…": {
+    spoken: "I'm searching roles in your market for you.",
     etaSec: 8,
   },
-  "I'm searching India roles now…": {
-    spoken: "I'm searching India roles for you.",
+  "I'm searching roles in your market now…": {
+    spoken: "I'm searching roles in your market for you.",
     etaSec: 8,
   },
   "Scoring this role…": {

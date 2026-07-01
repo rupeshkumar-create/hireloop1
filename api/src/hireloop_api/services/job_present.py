@@ -34,6 +34,7 @@ def serialize_job_card(
         "seniority": row.get("seniority"),
         "ctc_min": row.get("ctc_min"),
         "ctc_max": row.get("ctc_max"),
+        "salary_currency": row.get("salary_currency"),
         "skills_required": list(row.get("skills_required") or []),
         "apply_url": row.get("apply_url"),
         "overall_score": float(overall),

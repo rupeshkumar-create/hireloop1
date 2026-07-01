@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
@@ -185,7 +185,7 @@ def _build_profile_updates_from_resume(
 @router.post("/upload", response_model=ResumeUploadResponse, status_code=201)
 async def upload_resume(
     file: Annotated[UploadFile, File(description="PDF or DOCX resume, max 10MB")],
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> ResumeUploadResponse:
@@ -313,7 +313,7 @@ async def upload_resume(
 @router.post("/{resume_id}/apply-to-profile", response_model=ApplyToProfileResponse)
 async def apply_to_profile(
     resume_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> ApplyToProfileResponse:

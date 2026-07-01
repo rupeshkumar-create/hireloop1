@@ -21,7 +21,7 @@ export default function SignupPage() {
         <div className="space-y-1">
           <h1 className="text-h1 text-ink-900">Get started</h1>
           <p className="text-small text-ink-500">
-            India&apos;s AI recruiting platform — for candidates &amp; recruiters.
+            India&apos;s AI recruiting platform — now in India, the US &amp; UK.
           </p>
         </div>
 

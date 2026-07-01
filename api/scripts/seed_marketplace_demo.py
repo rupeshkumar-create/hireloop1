@@ -545,7 +545,7 @@ async def _seed_pipeline_for_role(
         job_row = await conn.fetchrow(
             """
             SELECT j.id FROM public.jobs j
-            WHERE j.is_active AND j.country_code = 'IN' AND j.deleted_at IS NULL
+            WHERE j.is_active AND j.deleted_at IS NULL
               AND j.title ILIKE '%' || $1 || '%'
             LIMIT 1
             """,
@@ -770,13 +770,15 @@ async def main() -> None:
             )
             await conn.execute(
                 """
-                INSERT INTO public.users (id, email, phone, full_name, role, india_verified)
-                VALUES ($1::uuid, $2, $3, $4, 'candidate', TRUE)
+                INSERT INTO public.users (id, email, phone, full_name, role, phone_verified, market, phone_country)
+                VALUES ($1::uuid, $2, $3, $4, 'candidate', TRUE, 'IN', 'IN')
                 ON CONFLICT (id) DO UPDATE SET
                   email = EXCLUDED.email,
                   phone = EXCLUDED.phone,
                   full_name = EXCLUDED.full_name,
-                  india_verified = TRUE,
+                  phone_verified = TRUE,
+                  market = 'IN',
+                  phone_country = 'IN',
                   deleted_at = NULL,
                   updated_at = NOW()
                 """,
@@ -888,13 +890,15 @@ async def main() -> None:
             )
             await conn.execute(
                 """
-                INSERT INTO public.users (id, email, phone, full_name, role, india_verified)
-                VALUES ($1::uuid, $2, $3, $4, 'recruiter', TRUE)
+                INSERT INTO public.users (id, email, phone, full_name, role, phone_verified, market, phone_country)
+                VALUES ($1::uuid, $2, $3, $4, 'recruiter', TRUE, 'IN', 'IN')
                 ON CONFLICT (id) DO UPDATE SET
                   email = EXCLUDED.email,
                   phone = EXCLUDED.phone,
                   full_name = EXCLUDED.full_name,
-                  india_verified = TRUE,
+                  phone_verified = TRUE,
+                  market = 'IN',
+                  phone_country = 'IN',
                   deleted_at = NULL,
                   updated_at = NOW()
                 """,
@@ -1023,7 +1027,7 @@ async def main() -> None:
         job_count = await conn.fetchval(
             """
             SELECT count(*) FROM public.jobs
-            WHERE country_code = 'IN' AND is_active AND deleted_at IS NULL
+            WHERE is_active AND deleted_at IS NULL
               AND expires_at > NOW()
             """
         )

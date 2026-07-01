@@ -403,6 +403,7 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
             queries=payload.get("queries"),
             locations=payload.get("locations"),
             max_results_per_query=int(payload.get("max_results_per_query") or 50),
+            time_range=str(payload.get("time_range") or settings.fantastic_jobs_time_range),
         )
 
 

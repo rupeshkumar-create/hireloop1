@@ -328,6 +328,7 @@ class CareerIntelligenceService:
                    c.expected_ctc_min, c.expected_ctc_max, c.current_ctc,
                    c.notice_period_days, c.looking_for, c.skills,
                    c.remote_preference,
+                   COALESCE(NULLIF(c.market, ''), u.market, 'IN') AS market,
                    c.career_profile, c.career_analysis, c.linkedin_data, c.aarya_state,
                    u.full_name, u.email
             FROM public.candidates c

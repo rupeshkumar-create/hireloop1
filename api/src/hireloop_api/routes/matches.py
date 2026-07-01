@@ -21,7 +21,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.markets import job_visible_for_market_sql, normalize_market
 from hireloop_api.services.job_preferences import (
     extract_negative_preferences,
     normalize_remote_preference,
@@ -78,6 +80,7 @@ class MatchedJob(BaseModel):
     seniority: str | None
     ctc_min: int | None
     ctc_max: int | None
+    salary_currency: str | None = None
     skills_required: list[str]
     apply_url: str | None
     # Full posting detail (so the candidate never has to leave the app).
@@ -129,18 +132,18 @@ async def get_match_feed(
     ),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """
     Return the current candidate's ranked job matches, best first.
-    Only active IN jobs with unexpired match scores are returned.
+    Only active jobs in the candidate's market with unexpired match scores are returned.
     """
     candidate = await db.fetchrow(
         """
         SELECT c.id, c.current_title, c.years_experience, c.skills,
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
-               c.remote_preference, c.aarya_state,
+               c.remote_preference, c.aarya_state, c.market,
                (
                    SELECT cp.target_titles
                    FROM public.career_paths cp
@@ -157,6 +160,9 @@ async def get_match_feed(
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
     remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
+    market = normalize_market(candidate.get("market"))
+    if not candidate.get("market"):
+        market = await fetch_candidate_market(db, candidate["id"])
 
     rows = await _fetch_cached_match_rows(
         db,
@@ -165,6 +171,7 @@ async def get_match_feed(
         limit=limit,
         offset=offset,
         remote_preference=remote_pref,
+        market=market,
     )
 
     if not rows and offset == 0:
@@ -181,6 +188,7 @@ async def get_match_feed(
                 limit=limit,
                 offset=offset,
                 remote_preference=remote_pref,
+                market=market,
             )
             if not rows:
                 engine = MatchingEngine(db)
@@ -198,6 +206,7 @@ async def get_match_feed(
                         limit=limit,
                         offset=offset,
                         remote_preference=remote_pref,
+                        market=market,
                     )
         _first_score_locks.pop(str(candidate["id"]), None)
 
@@ -211,6 +220,7 @@ async def get_match_feed(
             limit=limit,
             offset=offset,
             remote_preference=remote_pref,
+            market=market,
         )
 
     # Hard constraints: drop deal-breakers on every page (so pagination is
@@ -388,7 +398,7 @@ async def get_match_feed_count(
         le=1.0,
         description="Minimum overall score filter (default relevance floor)",
     ),
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Total job matches for the candidate (same rules as GET /matches)."""
@@ -396,7 +406,7 @@ async def get_match_feed_count(
         """
         SELECT c.id, c.current_title, c.years_experience, c.skills,
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
-               c.remote_preference, c.aarya_state,
+               c.remote_preference, c.aarya_state, c.market,
                (
                    SELECT cp.target_titles
                    FROM public.career_paths cp
@@ -413,11 +423,16 @@ async def get_match_feed_count(
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
     remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
+    market = normalize_market(candidate.get("market"))
+    if not candidate.get("market"):
+        market = await fetch_candidate_market(db, candidate["id"])
+
     total = await _count_cached_match_rows(
         db,
         candidate_id=candidate["id"],
         min_score=min_score,
         remote_preference=remote_pref,
+        market=market,
     )
 
     if total == 0:
@@ -434,6 +449,7 @@ async def get_match_feed_count(
                 candidate_id=candidate["id"],
                 min_score=min_score,
                 remote_preference=remote_pref,
+                market=market,
             )
 
     if total == 0:
@@ -448,6 +464,7 @@ async def get_match_feed_count(
             limit=50,
             offset=0,
             remote_preference=remote_pref,
+            market=market,
         )
         total = len(fallback)
 
@@ -460,8 +477,10 @@ async def _count_cached_match_rows(
     candidate_id: uuid.UUID,
     min_score: float,
     remote_preference: str = "any",
+    market: str = "IN",
 ) -> int:
     remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$3")
     val = await db.fetchval(
         f"""
         SELECT COUNT(*)::int
@@ -470,13 +489,14 @@ async def _count_cached_match_rows(
         WHERE ms.candidate_id = $1::uuid
           AND ms.overall_score >= $2
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
         """,  # noqa: S608
         candidate_id,
         min_score,
+        market,
     )
     return int(val or 0)
 
@@ -489,8 +509,10 @@ async def _fetch_cached_match_rows(
     limit: int,
     offset: int,
     remote_preference: str = "any",
+    market: str = "IN",
 ) -> list[asyncpg.Record]:
     remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$5")
     return await db.fetch(
         f"""
         SELECT
@@ -504,6 +526,7 @@ async def _fetch_cached_match_rows(
             j.seniority,
             j.ctc_min,
             j.ctc_max,
+            j.salary_currency,
             j.skills_required,
             j.apply_url,
             ms.overall_score,
@@ -532,7 +555,7 @@ async def _fetch_cached_match_rows(
         WHERE ms.candidate_id = $1::uuid
           AND ms.overall_score >= $2
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
@@ -555,6 +578,7 @@ async def _fetch_cached_match_rows(
         min_score,
         limit,
         offset,
+        market,
     )
 
 
@@ -623,6 +647,7 @@ async def _fetch_fallback_match_rows(
     limit: int,
     offset: int,
     remote_preference: str = "any",
+    market: str = "IN",
 ) -> list[dict]:
     """
     Return visible jobs even before the precomputed scoring pipeline is ready.
@@ -632,6 +657,7 @@ async def _fetch_fallback_match_rows(
     current_title = candidate.get("current_title")
     rows_to_rank = max(100, limit + offset)
     remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$4")
     rows = await db.fetch(
         f"""
         SELECT
@@ -645,6 +671,7 @@ async def _fetch_fallback_match_rows(
             j.seniority,
             j.ctc_min,
             j.ctc_max,
+            j.salary_currency,
             j.skills_required,
             j.apply_url,
             j.scraped_at,
@@ -659,7 +686,7 @@ async def _fetch_fallback_match_rows(
         FROM public.jobs j
         LEFT JOIN public.companies co ON co.id = j.company_id
         WHERE j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
@@ -676,6 +703,7 @@ async def _fetch_fallback_match_rows(
         candidate_skills,
         current_title,
         rows_to_rank,
+        market,
     )
 
     ranked = [_serialize_fallback_match_row(row, candidate=candidate) for row in rows]
@@ -775,7 +803,7 @@ def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict
 @router.get("/{job_id}", response_model=MatchedJob)
 async def get_single_match(
     job_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
@@ -794,13 +822,16 @@ async def get_single_match(
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
+    market = await fetch_candidate_market(db, candidate["id"])
+    vis = job_visible_for_market_sql(market_param="$3")
+
     # Full detail SELECT — includes description/requirements/scraped_at so the
     # candidate gets the whole posting inline (no need to leave the app).
     detail_cols = """
             ms.job_id, j.title, co.name AS company_name,
             j.location_city, j.location_state, j.is_remote,
             j.employment_type, j.seniority,
-            j.ctc_min, j.ctc_max, j.skills_required, j.apply_url,
+            j.ctc_min, j.ctc_max, j.salary_currency, j.skills_required, j.apply_url,
             j.description, j.requirements, j.scraped_at,
             ms.overall_score, ms.skills_score, ms.experience_score,
             ms.location_score, ms.ctc_score, ms.explanation, ms.computed_at
@@ -814,10 +845,11 @@ async def get_single_match(
         WHERE ms.candidate_id = $1::uuid
           AND ms.job_id = $2::uuid
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
         """,  # noqa: S608 — detail_cols is a fixed literal, not user input
         candidate["id"],
         job_uuid,
+        market,
     )
 
     if not row:
@@ -845,7 +877,7 @@ async def get_single_match(
                 """
                 SELECT j.id AS job_id, j.title, co.name AS company_name,
                        j.location_city, j.location_state, j.is_remote,
-                       j.employment_type, j.seniority, j.ctc_min, j.ctc_max,
+                       j.employment_type, j.seniority, j.ctc_min, j.ctc_max, j.salary_currency,
                        j.skills_required, j.apply_url, j.description,
                        j.requirements, j.scraped_at
                 FROM public.jobs j

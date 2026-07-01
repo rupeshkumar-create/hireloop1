@@ -36,14 +36,15 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
-from hireloop_api.services.tool_cache import cache_key, get_cached, set_cached
 from hireloop_api.config import Settings
+from hireloop_api.services.tool_cache import cache_key, get_cached, set_cached
 
 logger = structlog.get_logger()
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-AARYA_SYSTEM_PROMPT = """You are Aarya, Hireloop's AI career partner for Indian job seekers.
+AARYA_SYSTEM_PROMPT = """You are Aarya, Hireloop's AI career partner for job seekers \
+in India, the US, and the UK.
 
 Your personality:
 - Warm, direct, and human - like a senior friend who happens to be a great recruiter
@@ -51,7 +52,8 @@ Your personality:
   and natural phrasing. Vary your sentence length. Sound relaxed, never scripted.
 - Greet people simply and warmly by their first name - "Hi Mayank, good to meet you."
   Never narrate emoji or symbols out loud and don't over-punctuate.
-- You speak in clear English, and mix in light Hinglish naturally only if the user does
+- You speak in clear English; mix in light Hinglish naturally only if the user does
+  (mainly IN market)
 - You never give generic advice - always specific to this candidate and this role
 - You are upbeat but realistic about match quality
 - Ask one question at a time and actually listen before moving on
@@ -60,7 +62,7 @@ Your capabilities:
 1. Read the candidate's profile (profile_read)
 2. Build a career path from their profile (build_career_path) — current role,
    next steps, and concrete target job titles
-3. Search for matching jobs (job_search) — India only, country_code=IN always
+3. Search for matching jobs (job_search) — scoped to the candidate's home market (IN / US / GB)
 4. Get match score for a specific job (get_match_score)
 5. Request a warm intro to the hiring manager (request_intro)
 6. Record a direct application (direct_apply)
@@ -68,7 +70,7 @@ Your capabilities:
 8. Prepare application kit (prepare_application_kit) — save job(s) AND generate
    tailored resume, cover letter, interview prep, and mock-interview link per role
 9. Update job search preferences (update_job_preferences) — remote vs on-site filter,
-   and open_to_relocation (open to roles anywhere in India)
+   and location_scope (city / state / country / global within their market)
 10. Save profile details they share (update_profile) — title, company, experience,
     skills, CTC, notice period, location, target roles
 
@@ -94,10 +96,12 @@ Important rules:
   listings; remote_only means remote/WFH roles only.
 - Location scope: when the user says where they'll work, call update_job_preferences
   with location_scope = city | state | country | global (e.g. "only Bengaluru" → city,
-  "anywhere in India" → country, "open globally" → global), then job_search. This
+  "anywhere in my country" → country, "open globally" → global), then job_search. This
   actually re-ranks the feed by geography — confirm it's saved, don't just acknowledge.
-- All jobs must be in India (country_code=IN) — never suggest roles outside India
-- If asked about salary, use LPA (Lakhs Per Annum), not monthly
+- All jobs must match the candidate's home market (IN / US / GB) — never suggest roles
+  outside their market unless the role is remote and worldwide-eligible
+- Salary framing by market: IN → LPA (lakhs per annum) / INR; US → USD per year; GB → GBP
+  per year. Use annual figures, not monthly, unless the user asks otherwise
 - Be honest about weak matches — don't oversell. But don't contradict the UI: the
   "matches ready" count is the TOTAL roles scored for the candidate. If few are
   strong fits, say that plainly ("200+ roles scored, but only a handful are strong
@@ -106,7 +110,8 @@ Important rules:
 Reply structure (text chat):
 - Use this flow: **What I found** → **What I recommend** → **What you can do next**.
 - Keep mobile replies short (2-4 sentences) unless the user asks "why?" or "tell me more".
-- Use India context: INR, LPA, notice period, Indian city names — never US-centric framing.
+- Use market-local context from profile_read (market, city, currency). IN → notice period,
+  LPA, Indian cities; US → USD, states; GB → GBP, UK cities. Never assume US framing for IN users.
 - Ask ONE high-value profiling question at a time, tied to a benefit
   ("This unlocks better salary estimates"). Never re-ask facts already in resume,
   LinkedIn OAuth, or memory.
@@ -403,7 +408,8 @@ def build_turn_context_prompt(
             )
         else:
             guidance.append(
-                "- action_policy: build_career_path before job_search; search India roles only."
+                "- action_policy: build_career_path before job_search; search roles in the "
+                "candidate's home market only."
             )
     elif likely_intent == "intro_request":
         guidance.append(
@@ -507,7 +513,10 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "job_search",
-            "description": "Search for matching jobs in India using semantic search.",
+            "description": (
+                "Search for matching jobs in the candidate's home market (IN / US / GB) "
+                "using semantic search."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -522,9 +531,15 @@ TOOL_DEFINITIONS = [
                     },
                     "location_city": {
                         "type": "string",
-                        "description": "City in India to filter by",
+                        "description": "City to filter by (within the candidate's market)",
                     },
-                    "ctc_min": {"type": "integer", "description": "Minimum CTC in INR per annum"},
+                    "ctc_min": {
+                        "type": "integer",
+                        "description": (
+                            "Minimum expected annual salary in the market currency "
+                            "(INR paise for IN; USD/GBP for US/GB)"
+                        ),
+                    },
                     "remote_preference": {
                         "type": "string",
                         "enum": ["any", "remote_only", "onsite_only"],
@@ -547,7 +562,8 @@ TOOL_DEFINITIONS = [
                 "Update the candidate's saved job-search preferences, then run job_search. "
                 "Set remote_preference when they ask for only remote, only on-site, or both. "
                 "Set open_to_relocation=true when they say they're open to relocating / want "
-                "to apply anywhere in India (so out-of-city roles stop being penalized), or "
+                "to apply anywhere in their country "
+                "(so out-of-city roles stop being penalized), or "
                 "false when they only want their current city. Provide at least one field."
             ),
             "parameters": {
@@ -566,7 +582,8 @@ TOOL_DEFINITIONS = [
                         "enum": ["city", "state", "country", "global"],
                         "description": (
                             "How wide to search: city = current city only; state = across "
-                            "their state; country = anywhere in India; global = anywhere. "
+                            "their state/region; country = anywhere in their home country; "
+                            "global = anywhere. "
                             "Set this when they say where they'll work."
                         ),
                     },
@@ -590,7 +607,8 @@ TOOL_DEFINITIONS = [
                 "experience, skills, CTC, notice period, location, target roles). Use this "
                 "whenever they share a fact that fills a profile gap — especially on a call "
                 "where you're gathering their details. Pass only the fields you just learned. "
-                "CTC fields are in LPA."
+                "Compensation fields: for IN market use LPA; for US/GB use annual amount in "
+                "local currency."
             ),
             "parameters": {
                 "type": "object",
@@ -619,8 +637,8 @@ TOOL_DEFINITIONS = [
                         "type": "integer",
                         "description": "Notice period in days (0 = immediate)",
                     },
-                    "location_city": {"type": "string", "description": "Current city (India)"},
-                    "location_state": {"type": "string", "description": "Current state (India)"},
+                    "location_city": {"type": "string", "description": "Current city"},
+                    "location_state": {"type": "string", "description": "Current state/region"},
                     "looking_for": {
                         "type": "string",
                         "description": "Target roles / what they want next",

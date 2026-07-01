@@ -68,7 +68,7 @@ def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> 
   <p style="margin:24px 0">
     <a href="{cta_url}" style="background:#111;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">{cta_label}</a>
   </p>
-  <p style="font-size:12px;color:#888;margin-top:24px">Hireloop — India-first AI recruiting</p>
+  <p style="font-size:12px;color:#888;margin-top:24px">Hireloop — AI recruiting for India, the US &amp; the UK</p>
 </div>"""
 
 
@@ -141,7 +141,7 @@ async def maybe_send_signup_confirmation(
             html=_email_shell(
                 f"Welcome, {display_name} 👋",
                 "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
-                "looking for and she'll surface live India roles that fit your profile.</p>",
+                "looking for and she'll surface live roles in your market that fit your profile.</p>",
                 f"{settings.public_app_url.rstrip('/')}/dashboard",
                 "Open Hireloop",
             ),

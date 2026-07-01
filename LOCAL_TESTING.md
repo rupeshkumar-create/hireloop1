@@ -184,11 +184,11 @@ cd api && pytest tests/ -v
 
 ---
 
-## P02 — Infra / Cloudflare geo-lock
+## P02 — Infra / Cloudflare WAF
 
 **Keys:** Cloudflare (production)  
 **Test:** N/A locally.  
-**Pass:** WAF blocks non-IN ASN in staging/prod.
+**Pass:** Rate limits + security headers applied in staging/prod (no geo-blocking).
 
 ---
 
@@ -206,21 +206,21 @@ psql ... -f scripts/seed_dev.sql
 
 ---
 
-## P04 — Auth (+91 OTP + login)
+## P04 — Auth (LinkedIn + optional phone OTP)
 
 **Keys:**
 
 - Supabase (required)
-- MSG91 — **only production**; in `ENVIRONMENT=development` OTP prints in **API logs**
+- MSG91 / Twilio — **optional**; in `ENVIRONMENT=development` OTP prints in **API logs**
 
 **Test:**
 
 1. `http://localhost:3001/signup` — LinkedIn **or** email `candidate@test.hireloop.in` / `hireloop-dev-2026`
-2. OTP: `POST /api/v1/auth/send-otp` with `{"phone":"+919876543210"}` — read OTP from terminal log
-3. `POST /api/v1/auth/verify-otp` with phone + OTP
+2. Complete onboarding → land on `/dashboard`
+3. Optional phone verify: `POST /api/v1/auth/phone/send-otp` then `verify-otp` (read OTP from API log in dev)
 4. `GET /api/v1/auth/me` with Bearer token
 
-**Pass:** `india_verified=true` on user.
+**Pass:** User row exists with `role=candidate`; phone verify optional.
 
 ---
 
@@ -498,7 +498,7 @@ With API running: http://localhost:8000/api/docs
 | Symptom | Fix |
 |---------|-----|
 | 401 on API | Pass Supabase access token; user must exist in `public.users` |
-| 403 “Phone verification” | Run verify-otp or set `india_verified=true` in seed |
+| 403 “Phone verification” | Only if `require_phone_verification=true` on API — verify phone or disable flag |
 | CORS error | Add `http://localhost:3001` to `ALLOWED_ORIGINS` |
 | No matches on dashboard | Run seed or `matches/embed/candidate/{id}` |
 | Recruiter 403 | `users.role=recruiter` + `recruiters` row |

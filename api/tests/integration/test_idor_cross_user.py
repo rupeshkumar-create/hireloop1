@@ -31,7 +31,7 @@ async def _seed_victim_candidate(db: asyncpg.Connection) -> str:
     )
     await db.execute(
         """
-        INSERT INTO public.users (id, email, full_name, role, india_verified)
+        INSERT INTO public.users (id, email, full_name, role, phone_verified)
         VALUES ($1, $2, 'Victim B', 'candidate', TRUE)
         ON CONFLICT (id) DO NOTHING
         """,

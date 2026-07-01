@@ -60,62 +60,57 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 ---
 
-## S02 — Phone OTP Verification (+91)  ✅ 🧪
+## S02 — Phone OTP Verification (optional)  ✅ 🧪
 
-> User enters their Indian mobile number, gets SMS OTP, verifies.
-> Sets `india_verified = true` — required before accessing any job features.
+> Optional phone verification per market: IN (+91/MSG91), US (+1/Twilio), GB (+44/Twilio).
+> Not required for signup — available in Settings when configured.
 
 **What's built:**
-- `/onboarding/phone` page → Twilio Verify Send + Check endpoints
 - `POST /api/v1/auth/phone/send-otp`, `POST /api/v1/auth/phone/verify-otp`
-- `india_verified` flag on `users` table
-- `get_india_verified_user` FastAPI dependency guards all job-related routes
+- `phone_verified` flag on `users` table (+ `market`, `phone_country`)
+- `get_phone_verified_user` FastAPI dependency (only when `require_phone_verification=true`)
 
 **How to test:**
 ```
-1. After LinkedIn login → lands on /onboarding/phone
-2. Enter +91 mobile number
-3. Enter OTP received via SMS
-4. Should redirect to /onboarding (wizard)
+1. Sign up via LinkedIn → complete onboarding (no phone step)
+2. Optional: verify phone from Settings when MSG91/Twilio keys are set
+3. OTP received via SMS (dev: logged in API when ENVIRONMENT=development)
 ```
 
-**Env needed (already set):**
+**Env needed:**
 ```
-TWILIO_ACCOUNT_SID=AC914d70cd1fc05bee2095cf5a83343cb3
-TWILIO_AUTH_TOKEN=67bfd9ebafb78478429d20291641fa66
-TWILIO_VERIFY_SERVICE_SID=VAab23e6cdbe58221139055ac398c6f700
+ENABLED_MARKETS=IN,US,GB
+MSG91_AUTH_KEY=...          # IN OTP
+TWILIO_VERIFY_SERVICE_SID=... # US/GB OTP (when configured)
 ```
 
 **DB check:**
 ```sql
-SELECT email, india_verified, phone FROM public.users WHERE india_verified = true;
+SELECT email, phone_verified, market, phone FROM public.users WHERE phone_verified = true;
 ```
 
 ---
 
-## S03 — Onboarding Wizard (5 steps)  ✅ 🧪
+## S03 — Onboarding Wizard (v2)  ✅ 🧪
 
-> Jack & Jill-style wizard that collects goals, consent, and optionally a resume.
-> On completion → `/dashboard`.
+> Two-step activation after signup: welcome → CV + market + DPDP consent.
+> On completion → `/dashboard` with jobs panel open.
 
 **Steps:**
 1. **Welcome** — Aarya introduces herself
-2. **Goal** — user picks what they want (find role / discuss job / improve resume / etc.)
-3. **Legal** — marketing consent (DPDP Act) → writes to `consent_log`
-4. **Resume** — optional upload (can skip)
-5. **Voice CTA** — "jump on call with Aarya" or "continue in chat"
+2. **Activate** — CV upload, market picker, legal consent → `complete-onboarding`
 
 **What's built:**
-- `/onboarding/OnboardingFlow.tsx` — 5-step client wizard
+- `/onboarding/OnboardingFlow.tsx` — v2 two-step wizard
 - `candidates` row created with `profile_complete = false`
-- Goal selection → pre-populates Aarya's first message when opening chat
+- Resume, voice, and CTC are dashboard boosters — not wizard gates
 
 **How to test:**
 ```
-1. Complete S01 + S02
-2. Should see 5-step wizard
-3. Complete all steps
-4. Should land on /dashboard with Aarya greeting
+1. Complete S01
+2. Should see welcome → activate flow
+3. Upload CV, pick market, accept terms
+4. Should land on /dashboard with jobs open
 ```
 
 **DB check:**
@@ -254,7 +249,7 @@ ORDER BY r.created_at DESC LIMIT 3;
 **DB check:**
 ```sql
 SELECT COUNT(*) as total_jobs, COUNT(DISTINCT company_id) as companies
-FROM public.jobs WHERE country_code = 'IN' AND is_active = true;
+FROM public.jobs WHERE is_active = true AND deleted_at IS NULL;
 ```
 
 **Why this matters:** S08, S09 (match feed) produce zero results until jobs are ingested.
@@ -567,7 +562,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 
 **Steps:**
 ```
-1. Cloudflare → add hireloop.in domain → enable geo-blocking (non-IN IPs)
+1. Cloudflare → add hireloop.in domain → rate limits + security headers
 2. AWS ap-south-1:
    - ECS Fargate: hireloop-api (FastAPI, 2 vCPU / 4 GB)
    - ECS Fargate: hireloop-app (Next.js, 1 vCPU / 2 GB)

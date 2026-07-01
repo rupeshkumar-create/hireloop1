@@ -22,7 +22,7 @@ class FakeProfileDb:
                 "phone": None,
                 "full_name": "Rupesh Kumar",
                 "role": "candidate",
-                "india_verified": False,
+                "phone_verified": False,
                 "avatar_url": None,
             }
         if "FROM public.candidates" in query:

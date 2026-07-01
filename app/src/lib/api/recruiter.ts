@@ -1,4 +1,6 @@
 import { apiFetch } from "@/lib/api/client";
+import { formatSalaryRange } from "@/lib/salary";
+import type { MarketCode } from "@/lib/markets";
 
 export type ReadinessItem = {
   key: string;
@@ -144,21 +146,18 @@ export type RoleListItem = {
   comp_max: number | null;
 };
 
+export function formatCompRange(
+  compMin: number | null | undefined,
+  compMax: number | null | undefined,
+  opts?: { market?: MarketCode | string | null; currency?: string | null },
+): string {
+  return formatSalaryRange(compMin, compMax, opts) ?? "Not set";
+}
+
+/** @deprecated Use formatCompRange with market context instead. */
 export function inrToLpa(inr: number | null | undefined): number | null {
   if (inr == null) return null;
   return Math.round(inr / 100_000);
-}
-
-export function formatCompRange(
-  compMin: number | null | undefined,
-  compMax: number | null | undefined
-): string {
-  const min = inrToLpa(compMin);
-  const max = inrToLpa(compMax);
-  if (min && max && min !== max) return `₹${min}–${max} LPA`;
-  if (min) return `₹${min} LPA`;
-  if (max) return `₹${max} LPA`;
-  return "Not set";
 }
 
 export async function listRoles(): Promise<RoleListItem[]> {

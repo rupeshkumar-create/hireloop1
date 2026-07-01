@@ -2,7 +2,7 @@
 
 const TOOL_LABELS: Record<string, string> = {
   profile_read: "Reading your profile",
-  job_search: "Searching India roles",
+  job_search: "Searching roles in your market",
   get_match_score: "Scoring this role",
   match_score: "Scoring this role",
   request_intro: "Preparing your intro",

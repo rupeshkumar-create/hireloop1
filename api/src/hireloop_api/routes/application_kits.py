@@ -7,7 +7,7 @@ import uuid
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 
 router = APIRouter(prefix="/application-kits", tags=["application-kits"])
 
@@ -39,7 +39,7 @@ def _serialize_kit(row: asyncpg.Record) -> dict:
 
 @router.get("")
 async def list_application_kits(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     limit: int = 50,
 ) -> dict:
@@ -66,7 +66,7 @@ async def list_application_kits(
 @router.get("/jobs/{job_id}")
 async def get_application_kit_for_job(
     job_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Single application kit for a candidate + job pair."""

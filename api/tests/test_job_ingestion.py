@@ -4,7 +4,7 @@ Tests for the Apify job ingestion pipeline (P09).
 These exercise the pure normalisation logic and the DB upsert path without
 needing a real Apify token, network, or Postgres connection:
 
-  * R4 India geo-lock — non-IN jobs must never become JobRecords.
+  * Multi-market normalisation (IN / US / GB) produces supported JobRecords.
   * Salary / location / skill / dedup-id parsing for both scrapers.
   * JobIngester._upsert_jobs insert / update / skip accounting via a fake conn.
 """
@@ -21,10 +21,9 @@ from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 # ── JobRecord model invariants ────────────────────────────────────────────────
 
 
-def test_country_code_is_forced_to_india() -> None:
-    # R4: even if a caller passes a non-IN country, the validator pins it to IN.
+def test_country_code_accepts_supported_markets() -> None:
     rec = JobRecord(apify_job_id="x1", title="Engineer", country_code="US")
-    assert rec.country_code == "IN"
+    assert rec.country_code == "US"
 
 
 def test_employment_type_is_normalised() -> None:
@@ -48,14 +47,16 @@ def _linkedin_scraper() -> ApifyJobsScraper:
     return ApifyJobsScraper(api_token="test-token")
 
 
-def test_linkedin_rejects_non_india_location() -> None:
+def test_linkedin_accepts_us_location() -> None:
     scraper = _linkedin_scraper()
     raw = {
         "title": "Senior Engineer",
         "location": "San Francisco, CA, USA",
         "jobUrl": "https://www.linkedin.com/jobs/view/999",
     }
-    assert scraper.normalise(raw) is None
+    rec = scraper.normalise(raw)
+    assert rec is not None
+    assert rec.country_code == "US"
 
 
 def test_linkedin_accepts_india_and_parses_city_state() -> None:
@@ -94,10 +95,14 @@ def test_linkedin_dedup_id_falls_back_to_uuid_when_no_job_id() -> None:
     uuid.UUID(rec.apify_job_id)  # parses as a valid uuid
 
 
-def test_is_india_location() -> None:
+def test_linkedin_rejects_unresolved_market() -> None:
     scraper = _linkedin_scraper()
-    assert scraper._is_india_location("Remote, Gurugram") is True
-    assert scraper._is_india_location("Berlin, Germany") is False
+    raw = {
+        "title": "Engineer",
+        "location": "Berlin, Germany",
+        "jobUrl": "https://www.linkedin.com/jobs/view/1",
+    }
+    assert scraper.normalise(raw) is None
 
 
 def test_parse_salary_lpa_range() -> None:
@@ -120,14 +125,17 @@ def _fantastic_scraper() -> ApifyFantasticJobsScraper:
     return ApifyFantasticJobsScraper(api_token="test-token", actor="fantastic/career")
 
 
-def test_fantastic_geo_lock_rejects_non_india_country() -> None:
+def test_fantastic_accepts_us_country() -> None:
     scraper = _fantastic_scraper()
     raw = {
         "title": "Engineer",
         "countries_derived": ["United States"],
         "locations_derived": [{"city": "Austin", "country": "United States"}],
+        "url": "https://careers.example.com/jobs/1",
     }
-    assert scraper.normalise(raw) is None
+    rec = scraper.normalise(raw)
+    assert rec is not None
+    assert rec.country_code == "US"
 
 
 def test_fantastic_skips_when_no_country_info() -> None:
@@ -181,6 +189,26 @@ def test_fantastic_drops_non_inr_salary() -> None:
     assert rec is not None
     assert rec.ctc_min is None
     assert rec.ctc_max is None
+
+
+def test_fantastic_keeps_usd_salary_for_us_market() -> None:
+    scraper = _fantastic_scraper()
+    raw = {
+        "id": "usd2",
+        "title": "Engineer",
+        "countries_derived": ["United States"],
+        "locations_derived": [{"city": "Austin", "country": "United States"}],
+        "ai_salary_minvalue": 100_000,
+        "ai_salary_maxvalue": 150_000,
+        "ai_salary_currency": "USD",
+        "ai_salary_unittext": "YEAR",
+        "url": "https://careers.example.com/jobs/us-2",
+    }
+    rec = scraper.normalise(raw)
+    assert rec is not None
+    assert rec.country_code == "US"
+    assert rec.ctc_min == 100_000
+    assert rec.ctc_max == 150_000
 
 
 def test_fantastic_apify_id_falls_back_to_url() -> None:
@@ -328,7 +356,14 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     captured: dict = {}
     ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
 
-    async def _fake_ingest(*, queries, locations, max_results_per_query, time_range):  # noqa: ANN001, ANN202
+    async def _fake_ingest(  # noqa: ANN001, ANN202
+        *,
+        queries,
+        locations,
+        max_results_per_query,
+        time_range,
+        description_search=None,
+    ):
         captured["queries"] = queries
         captured["locations"] = locations
         return {"inserted": 0}

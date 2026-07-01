@@ -1,14 +1,11 @@
 /**
- * Onboarding entry — shown immediately after +91 OTP verification.
- * Renders the conversational flow inspired by Jack & Jill AI.
+ * Onboarding entry — shown after LinkedIn sign-in for candidates.
  *
- * Steps (client-side in OnboardingFlow):
+ * Steps (client-side in OnboardingFlow v2):
  *   0  Welcome
- *   1  Goal selection
- *   2  Phone (+91)
- *   3  Legal + DPDP consent
- *   4  Resume / CV (+ LinkedIn confirm)
- *   5  Voice call with Aarya
+ *   1  Activate (CV + market + DPDP consent)
+ *
+ * Phone verification is optional (Settings) — not a signup gate.
  */
 
 import type { Metadata } from "next";

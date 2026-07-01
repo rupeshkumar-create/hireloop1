@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
 
@@ -109,7 +109,7 @@ async def _run_tailor_task(
 @router.post("/tailor")
 async def request_tailored_resume(
     body: TailorRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -175,7 +175,7 @@ async def request_tailored_resume(
 
 @router.get("/tailored")
 async def list_tailored_resumes(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     rows = await db.fetch(
@@ -196,7 +196,7 @@ async def list_tailored_resumes(
 @router.get("/tailored/{resume_id}")
 async def get_tailored_resume(
     resume_id: uuid.UUID,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     row = await db.fetchrow(
@@ -224,7 +224,7 @@ async def get_tailored_resume(
 async def download_tailored_resume(
     resume_id: uuid.UUID,
     print_dialog: bool = True,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     row = await db.fetchrow(

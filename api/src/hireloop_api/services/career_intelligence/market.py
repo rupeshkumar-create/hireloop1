@@ -38,11 +38,15 @@ logger = structlog.get_logger()
 _MIN_CORPUS = 8  # total live IN jobs before we trust demand scores
 _MIN_COMP_SAMPLE = 5  # postings with a salary band before we trust comp percentiles
 
-# Shared predicate for a "live" Indian posting.
-_LIVE = (
-    "j.is_active AND j.deleted_at IS NULL AND j.country_code = 'IN' "
-    "AND (j.expires_at IS NULL OR j.expires_at > NOW())"
-)
+# Shared predicate for a "live" posting in the candidate's market.
+def _live_sql(market: str, *, job_alias: str = "j") -> str:
+    from hireloop_api.markets import job_visible_for_market_sql
+
+    vis = job_visible_for_market_sql(job_alias=job_alias, market_param=f"'{market}'")
+    return (
+        f"{job_alias}.is_active AND {job_alias}.deleted_at IS NULL AND {vis} "
+        f"AND ({job_alias}.expires_at IS NULL OR {job_alias}.expires_at > NOW())"
+    )
 
 
 class MarketFacts(BaseModel):
@@ -108,11 +112,15 @@ async def compute_market_facts(
 
 
 async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
+    from hireloop_api.markets import normalize_market
+
     skills = _candidate_skills(ctx)
     role_term = _role_term(ctx)
     facts = MarketFacts(role_term=role_term)
+    market = normalize_market(ctx.get("market"))
+    live = _live_sql(market)
 
-    total_live = await db.fetchval(f"SELECT count(*) FROM public.jobs j WHERE {_LIVE}")  # noqa: S608
+    total_live = await db.fetchval(f"SELECT count(*) FROM public.jobs j WHERE {live}")  # noqa: S608
     facts.total_live_jobs = int(total_live or 0)
     if facts.total_live_jobs < _MIN_CORPUS:
         return facts  # corpus too thin to ground anything
@@ -124,7 +132,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
             SELECT lower(s) AS skill, count(*) AS n
             FROM public.jobs j
             CROSS JOIN LATERAL unnest(j.skills_required) AS s
-            WHERE {_LIVE} AND lower(s) = ANY($1::text[])
+            WHERE {live} AND lower(s) = ANY($1::text[])
             GROUP BY 1
             ORDER BY n DESC
             """,  # noqa: S608
@@ -134,7 +142,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
         facts.skill_demand_score = round(100 * len(matched) / len(skills))
         facts.skill_demand_evidence = (
             f"{len(matched)} of {len(skills)} skills appear in "
-            f"{facts.total_live_jobs} live Indian postings"
+            f"{facts.total_live_jobs} live postings in your market"
         )
 
         # In-demand skills the candidate is missing, from their own role cluster
@@ -144,7 +152,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
             SELECT lower(s) AS skill, count(*) AS n
             FROM public.jobs j
             CROSS JOIN LATERAL unnest(j.skills_required) AS s
-            WHERE {_LIVE}
+            WHERE {live}
               AND EXISTS (
                 SELECT 1 FROM unnest(j.skills_required) x
                 WHERE lower(x) = ANY($1::text[])
@@ -161,7 +169,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
     # ── Role demand: live postings matching the candidate's title ──────────────
     if role_term:
         role_count = await db.fetchval(
-            f"SELECT count(*) FROM public.jobs j WHERE {_LIVE} AND j.title ILIKE '%' || $1 || '%'",  # noqa: S608
+            f"SELECT count(*) FROM public.jobs j WHERE {live} AND j.title ILIKE '%' || $1 || '%'",  # noqa: S608
             role_term,
         )
         role_count = int(role_count or 0)
@@ -186,7 +194,7 @@ async def _compute(db: asyncpg.Connection, ctx: dict[str, Any]) -> MarketFacts:
         FROM (
           SELECT (COALESCE(j.ctc_min, j.ctc_max) + COALESCE(j.ctc_max, j.ctc_min)) / 2.0 AS mid
           FROM public.jobs j
-          WHERE {_LIVE}
+          WHERE {live}
             AND (j.ctc_min IS NOT NULL OR j.ctc_max IS NOT NULL)
             AND (
               ($1::text[] <> '{{}}'::text[] AND EXISTS (

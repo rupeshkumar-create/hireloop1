@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.google_calendar import (
     SLOT_MINUTES,
     AvailableSlot,
@@ -59,7 +59,7 @@ class BookSessionResponse(BaseModel):
 @router.get("/slots", response_model=list[AvailableSlot])
 async def get_available_slots(
     days_ahead: int = 7,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[AvailableSlot]:
     """Return available 20-min AI career call slots for the next N days."""
@@ -76,7 +76,7 @@ async def get_available_slots(
 @router.post("/book", response_model=BookSessionResponse, status_code=201)
 async def book_session(
     body: BookSessionRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> BookSessionResponse:
@@ -158,7 +158,7 @@ async def book_session(
 
 @router.get("", response_model=list[dict])
 async def list_sessions(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """Return all voice sessions for the current candidate."""
@@ -180,7 +180,7 @@ async def list_sessions(
 @router.delete("/{session_id}/cancel", status_code=200)
 async def cancel_session(
     session_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:

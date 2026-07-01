@@ -3,9 +3,8 @@ Fantastic.jobs Career Site Job Listing API scraper (via Apify).
 
 Actor: fantastic-jobs/career-site-job-listing-api
 
-We use this as a second ingestion source alongside LinkedIn jobs. Input is
-scoped to India (locationSearch includes "India") and we hard-filter derived
-countries to ensure we never write non-IN jobs (R4 geo-lock).
+We use this as a second ingestion source alongside LinkedIn jobs. Jobs are
+scoped to supported markets (IN / US / GB) via location search and normalisation.
 """
 
 from __future__ import annotations
@@ -17,6 +16,15 @@ from typing import Any, ClassVar
 import httpx
 import structlog
 
+from hireloop_api.markets import (
+    SUPPORTED_MARKETS,
+    currency_for_market,
+    resolve_country_from_location,
+)
+from hireloop_api.services.apify.fantastic_jobs_config import (
+    FantasticJobsRunParams,
+    build_actor_input,
+)
 from hireloop_api.services.apify.jobs_scraper import JobRecord
 
 logger = structlog.get_logger()
@@ -46,31 +54,31 @@ class ApifyFantasticJobsScraper:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
 
-    async def trigger_run(
-        self,
-        *,
-        title_search: list[str] | None,
-        locations: list[str] | None,
-        limit: int,
-        time_range: str = "24h",
-    ) -> str:
+    async def trigger_run(self, *, run_params: FantasticJobsRunParams) -> str:
         """
         Trigger Fantastic.jobs job listing run and return Apify run_id.
         """
-        # Input schema reference:
-        # https://apify.com/fantastic-jobs/career-site-job-listing-api/input-schema
-        input_data: dict[str, Any] = {
-            "timeRange": time_range,
-            "limit": max(10, min(limit, 5000)),
-            "includeLinkedIn": True,
-            "includeCompanyDetails": True,
-            "descriptionType": "text",
-            "descriptionFormat": "text",
-            "removeAgency": True,
-            "locationSearch": locations or ["India"],
-        }
-        if title_search:
-            input_data["titleSearch"] = title_search
+        input_data = build_actor_input(run_params)
+        logger.info(
+            "apify_fantastic_run_input",
+            time_range=input_data.get("timeRange"),
+            limit=input_data.get("limit"),
+            title_count=len(input_data.get("titleSearch") or []),
+            location_count=len(input_data.get("locationSearch") or []),
+            filters=sorted(
+                k
+                for k in input_data
+                if k
+                not in {
+                    "timeRange",
+                    "limit",
+                    "removeAgency",
+                    "descriptionType",
+                    "locationSearch",
+                    "titleSearch",
+                }
+            ),
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -152,30 +160,20 @@ class ApifyFantasticJobsScraper:
         if not title:
             return None
 
-        # India geo-lock (R4): filter derived countries first, then location objects.
         countries = [str(c).lower() for c in (raw.get("countries_derived") or [])]
-        if countries:
-            if not any(c in ("india", "in") for c in countries):
-                return None
-
         locations = raw.get("locations_derived") or []
         city = state = None
+        location_country = None
         if isinstance(locations, list) and locations:
             first = locations[0] or {}
             if isinstance(first, dict):
-                country = first.get("country")
-                if country:
-                    if str(country).lower() not in ("india", "in"):
-                        return None
+                location_country = first.get("country")
                 city = first.get("city")
                 state = first.get("admin") or first.get("region")
 
-        # Hard enforce India-only: if neither derived countries nor a location country
-        # is present, skip to avoid accidentally storing non-IN jobs.
-        if not countries:
-            first_loc = locations[0] if isinstance(locations, list) and locations else None
-            if not (isinstance(first_loc, dict) and first_loc.get("country")):
-                return None
+        market = self._resolve_market(countries, location_country, city, state)
+        if not market:
+            return None
 
         # Remote detection (remote_derived removed 2026-06 — use ai_work_arrangement)
         work_arrangement = str(_pick(raw, "ai_work_arrangement") or "").lower()
@@ -230,8 +228,10 @@ class ApifyFantasticJobsScraper:
                 ctc_min_i = v
                 ctc_max_i = v
 
-        # Only keep salary when it looks like INR per year (avoid incorrect mappings)
-        if currency and currency not in ("inr", "₹"):
+        # Keep salary when currency matches the job market
+        allowed_currencies = {"IN": ("inr", "₹"), "US": ("usd", "$"), "GB": ("gbp", "£")}
+        ok_currencies = allowed_currencies.get(market, ("inr",))
+        if currency and currency not in ok_currencies:
             ctc_min_i = None
             ctc_max_i = None
         if unit and unit not in ("year", "yr", "annual", "annum"):
@@ -277,6 +277,19 @@ class ApifyFantasticJobsScraper:
         if expires_at is None:
             expires_at = datetime.now(UTC) + timedelta(days=30)
 
+        seniority = self._map_seniority(
+            str(
+                _pick(
+                    raw,
+                    "ai_experience_level",
+                    "seniority",
+                    "seniority_level",
+                    "experience_level",
+                )
+                or ""
+            )
+        )
+
         return JobRecord(
             apify_job_id=apify_job_id,
             title=title,
@@ -286,10 +299,12 @@ class ApifyFantasticJobsScraper:
             company_linkedin_url=company_linkedin_url,
             location_city=city,
             location_state=state,
-            country_code="IN",
+            country_code=market,
+            salary_currency=currency_for_market(market),
+            allowed_regions=["WORLD"] if is_remote else None,
             is_remote=is_remote,
             employment_type=employment_type,
-            seniority=None,
+            seniority=seniority,
             ctc_min=ctc_min_i,
             ctc_max=ctc_max_i,
             skills_required=sorted(set(skills)),
@@ -298,6 +313,72 @@ class ApifyFantasticJobsScraper:
             expires_at=expires_at,
             raw_data=raw,
         )
+
+    @staticmethod
+    def _map_seniority(raw: str) -> str | None:
+        if not raw:
+            return None
+        low = raw.lower().strip()
+        mapping = {
+            "intern": "intern",
+            "internship": "intern",
+            "entry": "junior",
+            "junior": "junior",
+            "associate": "junior",
+            "mid": "mid",
+            "middle": "mid",
+            "senior": "senior",
+            "lead": "lead",
+            "staff": "lead",
+            "principal": "lead",
+            "director": "director",
+            "vp": "vp",
+            "vice president": "vp",
+            "executive": "c_level",
+            "c-level": "c_level",
+        }
+        for key, val in mapping.items():
+            if key in low:
+                return val
+        if any(x in low for x in ("10+", "10-")):
+            return "senior"
+        if any(x in low for x in ("5-10", "5 to 10", "5+")):
+            return "mid"
+        if any(x in low for x in ("2-5", "0-2", "entry")):
+            return "junior"
+        return None
+
+    @staticmethod
+    def _resolve_market(
+        countries: list[str],
+        location_country: str | None,
+        city: str | None,
+        state: str | None,
+    ) -> str | None:
+        _MAP = {
+            "india": "IN",
+            "in": "IN",
+            "united states": "US",
+            "usa": "US",
+            "us": "US",
+            "united kingdom": "GB",
+            "uk": "GB",
+            "gb": "GB",
+            "england": "GB",
+        }
+        for c in countries:
+            m = _MAP.get(c)
+            if m:
+                return m
+        if location_country:
+            m = _MAP.get(str(location_country).lower())
+            if m:
+                return m
+        loc_text = ", ".join(filter(None, [city, state, location_country]))
+        resolved = resolve_country_from_location(loc_text)
+        if resolved and resolved in SUPPORTED_MARKETS:
+            return resolved
+        return None
 
     @staticmethod
     def _stable_id(url: str | None) -> str:

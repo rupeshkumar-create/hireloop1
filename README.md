@@ -1,6 +1,6 @@
 # Hireloop
 
-**India-first AI recruiting platform.** Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
+**Hireloop** — AI recruiting platform for India, the US, and the UK. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
 
 > Replicating the Jack & Jill model (Tinker Tailor Talent, London) for the Indian market — INR, +91-only, ap-south-1, DPDP-compliant.
 
@@ -99,14 +99,13 @@ Current phase: **P01 — Repo & CI scaffold** `in_progress`
 | WhatsApp | MSG91 |
 | Infra | AWS ap-south-1, ECS Fargate, Cloudflare WAF |
 
-## India-only
+## Multi-region marketplace (IN / US / GB)
 
-All traffic is geo-locked to India:
-- +91 OTP mandatory at signup
-- Cloudflare WAF blocks non-IN ASN
-- INR-only pricing
-- Job DB filter: `country_code = 'IN'`
-- AWS ap-south-1 region
+Candidates and jobs are scoped by `market`:
+- Phone: IN → +91/MSG91; US → +1/Twilio; GB → +44/Twilio (`phone_verified` gate)
+- Salaries in local currency (INR / USD / GBP)
+- Job visibility: onsite = same country; remote = `allowed_regions` or worldwide
+- Primary compute: AWS ap-south-1; Cloudflare WAF for rate limits + security headers
 
 ## License
 

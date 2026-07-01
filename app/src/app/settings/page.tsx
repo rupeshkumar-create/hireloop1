@@ -13,7 +13,7 @@ import Link from "next/link";
 import { LogOut, Shield, User } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { createClient } from "@/lib/supabase/client";
-import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
+import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
 import {
   Button,
   Card,
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
+import { SUPPORTED_MARKETS, type MarketCode, marketByCode } from "@/lib/markets";
 import { cn } from "@/lib/utils";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -32,6 +33,8 @@ export default function SettingsPage() {
   const { toast } = useToast();
 
   const [signingOut, setSigningOut] = useState(false);
+  const [market, setMarket] = useState<MarketCode>("IN");
+  const [savingMarket, setSavingMarket] = useState(false);
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -61,6 +64,8 @@ export default function SettingsPage() {
       try {
         const d = await fetchMyProfile();
         setProfile(d);
+        const nextMarket = (d.user?.market ?? "IN") as MarketCode;
+        setMarket(marketByCode(nextMarket).code);
       } catch (err) {
         setProfileError(
           err instanceof Error ? err.message : "Couldn't load profile"
@@ -98,6 +103,25 @@ export default function SettingsPage() {
       ...p,
       [catId]: { ...(p[catId] ?? {}), whatsapp: checked },
     }));
+  }
+
+  async function saveMarket() {
+    if (savingMarket) return;
+    setSavingMarket(true);
+    try {
+      await updateMyMarket(market);
+      const refreshed = await fetchMyProfile({ force: true });
+      setProfile(refreshed);
+      toast.success("Market updated");
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Couldn't update market";
+      toast.error(msg);
+    } finally {
+      setSavingMarket(false);
+    }
   }
 
   async function deleteAccount() {
@@ -158,6 +182,46 @@ export default function SettingsPage() {
             >
               Edit in Profile
             </Link>
+          </CardFooter>
+        </Card>
+
+        {/* Market */}
+        <Card>
+          <CardHeader
+            title="Market"
+            description="Your home job market. Roles and salaries are scoped to this region."
+          />
+          <CardBody className="space-y-3 !pt-0">
+            <label htmlFor="settings-market" className="text-small font-medium text-ink-700">
+              Home market
+            </label>
+            <select
+              id="settings-market"
+              value={market}
+              onChange={(e) => setMarket(e.target.value as MarketCode)}
+              className="h-10 w-full rounded-md border border-ink-200 bg-paper-0 px-3 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent/25"
+            >
+              {SUPPORTED_MARKETS.map((m) => (
+                <option key={m.code} value={m.code}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-micro text-ink-500">
+              You can switch markets anytime. If you have a verified phone, it must
+              match the new region (+91 / +1 / +44). Fully remote roles may still
+              show if eligible worldwide.
+            </p>
+          </CardBody>
+          <CardFooter>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void saveMarket()}
+              loading={savingMarket}
+            >
+              Save market
+            </Button>
           </CardFooter>
         </Card>
 

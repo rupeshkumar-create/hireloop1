@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/hiring-managers", tags=["hiring-managers"])
@@ -118,7 +118,7 @@ async def create_hiring_manager(
 @router.get("/{hm_id}", response_model=HMDetail)
 async def get_hiring_manager(
     hm_id: str,
-    _current_user: dict = Depends(get_india_verified_user),
+    _current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Fetch a single hiring manager by ID."""
@@ -140,7 +140,7 @@ async def get_hiring_manager(
 @router.get("/by-company/{company_id}", response_model=list[HMDetail])
 async def list_hms_by_company(
     company_id: str,
-    _current_user: dict = Depends(get_india_verified_user),
+    _current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """List hiring managers associated with a company."""

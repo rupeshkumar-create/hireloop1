@@ -59,11 +59,38 @@ def test_normalise_legacy_field_fallbacks() -> None:
     assert rec.company_linkedin_url == "https://linkedin.com/company/beta"
 
 
-def test_normalise_skips_non_india() -> None:
+def test_normalise_maps_ai_experience_level() -> None:
+    raw = {
+        "id": "job-sr",
+        "title": "Senior Backend Engineer",
+        "countries_derived": ["India"],
+        "locations_derived": [{"country": "India", "city": "Bengaluru"}],
+        "ai_experience_level": "5-10 years",
+        "url": "https://example.com/jobs/sr",
+    }
+    rec = _scraper().normalise(raw)
+    assert rec is not None
+    assert rec.seniority == "mid"
+
+
+def test_normalise_maps_senior_experience_level() -> None:
+    raw = {
+        "id": "job-sr2",
+        "title": "Engineering Manager",
+        "countries_derived": ["United States"],
+        "ai_experience_level": "10+ years",
+        "url": "https://example.com/jobs/sr2",
+    }
+    rec = _scraper().normalise(raw)
+    assert rec is not None
+    assert rec.seniority == "senior"
+
     raw = {
         "id": "job-3",
         "title": "Engineer",
         "countries_derived": ["United States"],
         "url": "https://example.com/jobs/3",
     }
-    assert _scraper().normalise(raw) is None
+    rec = _scraper().normalise(raw)
+    assert rec is not None
+    assert rec.country_code == "US"

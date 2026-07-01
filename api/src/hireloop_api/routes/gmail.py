@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.email.gmail_oauth import GmailOAuthService
 
 logger = structlog.get_logger()
@@ -125,7 +125,7 @@ def _build_auth_url(settings: Settings, user_id: str) -> str:
 
 @router.get("/connect")
 async def gmail_connect(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
     """
@@ -137,7 +137,7 @@ async def gmail_connect(
 
 @router.get("/auth-url")
 async def gmail_auth_url(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """
@@ -238,7 +238,7 @@ async def gmail_callback(
 
 @router.get("/status")
 async def gmail_status(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Check whether the candidate has a connected Gmail token."""
@@ -267,7 +267,7 @@ async def gmail_status(
 
 @router.delete("/disconnect", status_code=200)
 async def gmail_disconnect(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:

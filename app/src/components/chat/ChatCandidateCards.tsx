@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Briefcase, Check, MapPin, User } from "lucide-react";
 import { Badge, Button, ScoreDot } from "@/components/ui";
-import { formatCompRange, inrToLpa } from "@/lib/api/recruiter";
+import { formatCompRange } from "@/lib/api/recruiter";
 import type { RankedCandidate, SearchMeta } from "@/lib/api/recruiter";
+import { getCachedProfile } from "@/lib/api/profile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
 import { cn } from "@/lib/utils";
 
 type ChatCandidateCardsProps = {
@@ -55,6 +58,13 @@ export function ChatCandidateCards({
   onShortlist,
   onPass,
 }: ChatCandidateCardsProps) {
+  const [market, setMarket] = useState<MarketCode>("IN");
+
+  useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
+  }, []);
+
   if (!candidates.length) {
     return (
       <div className="rounded-lg border border-ink-100 bg-ink-50 px-3 py-3 text-left">
@@ -87,8 +97,14 @@ export function ChatCandidateCards({
           const introBusy = introingId === c.candidate_id;
           const location = formatLocation(c);
           const remoteLabel = formatRemotePref(c.remote_preference);
-          const expectedComp = formatCompRange(c.expected_ctc_min, c.expected_ctc_max);
-          const currentCompLpa = inrToLpa(c.current_ctc);
+          const expectedComp = formatCompRange(
+            c.expected_ctc_min,
+            c.expected_ctc_max,
+            { market },
+          );
+          const currentComp = formatCompRange(c.current_ctc, c.current_ctc, {
+            market,
+          });
           const skills = (c.skills ?? []).slice(0, 6);
           const matched = new Set(c.skills_matched ?? []);
           const gaps = c.skills_gap ?? [];
@@ -136,11 +152,13 @@ export function ChatCandidateCards({
                     )}
                   </div>
 
-                  {(currentCompLpa || expectedComp !== "Not set") && (
+                  {(currentComp !== "Not set" || expectedComp !== "Not set") && (
                     <p className="mt-1.5 text-micro text-ink-500 inline-flex items-center gap-1">
                       <Briefcase className="h-3 w-3 shrink-0" strokeWidth={1.5} />
-                      {currentCompLpa ? `Current ₹${currentCompLpa} LPA` : null}
-                      {currentCompLpa && expectedComp !== "Not set" ? " · " : null}
+                      {currentComp !== "Not set" ? `Current ${currentComp}` : null}
+                      {currentComp !== "Not set" && expectedComp !== "Not set"
+                        ? " · "
+                        : null}
                       {expectedComp !== "Not set" ? `Expecting ${expectedComp}` : null}
                     </p>
                   )}

@@ -51,7 +51,7 @@ export function actionMeta(type: string): { label: string; Icon: LucideIcon } {
     case "update_profile":
       return { label: "Updated your profile", Icon: CheckCircle };
     case "job_search":
-      return { label: "Searching live roles in India", Icon: Search };
+      return { label: "Searching live roles in your market", Icon: Search };
     case "build_career_path":
       return { label: "Building your career path", Icon: Target };
     case "get_match_score":

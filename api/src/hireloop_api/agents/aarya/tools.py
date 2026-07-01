@@ -30,6 +30,8 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
+from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     normalize_remote_preference,
@@ -105,12 +107,17 @@ async def profile_read(
 
 
 VALID_LOCATION_SCOPES = ("city", "state", "country", "global")
-_LOCATION_SCOPE_LABELS = {
-    "city": "roles in your city",
-    "state": "roles across your state",
-    "country": "roles anywhere in India",
-    "global": "roles anywhere (global)",
-}
+_MARKET_COUNTRY_LABELS = {"IN": "India", "US": "the US", "GB": "the UK"}
+
+
+def location_scope_labels(market: str = "IN") -> dict[str, str]:
+    country = _MARKET_COUNTRY_LABELS.get(market, "your country")
+    return {
+        "city": "roles in your city",
+        "state": "roles across your state/region",
+        "country": f"roles anywhere in {country}",
+        "global": "roles anywhere (global)",
+    }
 
 
 async def update_job_preferences(
@@ -209,7 +216,8 @@ async def update_job_preferences(
                 bits.append(preference_label(pref))
             effective_scope = summary.get("location_scope")
             if effective_scope:
-                bits.append(_LOCATION_SCOPE_LABELS[effective_scope])
+                market = await fetch_candidate_market(db, user_id)
+                bits.append(location_scope_labels(market)[effective_scope])
             result = {
                 **summary,
                 "message": "Job search preferences updated: " + "; ".join(bits) + ".",
@@ -317,30 +325,32 @@ async def update_profile(
             else {"updated_fields": sorted(saved.keys()), "message": "Profile updated."}
         )
         if updated != "UPDATE 0":
-            cand = await db.fetchrow(
-                "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
-                uuid.UUID(user_id),
-            )
-            if cand:
-                from hireloop_api.services.background_jobs import (
-                    MATCH_EMBED_CANDIDATE,
-                    RESUME_EMBED_SCORE,
-                    enqueue_job,
+            if hasattr(db, "fetchrow"):
+                cand = await db.fetchrow(
+                    "SELECT id FROM public.candidates "
+                    "WHERE user_id = $1::uuid AND deleted_at IS NULL",
+                    uuid.UUID(user_id),
                 )
+                if cand:
+                    from hireloop_api.services.background_jobs import (
+                        MATCH_EMBED_CANDIDATE,
+                        RESUME_EMBED_SCORE,
+                        enqueue_job,
+                    )
 
-                cid = str(cand["id"])
-                await enqueue_job(
-                    db,
-                    kind=RESUME_EMBED_SCORE,
-                    payload={"candidate_id": cid},
-                    idempotency_key=f"resume_embed_score:{cid}",
-                )
-                await enqueue_job(
-                    db,
-                    kind=MATCH_EMBED_CANDIDATE,
-                    payload={"candidate_id": cid},
-                    idempotency_key=f"match_embed_candidate:{cid}",
-                )
+                    cid = str(cand["id"])
+                    await enqueue_job(
+                        db,
+                        kind=RESUME_EMBED_SCORE,
+                        payload={"candidate_id": cid},
+                        idempotency_key=f"resume_embed_score:{cid}",
+                    )
+                    await enqueue_job(
+                        db,
+                        kind=MATCH_EMBED_CANDIDATE,
+                        payload={"candidate_id": cid},
+                        idempotency_key=f"match_embed_candidate:{cid}",
+                    )
 
     duration_ms = int((time.monotonic() - t0) * 1000)
     await _write_action(
@@ -406,12 +416,18 @@ async def job_search(
 
     candidate = await db.fetchrow(
         """
-        SELECT id, remote_preference
+        SELECT id, remote_preference, market
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
         uuid.UUID(user_id),
     )
+
+    market = "IN"
+    if candidate:
+        market = await fetch_candidate_market(db, candidate["id"])
+
+    vis = job_visible_for_market_sql(market_param="$7")
 
     pref = resolve_remote_preference(
         stored=candidate["remote_preference"] if candidate else None,
@@ -464,7 +480,7 @@ async def job_search(
             LEFT JOIN public.companies co ON co.id = j.company_id
             WHERE ms.candidate_id = $1::uuid
               AND j.is_active = TRUE
-              AND j.country_code = 'IN'
+              AND {vis}
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
@@ -485,6 +501,7 @@ async def job_search(
             location_city,
             ctc_min,
             limit,
+            market,
         )
 
     # Step 1b: the candidate HAS ranked matches, but the narrow query/filters
@@ -493,6 +510,7 @@ async def job_search(
     # them "no jobs" while the Jobs panel shows 185: fall back to their top-ranked
     # matches (the same personalized set the match feed serves), keeping only the
     # hard constraints + their remote preference.
+    vis_fallback = job_visible_for_market_sql(market_param="$3")
     if candidate and not rows:
         rows = await db.fetch(
             f"""
@@ -506,7 +524,7 @@ async def job_search(
             LEFT JOIN public.companies co ON co.id = j.company_id
             WHERE ms.candidate_id = $1::uuid
               AND j.is_active = TRUE
-              AND j.country_code = 'IN'
+              AND {vis_fallback}
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
@@ -515,9 +533,11 @@ async def job_search(
             """,  # noqa: S608
             candidate["id"],
             limit,
+            market,
         )
 
     # Step 2: fallback — unranked keyword search (no match scores yet at all)
+    vis_kw = job_visible_for_market_sql(market_param="$6")
     if not rows:
         rows = await db.fetch(
             f"""
@@ -529,7 +549,7 @@ async def job_search(
             FROM public.jobs j
             LEFT JOIN public.companies co ON co.id = j.company_id
             WHERE j.is_active = TRUE
-              AND j.country_code = 'IN'
+              AND {vis_kw}
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
@@ -549,6 +569,7 @@ async def job_search(
             location_city,
             ctc_min,
             limit,
+            market,
         )
 
     from hireloop_api.services.job_present import serialize_job_card

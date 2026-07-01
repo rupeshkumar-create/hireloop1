@@ -21,9 +21,9 @@ import { Reveal } from "@/components/ui/Reveal";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
 
 export const metadata = {
-  title: "Hireloop — Your AI career partner for India",
+  title: "Hireloop — Your AI career partner",
   description:
-    "Aarya is the AI that finds you the right roles in India and makes the warm intro to the hiring manager. Free for candidates. Private beta.",
+    "Aarya finds you the right roles in India, the US, and the UK — scores your fit and makes the warm intro to the hiring manager. Free for candidates. Private beta.",
 };
 
 // ── Hero ─────────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ function Hero() {
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ink-50 border border-ink-100 mb-8">
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               <span className="text-micro text-ink-700 uppercase">
-                Private beta · India only · Q1 2026
+                Private beta · India, US &amp; UK · Q1 2026
               </span>
             </div>
           </Reveal>
@@ -47,7 +47,7 @@ function Hero() {
           <Reveal delay={60}>
             <h1 className="text-display text-ink-900 mb-6 leading-[1.05]">
               Your AI career partner
-              <span className="text-ink-500">, built for India.</span>
+              <span className="text-ink-500">, built for your market.</span>
             </h1>
           </Reveal>
 
@@ -92,7 +92,7 @@ function Hero() {
 
           <Reveal delay={240}>
             <p className="mt-5 text-small text-ink-500">
-              +91 only · No credit card · DPDP Act 2023 compliant
+              +91 / +1 / +44 · No credit card · DPDP Act 2023 compliant
             </p>
           </Reveal>
         </div>
@@ -114,7 +114,7 @@ const STEPS = [
     icon: Search,
     n: "02",
     title: "Get matched, ranked, explained",
-    body: "Aarya scores every live role in India against your profile. You see why each match works — skills, experience, location, CTC — before you decide.",
+    body: "Aarya scores every live role in your market against your profile. You see why each match works — skills, experience, location, compensation — before you decide.",
   },
   {
     icon: Send,

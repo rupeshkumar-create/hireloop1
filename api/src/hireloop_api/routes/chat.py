@@ -32,9 +32,11 @@ from hireloop_api.deps import (
     coerce_uuid,
     get_db,
     get_db_pool,
-    get_india_verified_user,
+    get_phone_verified_user,
     serialize_row,
 )
+from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.chat_stream import (
     sse_done,
@@ -58,7 +60,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 _TEXT_TOOL_STATUS_LABELS: dict[str, str] = {
     "profile_read": "Reading your profile…",
     "build_career_path": "Mapping your career path…",
-    "job_search": "Searching India roles…",
+    "job_search": "Searching roles in your market…",
     "get_match_score": "Scoring this role…",
     "match_score": "Scoring this role…",
     "save_job": "Saving this role…",
@@ -72,7 +74,7 @@ _TEXT_TOOL_STATUS_LABELS: dict[str, str] = {
 _VOICE_TOOL_STATUS_LABELS: dict[str, str] = {
     "profile_read": "I'm checking your profile…",
     "build_career_path": "I'm mapping the best next steps…",
-    "job_search": "I'm searching India roles now…",
+    "job_search": "I'm searching roles in your market now…",
     "get_match_score": "I'm checking the fit for this role…",
     "match_score": "I'm checking the fit for this role…",
     "save_job": "I'm saving that role…",
@@ -98,7 +100,7 @@ _TOOL_STATUS_META: dict[str, dict[str, str | int]] = {
         "voice": _VOICE_TOOL_STATUS_LABELS["build_career_path"],
     },
     "job_search": {
-        "spoken": "I'm searching India roles for you.",
+        "spoken": "I'm searching roles in your market for you.",
         "eta_sec": 8,
         "text": _TEXT_TOOL_STATUS_LABELS["job_search"],
         "voice": _VOICE_TOOL_STATUS_LABELS["job_search"],
@@ -303,8 +305,10 @@ async def _prefetch_top_jobs(
     """Load top match cards for voice/chat warmup (reduces first-turn latency)."""
     from hireloop_api.services.job_present import serialize_job_card
 
+    market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
+    vis = job_visible_for_market_sql(market_param="$3")
     rows = await db.fetch(
-        """
+        f"""
         SELECT j.id, j.title, j.location_city, j.location_state,
                j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
                j.employment_type, j.seniority, j.apply_url,
@@ -315,21 +319,22 @@ async def _prefetch_top_jobs(
         LEFT JOIN public.companies co ON co.id = j.company_id
         WHERE ms.candidate_id = $1::uuid
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
           AND (j.expires_at IS NULL OR j.expires_at > NOW())
         ORDER BY ms.overall_score DESC NULLS LAST
         LIMIT $2::integer
-        """,
+        """,  # noqa: S608
         uuid.UUID(candidate_id),
         limit,
+        market,
     )
     return dedupe_jobs([serialize_job_card(dict(r)) for r in rows])
 
 
 @router.get("/warmup")
 async def chat_warmup(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
@@ -349,18 +354,21 @@ async def chat_warmup(
         }
 
     candidate_id = str(candidate["id"])
+    market = await fetch_candidate_market(db, candidate["id"])
+    vis = job_visible_for_market_sql(market_param="$2")
     profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
     prefetched = await _prefetch_top_jobs(db, candidate_id, limit=5)
     match_count = await db.fetchval(
-        """
+        f"""
         SELECT count(*) FROM public.match_scores ms
         JOIN public.jobs j ON j.id = ms.job_id
         WHERE ms.candidate_id = $1::uuid
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
-        """,
+        """,  # noqa: S608
         candidate["id"],
+        market,
     )
 
     return {
@@ -373,7 +381,7 @@ async def chat_warmup(
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=201)
 async def create_session(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> CreateSessionResponse:
     """Create a new Aarya conversation session."""
@@ -403,7 +411,7 @@ async def create_session(
 
 @router.get("/sessions")
 async def list_sessions(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """List all conversations for the current candidate."""
@@ -428,7 +436,7 @@ async def list_sessions(
 async def send_message(
     conversation_id: str,
     body: SendMessageRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """
@@ -494,9 +502,9 @@ async def send_message(
 
     # Long threads: keep only the latest turns in the LLM window. Older context
     # lives in the rolling memory summary loaded above.
-    _MAX_HISTORY_MESSAGES = 12
-    if len(history) > _MAX_HISTORY_MESSAGES:
-        history = history[-_MAX_HISTORY_MESSAGES:]
+    max_history_messages = 12
+    if len(history) > max_history_messages:
+        history = history[-max_history_messages:]
 
     user_intent = _detect_likely_intent(body.content)
     include_prefetch = user_intent == "job_search"
@@ -665,7 +673,7 @@ async def send_message(
 @router.get("/sessions/{conversation_id}/messages")
 async def get_messages(
     conversation_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     limit: int = 100,
     offset: int = 0,
@@ -692,7 +700,7 @@ async def get_messages(
 @router.get("/sessions/{conversation_id}/actions")
 async def get_actions(
     conversation_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """

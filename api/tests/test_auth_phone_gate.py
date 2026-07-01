@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from hireloop_api.config import Settings
-from hireloop_api.deps import get_india_verified_user
+from hireloop_api.deps import get_phone_verified_user
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -20,9 +20,9 @@ def make_settings(**overrides: object) -> Settings:
 
 @pytest.mark.asyncio
 async def test_development_allows_unverified_user_when_phone_gate_disabled() -> None:
-    user = {"id": "user-id", "india_verified": False}
+    user = {"id": "user-id", "phone_verified": False}
 
-    result = await get_india_verified_user(
+    result = await get_phone_verified_user(
         current_user=user,
         settings=make_settings(environment="development", require_phone_verification=False),
     )
@@ -33,8 +33,8 @@ async def test_development_allows_unverified_user_when_phone_gate_disabled() -> 
 @pytest.mark.asyncio
 async def test_production_blocks_unverified_user_when_phone_gate_enabled() -> None:
     with pytest.raises(HTTPException) as exc:
-        await get_india_verified_user(
-            current_user={"id": "user-id", "india_verified": False},
+        await get_phone_verified_user(
+            current_user={"id": "user-id", "phone_verified": False},
             settings=make_settings(environment="production", require_phone_verification=True),
         )
 

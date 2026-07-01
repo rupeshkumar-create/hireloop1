@@ -4,14 +4,14 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "About Hireloop",
   description:
-    "Hireloop is building India's first AI recruiting platform — inspired by Jack & Jill (London) but built ground-up for the Indian market, culture, and compliance.",
+    "Hireloop is an AI recruiting platform — inspired by Jack & Jill (London) but built for India, the US, and the UK with local compliance and market-aware matching.",
 };
 
 const VALUES = [
   {
     icon: "🇮🇳",
-    title: "India-first",
-    desc: "Every design decision starts with Indian users. +91-only, INR pricing, Indian job market data, DPDP compliance, Mumbai-region hosting. Not a US product retrofitted.",
+    title: "Market-first",
+    desc: "Each candidate has a home market (IN / US / GB). Jobs, salaries, and phone verification are scoped to that region — not a one-size-fits-all US product retrofitted.",
   },
   {
     icon: "🤝",

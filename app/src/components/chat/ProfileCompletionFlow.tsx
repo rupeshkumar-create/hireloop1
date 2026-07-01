@@ -36,6 +36,13 @@ import {
   type RemotePreference,
 } from "@/lib/api/profile";
 import { cn } from "@/lib/utils";
+import type { MarketCode } from "@/lib/markets";
+import {
+  profileSalaryFromStorage,
+  profileSalaryToStorage,
+  salaryInputHint,
+  salaryInputSuffix,
+} from "@/lib/salary";
 
 type StepType = "text" | "textarea" | "number" | "select";
 
@@ -51,7 +58,7 @@ type Step = {
 
 // "Everything possible" — every field a human can actually answer (the rest of
 // the career-intelligence points are inferred from these + the résumé).
-const STEPS: Step[] = [
+const BASE_STEPS: Step[] = [
   { id: "current_title", prompt: "What's your current role?", hint: "Your job title today.", type: "text", placeholder: "e.g. Product Designer" },
   { id: "current_company", prompt: "Where are you working now?", type: "text", placeholder: "e.g. LimeDock" },
   {
@@ -67,9 +74,6 @@ const STEPS: Step[] = [
     ],
   },
   { id: "skills", prompt: "What are your top skills?", hint: "Comma-separated — the more specific, the better the matches.", type: "text", placeholder: "Figma, UX research, growth, Python" },
-  { id: "expected_ctc_min", prompt: "Minimum CTC you'd accept?", hint: "In LPA (lakhs per annum).", type: "number", placeholder: "10", suffix: "LPA" },
-  { id: "expected_ctc_max", prompt: "And the top of your range?", hint: "In LPA — leave blank if open.", type: "number", placeholder: "18", suffix: "LPA" },
-  { id: "current_ctc", prompt: "What's your current CTC?", hint: "In LPA — stays private, used only to gauge fit.", type: "number", placeholder: "12", suffix: "LPA" },
   {
     id: "notice_period_days",
     prompt: "What's your notice period?",
@@ -102,12 +106,50 @@ const STEPS: Step[] = [
     options: [
       { label: "My city only", value: "city" },
       { label: "Anywhere in my state", value: "state" },
-      { label: "Anywhere in India", value: "country" },
+      { label: "Anywhere in my country", value: "country" },
       { label: "Global (open to anywhere)", value: "global" },
     ],
   },
   { id: "looking_for", prompt: "What roles are you aiming for next?", hint: "Your target titles or the kind of work you want.", type: "textarea", placeholder: "e.g. Senior Product Designer, Growth Manager at an early-stage SaaS" },
 ];
+
+function salarySteps(market: MarketCode): Step[] {
+  const suffix = salaryInputSuffix(market);
+  const hint = salaryInputHint(market);
+  const minPrompt =
+    market === "IN" ? "Minimum CTC you'd accept?" : "Minimum salary you'd accept?";
+  const maxPrompt =
+    market === "IN" ? "And the top of your range?" : "And the top of your range?";
+  const currentPrompt =
+    market === "IN" ? "What's your current CTC?" : "What's your current salary?";
+  const placeholder = market === "IN" ? "10" : "120";
+  return [
+    { id: "expected_ctc_min", prompt: minPrompt, hint, type: "number", placeholder, suffix },
+    {
+      id: "expected_ctc_max",
+      prompt: maxPrompt,
+      hint: market === "IN" ? "In LPA — leave blank if open." : "Leave blank if open.",
+      type: "number",
+      placeholder: market === "IN" ? "18" : "150",
+      suffix,
+    },
+    {
+      id: "current_ctc",
+      prompt: currentPrompt,
+      hint: `${hint} Stays private — used only to gauge fit.`,
+      type: "number",
+      placeholder: market === "IN" ? "12" : "110",
+      suffix,
+    },
+  ];
+}
+
+function profileSteps(market: MarketCode): Step[] {
+  const noticeIdx = BASE_STEPS.findIndex((s) => s.id === "notice_period_days");
+  const before = BASE_STEPS.slice(0, noticeIdx >= 0 ? noticeIdx : BASE_STEPS.length);
+  const after = noticeIdx >= 0 ? BASE_STEPS.slice(noticeIdx) : [];
+  return [...before, ...salarySteps(market), ...after];
+}
 
 /** Mirrors backend `_completeness` weights in career_intelligence/engine.py */
 const FIELD_WEIGHTS: Record<string, number> = {
@@ -124,12 +166,8 @@ const FIELD_WEIGHTS: Record<string, number> = {
   looking_for: 10,
 };
 
-function buildPatch(answers: Record<string, string>): ProfilePatch {
+function buildPatch(answers: Record<string, string>, market: MarketCode): ProfilePatch {
   const patch: ProfilePatch = {};
-  const lpaToInr = (v: string): number | undefined => {
-    const n = Number.parseFloat(v);
-    return Number.isFinite(n) && n > 0 ? Math.round(n * 100_000) : undefined;
-  };
   const str = (v: string | undefined) => (v && v.trim() ? v.trim() : undefined);
   const int = (v: string | undefined) => {
     if (!v) return undefined;
@@ -147,9 +185,12 @@ function buildPatch(answers: Record<string, string>): ProfilePatch {
       .filter(Boolean);
     if (skills.length) patch.skills = skills;
   }
-  if (lpaToInr(answers.expected_ctc_min ?? "") != null) patch.expected_ctc_min = lpaToInr(answers.expected_ctc_min);
-  if (lpaToInr(answers.expected_ctc_max ?? "") != null) patch.expected_ctc_max = lpaToInr(answers.expected_ctc_max);
-  if (lpaToInr(answers.current_ctc ?? "") != null) patch.current_ctc = lpaToInr(answers.current_ctc);
+  const salMin = profileSalaryToStorage(answers.expected_ctc_min, market);
+  const salMax = profileSalaryToStorage(answers.expected_ctc_max, market);
+  const salCurrent = profileSalaryToStorage(answers.current_ctc, market);
+  if (salMin != null) patch.expected_ctc_min = salMin;
+  if (salMax != null) patch.expected_ctc_max = salMax;
+  if (salCurrent != null) patch.current_ctc = salCurrent;
   if (int(answers.notice_period_days) != null) patch.notice_period_days = int(answers.notice_period_days);
   if (str(answers.location_city)) patch.location_city = answers.location_city.trim();
   if (str(answers.location_state)) patch.location_state = answers.location_state.trim();
@@ -168,10 +209,12 @@ type Props = {
 };
 
 export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved }: Props) {
+  const market = (profile?.user?.market ?? "IN") as MarketCode;
+  const steps = useMemo(() => profileSteps(market), [market]);
   const [phase, setPhase] = useState<"choose" | "form" | "done">("choose");
   const [stepIndex, setStepIndex] = useState(0);
-  const [prefilled, setPrefilled] = useState<Record<string, string>>(() => prefill(profile));
-  const [answers, setAnswers] = useState<Record<string, string>>(() => prefill(profile));
+  const [prefilled, setPrefilled] = useState<Record<string, string>>(() => prefill(profile, market));
+  const [answers, setAnswers] = useState<Record<string, string>>(() => prefill(profile, market));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,7 +225,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
     fetchMyProfile()
       .then((fresh) => {
         if (cancelled) return;
-        const pf = prefill(fresh);
+        const pf = prefill(fresh, (fresh.user?.market ?? "IN") as MarketCode);
         setPrefilled(pf);
         setAnswers((prev) => {
           const next = { ...prev };
@@ -200,14 +243,14 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
 
   // Only ask for the fields we DON'T already have — known fields are skipped.
   const pendingSteps = useMemo(
-    () => STEPS.filter((s) => !(prefilled[s.id] ?? "").trim()),
-    [prefilled]
+    () => steps.filter((s) => !(prefilled[s.id] ?? "").trim()),
+    [steps, prefilled]
   );
 
   const base = completeness ?? 8;
   const projected = useMemo(() => {
     let newlyAdded = 0;
-    for (const step of STEPS) {
+    for (const step of steps) {
       const weight = FIELD_WEIGHTS[step.id] ?? 0;
       if (!weight) continue;
       const answered = (answers[step.id] ?? "").trim();
@@ -215,7 +258,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
       if (answered && !alreadyHad) newlyAdded += weight;
     }
     return Math.min(100, Math.round(base + newlyAdded));
-  }, [base, answers, prefilled]);
+  }, [base, answers, prefilled, steps]);
 
   const total = pendingSteps.length;
   const step = pendingSteps[Math.min(stepIndex, Math.max(0, total - 1))];
@@ -232,7 +275,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
     setSaving(true);
     setError(null);
     try {
-      const patch = buildPatch(answers);
+      const patch = buildPatch(answers, market);
       if (Object.keys(patch).length > 0) {
         await updateMyProfile(patch);
       }
@@ -282,7 +325,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
               Fill it in yourself
             </p>
             <p className="mt-0.5 text-micro text-ink-500">
-              {STEPS.length} quick questions, one at a time. ~2 minutes.
+              {steps.length} quick questions, one at a time. ~2 minutes.
             </p>
           </button>
         </div>
@@ -450,19 +493,17 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
   );
 }
 
-function prefill(profile: MyProfileData | null): Record<string, string> {
+function prefill(profile: MyProfileData | null, market: MarketCode): Record<string, string> {
   const c = profile?.candidate;
   if (!c) return {};
   const out: Record<string, string> = {};
-  const inrToLpa = (v: number | null | undefined) =>
-    v != null && v > 0 ? String(Math.round(v / 100_000)) : "";
   if (c.current_title) out.current_title = c.current_title;
   if (c.current_company) out.current_company = c.current_company;
   if (c.years_experience != null) out.years_experience = String(c.years_experience);
   if (c.skills?.length) out.skills = c.skills.join(", ");
-  out.expected_ctc_min = inrToLpa(c.expected_ctc_min);
-  out.expected_ctc_max = inrToLpa(c.expected_ctc_max);
-  out.current_ctc = inrToLpa(c.current_ctc);
+  out.expected_ctc_min = profileSalaryFromStorage(c.expected_ctc_min, market);
+  out.expected_ctc_max = profileSalaryFromStorage(c.expected_ctc_max, market);
+  out.current_ctc = profileSalaryFromStorage(c.current_ctc, market);
   if (c.notice_period_days != null) out.notice_period_days = String(c.notice_period_days);
   if (c.location_city) out.location_city = c.location_city;
   if (c.location_state) out.location_state = c.location_state;

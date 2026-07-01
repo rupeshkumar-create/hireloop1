@@ -19,7 +19,8 @@ type UserSummary = {
   full_name: string | null;
   phone: string | null;
   role: "candidate" | "recruiter" | "admin";
-  india_verified: boolean;
+  phone_verified: boolean;
+  market: string | null;
   created_at: string;
   deleted_at: string | null;
   candidate_id: string | null;
@@ -108,7 +109,10 @@ export default function SuperAdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint]);
 
-  async function updateUser(userId: string, patch: Partial<{ role: UserSummary["role"]; india_verified: boolean }>) {
+  async function updateUser(
+    userId: string,
+    patch: Partial<{ role: UserSummary["role"]; phone_verified: boolean; market: string }>,
+  ) {
     await apiFetch<UserSummary>(`/api/v1/super-admin/users/${userId}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
@@ -269,7 +273,10 @@ function UsersTable({
   rows: UserSummary[];
   loading: boolean;
   onDelete: (userId: string) => Promise<void>;
-  onUpdate: (userId: string, patch: Partial<{ role: UserSummary["role"]; india_verified: boolean }>) => Promise<void>;
+  onUpdate: (
+    userId: string,
+    patch: Partial<{ role: UserSummary["role"]; phone_verified: boolean; market: string }>,
+  ) => Promise<void>;
 }) {
   if (!loading && rows.length === 0) {
     return (
@@ -286,7 +293,7 @@ function UsersTable({
       <table className="w-full text-small">
         <thead className="bg-ink-700">
           <tr>
-            {["Email", "Name", "Role", "OTP", "Candidate", "Recruiter", "Created", ""].map((h) => (
+            {["Email", "Name", "Market", "Role", "Phone", "Candidate", "Recruiter", "Created", ""].map((h) => (
               <th
                 key={h}
                 className="text-left px-4 py-3 text-micro text-ink-300 uppercase tracking-wider font-semibold"
@@ -301,6 +308,7 @@ function UsersTable({
             <tr key={u.id} className="hover:bg-ink-700/30 transition-colors">
               <td className="px-4 py-3 font-medium text-paper-0">{u.email}</td>
               <td className="px-4 py-3 text-ink-300">{u.full_name ?? "—"}</td>
+              <td className="px-4 py-3 text-ink-300">{u.market ?? "—"}</td>
               <td className="px-4 py-3">
                 <Select
                   value={u.role}
@@ -312,15 +320,15 @@ function UsersTable({
               <td className="px-4 py-3">
                 <button
                   type="button"
-                  onClick={() => void onUpdate(u.id, { india_verified: !u.india_verified })}
+                  onClick={() => void onUpdate(u.id, { phone_verified: !u.phone_verified })}
                   className={cn(
                     "px-2.5 py-1 rounded-full text-micro font-semibold border transition-colors",
-                    u.india_verified
+                    u.phone_verified
                       ? "bg-ink-900 border-ink-700 text-paper-0 hover:bg-ink-700/40"
                       : "bg-destructive/10 border-destructive/30 text-destructive hover:bg-destructive/15"
                   )}
                 >
-                  {u.india_verified ? "Verified" : "Not verified"}
+                  {u.phone_verified ? "Verified" : "Not verified"}
                 </button>
               </td>
               <td className="px-4 py-3">

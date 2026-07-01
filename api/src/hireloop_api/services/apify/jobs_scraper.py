@@ -5,8 +5,7 @@ Supported actors (no-cookie, complies with R16 §3):
   - apify/linkedin-jobs-scraper     (URL-based input: startUrls)
   - bebity/linkedin-jobs-scraper    (title+location input schema)
 
-India geo-lock (R4): all queries include location=India and we filter
-country_code='IN' before writing to DB.
+India geo-lock replaced by per-market scoping (IN / US / GB).
 
 Typical cost: ~$0.50 per 1,000 job listings = ~₹0.04/job.
 
@@ -29,6 +28,13 @@ import httpx
 import structlog
 from pydantic import BaseModel, field_validator
 
+from hireloop_api.markets import (
+    MARKET_SCRAPE_LOCATIONS,
+    SUPPORTED_MARKETS,
+    currency_for_market,
+    resolve_country_from_location,
+)
+
 logger = structlog.get_logger()
 
 
@@ -46,7 +52,9 @@ class JobRecord(BaseModel):
     company_linkedin_url: str | None = None
     location_city: str | None = None
     location_state: str | None = None
-    country_code: str = "IN"  # Always IN — India geo-lock (R4)
+    country_code: str = "IN"
+    salary_currency: str = "INR"
+    allowed_regions: list[str] | None = None
     is_remote: bool = False
     employment_type: str = "full_time"
     seniority: str | None = None
@@ -60,9 +68,11 @@ class JobRecord(BaseModel):
 
     @field_validator("country_code")
     @classmethod
-    def must_be_india(cls, v: str) -> str:
-        # Hard enforce India-only — never write non-IN jobs (R4)
-        return "IN"
+    def must_be_supported_market(cls, v: str) -> str:
+        code = (v or "IN").upper().strip()
+        if code not in SUPPORTED_MARKETS:
+            raise ValueError(f"Unsupported market: {code}")
+        return code
 
     @field_validator("employment_type")
     @classmethod
@@ -83,9 +93,12 @@ class JobRecord(BaseModel):
         if not v:
             return None
         mapping = {
+            "intern": "intern",
             "internship": "intern",
+            "junior": "junior",
             "entry level": "junior",
             "associate": "junior",
+            "mid": "mid",
             "mid-senior level": "mid",
             "mid-senior": "mid",
             "mid level": "mid",
@@ -94,6 +107,7 @@ class JobRecord(BaseModel):
             "director": "director",
             "vp": "vp",
             "vice president": "vp",
+            "c_level": "c_level",
             "c-level": "c_level",
             "executive": "c_level",
         }
@@ -105,20 +119,8 @@ class JobRecord(BaseModel):
 DEFAULT_LINKEDIN_JOBS_ACTOR = "bebity/linkedin-jobs-scraper"
 APIFY_API_BASE = "https://api.apify.com/v2"
 
-# Indian cities we scrape — covers 90%+ of tech hiring volume
-INDIA_LOCATIONS = [
-    "Bengaluru, Karnataka, India",
-    "Mumbai, Maharashtra, India",
-    "Hyderabad, Telangana, India",
-    "Delhi, India",
-    "Pune, Maharashtra, India",
-    "Chennai, Tamil Nadu, India",
-    "Gurugram, Haryana, India",
-    "Noida, Uttar Pradesh, India",
-    "Kolkata, West Bengal, India",
-    "Ahmedabad, Gujarat, India",
-    "India",  # catch-all for remote-in-India
-]
+# Back-compat alias — prefer MARKET_SCRAPE_LOCATIONS from markets.py
+INDIA_LOCATIONS = MARKET_SCRAPE_LOCATIONS["IN"]
 
 # Role categories to scrape — expand in P24 for programmatic SEO
 SEARCH_QUERIES = [
@@ -171,13 +173,26 @@ class ApifyJobsScraper:
         return "start_urls"
 
     @staticmethod
-    def _coerce_india_location(loc: str) -> str:
+    def _coerce_market_location(loc: str, market: str) -> str:
         loc = (loc or "").strip()
         if not loc:
-            return "India"
-        if "india" in loc.lower():
+            return MARKET_SCRAPE_LOCATIONS.get(market, ["India"])[0]
+        low = loc.lower()
+        hints = {
+            "IN": "india",
+            "US": "united states",
+            "GB": "united kingdom",
+        }
+        hint = hints.get(market, "")
+        if hint and hint in low:
             return loc
-        return f"{loc}, India"
+        if market == "IN":
+            return f"{loc}, India" if "india" not in low else loc
+        if market == "US":
+            return f"{loc}, United States" if "united states" not in low else loc
+        if market == "GB":
+            return f"{loc}, United Kingdom" if "united kingdom" not in low else loc
+        return loc
 
     async def scrape(
         self,
@@ -218,9 +233,10 @@ class ApifyJobsScraper:
 
             for q in q_list:
                 for loc in loc_list:
+                    market = resolve_country_from_location(loc) or "IN"
                     run_id = await self._trigger_run_title_location(
                         title=q,
-                        location=self._coerce_india_location(loc),
+                        location=self._coerce_market_location(loc, market),
                         rows=rows,
                         time_range=time_range,
                     )
@@ -402,7 +418,7 @@ class ApifyJobsScraper:
     def normalise(self, raw: dict[str, Any]) -> JobRecord | None:
         """
         Map one Apify LinkedIn Jobs item → JobRecord.
-        Returns None if the job is not in India (geo-lock) or lacks required fields.
+        Returns None if market cannot be resolved or required fields are missing.
         """
         title = (
             raw.get("title") or raw.get("jobTitle") or raw.get("position") or raw.get("role") or ""
@@ -411,7 +427,6 @@ class ApifyJobsScraper:
         if not title:
             return None
 
-        # India geo-lock: skip non-India listings
         location_raw = (
             raw.get("location")
             or raw.get("jobLocation")
@@ -420,11 +435,11 @@ class ApifyJobsScraper:
             or ""
         )
         location_raw = str(location_raw).strip()
-        if not self._is_india_location(location_raw):
+        market = self._resolve_market(location_raw, title)
+        if not market:
             return None
 
-        # Parse location → city, state
-        city, state = self._parse_india_location(location_raw)
+        city, state = self._parse_location(location_raw, market)
 
         # Build a stable dedup key from job URL or ID
         job_url = (
@@ -479,6 +494,9 @@ class ApifyJobsScraper:
             or ""
         )
 
+        is_remote = "remote" in location_raw.lower() or "remote" in title.lower()
+        allowed_regions = ["WORLD"] if is_remote else None
+
         try:
             return JobRecord(
                 apify_job_id=apify_job_id,
@@ -493,8 +511,10 @@ class ApifyJobsScraper:
                 ),
                 location_city=city,
                 location_state=state,
-                country_code="IN",
-                is_remote="remote" in location_raw.lower() or "remote" in title.lower(),
+                country_code=market,
+                salary_currency=currency_for_market(market),
+                allowed_regions=allowed_regions,
+                is_remote=is_remote,
                 employment_type=emp_type,
                 seniority=seniority_raw or None,
                 ctc_min=ctc_min,
@@ -508,7 +528,7 @@ class ApifyJobsScraper:
             return None
 
     def normalise_batch(self, items: list[dict[str, Any]]) -> list[JobRecord]:
-        """Normalise a batch of raw Apify items, skipping non-India / invalid ones."""
+        """Normalise a batch of raw Apify items, skipping unsupported markets."""
         results = []
         skipped = 0
         for item in items:
@@ -523,29 +543,20 @@ class ApifyJobsScraper:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _is_india_location(loc: str) -> bool:
-        loc_lower = loc.lower()
-        india_signals = [
-            "india",
-            "bengaluru",
-            "bangalore",
-            "mumbai",
-            "delhi",
-            "hyderabad",
-            "pune",
-            "chennai",
-            "kolkata",
-            "gurugram",
-            "gurgaon",
-            "noida",
-            "ahmedabad",
-            "jaipur",
-            "kochi",
-            "chandigarh",
-            "indore",
-            "bhopal",
-        ]
-        return any(s in loc_lower for s in india_signals)
+    def _resolve_market(location_raw: str, title: str) -> str | None:
+        market = resolve_country_from_location(location_raw) or resolve_country_from_location(title)
+        if market and market in SUPPORTED_MARKETS:
+            return market
+        return None
+
+    @staticmethod
+    def _parse_location(loc: str, market: str) -> tuple[str | None, str | None]:
+        if market == "IN":
+            return ApifyJobsScraper._parse_india_location(loc)
+        parts = [p.strip() for p in loc.split(",")]
+        city = parts[0] if parts else None
+        state = parts[1] if len(parts) > 1 else None
+        return city, state
 
     @staticmethod
     def _parse_india_location(loc: str) -> tuple[str | None, str | None]:

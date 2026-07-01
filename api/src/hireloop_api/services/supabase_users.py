@@ -61,7 +61,7 @@ async def fetch_user(settings: Settings, user_id: uuid.UUID | str) -> dict[str, 
         "full_name": row.get("full_name"),
         "avatar_url": row.get("avatar_url"),
         "role": row.get("role") or "candidate",
-        "india_verified": bool(row.get("india_verified")),
+        "phone_verified": bool(row.get("phone_verified")),
     }
 
 
@@ -88,7 +88,7 @@ async def provision_user(
         "full_name": full_name,
         "avatar_url": avatar,
         "role": role,
-        "india_verified": False,
+        "phone_verified": False,
     }
     headers = _headers(settings)
     headers["Prefer"] = "resolution=merge-duplicates,return=representation"
@@ -116,7 +116,7 @@ async def provision_user(
         "full_name": row.get("full_name"),
         "avatar_url": row.get("avatar_url"),
         "role": row.get("role") or "candidate",
-        "india_verified": bool(row.get("india_verified")),
+        "phone_verified": bool(row.get("phone_verified")),
     }
 
 
@@ -127,7 +127,7 @@ async def save_phone(
     phone: str,
     supabase_user: dict[str, Any],
 ) -> None:
-    """Upsert user row and set phone + india_verified."""
+    """Upsert user row and set phone + phone_verified."""
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("Supabase REST not configured")
 
@@ -142,7 +142,7 @@ async def save_phone(
             f"{_base(settings)}/users",
             params={"id": f"eq.{user_id}", "deleted_at": "is.null"},
             headers=_headers(settings),
-            json={"phone": phone, "india_verified": True},
+            json={"phone": phone, "phone_verified": True},
         )
     if resp.status_code == 409 or "duplicate key" in resp.text.lower():
         raise ValueError("phone_already_claimed")

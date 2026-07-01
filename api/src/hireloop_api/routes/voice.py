@@ -41,7 +41,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import _fetch_supabase_user, get_db, get_india_verified_user
+from hireloop_api.deps import _fetch_supabase_user, get_db, get_phone_verified_user
 from hireloop_api.routes.resumes import _build_profile_updates_from_resume
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
@@ -147,7 +147,7 @@ class VoiceTTSRequest(BaseModel):
 
 @router.get("/config", response_model=VoiceConfigResponse, status_code=200)
 async def voice_config(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> VoiceConfigResponse:
     """Tell the client which STT/TTS path to use, so voice works with or without
@@ -160,7 +160,7 @@ async def voice_config(
 @router.post("/stt", response_model=VoiceSTTResponse, status_code=200)
 async def speech_to_text(
     file: UploadFile = File(..., description="Audio snippet (webm/wav/mp4), max 6MB"),
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> VoiceSTTResponse:
     """
@@ -215,7 +215,7 @@ async def speech_to_text(
 @router.post("/tts", status_code=200)
 async def text_to_speech(
     body: VoiceTTSRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
 ) -> Response:
     """
@@ -262,7 +262,7 @@ async def text_to_speech(
 @router.post("/sessions", response_model=VoiceSessionResponse, status_code=201)
 async def create_voice_session(
     body: VoiceSessionCreate,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
@@ -578,7 +578,7 @@ async def voice_stream(
 
 @router.get("/sessions")
 async def list_voice_sessions(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """List the candidate's voice sessions (for profile/dashboard display)."""

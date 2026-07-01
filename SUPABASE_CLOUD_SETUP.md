@@ -45,8 +45,8 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 
 | Setting | Local dev | Production (later) |
 |---------|-----------|-------------------|
-| Site URL | `http://localhost:3001` | `https://app.hireloop.in` |
-| Redirect URLs | `http://localhost:3001/auth/callback` | `https://app.hireloop.in/auth/callback` |
+| Site URL | `http://localhost:3001` | `https://hireloop1-app.vercel.app` |
+| Redirect URLs | `http://localhost:3001/auth/callback` | `https://hireloop1-app.vercel.app/auth/callback` |
 
 Add `http://localhost:3001/**` under redirect URLs if you use query params on callback.
 
@@ -68,7 +68,7 @@ Signup flow in the app:
 1. User picks **Job Seeker** or **Recruiter** → cookie `hireloop_signup_role`.
 2. LinkedIn OAuth → `/auth/callback` exchanges code.
 3. Callback calls `POST /api/v1/auth/bootstrap` with Bearer token → creates `candidates` or `recruiters` row.
-4. Redirect to `/onboarding/phone` → MSG91 OTP (dev: OTP logged in API when `ENVIRONMENT=development`).
+4. Redirect to `/onboarding` → welcome + activate (CV, market, consent).
 
 ---
 
@@ -127,8 +127,8 @@ cd app && pnpm dev   # http://localhost:3001
 **Smoke test (P04 auth)**
 
 1. Open `http://localhost:3001/signup` → Continue with LinkedIn.
-2. After redirect, `/onboarding/phone` → send OTP (check API logs for `dev_otp` in development).
-3. Verify OTP → `/onboarding` → complete profile → `/dashboard`.
+2. After redirect, `/onboarding` → upload CV, pick market, accept terms → `/dashboard`.
+3. Optional: verify phone from Settings when MSG91/Twilio keys are configured.
 
 API calls from the browser must send **`Authorization: Bearer <supabase_access_token>`** (handled by `apiAuthFetch` in the app).
 
@@ -151,6 +151,6 @@ API calls from the browser must send **`Authorization: Bearer <supabase_access_t
 - Never commit `.env` / `.env.local`.
 - Never put `service_role` in the Next.js app.
 - Cold email stays on **Gmail OAuth**, not SendGrid (R9).
-- India geo-lock: +91 OTP + WAF + `country_code = 'IN'` on jobs (R4).
+- Multi-region marketplace: market-scoped jobs + phone verify per region (R4).
 
 See also: `LOCAL_TESTING.md` (phase-by-phase tests), `PHASE_TRACKER.md`.

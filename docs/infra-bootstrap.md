@@ -186,5 +186,4 @@ put_secret "secret-key"          "$(openssl rand -hex 32)"
 - [ ] `https://hireloop.in` shows Coming Soon page
 - [ ] `https://app.hireloop.in` shows Signup placeholder
 - [ ] `https://api.hireloop.in/api/v1/health` returns `{"status":"ok",...}`
-- [ ] Cloudflare WAF blocks a request from a VPN/US IP with 403
 - [ ] Supabase project accessible from API health check (P03 adds DB check)

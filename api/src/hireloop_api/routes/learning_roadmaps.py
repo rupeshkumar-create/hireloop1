@@ -17,7 +17,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.learning_roadmap import (
     generate_roadmap,
     render_roadmap_html,
@@ -116,7 +116,7 @@ async def _run_roadmap_task(
 @router.post("/roadmap")
 async def request_learning_roadmap(
     body: RoadmapRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -178,7 +178,7 @@ async def request_learning_roadmap(
 
 @router.get("/roadmaps")
 async def list_learning_roadmaps(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     rows = await db.fetch(
@@ -199,7 +199,7 @@ async def list_learning_roadmaps(
 @router.get("/{roadmap_id}")
 async def get_learning_roadmap(
     roadmap_id: uuid.UUID,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     row = await db.fetchrow(
@@ -225,7 +225,7 @@ async def get_learning_roadmap(
 @router.get("/{roadmap_id}/download")
 async def download_learning_roadmap(
     roadmap_id: uuid.UUID,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     row = await db.fetchrow(

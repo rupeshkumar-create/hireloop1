@@ -43,7 +43,7 @@ async def main() -> None:
             """
             SELECT j.id
             FROM public.jobs j
-            WHERE j.is_active AND j.deleted_at IS NULL AND j.country_code = 'IN'
+            WHERE j.is_active AND j.deleted_at IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM public.job_embeddings je
                 WHERE je.job_id = j.id AND je.jd_embedding IS NOT NULL

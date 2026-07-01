@@ -58,7 +58,7 @@ const PLANS: Plan[] = [
     cta: "Talk to Nitya — free",
     href: APP_URL + "/signup?role=recruiter",
     highlight: false,
-    note: "Post-beta: % of first-year CTC per hire. India-market pricing.",
+    note: "Post-beta: % of first-year salary per hire. Market-local pricing.",
   },
 ];
 
@@ -152,7 +152,7 @@ export default function PricingPage() {
 
           <div className="mt-12 bg-ink-50 rounded-xl p-6">
             <p className="text-small text-ink-700">
-              India only · All prices in INR · DPDP Act 2023 compliant ·{" "}
+              India, US &amp; UK · Local currency pricing · DPDP Act 2023 compliant ·{" "}
               <a href="mailto:hello@hireloop.in" className="text-accent underline">
                 Questions? hello@hireloop.in
               </a>

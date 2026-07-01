@@ -1,6 +1,6 @@
 ###############################################################################
 # Hireloop — Cloudflare WAF rules
-# India geo-lock layer 2: block non-IN ASN at WAF level
+# Rate limits + security headers (no geo-blocking — global access)
 ###############################################################################
 
 terraform {
@@ -18,48 +18,6 @@ variable "cloudflare_api_token"  { type = string; sensitive = true }
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
-}
-
-# ── WAF Custom Ruleset ────────────────────────────────────────────────────────
-
-resource "cloudflare_ruleset" "india_geo_lock" {
-  zone_id     = var.cloudflare_zone_id
-  name        = "Hireloop India Geo-Lock"
-  description = "Block all traffic originating outside India"
-  kind        = "zone"
-  phase       = "http_request_firewall_custom"
-
-  rules {
-    action      = "block"
-    description = "Block non-India traffic (geo-lock layer 2)"
-    enabled     = true
-
-    # Block if country is NOT India
-    # ip.geoip.country gives the 2-letter ISO country code
-    expression = "(not ip.geoip.country eq \"IN\")"
-
-    action_parameters {
-      response {
-        status_code  = 403
-        content_type = "application/json"
-        content      = "{\"detail\":\"This service is available in India only.\"}"
-      }
-    }
-  }
-
-  rules {
-    action      = "block"
-    description = "Block known bad bots and scrapers"
-    enabled     = true
-    expression  = "(cf.client.bot) and (not cf.verified_bot_category in {\"search_engine\" \"monitor\" \"aggregator\"})"
-  }
-
-  rules {
-    action      = "challenge"
-    description = "Challenge suspicious user agents"
-    enabled     = true
-    expression  = "(http.user_agent contains \"curl\" and not ip.geoip.country eq \"IN\")"
-  }
 }
 
 # ── Rate limiting ──────────────────────────────────────────────────────────────

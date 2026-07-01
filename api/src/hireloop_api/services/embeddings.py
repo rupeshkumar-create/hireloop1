@@ -233,7 +233,6 @@ class EmbeddingService:
                 FROM public.jobs
                 WHERE id = $1::uuid
                   AND is_active = TRUE
-                  AND country_code = 'IN'
                   AND deleted_at IS NULL
                 """,
                 job_id,
@@ -310,7 +309,6 @@ class EmbeddingService:
             SELECT j.id FROM public.jobs j
             LEFT JOIN public.job_embeddings je ON je.job_id = j.id
             WHERE j.is_active = TRUE
-              AND j.country_code = 'IN'
               AND j.deleted_at IS NULL
               AND je.job_id IS NULL
             ORDER BY j.scraped_at DESC

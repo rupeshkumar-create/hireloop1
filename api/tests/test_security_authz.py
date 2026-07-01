@@ -41,7 +41,7 @@ class _FakeConn:
                 "full_name": args[2],
                 "avatar_url": args[3],
                 "role": args[4],
-                "india_verified": False,
+                "phone_verified": False,
             }
         return None
 

@@ -175,7 +175,7 @@ async def _load_app_user(
         try:
             user = await db.fetchrow(
                 """
-                SELECT id, email, phone, full_name, avatar_url, role, india_verified
+                SELECT id, email, phone, full_name, avatar_url, role, phone_verified, market
                 FROM public.users
                 WHERE id = $1 AND deleted_at IS NULL
                 """,
@@ -231,18 +231,23 @@ async def _provision_user_row(
     )
     avatar = meta.get("avatar_url") or meta.get("picture") or None
 
+    market = meta.get("market") or "IN"
+    if market not in ("IN", "US", "GB"):
+        market = "IN"
+
     row = await db.fetchrow(
         """
-        INSERT INTO public.users (id, email, full_name, avatar_url, role, india_verified)
-        VALUES ($1::uuid, $2, $3, $4, $5, FALSE)
+        INSERT INTO public.users (id, email, full_name, avatar_url, role, phone_verified, market)
+        VALUES ($1::uuid, $2, $3, $4, $5, FALSE, $6)
         ON CONFLICT (id) DO NOTHING
-        RETURNING id, email, phone, full_name, avatar_url, role, india_verified
+        RETURNING id, email, phone, full_name, avatar_url, role, phone_verified, market
         """,
         user_id,
         email,
         full_name,
         avatar,
         role,
+        market,
     )
 
     if row is None:
@@ -250,7 +255,7 @@ async def _provision_user_row(
         # if it's soft-deleted this returns None (we don't auto-resurrect).
         row = await db.fetchrow(
             """
-            SELECT id, email, phone, full_name, avatar_url, role, india_verified
+            SELECT id, email, phone, full_name, avatar_url, role, phone_verified
             FROM public.users
             WHERE id = $1::uuid AND deleted_at IS NULL
             """,
@@ -297,7 +302,7 @@ async def get_current_user(
     Returns the user row from public.users.
 
     Raises HTTP 401 if token is missing/invalid.
-    Phone verification is enforced by get_india_verified_user when configured.
+    Phone verification is enforced by get_phone_verified_user when configured.
     """
     if credentials is None:
         raise HTTPException(
@@ -362,21 +367,25 @@ async def get_current_user_with_supabase(
     return {**base, "_supabase_user": supabase_user}
 
 
-async def get_india_verified_user(
+async def get_phone_verified_user(
     current_user: dict = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Like get_current_user, with optional +91 phone verification enforcement."""
-    if settings.require_phone_verification and not current_user.get("india_verified"):
+    """Like get_current_user, with optional phone verification enforcement."""
+    if settings.require_phone_verification and not current_user.get("phone_verified"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Phone verification required. Please verify your +91 number.",
+            detail="Phone verification required. Please verify your mobile number.",
         )
     return current_user
 
 
+# Backwards-compatible alias for routes not yet renamed.
+get_india_verified_user = get_phone_verified_user
+
+
 async def get_current_candidate_id(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> uuid.UUID:
     """Resolve the signed-in user's candidate id, or 404.
@@ -397,7 +406,7 @@ async def get_current_candidate_id(
 
 
 async def get_recruiter_user(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Requires recruiter or admin role and an active recruiters row."""

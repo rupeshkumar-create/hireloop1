@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText, Linkedin, Mic, MapPin, IndianRupee, ChevronRight } from "lucide-react";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { Button, Card, CardBody } from "@/components/ui";
-import { updateMyProfile } from "@/lib/api/profile";
+import { getCachedProfile, updateMyProfile } from "@/lib/api/profile";
 import { isValidLinkedInUrl, saveLinkedInUrl } from "@/lib/api/onboardingProfile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
+import { profileSalaryToStorage, salaryInputLabel } from "@/lib/salary";
 import { cn } from "@/lib/utils";
 
 type ProfileBoostersProps = {
@@ -24,6 +26,7 @@ export function ProfileBoosters({
   onProfileUpdated,
   className,
 }: ProfileBoostersProps) {
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [locationCity, setLocationCity] = useState("");
   const [ctcMinLpa, setCtcMinLpa] = useState("");
   const [saving, setSaving] = useState(false);
@@ -52,11 +55,18 @@ export function ProfileBoosters({
     }
   }
 
+  const salaryLabel = salaryInputLabel(market);
+
+  useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
+  }, []);
+
   async function saveMinimalProfile() {
     const city = locationCity.trim();
-    const lpa = Number.parseFloat(ctcMinLpa);
-    if (!city || !Number.isFinite(lpa) || lpa <= 0) {
-      setError("Add your city and expected CTC (LPA) to unlock apply and intros.");
+    const sal = profileSalaryToStorage(ctcMinLpa, market);
+    if (!city || sal == null) {
+      setError(`Add your city and expected ${salaryLabel} to unlock apply and intros.`);
       return;
     }
     setSaving(true);
@@ -64,7 +74,7 @@ export function ProfileBoosters({
     try {
       await updateMyProfile({
         location_city: city,
-        expected_ctc_min: Math.round(lpa * 100_000),
+        expected_ctc_min: sal,
       });
       setSavedPrefs(true);
       onProfileUpdated?.();
@@ -156,7 +166,7 @@ export function ProfileBoosters({
               <label className="block space-y-1">
                 <span className="text-micro text-ink-500 flex items-center gap-1">
                   <IndianRupee className="h-3 w-3" />
-                  Expected CTC (LPA)
+                  {salaryLabel}
                 </span>
                 <input
                   type="number"

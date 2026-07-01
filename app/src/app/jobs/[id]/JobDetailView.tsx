@@ -27,7 +27,8 @@ import {
 } from "lucide-react";
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
-import { cn, formatLPA } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatSalaryRange } from "@/lib/salary";
 import { AppShell } from "@/components/layout/AppShell";
 import { Avatar, Badge, Button, ScoreDot, useToast } from "@/components/ui";
 
@@ -295,16 +296,13 @@ function JobDetailBody({
   onApply: () => void;
   onSaveToggle: () => void;
 }) {
-  const ctcLabel =
-    job.ctc_min && job.ctc_max
-      ? formatLPA(job.ctc_min, job.ctc_max)
-      : job.ctc_min
-      ? `${Math.round(job.ctc_min / 100_000)}+ LPA`
-      : null;
+  const ctcLabel = formatSalaryRange(job.ctc_min, job.ctc_max, {
+    currency: job.salary_currency,
+  });
 
   const locationLabel =
     [job.location_city, job.location_state].filter(Boolean).join(", ") ||
-    (job.is_remote ? "Remote" : "India");
+    (job.is_remote ? "Remote" : "Onsite");
 
   const posted = postedAgo(job.posted_at);
   // Split skills into "you have" vs "gap" when the API provides it; otherwise

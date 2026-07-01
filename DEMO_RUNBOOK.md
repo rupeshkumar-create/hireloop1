@@ -82,7 +82,7 @@ Add keys to `api/.env` (see `KEYS_AND_UNLOCKS.md`), **restart the API**, then:
 - **Relevance is real, not theatre:** weighted composite (skills 0.40 / profile 0.30 /
   experience 0.15 / location 0.10 / CTC 0.05), lexical + title-affinity so it works before
   embeddings, **hybrid RRF fusion**, MMR diversity, cross-ATS de-dup, saved-job boost.
-- **India-first & DPDP-compliant:** INR/LPA, geo-locked to IN, **no protected attributes in
+- **Multi-market & DPDP-compliant:** INR/USD/GBP salaries by market, **no protected attributes in
   scoring** (every match carries a bias-audit), raw voice not stored.
 - **Two agents, DB-only comms:** Aarya (candidate) + Nitya (recruiter) — no agent-to-agent RPC.
 - **Quality bar:** 205 backend tests, typed APIs, RLS on every table, prod-secret boot guard.

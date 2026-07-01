@@ -33,7 +33,7 @@ class UserSummary(BaseModel):
     full_name: str | None
     phone: str | None
     role: Literal["candidate", "recruiter", "admin"]
-    india_verified: bool
+    phone_verified: bool
     created_at: str
     deleted_at: str | None
 
@@ -46,7 +46,7 @@ class UserSummary(BaseModel):
 
 class UserUpdateRequest(BaseModel):
     role: Literal["candidate", "recruiter", "admin"] | None = None
-    india_verified: bool | None = None
+    phone_verified: bool | None = None
     restore: bool | None = Field(
         default=None,
         description="When true, clears users.deleted_at (does not restore candidate/recruiter).",
@@ -120,7 +120,7 @@ async def list_users(
     # user input (q, limit, offset) is bound as asyncpg parameters via *params.
     query = f"""
       SELECT
-        u.id, u.email, u.full_name, u.phone, u.role, u.india_verified,
+        u.id, u.email, u.full_name, u.phone, u.role, u.phone_verified,
         u.created_at, u.deleted_at,
         c.id AS candidate_id, c.is_active AS candidate_is_active,
         r.id AS recruiter_id, r.deleted_at AS recruiter_deleted_at
@@ -142,7 +142,7 @@ async def list_users(
                 "full_name": r["full_name"],
                 "phone": r["phone"],
                 "role": r["role"],
-                "india_verified": bool(r["india_verified"]),
+                "phone_verified": bool(r["phone_verified"]),
                 "created_at": r["created_at"].isoformat(),
                 "deleted_at": _iso(r["deleted_at"]),
                 "candidate_id": str(r["candidate_id"]) if r["candidate_id"] else None,
@@ -179,9 +179,9 @@ async def update_user(
         sets.append(f"role = ${idx}")
         params.append(body.role)
         idx += 1
-    if body.india_verified is not None:
-        sets.append(f"india_verified = ${idx}")
-        params.append(body.india_verified)
+    if body.phone_verified is not None:
+        sets.append(f"phone_verified = ${idx}")
+        params.append(body.phone_verified)
         idx += 1
     if body.restore:
         sets.append("deleted_at = NULL")
@@ -197,7 +197,7 @@ async def update_user(
     row = await db.fetchrow(
         """
         SELECT
-          u.id, u.email, u.full_name, u.phone, u.role, u.india_verified,
+          u.id, u.email, u.full_name, u.phone, u.role, u.phone_verified,
           u.created_at, u.deleted_at,
           c.id AS candidate_id, c.is_active AS candidate_is_active,
           r.id AS recruiter_id, r.deleted_at AS recruiter_deleted_at
@@ -217,7 +217,7 @@ async def update_user(
         "full_name": row["full_name"],
         "phone": row["phone"],
         "role": row["role"],
-        "india_verified": bool(row["india_verified"]),
+        "phone_verified": bool(row["phone_verified"]),
         "created_at": row["created_at"].isoformat(),
         "deleted_at": _iso(row["deleted_at"]),
         "candidate_id": str(row["candidate_id"]) if row["candidate_id"] else None,

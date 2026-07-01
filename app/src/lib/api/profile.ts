@@ -7,7 +7,8 @@ export type MyProfileData = {
     phone: string | null;
     full_name: string | null;
     role?: string;
-    india_verified?: boolean;
+    phone_verified?: boolean;
+    market?: string;
     avatar_url?: string | null;
     /** True for DB admins AND founders in SUPER_ADMIN_EMAILS — gates the Admin link. */
     is_admin?: boolean;
@@ -140,6 +141,14 @@ export async function updateMyProfile(patch: ProfilePatch): Promise<void> {
   await apiFetch("/api/v1/me/profile", {
     method: "PATCH",
     body: JSON.stringify(patch),
+  });
+  invalidateProfileCache();
+}
+
+export async function updateMyMarket(market: string): Promise<void> {
+  await apiFetch("/api/v1/me/market", {
+    method: "PATCH",
+    body: JSON.stringify({ market }),
   });
   invalidateProfileCache();
 }

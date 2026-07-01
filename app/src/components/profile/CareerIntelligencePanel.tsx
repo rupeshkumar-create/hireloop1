@@ -22,6 +22,12 @@ import { useEffect, useState } from "react";
 import { Brain, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { Badge, Button, Card, CardBody } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { getCachedProfile } from "@/lib/api/profile";
+import { marketByCode, type MarketCode } from "@/lib/markets";
+import {
+  formatCompensationAmount,
+  formatSalaryRange,
+} from "@/lib/salary";
 import {
   fetchCareerIntelligence,
   generateCareerIntelligence,
@@ -123,19 +129,6 @@ function Layer({
   );
 }
 
-const INR = new Intl.NumberFormat("en-IN", {
-  style: "currency",
-  currency: "INR",
-  maximumFractionDigits: 0,
-});
-
-function formatINR(n: number | null | undefined): string | null {
-  if (n === null || n === undefined) return null;
-  // Values are stored per-annum in rupees. Show in lakhs for readability.
-  if (n >= 100000) return `${INR.format(n)} (₹${(n / 100000).toFixed(1)} LPA)`;
-  return INR.format(n);
-}
-
 function pct(n: number | null | undefined): string | null {
   if (n === null || n === undefined) return null;
   return `${Math.round(n)}%`;
@@ -181,7 +174,7 @@ function MobilityList({
               type="button"
               onClick={() =>
                 onAskAarya(
-                  `Show me current India roles for "${opt.role}" and what it would take for me to move into it.`,
+                  `Show me current roles for "${opt.role}" in my market and what it would take for me to move into it.`,
                 )
               }
               className="text-micro font-medium text-accent hover:underline"
@@ -385,10 +378,16 @@ export function CareerIntelligencePanel({
   onAskAarya?: (message: string) => void;
 } = {}) {
   const [intel, setIntel] = useState<CareerIntelligence | null>(null);
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
+
+  useEffect(() => {
+    const m = getCachedProfile()?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -566,6 +565,7 @@ export function CareerIntelligencePanel({
   }
 
   const i = intel;
+  const salaryOpts = { market };
 
   // ── Hero headline values ───────────────────────────────────────────────────
   const primaryArchetype = i.career_dna?.primary_archetype;
@@ -574,7 +574,10 @@ export function CareerIntelligencePanel({
     i.data_completeness !== null && i.data_completeness !== undefined
       ? Math.min(100, Math.round(i.data_completeness))
       : null;
-  const marketValue = formatINR(i.compensation?.current_market_value);
+  const marketValue = formatCompensationAmount(
+    i.compensation?.current_market_value,
+    salaryOpts,
+  );
   const nextRole = i.prediction?.most_likely_next_role?.outcome;
   const nextRoleConf = pct(i.prediction?.most_likely_next_role?.confidence);
   const momentum =
@@ -683,7 +686,7 @@ export function CareerIntelligencePanel({
                   size="sm"
                   onClick={() =>
                     onAskAarya(
-                      `Find me current India jobs matching the "${nextRole}" direction, strongest fit first.`,
+                      `Find me current jobs matching the "${nextRole}" direction in my market, strongest fit first.`,
                     )
                   }
                 >
@@ -1038,19 +1041,31 @@ export function CareerIntelligencePanel({
             <Layer title="Compensation">
               <Fact
                 label="current market value"
-                value={formatINR(i.compensation.current_market_value)}
+                value={formatCompensationAmount(
+                  i.compensation.current_market_value,
+                  salaryOpts,
+                )}
               />
               {i.compensation.salary_range &&
                 (i.compensation.salary_range.min ||
                   i.compensation.salary_range.max) && (
                   <Fact
                     label="salary range"
-                    value={`${formatINR(i.compensation.salary_range.min) ?? "—"} – ${formatINR(i.compensation.salary_range.max) ?? "—"}`}
+                    value={
+                      formatSalaryRange(
+                        i.compensation.salary_range.min,
+                        i.compensation.salary_range.max,
+                        salaryOpts,
+                      ) ?? "—"
+                    }
                   />
                 )}
               <Fact
                 label="total compensation"
-                value={formatINR(i.compensation.total_compensation)}
+                value={formatCompensationAmount(
+                  i.compensation.total_compensation,
+                  salaryOpts,
+                )}
               />
               <Fact label="equity" value={i.compensation.equity_potential} />
               <ScoreBar
@@ -1114,7 +1129,10 @@ export function CareerIntelligencePanel({
                   />
                   <Fact
                     label="desired salary"
-                    value={formatINR(i.goals.explicit_goals.desired_salary)}
+                    value={formatCompensationAmount(
+                      i.goals.explicit_goals.desired_salary,
+                      salaryOpts,
+                    )}
                   />
                 </div>
               )}

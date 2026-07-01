@@ -670,7 +670,7 @@ export function VoiceSession({
             </p>
             <p className="text-small text-ink-500 leading-relaxed max-w-xs">
               Aarya will guide you through a 15-minute conversation about your
-              career goals — then start finding you the best matches in India.
+              career goals — then start finding you the best matches in your market.
               No typing needed.
             </p>
           </div>

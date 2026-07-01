@@ -174,16 +174,18 @@ async def main() -> None:
         # ── Public users ────────────────────────────────────────────────────
         await conn.execute(
             """
-            INSERT INTO public.users (id, email, phone, full_name, role, india_verified)
+            INSERT INTO public.users (id, email, phone, full_name, role, phone_verified, market, phone_country)
             VALUES
-              ($1::uuid, $2, '+919876543210', 'Priya Sharma', 'candidate', TRUE),
-              ($3::uuid, $4, '+919876543211', 'Arun Mehta', 'recruiter', TRUE)
+              ($1::uuid, $2, '+919876543210', 'Priya Sharma', 'candidate', TRUE, 'IN', 'IN'),
+              ($3::uuid, $4, '+919876543211', 'Arun Mehta', 'recruiter', TRUE, 'IN', 'IN')
             ON CONFLICT (id) DO UPDATE SET
               email = EXCLUDED.email,
               phone = EXCLUDED.phone,
               full_name = EXCLUDED.full_name,
               role = EXCLUDED.role,
-              india_verified = TRUE,
+              phone_verified = TRUE,
+              market = 'IN',
+              phone_country = 'IN',
               deleted_at = NULL,
               updated_at = NOW()
             """,
@@ -345,7 +347,6 @@ async def main() -> None:
               'Strong match (84%) — Python/FastAPI align with Senior Backend roles in Bengaluru.'
             FROM public.jobs j
             WHERE j.title ILIKE '%Senior Backend%'
-              AND j.country_code = 'IN'
               AND j.deleted_at IS NULL
             LIMIT 1
             ON CONFLICT (candidate_id, job_id) DO UPDATE SET

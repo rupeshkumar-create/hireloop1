@@ -5,7 +5,7 @@ Follow these instructions in addition to `.cursorrules`.
 
 ## Project identity
 
-**Hireloop** — India-first AI recruiting platform.
+**Hireloop** — AI recruiting platform for India, the US, and the UK.
 - **Aarya** = candidate-facing AI agent
 - **Nitya** = recruiter/HM-facing AI agent
 - Shared Postgres candidate graph via Supabase

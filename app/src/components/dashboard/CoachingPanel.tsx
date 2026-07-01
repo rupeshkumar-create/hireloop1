@@ -79,7 +79,7 @@ const COACHING_TABS: {
       {
         title: "Know your market value",
         desc: "Benchmark your CTC for your role and city.",
-        prompt: "What's my likely market value / CTC range for my role in India?",
+        prompt: "What's my likely market value / salary range for my role?",
       },
       {
         title: "Negotiate an offer",

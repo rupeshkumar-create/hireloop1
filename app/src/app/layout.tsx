@@ -16,8 +16,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const APP_ORIGIN =
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3001");
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://app.hireloop.in"),
+  metadataBase: new URL(APP_ORIGIN),
   title: {
     default: "Hireloop",
     template: "%s | Hireloop",

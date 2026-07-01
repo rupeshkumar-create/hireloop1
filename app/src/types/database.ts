@@ -21,7 +21,8 @@ export type Database = {
           full_name: string | null;
           avatar_url: string | null;
           role: "candidate" | "recruiter" | "admin";
-          india_verified: boolean;
+          phone_verified: boolean;
+          market: string;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
@@ -33,7 +34,8 @@ export type Database = {
           full_name?: string | null;
           avatar_url?: string | null;
           role?: "candidate" | "recruiter" | "admin";
-          india_verified?: boolean;
+          phone_verified?: boolean;
+          market?: string;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;

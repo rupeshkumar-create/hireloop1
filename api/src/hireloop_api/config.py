@@ -93,13 +93,52 @@ class Settings(BaseSettings):
 
     # ── Apify ─────────────────────────────────────────────────────────────────
     apify_token: str = ""
-    # Enable the Fantastic.jobs Career Site Job Listing actor as an additional
-    # ingestion source (India-only). Safe default: on.
+    # Enable the Fantastic.jobs Career Site Job Listing actor (IN/US/GB).
     apify_enable_career_site_ingest: bool = True
     apify_linkedin_jobs_actor: str = "bebity/linkedin-jobs-scraper"
     apify_career_site_actor: str = "fantastic-jobs/career-site-job-listing-api"
     # No-cookie LinkedIn profile actor for candidate onboarding (R16).
     apify_linkedin_profile_actor: str = "dev_fusion/linkedin-profile-scraper"
+
+    # ── Fantastic.jobs actor filters (career-site-job-listing-api) ────────────
+    fantastic_jobs_time_range: str = "24h"
+    fantastic_jobs_candidate_time_range: str = "7d"
+    fantastic_jobs_remove_agency: bool = True
+    fantastic_jobs_recruiter_only: bool = False
+    fantastic_jobs_exclude_ats_duplicate: bool = True
+    fantastic_jobs_populate_ai_remote: bool = True
+    fantastic_jobs_require_salary: bool = False
+    fantastic_jobs_visa_sponsorship_only: bool = False
+    fantastic_jobs_no_direct_apply: bool = False
+    fantastic_jobs_direct_apply_only: bool = False
+    fantastic_jobs_use_description_search_for_candidates: bool = True
+    fantastic_jobs_max_description_search_terms: int = 3
+    fantastic_jobs_org_employees_min: int = 0
+    fantastic_jobs_org_employees_max: int = 0
+    # Comma-separated lists — see fantastic_jobs_config.py / Apify input schema
+    fantastic_jobs_title_exclusions: list[str] = ["Intern:*", "Trainee:*", "Apprentice:*"]
+    fantastic_jobs_location_exclusions: list[str] = []
+    fantastic_jobs_description_exclusions: list[str] = []
+    fantastic_jobs_organization_exclusions: list[str] = []
+    fantastic_jobs_organization_slug_exclusions: list[str] = []
+    fantastic_jobs_industry_exclusions: list[str] = []
+    fantastic_jobs_ai_work_arrangement: list[str] = []
+    fantastic_jobs_ai_employment_types: list[str] = [
+        "FULL_TIME",
+        "PART_TIME",
+        "CONTRACTOR",
+        "INTERN",
+    ]
+    fantastic_jobs_ai_experience_levels: list[str] = []
+    fantastic_jobs_ai_languages: list[str] = ["English"]
+    fantastic_jobs_seniority_filter: list[str] = []
+    fantastic_jobs_industry_filter: list[str] = []
+    fantastic_jobs_organization_search: list[str] = []
+    fantastic_jobs_organization_slug_filter: list[str] = []
+    fantastic_jobs_organization_size_filter: list[str] = []
+    fantastic_jobs_ai_taxonomies: list[str] = []
+    fantastic_jobs_ai_taxonomies_primary: list[str] = []
+    fantastic_jobs_ai_taxonomies_exclusions: list[str] = []
 
     # ── ATS feeds (#26) — free first-party boards, no Apify spend ─────────────
     # Comma-separated allowlists. Greenhouse board tokens (the slug in
@@ -164,8 +203,13 @@ class Settings(BaseSettings):
     msg91_job_match_template: str = ""
     msg91_intro_status_template: str = ""
 
-    # Dev-only: when True and is_development, save-phone also sets india_verified.
+    # Dev-only: when True and is_development, save-phone also sets phone_verified.
     allow_phone_save_bypass: bool = False
+
+    # ── Multi-region markets ─────────────────────────────────────────────────
+    # Comma-separated ISO codes. Default IN-only until ingest + UX are ready per market.
+    enabled_markets: list[str] = ["IN", "US", "GB"]
+    default_market: str = "IN"
 
     # ── Twilio Verify (optional OTP provider) ────────────────────────────────
     twilio_account_sid: str = ""
@@ -192,12 +236,43 @@ class Settings(BaseSettings):
             return [s.strip().lower() for s in v.split(",") if s.strip()]
         return [str(s).strip().lower() for s in v if str(s).strip()]
 
-    @field_validator("ats_greenhouse_boards", "ats_lever_companies", mode="before")
+    @field_validator(
+        "ats_greenhouse_boards",
+        "ats_lever_companies",
+        "fantastic_jobs_title_exclusions",
+        "fantastic_jobs_location_exclusions",
+        "fantastic_jobs_description_exclusions",
+        "fantastic_jobs_organization_exclusions",
+        "fantastic_jobs_organization_slug_exclusions",
+        "fantastic_jobs_industry_exclusions",
+        "fantastic_jobs_ai_work_arrangement",
+        "fantastic_jobs_ai_employment_types",
+        "fantastic_jobs_ai_experience_levels",
+        "fantastic_jobs_ai_languages",
+        "fantastic_jobs_seniority_filter",
+        "fantastic_jobs_industry_filter",
+        "fantastic_jobs_organization_search",
+        "fantastic_jobs_organization_slug_filter",
+        "fantastic_jobs_organization_size_filter",
+        "fantastic_jobs_ai_taxonomies",
+        "fantastic_jobs_ai_taxonomies_primary",
+        "fantastic_jobs_ai_taxonomies_exclusions",
+        mode="before",
+    )
     @classmethod
-    def split_ats_lists(cls, v: str | list[str]) -> list[str]:
+    def split_csv_lists(cls, v: str | list[str]) -> list[str]:
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
         return [str(s).strip() for s in v if str(s).strip()]
+
+    @field_validator("enabled_markets", mode="before")
+    @classmethod
+    def split_enabled_markets(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            parts = [s.strip().upper() for s in v.split(",") if s.strip()]
+        else:
+            parts = [str(s).strip().upper() for s in v if str(s).strip()]
+        return parts or ["IN"]
 
     # Secrets that MUST be overridden in production. Their insecure defaults gate
     # privileged surfaces (service-secret webhooks, admin job ingest/cron, token

@@ -18,6 +18,7 @@ export type MatchedJob = {
   employment_type: string | null;
   ctc_min: number | null;
   ctc_max: number | null;
+  salary_currency?: string | null;
   skills_required: string[];
   apply_url: string | null;
   // Full posting detail (single-match endpoint)

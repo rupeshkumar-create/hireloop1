@@ -26,7 +26,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.market_db import fetch_user_market
+from hireloop_api.markets import job_visible_for_market_sql, normalize_market
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -193,22 +195,30 @@ async def list_jobs(
     ctc_min: int | None = Query(default=None, description="Min CTC filter (INR p.a.)"),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     """
-    List active India jobs with optional filters.
-    Always enforces country_code = 'IN' and is_active = TRUE.
+    List active jobs in the candidate's market with optional filters.
     """
+    user_market = normalize_market(current_user.get("market"))
+    if not current_user.get("market"):
+        user_market = await fetch_user_market(db, uuid.UUID(str(current_user["id"])))
+
     # Build dynamic WHERE clauses
     conditions: list[str] = [
         "j.is_active = TRUE",
-        "j.country_code = 'IN'",
         "j.deleted_at IS NULL",
         "j.expires_at > NOW()",
     ]
     params: list[Any] = []
     param_idx = 1
+
+    market_param = f"${param_idx}"
+    vis = job_visible_for_market_sql(market_param=market_param)
+    conditions.append(vis)
+    params.append(user_market)
+    param_idx += 1
 
     if q:
         conditions.append(
@@ -293,20 +303,24 @@ async def list_jobs(
 @router.get("/{job_id}", response_model=JobDetail)
 async def get_job(
     job_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
-    Fetch full detail for a single job.
-    Only returns active IN jobs (country_code enforced).
+    Fetch full detail for a single job visible in the candidate's market.
     """
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID format") from None
 
+    user_market = normalize_market(current_user.get("market"))
+    if not current_user.get("market"):
+        user_market = await fetch_user_market(db, uuid.UUID(str(current_user["id"])))
+    vis = job_visible_for_market_sql(market_param="$2")
+
     row = await db.fetchrow(
-        """
+        f"""
         SELECT
             j.id,
             j.title,
@@ -322,6 +336,8 @@ async def get_job(
             j.seniority,
             j.ctc_min,
             j.ctc_max,
+            j.salary_currency,
+            j.allowed_regions,
             j.skills_required,
             j.apply_url,
             j.source,
@@ -335,10 +351,11 @@ async def get_job(
         LEFT JOIN public.companies co ON co.id = j.company_id
         WHERE j.id = $1
           AND j.is_active = TRUE
-          AND j.country_code = 'IN'
+          AND {vis}
           AND j.deleted_at IS NULL
-        """,
+        """,  # noqa: S608
         job_uuid,
+        user_market,
     )
 
     if not row:

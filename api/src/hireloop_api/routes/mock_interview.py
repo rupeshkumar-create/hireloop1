@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
@@ -88,7 +88,7 @@ class MockMessageRequest(BaseModel):
 @router.post("/sessions", status_code=201)
 async def start_mock_session(
     body: StartMockRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     # Each mock session drives multiple LLM turns — cap per user per hour.
@@ -152,7 +152,7 @@ async def start_mock_session(
 @router.get("/sessions/{mock_id}")
 async def get_mock_session(
     mock_id: uuid.UUID,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Return session metadata (type, target role, status)."""
@@ -176,7 +176,7 @@ async def get_mock_session(
 async def mock_message(
     mock_id: uuid.UUID,
     body: MockMessageRequest,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -279,7 +279,7 @@ async def mock_message(
 
 @router.get("/sessions")
 async def list_mock_sessions(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
     rows = await db.fetch(

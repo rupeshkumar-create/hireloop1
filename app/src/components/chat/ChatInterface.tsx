@@ -1537,7 +1537,7 @@ function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
       description: "Realistic CTC range for your next move",
       kind: "message",
       message:
-        "Based on my profile, experience, and the India market, what CTC range could I realistically target next?",
+        "Based on my profile, experience, and my market, what salary range could I realistically target next?",
     },
     {
       Icon: BookOpen,

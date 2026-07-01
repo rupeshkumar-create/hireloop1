@@ -28,7 +28,7 @@ const SCRIPT: Line[] = [
   { role: "user", text: "Senior backend roles in Bangalore, ₹40L+, remote-friendly." },
   {
     role: "assistant",
-    text: "On it. Found 12 live roles in India that fit. Your strongest match is a Staff Backend role at a Series B fintech — 91% fit. Want a warm intro?",
+    text: "On it. Found 12 live roles in your market that fit. Your strongest match is a Staff Backend role at a Series B fintech — 91% fit. Want a warm intro?",
     actions: "Aarya performed 3 actions",
   },
   { role: "user", text: "Yes, request the intro." },
@@ -118,7 +118,7 @@ export function ChatPreview() {
         </div>
         <div className="min-w-0">
           <p className="text-small font-semibold text-ink-900 leading-none">Aarya</p>
-          <p className="text-micro text-ink-400 mt-0.5">India-first AI recruiting copilot</p>
+          <p className="text-micro text-ink-400 mt-0.5">AI recruiting copilot · IN / US / UK</p>
         </div>
         <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-paper-0 px-2 py-1 text-micro text-ink-500 ring-1 ring-ink-100">
           <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />

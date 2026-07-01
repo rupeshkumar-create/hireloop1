@@ -104,14 +104,14 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
         {roleLabel} jobs in {cityLabel}
       </h1>
       <p className="mt-4 text-ink-700">
-        Hireloop surfaces India-only {roleLabel} openings in {cityLabel} with AI match scores,
-        direct apply links, and warm intros to hiring managers — salaries in INR, no spam.
+        Hireloop surfaces {roleLabel} openings in {cityLabel} with AI match scores,
+        direct apply links, and warm intros to hiring managers — local currency salaries, no spam.
       </p>
 
       <section className="mt-8 rounded-2xl border bg-ink-50 p-6">
         <h2 className="font-semibold">Why candidates use Hireloop</h2>
         <ul className="mt-3 list-disc list-inside text-sm text-ink-700 space-y-1">
-          <li>Daily ranked matches (India geo-lock, INR salaries)</li>
+          <li>Daily ranked matches in your market (IN / US / GB)</li>
           <li>Request Intro — email from your Gmail, not spam</li>
           <li>Tailored résumé per JD in under 30 seconds</li>
         </ul>

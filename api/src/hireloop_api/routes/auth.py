@@ -2,7 +2,7 @@
 Authentication routes — phone collection and optional OTP.
 
 Flow:
-  1. POST /api/v1/auth/save-phone   → saves +91 number (onboarding; sets india_verified)
+  1. POST /api/v1/auth/save-phone   → saves +91 number (onboarding; sets phone_verified)
   2. POST /api/v1/auth/send-otp     → optional OTP via MSG91 SMS
   3. POST /api/v1/auth/verify-otp   → optional OTP verification
   4. GET  /api/v1/auth/me           → returns current user profile
@@ -25,7 +25,7 @@ import asyncpg
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import (
@@ -36,14 +36,15 @@ from hireloop_api.deps import (
     get_db_optional,
     get_supabase_identity,
 )
+from hireloop_api.markets import normalize_market, validate_e164_phone
 from hireloop_api.services import otp_store
 from hireloop_api.services.consent import log_consent
+from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
 from hireloop_api.services.linkedin_oauth import (
     extract_linkedin_headline,
     extract_linkedin_profile_url,
     heal_candidate_headline_from_linkedin,
 )
-from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
 from hireloop_api.services.whatsapp.msg91 import Msg91Client
 
 logger = structlog.get_logger()
@@ -62,22 +63,29 @@ OTP_RESEND_COOLDOWN_SECONDS = 30
 
 class SendOTPRequest(BaseModel):
     phone: str
+    market: str = "IN"
 
-    @field_validator("phone")
-    @classmethod
-    def validate_india_phone(cls, v: str) -> str:
-        # India geo-lock: +91 only, valid mobile prefix (6-9)
-        if not v.startswith("+91"):
-            raise ValueError("Only Indian phone numbers (+91) are accepted")
-        digits = v[3:]
-        if not digits.isdigit() or len(digits) != 10 or digits[0] not in "6789":
-            raise ValueError("Invalid Indian mobile number")
-        return v
+    @model_validator(mode="after")
+    def validate_phone(self) -> "SendOTPRequest":
+        try:
+            self.phone = validate_e164_phone(self.phone, self.market)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class VerifyOTPRequest(BaseModel):
     phone: str
     otp: str
+    market: str = "IN"
+
+    @model_validator(mode="after")
+    def validate_phone(self) -> "VerifyOTPRequest":
+        try:
+            self.phone = validate_e164_phone(self.phone, self.market)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
     @field_validator("otp")
     @classmethod
@@ -97,27 +105,25 @@ class SendOTPResponse(BaseModel):
 
 class VerifyOTPResponse(BaseModel):
     message: str
-    india_verified: bool
+    phone_verified: bool
 
 
 class SavePhoneRequest(BaseModel):
     phone: str
+    market: str = "IN"
 
-    @field_validator("phone")
-    @classmethod
-    def validate_india_phone(cls, v: str) -> str:
-        # Same +91 format check as OTP — we still store a clean, valid number.
-        if not v.startswith("+91"):
-            raise ValueError("Only Indian phone numbers (+91) are accepted")
-        digits = v[3:]
-        if not digits.isdigit() or len(digits) != 10 or digits[0] not in "6789":
-            raise ValueError("Invalid Indian mobile number")
-        return v
+    @model_validator(mode="after")
+    def validate_phone(self) -> "SavePhoneRequest":
+        try:
+            self.phone = validate_e164_phone(self.phone, self.market)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class SavePhoneResponse(BaseModel):
     message: str
-    india_verified: bool
+    phone_verified: bool
 
 
 class BootstrapRequest(BaseModel):
@@ -191,8 +197,10 @@ def _is_twilio_trial_destination_error(exc: HTTPException) -> bool:
 
 def _select_otp_provider(
     settings: Settings,
+    market: str = "IN",
 ) -> Literal["msg91", "twilio", "local", "unconfigured"]:
-    if _is_msg91_configured(settings):
+    m = normalize_market(market)
+    if m == "IN" and _is_msg91_configured(settings):
         return "msg91"
     if _is_twilio_verify_configured(settings):
         return "twilio"
@@ -491,6 +499,7 @@ async def send_otp(
     Rate limited: max 3 OTP sends per phone per hour (enforced by Cloudflare WAF + this code).
     """
     phone = body.phone
+    market = normalize_market(body.market)
 
     # Cooldown: allow resend only after a short wait (UI shows countdown).
     elapsed = await otp_store.seconds_since_last_send(db, phone)
@@ -503,7 +512,7 @@ async def send_otp(
                 headers={"Retry-After": str(remaining)},
             )
 
-    provider = _select_otp_provider(settings)
+    provider = _select_otp_provider(settings, market)
 
     if provider == "unconfigured":
         raise HTTPException(
@@ -564,11 +573,12 @@ async def verify_otp(
     db: asyncpg.Connection = Depends(get_db),
 ) -> VerifyOTPResponse:
     """
-    Verify OTP. On success, marks the user as india_verified = TRUE.
+    Verify OTP. On success, marks the user as phone_verified = TRUE.
     Requires the user to already have a Supabase Auth session.
     """
     phone = body.phone
-    provider = _select_otp_provider(settings)
+    market = normalize_market(body.market)
+    provider = _select_otp_provider(settings, market)
     if provider == "twilio":
         await _verify_twilio_otp(phone, body.otp, settings)
     else:
@@ -616,12 +626,15 @@ async def verify_otp(
             """
             UPDATE public.users SET
               phone = $2,
-              india_verified = TRUE,
+              phone_verified = TRUE,
+              market = $3,
+              phone_country = $3,
               updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL
             """,
             user_id,
             phone,
+            market,
         )
     except asyncpg.UniqueViolationError as exc:
         # Most likely: another account already verified this number.
@@ -635,8 +648,7 @@ async def verify_otp(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "This phone number is already linked to another Hireloop "
-                "account. Sign in with that account, or use a different "
-                "+91 number."
+                "account. Sign in with that account, or use a different number."
             ),
         ) from exc
 
@@ -651,6 +663,16 @@ async def verify_otp(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Your user record is missing. Sign out and sign in again.",
         )
+
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET market = $2, updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        market,
+    )
 
     # ── INSERT consent_log — non-fatal if it fails, log and continue ─────
     try:
@@ -683,7 +705,7 @@ async def verify_otp(
 
     return VerifyOTPResponse(
         message="Phone verified successfully",
-        india_verified=True,
+        phone_verified=True,
     )
 
 
@@ -698,10 +720,11 @@ async def save_phone(
     """
     Save the user's +91 mobile number (format-validated, unique).
 
-    Onboarding flow: collect the number and mark india_verified so gated routes
+    Onboarding flow: collect the number and mark phone_verified so gated routes
     unlock. WhatsApp alerts use this number — no OTP required for signup.
     """
     phone = body.phone
+    market = normalize_market(body.market)
     user_id = uuid.UUID(str(supabase_user["id"]))
 
     saved_via_rest = False
@@ -711,12 +734,15 @@ async def save_phone(
                 """
                 UPDATE public.users SET
                   phone = $2,
-                  india_verified = TRUE,
+                  phone_verified = TRUE,
+                  market = $3,
+                  phone_country = $3,
                   updated_at = NOW()
                 WHERE id = $1 AND deleted_at IS NULL
                 """,
                 user_id,
                 phone,
+                market,
             )
             if result.endswith(" 0"):
                 provisioned = await _provision_user_row(db, supabase_user)
@@ -729,12 +755,15 @@ async def save_phone(
                     """
                     UPDATE public.users SET
                       phone = $2,
-                      india_verified = TRUE,
+                      phone_verified = TRUE,
+                      market = $3,
+                      phone_country = $3,
                       updated_at = NOW()
                     WHERE id = $1 AND deleted_at IS NULL
                     """,
                     user_id,
                     phone,
+                    market,
                 )
                 if result.endswith(" 0"):
                     raise HTTPException(
@@ -751,6 +780,15 @@ async def save_phone(
                 )
             except Exception as exc:
                 logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
+            await db.execute(
+                """
+                UPDATE public.candidates
+                SET market = $2, updated_at = NOW()
+                WHERE user_id = $1::uuid AND deleted_at IS NULL
+                """,
+                user_id,
+                market,
+            )
         except asyncpg.UniqueViolationError as exc:
             logger.warning(
                 "phone_already_claimed",
@@ -762,7 +800,7 @@ async def save_phone(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     "This phone number is already linked to another Hireloop "
-                    "account. Use a different +91 number."
+                    "account. Use a different number."
                 ),
             ) from exc
         except Exception as exc:
@@ -796,7 +834,7 @@ async def save_phone(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "This phone number is already linked to another Hireloop "
-                        "account. Use a different +91 number."
+                                            "account. Use a different number."
                     ),
                 ) from exc
             raise
@@ -827,7 +865,7 @@ async def save_phone(
 
     return SavePhoneResponse(
         message="Phone number saved",
-        india_verified=True,
+        phone_verified=True,
     )
 
 
@@ -840,6 +878,6 @@ async def get_me(
         "id": str(current_user["id"]),
         "email": current_user["email"],
         "role": current_user["role"],
-        "india_verified": current_user["india_verified"],
+        "phone_verified": current_user["phone_verified"],
         "full_name": current_user["full_name"],
     }

@@ -21,7 +21,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from hireloop_api.deps import get_db, get_india_verified_user
+from hireloop_api.deps import get_db, get_phone_verified_user
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/intros", tags=["intros"])
@@ -55,7 +55,7 @@ class IntroDetail(IntroSummary):
 
 @router.get("", response_model=list[IntroSummary])
 async def list_intros(
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     limit: int = 50,
     offset: int = 0,
@@ -97,7 +97,7 @@ async def list_intros(
 @router.get("/{intro_id}", response_model=IntroDetail)
 async def get_intro(
     intro_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Get full intro request detail including draft email preview."""
@@ -159,7 +159,7 @@ def _normalize_intro_status(status: str) -> str:
 @router.post("/{intro_id}/approve-send", status_code=200)
 async def approve_and_send_intro(
     intro_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Candidate approves Nitya's draft and triggers Gmail send (R9)."""
@@ -230,7 +230,7 @@ async def approve_and_send_intro(
 
 async def cancel_intro(
     intro_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Cancel a pending intro request."""
@@ -271,7 +271,7 @@ async def cancel_intro(
 async def respond_to_intro(
     intro_id: str,
     accept: bool = True,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Candidate accepts or declines a recruiter→candidate intro request."""
@@ -348,7 +348,7 @@ async def respond_to_intro(
 @router.get("/{intro_id}/messages")
 async def list_intro_messages(
     intro_id: str,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Candidate reads the direct chat thread for an intro."""
@@ -364,7 +364,7 @@ async def list_intro_messages(
 async def send_intro_message(
     intro_id: str,
     body: dict,
-    current_user: dict = Depends(get_india_verified_user),
+    current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Candidate posts a message in an accepted intro thread."""

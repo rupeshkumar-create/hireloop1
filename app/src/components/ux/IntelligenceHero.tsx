@@ -56,7 +56,7 @@ export function IntelligenceHero({
             size="sm"
             onClick={() =>
               onAskAarya(
-                `Find me current India jobs matching the "${nextRole}" direction, strongest fit first.`,
+                `Find me current jobs matching the "${nextRole}" direction in my market, strongest fit first.`,
               )
             }
           >

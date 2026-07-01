@@ -21,7 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import (
     get_current_user,
-    get_india_verified_user,
+    get_phone_verified_user,
     get_recruiter_user,
     reset_db_pool,
 )
@@ -122,9 +122,9 @@ async def candidate_user(db_conn: asyncpg.Connection) -> dict[str, str]:
     )
     await db_conn.execute(
         """
-        INSERT INTO public.users (id, email, full_name, role, india_verified)
-        VALUES ($1, $2, 'Integration Tester', 'candidate', TRUE)
-        ON CONFLICT (id) DO UPDATE SET india_verified = TRUE
+        INSERT INTO public.users (id, email, full_name, role, phone_verified, market, phone_country)
+        VALUES ($1, $2, 'Integration Tester', 'candidate', TRUE, 'IN', 'IN')
+        ON CONFLICT (id) DO UPDATE SET phone_verified = TRUE, market = 'IN', phone_country = 'IN'
         """,
         user_id,
         email,
@@ -157,12 +157,12 @@ async def api_client(
             "id": candidate_user["user_id"],
             "email": candidate_user["email"],
             "role": "candidate",
-            "india_verified": True,
+            "phone_verified": True,
         }
 
     app.dependency_overrides[get_settings] = lambda: integration_settings
     app.dependency_overrides[get_current_user] = _user
-    app.dependency_overrides[get_india_verified_user] = _user
+    app.dependency_overrides[get_phone_verified_user] = _user
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -184,9 +184,9 @@ async def recruiter_user(db_conn: asyncpg.Connection) -> dict[str, str]:
     )
     await db_conn.execute(
         """
-        INSERT INTO public.users (id, email, full_name, role, india_verified)
+        INSERT INTO public.users (id, email, full_name, role, phone_verified)
         VALUES ($1, $2, 'Recruiter Tester', 'recruiter', TRUE)
-        ON CONFLICT (id) DO UPDATE SET role = 'recruiter', india_verified = TRUE
+        ON CONFLICT (id) DO UPDATE SET role = 'recruiter', phone_verified = TRUE
         """,
         user_id,
         email,
@@ -234,13 +234,13 @@ async def recruiter_api_client(
             "id": recruiter_user["user_id"],
             "email": recruiter_user["email"],
             "role": "recruiter",
-            "india_verified": True,
+            "phone_verified": True,
             "recruiter": dict(recruiter_row) if recruiter_row else None,
         }
 
     app.dependency_overrides[get_settings] = lambda: integration_settings
     app.dependency_overrides[get_current_user] = _user
-    app.dependency_overrides[get_india_verified_user] = _user
+    app.dependency_overrides[get_phone_verified_user] = _user
     app.dependency_overrides[get_recruiter_user] = _user
 
     transport = ASGITransport(app=app)
