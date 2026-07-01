@@ -76,9 +76,13 @@
   }
 
   /* Forms — strip default chrome so primitives stay consistent */
-  input, textarea, select, button {
+  input, textarea, select {
     font: inherit;
     color: inherit;
+  }
+
+  button {
+    font: inherit;
   }
 
   /* Universal placeholder colour */

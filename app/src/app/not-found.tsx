@@ -26,7 +26,7 @@ export default async function NotFound() {
         <div className="mt-6 flex items-center justify-center gap-3">
           <Link
             href={primaryHref}
-            className="inline-flex items-center rounded-md bg-ink-900 px-4 py-2 text-small font-medium text-paper-0 hover:bg-ink-700 transition-colors"
+            className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-small font-medium text-accent-fg hover:bg-accent-hover transition-colors"
           >
             {primaryLabel}
           </Link>

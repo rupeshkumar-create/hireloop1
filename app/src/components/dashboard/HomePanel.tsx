@@ -202,7 +202,7 @@ function SetupChecklist({
             <button
               type="button"
               onClick={() => onOpenPanel("jobs")}
-              className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-ink-900 px-3 py-2 text-small font-medium text-paper-0 hover:bg-ink-800 transition-colors"
+              className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-small font-medium text-accent-fg hover:bg-accent-hover transition-colors"
             >
               <Search className="h-4 w-4" strokeWidth={1.5} />
               See your {jobCount} {jobCount === 1 ? "match" : "matches"}
@@ -450,7 +450,7 @@ export function HomePanel({
                 className={cn(
                   "w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-fast",
                   isActive
-                    ? "border-ink-900 bg-ink-50"
+                    ? "border-accent bg-ink-50"
                     : "border-ink-200 hover:border-ink-300 hover:bg-ink-50",
                   savingVis !== null && "opacity-70",
                 )}

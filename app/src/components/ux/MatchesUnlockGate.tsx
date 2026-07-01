@@ -50,7 +50,7 @@ export function MatchesUnlockGate({
             )}
             <Link
               href="/voice"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-ink-50 px-4 text-body font-medium text-ink-900 hover:bg-ink-100"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-ink-200 bg-transparent px-4 text-body font-medium text-ink-900 hover:bg-ink-50 hover:border-ink-300"
             >
               <Mic className="h-4 w-4" />
               Talk to Aarya

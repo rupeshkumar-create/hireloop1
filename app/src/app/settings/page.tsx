@@ -178,7 +178,7 @@ export default function SettingsPage() {
           <CardFooter>
             <Link
               href="/dashboard?panel=profile"
-              className="inline-flex items-center justify-center font-medium h-9 px-3 text-small rounded-md bg-ink-50 text-ink-900 hover:bg-ink-100 transition-colors"
+              className="inline-flex items-center justify-center font-medium h-9 px-3 text-small rounded-md border border-ink-200 bg-transparent text-ink-900 hover:bg-ink-50 hover:border-ink-300 transition-colors"
             >
               Edit in Profile
             </Link>

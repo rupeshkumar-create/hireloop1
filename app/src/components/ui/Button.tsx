@@ -34,8 +34,8 @@ const VARIANT: Record<Variant, string> = {
     "bg-accent text-accent-fg hover:bg-accent-hover active:bg-accent-hover " +
     "disabled:bg-ink-100 disabled:text-ink-300",
   secondary:
-    "bg-ink-50 text-ink-900 hover:bg-ink-100 active:bg-ink-100 " +
-    "disabled:bg-ink-50 disabled:text-ink-300",
+    "bg-transparent border border-ink-200 text-ink-900 hover:bg-ink-50 hover:border-ink-300 active:bg-ink-50 " +
+    "disabled:bg-transparent disabled:text-ink-300 disabled:border-ink-100",
   ghost:
     "bg-transparent text-ink-700 hover:bg-ink-50 active:bg-ink-100 " +
     "disabled:text-ink-300",

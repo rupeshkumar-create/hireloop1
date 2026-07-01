@@ -150,7 +150,7 @@ export function JobsPanel({
               <button
                 type="button"
                 onClick={() => selectTab("path")}
-                className="rounded-lg bg-ink-900 px-4 py-2 text-small font-medium text-paper-0 hover:bg-ink-800"
+                className="rounded-lg bg-accent px-4 py-2 text-small font-medium text-accent-fg hover:bg-accent-hover"
               >
                 View career paths
               </button>

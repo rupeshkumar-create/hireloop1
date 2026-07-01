@@ -11,6 +11,9 @@ import { marketByCode, type MarketCode } from "@/lib/markets";
 import { profileSalaryToStorage, salaryInputLabel } from "@/lib/salary";
 import { cn } from "@/lib/utils";
 
+const FIELD_CLASS =
+  "w-full rounded-md border border-ink-100 bg-paper-1 px-2.5 py-2 text-small text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-ring";
+
 type ProfileBoostersProps = {
   hasResume: boolean;
   hasVoiceSession: boolean;
@@ -118,7 +121,7 @@ export function ProfileBoosters({
                 value={linkedinUrl}
                 onChange={(e) => setLinkedinUrl(e.target.value)}
                 placeholder="linkedin.com/in/your-profile"
-                className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+                className={FIELD_CLASS}
               />
               {liError && <p className="text-micro text-destructive">{liError}</p>}
               <Button
@@ -160,7 +163,7 @@ export function ProfileBoosters({
                   value={locationCity}
                   onChange={(e) => setLocationCity(e.target.value)}
                   placeholder="Bangalore"
-                  className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+                  className={FIELD_CLASS}
                 />
               </label>
               <label className="block space-y-1">
@@ -174,7 +177,7 @@ export function ProfileBoosters({
                   value={ctcMinLpa}
                   onChange={(e) => setCtcMinLpa(e.target.value)}
                   placeholder="18"
-                  className="w-full rounded-md border border-ink-100 px-2.5 py-2 text-small focus:outline-none focus:ring-2 focus:ring-accent/15"
+                  className={FIELD_CLASS}
                 />
               </label>
             </div>

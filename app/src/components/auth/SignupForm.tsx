@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
 
 type Role = "candidate" | "recruiter";
 
@@ -230,14 +230,17 @@ export function SignupForm() {
         </div>
       </div>
 
-      <button
+      <Button
         type="button"
+        variant="primary"
+        size="lg"
+        fullWidth
+        loading={isLoading}
         onClick={handleLinkedInSignIn}
-        disabled={isLoading}
-        className="w-full rounded-lg bg-ink-900 py-3 font-semibold text-paper-0 transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper-1 disabled:opacity-60"
+        className="rounded-lg"
       >
         {isLoading ? "Redirecting..." : "Continue with LinkedIn"}
-      </button>
+      </Button>
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center">
@@ -261,7 +264,7 @@ export function SignupForm() {
           <button
             type="submit"
             disabled={isLoading || !email.trim()}
-            className="w-full rounded-lg border border-ink-200 bg-paper-0 py-3 font-semibold text-ink-900 transition-colors hover:bg-ink-50 disabled:opacity-60"
+            className="w-full rounded-lg border border-ink-200 bg-transparent py-3 font-semibold text-ink-900 transition-colors hover:bg-ink-50 hover:border-ink-300 disabled:opacity-60"
           >
             {isLoading ? "Sending…" : "Email me a login code"}
           </button>
@@ -277,13 +280,17 @@ export function SignupForm() {
             autoComplete="one-time-code"
             required
           />
-          <button
+          <Button
             type="submit"
-            disabled={isLoading || otpCode.length < 6}
-            className="w-full rounded-lg bg-ink-900 py-3 font-semibold text-paper-0 transition-colors hover:bg-ink-800 disabled:opacity-60"
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isLoading}
+            disabled={otpCode.length < 6}
+            className="rounded-lg"
           >
             {isLoading ? "Verifying…" : "Verify & continue"}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => {
@@ -327,7 +334,7 @@ export function SignupForm() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-lg border border-ink-200 bg-paper-0 py-2.5 text-sm font-medium text-ink-900 hover:bg-ink-50 disabled:opacity-60"
+            className="w-full rounded-lg border border-ink-200 bg-transparent py-2.5 text-sm font-medium text-ink-900 hover:bg-ink-50 hover:border-ink-300 disabled:opacity-60"
           >
             {isLoading ? "Signing in…" : "Sign in with email (dev)"}
           </button>

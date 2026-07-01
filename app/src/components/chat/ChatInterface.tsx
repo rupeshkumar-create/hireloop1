@@ -1346,7 +1346,7 @@ export function ChatInterface({
                     className={cn(
                       "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
                       !isStreaming
-                        ? "bg-ink-900 text-paper-0 hover:bg-ink-800"
+                        ? "bg-accent text-accent-fg hover:bg-accent-hover"
                         : "bg-ink-100 text-ink-300 cursor-not-allowed",
                     )}
                   >
@@ -1381,7 +1381,7 @@ export function ChatInterface({
                       "w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-fast",
                       isRecording
                         ? "bg-destructive text-paper-0 animate-pulse"
-                        : "bg-ink-900 text-paper-0 hover:bg-ink-800",
+                        : "bg-ink-50 text-ink-900 border border-ink-100 hover:bg-ink-100 hover:border-ink-200",
                       (isStreaming || voiceProcessing) &&
                         "opacity-40 cursor-not-allowed",
                     )}

@@ -196,19 +196,19 @@ export function HomeMissionHero({
         ))}
       </div>
 
-      <div className="rounded-lg bg-ink-900 px-4 py-3 text-paper-0 space-y-2">
-        <div className="flex items-center gap-2 text-micro font-medium text-ink-300">
+      <div className="rounded-lg border border-accent/25 bg-paper-0 px-4 py-3 space-y-2">
+        <div className="flex items-center gap-2 text-micro font-medium text-accent">
           <Route className="h-3.5 w-3.5" strokeWidth={1.5} />
           Next step
         </div>
-        <p className="text-small font-semibold leading-snug">{next.label}</p>
-        <p className="text-micro text-ink-300 leading-snug">{next.hint}</p>
+        <p className="text-small font-semibold leading-snug text-ink-900">{next.label}</p>
+        <p className="text-micro text-ink-500 leading-snug">{next.hint}</p>
         <Button
-          variant="secondary"
+          variant="primary"
           size="sm"
           onClick={next.onClick}
           rightIcon={<ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />}
-          className="mt-1 bg-paper-0 text-ink-900 hover:bg-ink-50 border-0"
+          className="mt-1"
         >
           Continue
         </Button>

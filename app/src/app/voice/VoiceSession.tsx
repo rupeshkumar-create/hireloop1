@@ -628,7 +628,7 @@ export function VoiceSession({
             <button
               type="button"
               onClick={() => void startCall()}
-              className="w-20 h-20 rounded-full bg-ink-900 hover:bg-ink-800 text-paper-0 flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95"
+              className="w-20 h-20 rounded-full bg-accent hover:bg-accent-hover text-accent-fg flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95"
               aria-label="Start call with Aarya"
             >
               <Mic className="h-7 w-7" strokeWidth={1.5} />
