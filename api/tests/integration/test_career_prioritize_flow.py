@@ -84,4 +84,4 @@ async def test_find_jobs_requires_prioritized_path(
 
     res = await api_client.post("/api/v1/career/path/find-jobs")
     assert res.status_code == 400
-    assert "prioritize" in res.json()["detail"].lower()
+    assert "career path" in res.json()["detail"].lower()
