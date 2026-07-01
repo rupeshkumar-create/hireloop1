@@ -70,12 +70,9 @@ def bootstrap_integration_db() -> None:
     )
     if result.returncode != 0:
         if os.environ.get("REQUIRE_INTEGRATION_DB") == "1":
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(result.stderr, file=sys.stderr)
+            detail = (result.stdout or "") + (result.stderr or "")
             pytest.fail(
-                f"Integration database bootstrap failed (exit {result.returncode})"
+                f"Integration database bootstrap failed (exit {result.returncode}): {detail}"
             )
         return
     INTEGRATION_DB_READY = True
