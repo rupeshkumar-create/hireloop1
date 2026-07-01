@@ -88,14 +88,15 @@ function ProgressRing({ percent }: { percent: number | null }) {
   return (
     <div className="relative h-14 w-14 shrink-0" aria-label={`Profile ${value}% complete`}>
       <svg className="h-14 w-14 -rotate-90" viewBox="0 0 48 48" aria-hidden>
-        <circle cx="24" cy="24" r={r} fill="none" stroke="#E6E6E4" strokeWidth="4" />
+        <circle cx="24" cy="24" r={r} fill="none" stroke="currentColor" strokeWidth="4" className="text-ink-200" />
         <circle
           cx="24"
           cy="24"
           r={r}
           fill="none"
-          stroke="#3B5BFD"
+          stroke="currentColor"
           strokeWidth="4"
+          className="text-accent"
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={offset}

@@ -230,7 +230,7 @@ export function SignupForm() {
         type="button"
         onClick={handleLinkedInSignIn}
         disabled={isLoading}
-        className="w-full rounded-lg bg-[#0A66C2] py-3 font-semibold text-paper-0 transition-colors hover:bg-[#094fa3] disabled:opacity-60"
+        className="w-full rounded-lg bg-ink-900 py-3 font-semibold text-paper-0 transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper-1 disabled:opacity-60"
       >
         {isLoading ? "Redirecting..." : "Continue with LinkedIn"}
       </button>

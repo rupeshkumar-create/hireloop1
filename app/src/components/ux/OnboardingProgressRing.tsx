@@ -16,14 +16,15 @@ export function OnboardingProgressRing({
   return (
     <div className="flex items-center gap-3">
       <svg width="44" height="44" className="-rotate-90" aria-hidden>
-        <circle cx="22" cy="22" r={r} fill="none" stroke="#E6E6E4" strokeWidth="3" />
+        <circle cx="22" cy="22" r={r} fill="none" stroke="currentColor" strokeWidth="3" className="text-ink-200" />
         <circle
           cx="22"
           cy="22"
           r={r}
           fill="none"
-          stroke="#3B5BFD"
+          stroke="currentColor"
           strokeWidth="3"
+          className="text-accent"
           strokeDasharray={c}
           strokeDashoffset={offset}
           strokeLinecap="round"

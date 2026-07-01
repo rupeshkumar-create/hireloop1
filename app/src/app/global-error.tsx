@@ -27,8 +27,8 @@ export default function GlobalError({
           alignItems: "center",
           justifyContent: "center",
           fontFamily: "system-ui, sans-serif",
-          background: "#f7f7f5",
-          color: "#1a1a1a",
+          background: "#141414",
+          color: "#FAFAFA",
           padding: "1.5rem",
         }}
       >
@@ -36,7 +36,7 @@ export default function GlobalError({
           <h1 style={{ fontSize: "1.25rem", fontWeight: 600, margin: 0 }}>
             Hireloop hit an unexpected error
           </h1>
-          <p style={{ marginTop: "0.5rem", color: "#6b6b6b", fontSize: "0.9rem" }}>
+          <p style={{ marginTop: "0.5rem", color: "#A3A3A3", fontSize: "0.9rem" }}>
             Please refresh the page. If it keeps happening, contact support@hireloop.in.
           </p>
           <button
@@ -45,8 +45,8 @@ export default function GlobalError({
             style={{
               marginTop: "1.5rem",
               borderRadius: "0.375rem",
-              background: "#1a1a1a",
-              color: "#fff",
+              background: "#B9F84C",
+              color: "#0F1400",
               border: "none",
               padding: "0.5rem 1rem",
               fontSize: "0.9rem",
