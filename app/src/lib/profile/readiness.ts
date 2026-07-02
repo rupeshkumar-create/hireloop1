@@ -1,8 +1,17 @@
 import type { MyProfileData } from "@/lib/api/profile";
 
+type ProfileReadinessCandidate = Pick<
+  NonNullable<MyProfileData["candidate"]>,
+  "location_city" | "expected_ctc_min" | "expected_ctc_max" | "linkedin_url"
+>;
+
+export type ProfileReadinessInput = {
+  candidate?: ProfileReadinessCandidate | null;
+} | null | undefined;
+
 /** Resume uploaded, or minimal profile (city + expected CTC) — unlocks apply / intro in UI. */
 export function canApplyOrIntro(
-  profile: MyProfileData | null | undefined,
+  profile: ProfileReadinessInput,
   hasResume: boolean,
 ): boolean {
   if (hasResume) return true;
@@ -15,12 +24,13 @@ export function canApplyOrIntro(
   return hasCity && hasCtc;
 }
 
-/** Show dashboard boosters until apply is unlocked or profile is fully enriched. */
+/** Show dashboard boosters only while apply/intros are locked or resume is missing. */
 export function shouldShowProfileBoosters(
-  profile: MyProfileData | null | undefined,
+  profile: ProfileReadinessInput,
   hasResume: boolean,
-  hasVoiceSession: boolean,
 ): boolean {
   if (!canApplyOrIntro(profile, hasResume)) return true;
-  return !hasResume || !hasVoiceSession;
+  if (hasResume) return false;
+  if (profile?.candidate?.linkedin_url?.trim()) return false;
+  return true;
 }

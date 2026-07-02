@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
 import { VALID_JOBS_TABS, VALID_PANELS, type JobsTab, type PanelId } from "@/lib/dashboard/panel-types";
+import { canApplyOrIntro, shouldShowProfileBoosters } from "@/lib/profile/readiness";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -93,7 +94,7 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: candidateRaw } = await (supabase as any)
     .from("candidates")
-    .select("id, location_city, expected_ctc_min, expected_ctc_max")
+    .select("id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url")
     .eq("user_id", user.id)
     .is("deleted_at", null)
     .maybeSingle() as {
@@ -102,6 +103,7 @@ export default async function DashboardPage({
       location_city: string | null;
       expected_ctc_min: number | null;
       expected_ctc_max: number | null;
+      linkedin_url: string | null;
     } | null;
   };
 
@@ -110,10 +112,6 @@ export default async function DashboardPage({
   }
 
   const candidateId = candidateRaw.id;
-  const hasMinimalProfile =
-    Boolean(candidateRaw.location_city?.trim()) &&
-    ((candidateRaw.expected_ctc_min ?? 0) > 0 ||
-      (candidateRaw.expected_ctc_max ?? 0) > 0);
 
   // ── Profile readiness (frontend gates only — match APIs unchanged) ────────
   const [resumeResult, voiceResult] = await Promise.all([
@@ -135,9 +133,16 @@ export default async function DashboardPage({
 
   const hasResume = (resumeResult.count ?? 0) > 0;
   const hasVoiceSession = (voiceResult.count ?? 0) > 0;
-  const canApplyOrIntro = hasResume || hasMinimalProfile;
-  const showProfileBoosters =
-    !canApplyOrIntro || !hasResume || !hasVoiceSession;
+  const profileForReadiness = {
+    candidate: {
+      location_city: candidateRaw.location_city,
+      expected_ctc_min: candidateRaw.expected_ctc_min,
+      expected_ctc_max: candidateRaw.expected_ctc_max,
+      linkedin_url: candidateRaw.linkedin_url,
+    },
+  };
+  const canApply = canApplyOrIntro(profileForReadiness, hasResume);
+  const showProfileBoosters = shouldShowProfileBoosters(profileForReadiness, hasResume);
 
   // Try to surface a pre-existing session so returning users see their history.
   // This is best-effort: if the Supabase server-side session isn't available yet
@@ -186,7 +191,7 @@ export default async function DashboardPage({
       candidateName={profile?.full_name ?? undefined}
       initialInput={initMessage}
       initialPanel={initialPanel ?? "jobs"}
-      canApplyOrIntro={canApplyOrIntro}
+      canApplyOrIntro={canApply}
       hasResume={hasResume}
       hasVoiceSession={hasVoiceSession}
       showProfileBoosters={showProfileBoosters}

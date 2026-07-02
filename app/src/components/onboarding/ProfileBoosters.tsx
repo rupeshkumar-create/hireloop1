@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FileText, Linkedin, Mic, MapPin, IndianRupee, ChevronRight } from "lucide-react";
+import { ChevronRight, FileText, IndianRupee, Linkedin, MapPin, Mic, X } from "lucide-react";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { Button, Card, CardBody } from "@/components/ui";
 import { getCachedProfile, updateMyProfile } from "@/lib/api/profile";
 import { isValidLinkedInUrl, saveLinkedInUrl } from "@/lib/api/onboardingProfile";
+import {
+  dismissProfileBoosters,
+  isProfileBoostersDismissed,
+} from "@/lib/profile/booster-dismiss";
 import { marketByCode, type MarketCode } from "@/lib/markets";
 import { profileSalaryToStorage, salaryInputLabel } from "@/lib/salary";
 import { cn } from "@/lib/utils";
@@ -39,6 +43,26 @@ export function ProfileBoosters({
   const [savingLi, setSavingLi] = useState(false);
   const [savedLi, setSavedLi] = useState(false);
   const [liError, setLiError] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  const salaryLabel = salaryInputLabel(market);
+
+  useEffect(() => {
+    const profile = getCachedProfile();
+    const id = profile?.user?.id ?? null;
+    setUserId(id);
+    if (id && isProfileBoostersDismissed(id)) {
+      setDismissed(true);
+    }
+    const existingLi = profile?.candidate?.linkedin_url?.trim();
+    if (existingLi) {
+      setSavedLi(true);
+      setLinkedinUrl(existingLi);
+    }
+    const m = profile?.user?.market;
+    if (m) setMarket(marketByCode(m).code);
+  }, []);
 
   async function saveLinkedin() {
     if (!isValidLinkedInUrl(linkedinUrl)) {
@@ -57,13 +81,6 @@ export function ProfileBoosters({
       setSavingLi(false);
     }
   }
-
-  const salaryLabel = salaryInputLabel(market);
-
-  useEffect(() => {
-    const m = getCachedProfile()?.user?.market;
-    if (m) setMarket(marketByCode(m).code);
-  }, []);
 
   async function saveMinimalProfile() {
     const city = locationCity.trim();
@@ -88,69 +105,83 @@ export function ProfileBoosters({
     }
   }
 
-  if (canApply && hasResume && hasVoiceSession) return null;
+  function handleDismiss() {
+    if (userId) dismissProfileBoosters(userId);
+    setDismissed(true);
+  }
+
+  if (dismissed) return null;
+  if (canApply && hasResume) return null;
+
+  const showLinkedIn = !savedLi;
+  const showResume = !hasResume;
+  const showCityCtc = !canApply && !savedPrefs;
+  const showVoice = !hasVoiceSession;
+
+  if (!showLinkedIn && !showResume && !showCityCtc && !showVoice) return null;
 
   return (
     <Card className={cn("border-accent/20 bg-accent/5", className)}>
       <CardBody className="space-y-4 p-4">
-        <div>
-          <p className="text-small font-semibold text-ink-900">
-            {canApply ? "Boost your matches" : "Unlock apply & intros"}
-          </p>
-          <p className="mt-0.5 text-micro text-ink-500 leading-relaxed">
-            {canApply
-              ? "Add a CV or talk to Aarya to sharpen your match scores."
-              : "Upload a resume or add city + expected CTC — then you can request intros and apply."}
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-2">
-          <div className="flex items-center gap-2 text-small font-medium text-ink-900">
-            <Linkedin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
-            Add your LinkedIn URL
-          </div>
-          {savedLi ? (
-            <p className="text-micro text-ink-500">
-              Saved — Aarya is pulling your LinkedIn profile in the background.
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-small font-semibold text-ink-900">
+              {canApply ? "Boost your matches" : "Unlock apply & intros"}
             </p>
-          ) : (
-            <>
-              <input
-                type="url"
-                inputMode="url"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-                placeholder="linkedin.com/in/your-profile"
-                className={FIELD_CLASS}
-              />
-              {liError && <p className="text-micro text-destructive">{liError}</p>}
-              <Button
-                variant="secondary"
-                size="sm"
-                className="w-full"
-                loading={savingLi}
-                onClick={() => void saveLinkedin()}
-              >
-                Save &amp; enrich from LinkedIn
-              </Button>
-            </>
-          )}
+            <p className="mt-0.5 text-micro text-ink-500 leading-relaxed">
+              {canApply
+                ? "Add a CV or talk to Aarya to sharpen your match scores."
+                : "Upload a resume or add city + expected CTC — then you can request intros and apply."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            aria-label="Dismiss profile suggestions"
+            className="shrink-0 rounded-md p-1 text-ink-400 hover:text-ink-900 hover:bg-ink-50 transition-colors"
+          >
+            <X className="h-4 w-4" strokeWidth={1.5} />
+          </button>
         </div>
 
-        {!hasResume && (
+        {showLinkedIn && (
+          <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-2">
+            <div className="flex items-center gap-2 text-small font-medium text-ink-900">
+              <Linkedin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
+              Add your LinkedIn URL
+            </div>
+            <input
+              type="url"
+              inputMode="url"
+              value={linkedinUrl}
+              onChange={(e) => setLinkedinUrl(e.target.value)}
+              placeholder="linkedin.com/in/your-profile"
+              className={FIELD_CLASS}
+            />
+            {liError && <p className="text-micro text-destructive">{liError}</p>}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
+              loading={savingLi}
+              onClick={() => void saveLinkedin()}
+            >
+              Save &amp; enrich from LinkedIn
+            </Button>
+          </div>
+        )}
+
+        {showResume && (
           <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-2">
             <div className="flex items-center gap-2 text-small font-medium text-ink-900">
               <FileText className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
               Upload resume
             </div>
-            <ResumeUpload
-              autoApply
-              onDone={() => onProfileUpdated?.()}
-            />
+            <ResumeUpload autoApply onDone={() => onProfileUpdated?.()} />
           </div>
         )}
 
-        {!canApply && !savedPrefs && (
+        {showCityCtc && (
           <div className="rounded-lg border border-ink-100 bg-paper-0 p-3 space-y-3">
             <div className="flex items-center gap-2 text-small font-medium text-ink-900">
               <MapPin className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
@@ -194,7 +225,7 @@ export function ProfileBoosters({
           </div>
         )}
 
-        {!hasVoiceSession && (
+        {showVoice && (
           <Link
             href="/dashboard?voice=deep&panel=jobs"
             className="group flex items-center justify-between rounded-lg border border-ink-100 bg-paper-0 px-3 py-2.5 hover:border-ink-200 transition-colors"
