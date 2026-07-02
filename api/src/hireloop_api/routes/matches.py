@@ -29,17 +29,11 @@ from hireloop_api.services.job_preferences import (
     normalize_remote_preference,
     remote_filter_sql,
 )
-from hireloop_api.services.match_quality import DEFAULT_FEED_MIN_SCORE
+from hireloop_api.services.match_quality import DEFAULT_FEED_MIN_SCORE, should_persist_match
 from hireloop_api.services.match_rationale import generate_match_rationales
 from hireloop_api.services.matching import (
     MatchingEngine,
-    _best_title_affinity,
-    _build_explanation,
-    _candidate_open_to_remote,
-    _ctc_score,
-    _experience_score,
-    _location_score,
-    _skill_overlap_score,
+    _assemble_score,
 )
 from hireloop_api.services.ranking import (
     HardConstraints,
@@ -141,9 +135,11 @@ async def get_match_feed(
     """
     candidate = await db.fetchrow(
         """
-        SELECT c.id, c.current_title, c.years_experience, c.skills,
+        SELECT c.id, c.current_title, c.current_company, c.headline, c.summary,
+               c.years_experience, c.skills,
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
-               c.remote_preference, c.aarya_state, c.market,
+               c.remote_preference, c.open_to_relocation, c.location_scope,
+               c.aarya_state, c.market,
                (
                    SELECT cp.target_titles
                    FROM public.career_paths cp
@@ -404,9 +400,11 @@ async def get_match_feed_count(
     """Total job matches for the candidate (same rules as GET /matches)."""
     candidate = await db.fetchrow(
         """
-        SELECT c.id, c.current_title, c.years_experience, c.skills,
+        SELECT c.id, c.current_title, c.current_company, c.headline, c.summary,
+               c.years_experience, c.skills,
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
-               c.remote_preference, c.aarya_state, c.market,
+               c.remote_preference, c.open_to_relocation, c.location_scope,
+               c.aarya_state, c.market,
                (
                    SELECT cp.target_titles
                    FROM public.career_paths cp
@@ -673,6 +671,7 @@ async def _fetch_fallback_match_rows(
             j.ctc_max,
             j.salary_currency,
             j.skills_required,
+            j.description,
             j.apply_url,
             j.scraped_at,
             COALESCE(
@@ -706,7 +705,11 @@ async def _fetch_fallback_match_rows(
         market,
     )
 
-    ranked = [_serialize_fallback_match_row(row, candidate=candidate) for row in rows]
+    ranked = [
+        item
+        for row in rows
+        if (item := _serialize_fallback_match_row(row, candidate=candidate)) is not None
+    ]
     # Order by the computed score (career-path + skill aware), not just the SQL
     # ordering, so aspirational target-title matches surface.
     ranked.sort(key=lambda r: r["overall_score"], reverse=True)
@@ -714,65 +717,41 @@ async def _fetch_fallback_match_rows(
     return filtered[offset : offset + limit]
 
 
-def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict) -> dict:
+def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict) -> dict | None:
     row_dict = dict(row)
     job_skills = list(row_dict.get("skills_required") or [])
-
-    # Same lexical signals as score_pair so the fallback ranks by real skill
-    # coverage + title affinity (not a flat 0.5). None → neutral when unknowable.
-    lexical = _skill_overlap_score(list(candidate.get("skills") or []), job_skills)
-    skills_score = lexical if lexical is not None else 0.5
-
-    # Career-path aware: match the job title against the candidate's current role
-    # AND their career-path target titles (best wins).
-    candidate_titles = [
-        t for t in [candidate.get("current_title"), *(candidate.get("target_titles") or [])] if t
-    ]
-    title_aff = _best_title_affinity(row_dict.get("title"), candidate_titles)
-    profile_score = title_aff if title_aff is not None else 0.5
-
-    experience_score = _experience_score(
-        candidate.get("years_experience"),
-        row_dict.get("seniority"),
-    )
-    location_score = _location_score(
-        candidate_city=candidate.get("location_city"),
-        candidate_state=candidate.get("location_state"),
-        job_city=row_dict.get("location_city"),
-        job_state=row_dict.get("location_state"),
-        job_is_remote=bool(row_dict.get("is_remote")),
-        candidate_open_to_remote=_candidate_open_to_remote(candidate.get("remote_preference")),
-    )
-    ctc_score = _ctc_score(
-        candidate_ctc_min=candidate.get("expected_ctc_min"),
-        candidate_ctc_max=candidate.get("expected_ctc_max"),
-        job_ctc_min=row_dict.get("ctc_min"),
-        job_ctc_max=row_dict.get("ctc_max"),
-    )
-    overall_score = round(
-        min(
-            1.0,
-            max(
-                0.0,
-                0.40 * skills_score
-                + 0.30 * profile_score
-                + 0.15 * experience_score
-                + 0.10 * location_score
-                + 0.05 * ctc_score,
-            ),
-        ),
-        4,
-    )
-    explanation = _build_explanation(
-        overall=overall_score,
-        skills=skills_score,
-        experience=experience_score,
-        location=location_score,
-        ctc=ctc_score,
-        job_title=row_dict["title"],
-        company_name=row_dict.get("company_name"),
-        candidate_name=None,
-    )
+    cand_row = {
+        "full_name": candidate.get("full_name"),
+        "current_title": candidate.get("current_title"),
+        "current_company": candidate.get("current_company"),
+        "headline": candidate.get("headline"),
+        "summary": candidate.get("summary"),
+        "years_experience": candidate.get("years_experience"),
+        "skills": list(candidate.get("skills") or []),
+        "expected_ctc_min": candidate.get("expected_ctc_min"),
+        "expected_ctc_max": candidate.get("expected_ctc_max"),
+        "location_city": candidate.get("location_city"),
+        "location_state": candidate.get("location_state"),
+        "remote_preference": candidate.get("remote_preference"),
+        "open_to_relocation": bool(candidate.get("open_to_relocation")),
+        "location_scope": candidate.get("location_scope"),
+        "target_titles": list(candidate.get("target_titles") or []),
+    }
+    job_row = {
+        "title": row_dict.get("title"),
+        "company_name": row_dict.get("company_name"),
+        "description": row_dict.get("description"),
+        "seniority": row_dict.get("seniority"),
+        "skills_required": job_skills,
+        "is_remote": bool(row_dict.get("is_remote")),
+        "location_city": row_dict.get("location_city"),
+        "location_state": row_dict.get("location_state"),
+        "ctc_min": row_dict.get("ctc_min"),
+        "ctc_max": row_dict.get("ctc_max"),
+    }
+    score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
+    if not should_persist_match(cand_row, job_row, score):
+        return None
 
     return {
         "job_id": str(row_dict["job_id"]),
@@ -787,12 +766,12 @@ def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict
         "ctc_max": row_dict.get("ctc_max"),
         "skills_required": job_skills,
         "apply_url": row_dict.get("apply_url"),
-        "overall_score": overall_score,
-        "skills_score": round(skills_score, 4),
-        "experience_score": round(experience_score, 4),
-        "location_score": round(location_score, 4),
-        "ctc_score": round(ctc_score, 4),
-        "explanation": f"{explanation} Aarya is still finalising your full ranking.",
+        "overall_score": score["overall"],
+        "skills_score": round(score["skills_sim"], 4),
+        "experience_score": round(score["exp_score"], 4),
+        "location_score": round(score["loc_score"], 4),
+        "ctc_score": round(score["ctc_score"], 4),
+        "explanation": f"{score['explanation']} Aarya is still finalising your full ranking.",
         "computed_at": datetime.now(UTC).isoformat(),
     }
 

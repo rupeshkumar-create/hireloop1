@@ -44,6 +44,16 @@ def test_hospitality_job_excluded_from_saas_persona_pool() -> None:
     assert job_in_persona_pool(hotel, cand) is False
 
 
+def test_dental_clinic_sales_job_excluded_from_staffing_saas_persona_pool() -> None:
+    dental = _job(
+        title="Sales Manager",
+        company_name="SmileBright Dental Clinic",
+        description="dental clinic healthcare practice growth and patient acquisition",
+        skills_required=["sales", "patient acquisition"],
+    )
+    assert job_in_persona_pool(dental, _cand()) is False
+
+
 def test_saas_job_in_persona_pool() -> None:
     assert job_in_persona_pool(_job(), _cand()) is True
 
@@ -71,6 +81,23 @@ def test_hospitality_match_not_persisted_even_if_score_inflated() -> None:
             _cand(),
             hotel,
             {"overall": 0.55},
+        )
+        is False
+    )
+
+
+def test_dental_clinic_match_not_persisted_even_if_sales_score_is_inflated() -> None:
+    dental = _job(
+        title="Sales Manager",
+        company_name="SmileBright Dental Clinic",
+        description="dental clinic healthcare practice growth and patient acquisition",
+        skills_required=["sales"],
+    )
+    assert (
+        should_persist_match(
+            _cand(),
+            dental,
+            {"overall": 0.65},
         )
         is False
     )

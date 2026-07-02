@@ -230,17 +230,16 @@ export function SignupForm() {
         </div>
       </div>
 
-      <Button
+      {/* LinkedIn keeps its brand blue — lime is reserved for our own primary
+          actions, and white-on-lime fails contrast anyway. */}
+      <button
         type="button"
-        variant="primary"
-        size="lg"
-        fullWidth
-        loading={isLoading}
+        disabled={isLoading}
         onClick={handleLinkedInSignIn}
-        className="rounded-lg"
+        className="w-full rounded-lg bg-[#0A66C2] px-6 py-3.5 text-body font-semibold text-white transition-colors hover:bg-[#004182] disabled:opacity-60"
       >
         {isLoading ? "Redirecting..." : "Continue with LinkedIn"}
-      </Button>
+      </button>
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center">

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchCareerPath } from "@/lib/api/career";
 import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
@@ -43,40 +42,17 @@ export function JobsPanel({
   savedJobsRefreshKey,
   onAskAarya,
 }: JobsPanelProps) {
-  const [tab, setTab] = useState<JobsTab>(initialTab ?? "path");
-  const [pathChosen, setPathChosen] = useState<boolean | null>(null);
+  const [tab, setTab] = useState<JobsTab>(initialTab ?? "matches");
 
   function selectTab(next: JobsTab) {
     setTab(next);
     onTabChange?.(next);
   }
 
-  function refreshPathChosen() {
-    fetchCareerPath()
-      .then((p) => setPathChosen(!!p?.prioritized_title))
-      .catch(() => setPathChosen(false));
-  }
-
-  // Career-path-first: returning users land on matches; new users on paths.
-  // Skip auto-switch when the URL already specifies a tab (?tab=).
+  // Keep the local tab in sync when the URL explicitly changes (?tab=path/saved).
   useEffect(() => {
-    if (initialTab) return;
-    let cancelled = false;
-    fetchCareerPath()
-      .then((p) => {
-        if (cancelled) return;
-        const chosen = !!p?.prioritized_title;
-        setPathChosen(chosen);
-        if (chosen) selectTab("matches");
-      })
-      .catch(() => {
-        if (!cancelled) setPathChosen(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
 
   return (
     <div className="flex flex-col h-full">
@@ -94,10 +70,7 @@ export function JobsPanel({
       <div className="flex items-center gap-1 px-5 pt-4 border-b border-ink-100 shrink-0">
         <button
           type="button"
-          onClick={() => {
-            selectTab("matches");
-            refreshPathChosen();
-          }}
+          onClick={() => selectTab("matches")}
           className={cn(
             "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
             tab === "matches"
@@ -140,34 +113,17 @@ export function JobsPanel({
 
       <div key={tab} className="flex-1 min-h-0 overflow-hidden animate-fade-in">
         {tab === "matches" ? (
-          pathChosen === false ? (
-            <div className="h-full p-5 flex flex-col items-center justify-center text-center gap-3">
-              <p className="text-h3 text-ink-900">Let&apos;s aim your search</p>
-              <p className="text-small text-ink-500 max-w-xs">
-                Pick a career direction and I&apos;ll surface roles tailored to it — sharper than a
-                generic list.
-              </p>
-              <button
-                type="button"
-                onClick={() => selectTab("path")}
-                className="rounded-lg bg-accent px-4 py-2 text-small font-medium text-accent-fg hover:bg-accent-hover"
-              >
-                View career paths
-              </button>
-            </div>
-          ) : (
-            <MatchFeed
-              conversationId={conversationId}
-              onRequestIntro={onRequestIntro}
-              onDirectApply={onDirectApply}
-              applyLocked={!canApplyOrIntro}
-              matchSourceBadge={!hasResume ? "linkedin" : undefined}
-              savedJobIds={savedJobIds}
-              onSavedChange={onSavedChange}
-              onAskAarya={onAskAarya}
-              className="h-full p-5"
-            />
-          )
+          <MatchFeed
+            conversationId={conversationId}
+            onRequestIntro={onRequestIntro}
+            onDirectApply={onDirectApply}
+            applyLocked={!canApplyOrIntro}
+            matchSourceBadge={!hasResume ? "linkedin" : undefined}
+            savedJobIds={savedJobIds}
+            onSavedChange={onSavedChange}
+            onAskAarya={onAskAarya}
+            className="h-full p-5"
+          />
         ) : tab === "path" ? (
           <CareerPathPanel
             conversationId={conversationId}

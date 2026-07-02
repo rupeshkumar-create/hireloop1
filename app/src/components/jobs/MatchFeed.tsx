@@ -128,6 +128,7 @@ export function MatchFeed({
     (initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE
   );
   const [offset, setOffset] = useState(initialJobs?.length ?? 0);
+  const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
 
   // Filters
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
@@ -192,6 +193,7 @@ export function MatchFeed({
         const data = applyLocalFilters(rawData, { remoteOnly, seniority });
 
         setJobs((prev) => (isFirst ? data : [...prev, ...data]));
+        if (isFirst && data.length > 0) setEmptyRefreshCount(0);
         setHasMore(rawData.length === PAGE_SIZE);
         setOffset(currentOffset + rawData.length);
       } catch (err) {
@@ -231,9 +233,19 @@ export function MatchFeed({
   useEffect(() => {
     setOffset(0);
     setHasMore(true);
+    setEmptyRefreshCount(0);
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minScore, remoteOnly, seniority]);
+
+  useEffect(() => {
+    if (loading || error || jobs.length > 0 || emptyRefreshCount >= 5) return;
+    const id = window.setTimeout(() => {
+      setEmptyRefreshCount((count) => count + 1);
+      void load(true);
+    }, 12_000);
+    return () => window.clearTimeout(id);
+  }, [emptyRefreshCount, error, jobs.length, load, loading]);
 
   const visibleCount = jobs.length;
   const sections = groupByTier(jobs);
@@ -370,7 +382,10 @@ export function MatchFeed({
         )}
 
         {!loading && !error && jobs.length === 0 && (
-          <MatchesEmptyPanel onAskAarya={onAskAarya} />
+          <MatchesEmptyPanel
+            onAskAarya={onAskAarya}
+            isSearching={emptyRefreshCount < 5}
+          />
         )}
 
         {!loading &&

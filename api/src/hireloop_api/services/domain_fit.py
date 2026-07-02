@@ -83,6 +83,35 @@ _MANUFACTURING = (
     "warehouse",
 )
 
+_HEALTHCARE_DENTAL = (
+    "healthcare",
+    "health care",
+    "hospital",
+    "medical",
+    "clinic",
+    "dental",
+    "dentist",
+    "orthodont",
+    "oral care",
+    "patient",
+    "doctor",
+    "physician",
+    "pharma",
+)
+
+_LOCAL_SERVICES = (
+    "dental clinic",
+    "clinic",
+    "practice management",
+    "patient acquisition",
+    "local business",
+    "local services",
+    "franchise",
+    "salon",
+    "spa",
+    "gym",
+)
+
 _GENERIC_FUNCTION = frozenset(
     {
         "sales",
@@ -133,6 +162,10 @@ def detect_domains(
         tags.add("finance")
     if any(m in text for m in _MANUFACTURING):
         tags.add("manufacturing")
+    if any(m in text for m in _HEALTHCARE_DENTAL):
+        tags.add("healthcare")
+    if any(m in text for m in _LOCAL_SERVICES):
+        tags.add("local_services")
 
     title_tokens = canonical_title_tokens(title)
     # "sales" now canonicalises to the "gotomarket" function token.
@@ -168,6 +201,24 @@ def domain_fit_multiplier(
     if "manufacturing" in job and cand & {"tech", "staffing"} and "manufacturing" not in cand:
         return 0.2
     if "manufacturing" in cand and job & {"tech", "staffing"} and "manufacturing" not in job:
+        return 0.2
+
+    # Dental clinics, healthcare practices, and local-service sales often share
+    # GTM/sales wording with SaaS roles but are a different operating domain.
+    if (
+        "local_services" in job
+        and cand & {"tech", "staffing"}
+        and not (cand & {"healthcare", "local_services"})
+    ):
+        return 0.12
+    if (
+        "healthcare" in job
+        and "tech" not in job
+        and cand & {"tech", "staffing"}
+        and "healthcare" not in cand
+    ):
+        return 0.18
+    if "local_services" in cand and job & {"tech", "staffing"} and "tech" not in cand:
         return 0.2
 
     return 1.0

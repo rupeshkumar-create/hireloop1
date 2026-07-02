@@ -44,6 +44,23 @@ def test_hospitality_job_penalised_for_saas_candidate() -> None:
     assert domain_fit_multiplier(cand, job) <= 0.15
 
 
+def test_dental_healthcare_job_penalised_for_staffing_saas_candidate() -> None:
+    cand = detect_domains(
+        title="Go-To-Market Lead",
+        company="Candidately",
+        skills=["AI", "Digital Strategy", "Automation", "Sales"],
+        extra="B2B SaaS for staffing agencies",
+    )
+    job = detect_domains(
+        title="Sales Manager",
+        company="SmileBright Dental Clinic",
+        skills=["sales", "patient acquisition"],
+        extra="dental clinic healthcare practice management",
+    )
+    assert {"healthcare", "local_services"} <= job
+    assert domain_fit_multiplier(cand, job) <= 0.15
+
+
 def test_commercial_function_overlap_counts_generic_overlap_still_penalised() -> None:
     # Commercial-function overlap (sales/GTM/growth/revenue) now COUNTS as a
     # function match — precision is enforced by the seniority-fit gate + domain
