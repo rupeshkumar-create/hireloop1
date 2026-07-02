@@ -49,7 +49,6 @@ import {
   Briefcase,
   Check,
   ChevronRight,
-  GraduationCap,
   Loader2,
   Mic,
   Paperclip,
@@ -59,7 +58,6 @@ import {
   Send,
   Settings,
   Square,
-  TrendingUp,
   Volume2,
 } from "lucide-react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
@@ -1455,8 +1453,8 @@ type ActionCardDef = {
   title: string;
   description: string;
   primary?: boolean;
-  /** If "upload", clicking fires onUploadResume. Otherwise sends the message. */
-  kind: "upload" | "message";
+  /** upload → resume flow; career_paths → path picker; message → sends text */
+  kind: "upload" | "message" | "career_paths";
   message?: string;
 };
 
@@ -1510,8 +1508,11 @@ function buildFindJobsMessage(profile: MyProfileData | null): string {
  * the candidate goals that used to live in onboarding; surfacing them here makes
  * the goal the first thing Aarya asks, and each chip seeds the right prompt.
  */
-function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
-  return [
+function buildSmartStarterCards(
+  findJobsMessage: string,
+  includeCareerPaths: boolean,
+): ActionCardDef[] {
+  const cards: ActionCardDef[] = [
     {
       Icon: Search,
       title: "Find a new role",
@@ -1520,6 +1521,21 @@ function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
       message: findJobsMessage,
       primary: true,
     },
+    includeCareerPaths
+      ? {
+          Icon: Route,
+          title: "View top 3 career paths",
+          description: "Pick a direction, then see matching roles",
+          kind: "career_paths",
+        }
+      : {
+          Icon: BookOpen,
+          title: "Improve my resume",
+          description: "Tailored fixes before you apply",
+          kind: "message",
+          message:
+            "Review my resume and profile and tell me the most impactful improvements to rank higher in matches.",
+        },
     {
       Icon: Briefcase,
       title: "Discuss a job I saw",
@@ -1528,39 +1544,8 @@ function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
       message:
         "I saw a job I'm interested in. Help me evaluate how well it fits my profile.",
     },
-    {
-      Icon: TrendingUp,
-      title: "Know my market value",
-      description: "Realistic CTC range for your next move",
-      kind: "message",
-      message:
-        "Based on my profile, experience, and my market, what salary range could I realistically target next?",
-    },
-    {
-      Icon: BookOpen,
-      title: "Improve my resume",
-      description: "Tailored fixes before you apply",
-      kind: "message",
-      message:
-        "Review my resume and profile and tell me the most impactful improvements to rank higher in matches.",
-    },
-    {
-      Icon: GraduationCap,
-      title: "Practice a mock interview",
-      description: "Role-specific questions with feedback",
-      kind: "message",
-      message:
-        "Run a mock interview tailored to my target role and seniority, and give me detailed feedback.",
-    },
-    {
-      Icon: Sparkles,
-      title: "Coach me on my career",
-      description: "Plan a move, negotiate, or reflect",
-      kind: "message",
-      message:
-        "I'd like some career coaching — help me think through my next move, an offer, or a recent setback.",
-    },
   ];
+  return cards;
 }
 
 function EmptyState({
@@ -1599,7 +1584,7 @@ function EmptyState({
     !c.current_title?.trim() ||
     (c.skills ?? []).filter((s) => s.trim()).length < 3;
 
-  const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage);
+  const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage, !profileSparse);
 
   const firstName = (profile?.user?.full_name || "").trim().split(" ")[0] || "there";
   const greeting = `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
@@ -1628,45 +1613,25 @@ function EmptyState({
         </p>
       </div>
 
-      {!profileSparse && (
-        <div className="w-full text-left">
-          {showPathPicker ? (
-            <CareerPathOptionCards
-              compact
-              onSelectPath={handlePathSelect}
-              className="mb-2"
-            />
-          ) : (
+      {!showPathPicker ? (
+        <div
+          className="w-full space-y-1.5 text-left"
+          role="group"
+          aria-label="Quick actions"
+        >
+          {cards.map((card) => (
             <button
+              key={card.title}
               type="button"
-              onClick={() => setShowPathPicker(true)}
-              className="w-full flex items-center gap-2.5 rounded-lg border border-ink-200 bg-paper-1 px-3 py-2 text-left hover:bg-ink-50 hover:border-ink-300 transition-colors"
-            >
-              <Route className="h-4 w-4 text-ink-500 shrink-0" strokeWidth={1.5} />
-              <span className="text-small font-medium text-ink-900">
-                View top 3 career paths
-              </span>
-            </button>
-          )}
-        </div>
-      )}
-
-      <div
-        className="w-full space-y-1.5 text-left"
-        role="group"
-        aria-label="Quick actions"
-      >
-        {cards.map((card) => (
-          <button
-            key={card.title}
-            type="button"
-            onClick={() => {
-              if (card.kind === "upload") {
-                onUploadResume();
-              } else if (card.message) {
-                onPick(card.message);
-              }
-            }}
+              onClick={() => {
+                if (card.kind === "upload") {
+                  onUploadResume();
+                } else if (card.kind === "career_paths") {
+                  setShowPathPicker(true);
+                } else if (card.message) {
+                  onPick(card.message);
+                }
+              }}
             className={cn(
               "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2",
               "bg-paper-1 transition-colors duration-fast",
@@ -1709,7 +1674,22 @@ function EmptyState({
             </span>
           </button>
         ))}
-      </div>
+        </div>
+      ) : (
+        <div className="w-full text-left space-y-2">
+          <CareerPathOptionCards
+            compact
+            onSelectPath={handlePathSelect}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPathPicker(false)}
+            className="text-micro text-ink-500 hover:text-ink-900 transition-colors"
+          >
+            ← Back to suggestions
+          </button>
+        </div>
+      )}
     </div>
   );
 }
