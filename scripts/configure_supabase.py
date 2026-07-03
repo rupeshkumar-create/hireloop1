@@ -182,8 +182,9 @@ def main() -> None:
     print("  2. supabase db push")
     print("  3. python3 scripts/verify_supabase_connection.py")
     print("  4. In Supabase Dashboard → Auth → URL config:")
-    print(f"       Site URL: {creds.get('APP_URL', 'http://localhost:3001')}")
+    print(f"       Site URL (app, NOT marketing :3000): {creds.get('APP_URL', 'http://localhost:3001')}")
     print(f"       Redirect: {creds.get('APP_URL', 'http://localhost:3001')}/auth/callback")
+    print(f"       Redirect: {creds.get('APP_URL', 'http://localhost:3001')}/auth/confirm")
 
 
 if __name__ == "__main__":
