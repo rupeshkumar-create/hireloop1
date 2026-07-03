@@ -62,9 +62,9 @@ function ScoreBar({
           {suffix ?? ""}
         </span>
       </div>
-      <div className="h-1.5 w-full rounded-full bg-ink-100 overflow-hidden">
+      <div className="h-2 w-full rounded-full bg-ink-100 overflow-hidden">
         <div
-          className="h-full rounded-full bg-ink-900 transition-all duration-base"
+          className="h-full rounded-full bg-accent transition-all duration-base"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -293,11 +293,14 @@ function CollapsibleGroup({
         aria-expanded={open}
         className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-ink-50 transition-colors duration-fast rounded-lg"
       >
-        <span className="text-h3 text-ink-900">{title}</span>
+        <span className="flex items-center gap-2.5">
+          <span className="h-4 w-1 rounded-full bg-accent" />
+          <span className="text-h3 text-ink-900">{title}</span>
+        </span>
         <ChevronDown
           className={cn(
-            "h-4 w-4 text-ink-400 transition-transform duration-fast shrink-0",
-            open && "rotate-180",
+            "h-4 w-4 transition-transform duration-fast shrink-0",
+            open ? "rotate-180 text-accent" : "text-ink-400",
           )}
           strokeWidth={1.5}
         />
@@ -321,9 +324,9 @@ function Stat({
 }) {
   if (!value) return null;
   return (
-    <div className="rounded-md border border-ink-100 px-3 py-2">
-      <p className="text-micro text-ink-400">{label}</p>
-      <p className="text-small font-medium text-ink-900 mt-0.5 leading-snug">
+    <div className="rounded-lg border border-ink-100 bg-ink-50 px-3.5 py-2.5 transition-colors hover:border-ink-200">
+      <p className="text-micro uppercase tracking-wide text-ink-400">{label}</p>
+      <p className="text-body font-semibold text-ink-900 mt-1 leading-snug">
         {value}
       </p>
     </div>
