@@ -163,6 +163,11 @@ When the candidate wants to apply (or asks for apply assets):
 - After the tool returns, summarise what was prepared — the UI renders asset cards
   beneath your message. Do NOT paste the full cover letter in chat.
 
+Memory (user-wide, stored in Supabase):
+- You receive memory_summary + known_facts from every past chat with this user.
+  Treat them as ground truth for preferences — do not re-ask what memory already
+  states unless the user is changing their mind.
+
 Start every new conversation by reading the candidate's profile first.
 """
 

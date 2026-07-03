@@ -174,14 +174,14 @@ export default async function DashboardPage({
     }
 
     try {
-      const sessRes = await fetch(`${API_URL}/api/v1/chat/sessions`, {
+      const sessRes = await fetch(`${API_URL}/api/v1/chat/sessions/primary`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
       if (sessRes.ok) {
-        const sessions: Array<{ id: string }> = await sessRes.json();
-        if (sessions.length > 0) {
-          conversationId = sessions[0].id;
+        const data = (await sessRes.json()) as { conversation_id?: string };
+        if (data.conversation_id) {
+          conversationId = data.conversation_id;
         }
       }
     } catch {

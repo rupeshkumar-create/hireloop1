@@ -44,6 +44,7 @@ from hireloop_api.services.career_path_selection import (
     career_path_options,
     try_apply_career_path_selection,
 )
+from hireloop_api.services.chat_sessions import get_or_create_primary_conversation
 from hireloop_api.services.chat_stream import (
     sse_done,
     sse_error,
@@ -398,8 +399,7 @@ async def create_session(
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> CreateSessionResponse:
-    """Create a new Aarya conversation session."""
-    # Get or verify candidate
+    """Return the candidate's primary Aarya thread (create if this is day one)."""
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
         coerce_uuid(current_user["id"]),
@@ -407,20 +407,25 @@ async def create_session(
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
-    convo_id = str(uuid.uuid4())
-    await db.execute(
-        """
-        INSERT INTO public.conversations (id, candidate_id, agent, title)
-        VALUES ($1::uuid, $2::uuid, 'aarya', 'New conversation')
-        """,
-        convo_id,
-        candidate["id"],
+    convo_id = await get_or_create_primary_conversation(
+        db,
+        user_id=str(current_user["id"]),
+        candidate_id=str(candidate["id"]),
     )
 
     return CreateSessionResponse(
         conversation_id=convo_id,
-        message="Conversation started. Aarya is ready.",
+        message="Conversation ready. Aarya remembers your past chats.",
     )
+
+
+@router.get("/sessions/primary", response_model=CreateSessionResponse)
+async def get_primary_session(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> CreateSessionResponse:
+    """Fetch the user's canonical Aarya conversation id (same as POST /sessions)."""
+    return await create_session(current_user=current_user, db=db)
 
 
 @router.get("/sessions")
@@ -428,10 +433,10 @@ async def list_sessions(
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
-    """List all conversations for the current candidate."""
+    """List all conversations for the current candidate (primary thread first)."""
     rows = await db.fetch(
         """
-        SELECT c.id, c.title, c.created_at, c.updated_at,
+        SELECT c.id, c.title, c.created_at, c.updated_at, c.is_primary,
                (
                  SELECT count(*) FROM public.messages m
                  WHERE m.conversation_id = c.id
@@ -439,11 +444,63 @@ async def list_sessions(
         FROM public.conversations c
         JOIN public.candidates ca ON ca.id = c.candidate_id
         WHERE ca.user_id = $1 AND c.deleted_at IS NULL AND c.agent = 'aarya'
-        ORDER BY c.updated_at DESC LIMIT 50
+        ORDER BY c.is_primary DESC, c.updated_at DESC LIMIT 50
         """,
         coerce_uuid(current_user["id"]),
     )
     return [serialize_row(r) for r in rows]
+
+
+@router.get("/history")
+async def get_user_chat_history(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """
+    Full Aarya chat history for the signed-in user (primary thread, Supabase-backed).
+    """
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+        coerce_uuid(current_user["id"]),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    convo_id = await get_or_create_primary_conversation(
+        db,
+        user_id=str(current_user["id"]),
+        candidate_id=str(candidate["id"]),
+    )
+    rows = await db.fetch(
+        """
+        SELECT m.id, m.role, m.content, m.content_type, m.audio_url, m.created_at
+        FROM public.messages m
+        WHERE m.conversation_id = $1::uuid
+          AND m.role IN ('user', 'assistant')
+        ORDER BY m.created_at ASC
+        LIMIT $2 OFFSET $3
+        """,
+        uuid.UUID(convo_id),
+        limit,
+        offset,
+    )
+    total = await db.fetchval(
+        """
+        SELECT count(*) FROM public.messages m
+        WHERE m.conversation_id = $1::uuid
+          AND m.role IN ('user', 'assistant')
+        """,
+        uuid.UUID(convo_id),
+    )
+    return {
+        "conversation_id": convo_id,
+        "messages": [serialize_row(r) for r in rows],
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/sessions/{conversation_id}/messages")

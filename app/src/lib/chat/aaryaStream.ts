@@ -113,18 +113,25 @@ export function storeVoiceSendOnPause(enabled: boolean): void {
   }
 }
 
-export async function createAaryaSession(): Promise<string> {
-  const res = await apiAuthFetch("/api/v1/chat/sessions", { method: "POST" });
+/** Return the user's canonical Supabase-backed Aarya conversation id. */
+export async function resolvePrimaryAaryaSession(): Promise<string> {
+  const res = await apiAuthFetch("/api/v1/chat/sessions/primary", {
+    cache: "no-store",
+  });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
     const detail =
       typeof (errBody as { detail?: unknown }).detail === "string"
         ? (errBody as { detail: string }).detail
-        : "Could not create chat session";
+        : "Could not open chat session";
     throw new Error(detail);
   }
   const data = (await res.json()) as { conversation_id: string };
   return data.conversation_id;
+}
+
+export async function createAaryaSession(): Promise<string> {
+  return resolvePrimaryAaryaSession();
 }
 
 /** Ensure a conversation id exists (lazy session creation). */
@@ -133,7 +140,7 @@ export async function ensureAaryaSession(
   onCreated?: (id: string) => void
 ): Promise<string> {
   if (currentId) return currentId;
-  const id = await createAaryaSession();
+  const id = await resolvePrimaryAaryaSession();
   onCreated?.(id);
   return id;
 }
@@ -195,6 +202,36 @@ export async function fetchAaryaChatHistory(
     offset += pageSize;
   }
   return out;
+}
+
+/** User-wise history on the primary Supabase thread (all messages, day one). */
+export async function fetchUserChatHistory(): Promise<{
+  conversationId: string;
+  messages: AaryaHistoryMessage[];
+}> {
+  const out: AaryaHistoryMessage[] = [];
+  const pageSize = 200;
+  let offset = 0;
+  let conversationId = "";
+  for (;;) {
+    const res = await apiAuthFetch(
+      `/api/v1/chat/history?limit=${pageSize}&offset=${offset}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) break;
+    const data = (await res.json()) as {
+      conversation_id?: string;
+      messages?: AaryaHistoryMessage[];
+      total?: number;
+    };
+    if (data.conversation_id) conversationId = data.conversation_id;
+    const batch = Array.isArray(data.messages) ? data.messages : [];
+    if (!batch.length) break;
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+    offset += pageSize;
+  }
+  return { conversationId, messages: out };
 }
 
 /**

@@ -56,7 +56,6 @@ import {
   Search,
   Sparkles,
   Send,
-  Settings,
   Square,
   Volume2,
 } from "lucide-react";
@@ -75,14 +74,14 @@ import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
 import {
-  createAaryaSession,
   ensureAaryaSession,
   fetchAaryaChatHistory,
+  fetchUserChatHistory,
   readStoredAaryaSession,
+  resolvePrimaryAaryaSession,
   readVoiceSendOnPause,
   StaleSessionError,
   storeAaryaSession,
-  storeVoiceSendOnPause,
   streamAaryaMessage,
   type AaryaStreamCallbacks,
 } from "@/lib/chat/aaryaStream";
@@ -91,7 +90,6 @@ import {
   readChatReplyMode,
   storeChatCoachSeen,
   storeChatReplyMode,
-  storeReviewBeforeSend,
   type ChatReplyMode,
 } from "@/lib/chat/voicePreferences";
 import {
@@ -251,7 +249,6 @@ export function ChatInterface({
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [replyMode, setReplyMode] = useState<ChatReplyMode>("voice");
   const [sendImmediately, setSendImmediately] = useState(true);
-  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voiceDeepDiveOpen, setVoiceDeepDiveOpen] = useState(initialVoiceDeepDive);
   const [showCoachMark, setShowCoachMark] = useState(false);
   const [hinglishHint, setHinglishHint] = useState(false);
@@ -332,17 +329,21 @@ export function ChatInterface({
       .catch(() => {});
   }, [conversationIdProp]);
 
-  // Restore the full conversation thread whenever we know the session id.
+  // Restore full user chat history from Supabase (primary thread, day one).
   useEffect(() => {
-    const sid = sessionId;
-    if (!sid || historyLoadedForRef.current === sid) return;
+    if (historyLoadedForRef.current === "user") return;
 
     let cancelled = false;
     setHistoryLoading(true);
-    void fetchAaryaChatHistory(sid)
-      .then((rows) => {
+    void fetchUserChatHistory()
+      .then(({ conversationId, messages: rows }) => {
         if (cancelled) return;
-        historyLoadedForRef.current = sid;
+        historyLoadedForRef.current = "user";
+        if (conversationId && !sessionIdRef.current) {
+          sessionIdRef.current = conversationId;
+          setSessionId(conversationId);
+          storeAaryaSession(conversationId, authUserId);
+        }
         const visible = rows.filter((m) => m.role === "user" || m.role === "assistant");
         if (visible.length > 0) {
           setMessages((prev) =>
@@ -361,7 +362,27 @@ export function ChatInterface({
         }
       })
       .catch(() => {
-        /* non-fatal — empty state or new session */
+        const sid = sessionId;
+        if (!sid || historyLoadedForRef.current) return;
+        void fetchAaryaChatHistory(sid)
+          .then((rows) => {
+            if (cancelled || !rows.length) return;
+            historyLoadedForRef.current = sid;
+            setMessages(
+              rows
+                .filter((m) => m.role === "user" || m.role === "assistant")
+                .map((m) => ({
+                  id: m.id,
+                  role: m.role as "user" | "assistant",
+                  content: m.content,
+                  content_type: (m.content_type === "voice" ? "voice" : "text") as
+                    | "text"
+                    | "voice",
+                  created_at: m.created_at,
+                }))
+            );
+          })
+          .catch(() => undefined);
       })
       .finally(() => {
         if (!cancelled) setHistoryLoading(false);
@@ -370,7 +391,7 @@ export function ChatInterface({
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [authUserId, sessionId]);
 
   useEffect(() => {
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
@@ -746,7 +767,7 @@ export function ChatInterface({
           // stale id is already cleared; create a fresh session and retry once
           // so the user (text or voice) isn't stuck on "Conversation not found".
           if (streamErr instanceof StaleSessionError) {
-            currentSessionId = await createAaryaSession();
+            currentSessionId = await resolvePrimaryAaryaSession();
             sessionIdRef.current = currentSessionId;
             setSessionId(currentSessionId);
             storeAaryaSession(currentSessionId, authUserId);
@@ -1169,9 +1190,9 @@ export function ChatInterface({
           {showCoachMark && (
             <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
               <p className="text-micro text-ink-700 leading-relaxed">
-                Type or hold the mic — Aarya replies in text or voice. Your job
-                matches are always in <span className="font-medium">Matches</span>{" "}
-                on the left; chat never blocks them.
+                Type or hold the mic to talk with Aarya. Your job matches are
+                always in <span className="font-medium">Matches</span> on the
+                left; chat never blocks them.
               </p>
               <button
                 type="button"
@@ -1183,66 +1204,6 @@ export function ChatInterface({
               >
                 Got it
               </button>
-            </div>
-          )}
-
-          {VOICE_FEATURE_ENABLED && (
-            <div className="flex items-center justify-between gap-2">
-              <div
-                className="inline-flex rounded-full border border-ink-200 bg-paper-1 p-0.5"
-                role="group"
-                aria-label="Reply mode"
-              >
-                {(["text", "voice"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => {
-                      setReplyMode(mode);
-                      storeChatReplyMode(mode);
-                    }}
-                    className={cn(
-                      "rounded-full px-3 py-1 text-micro font-medium capitalize transition-colors",
-                      replyMode === mode
-                        ? "bg-ink-900 text-paper-0"
-                        : "text-ink-500 hover:text-ink-800",
-                    )}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowVoiceSettings((v) => !v)}
-                className="inline-flex items-center gap-1 text-micro text-ink-500 hover:text-ink-800"
-                aria-expanded={showVoiceSettings}
-              >
-                <Settings className="h-3.5 w-3.5" strokeWidth={1.5} />
-                Voice
-              </button>
-            </div>
-          )}
-
-          {showVoiceSettings && VOICE_FEATURE_ENABLED && (
-            <div className="rounded-lg border border-ink-100 bg-paper-1 px-3 py-2.5 space-y-2">
-              <label className="flex items-center gap-2 text-micro text-ink-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!sendImmediately}
-                  onChange={(e) => {
-                    const review = e.target.checked;
-                    setSendImmediately(!review);
-                    storeVoiceSendOnPause(!review);
-                    storeReviewBeforeSend(review);
-                  }}
-                  className="rounded border-ink-300"
-                />
-                Review before send
-              </label>
-              <p className="text-micro text-ink-400">
-                Default: hold mic, release to send. Voice audio is not stored (DPDP).
-              </p>
             </div>
           )}
 

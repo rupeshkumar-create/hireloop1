@@ -36,7 +36,10 @@ from langchain_openai import ChatOpenAI
 
 from hireloop_api.config import Settings
 from hireloop_api.deps import get_db_pool
-from hireloop_api.services.job_preferences import normalize_remote_preference
+from hireloop_api.services.job_preferences import (
+    apply_negative_preference,
+    normalize_remote_preference,
+)
 
 logger = structlog.get_logger()
 
@@ -104,6 +107,10 @@ Return ONLY valid JSON (no markdown, no prose) with exactly this shape:
     "desired_industry": string | null,
     "desired_salary": integer | null
   },
+  "negative_preferences": {
+    "companies": [string],
+    "titles": [string]
+  },
   "memory_summary": string
 }
 
@@ -130,11 +137,17 @@ desired_salary is INR per annum integer. industry_preference is a list of \
 industries they want to work in. For preferred_name: ONLY set when the candidate \
 clearly states their own name in chat/voice. NEVER copy a name from their résumé \
 PDF, a reference, a manager, or anyone else mentioned in the document.
+- negative_preferences: when the candidate says they are NOT interested in a \
+company, role title, or employer type — append lowercased strings to companies \
+or titles lists (merge with prior exclusions; never remove unless they explicitly \
+take it back). Examples: "no consultancies" → titles: ["consultant"]; \
+"not Flipkart" → companies: ["flipkart"].
 - memory_summary: rewrite the running memory into ONE updated third-person \
 summary that folds in anything new from this conversation — goals, preferences, \
 constraints, companies they like/dislike, family/relocation constraints, \
 timeline, anything that helps personalize future chats. Keep it under 200 words. \
-Preserve still-relevant older facts; drop nothing important.
+Preserve still-relevant older facts; drop nothing important. This summary is the \
+self-learning loop: every chat turn refines what Aarya remembers user-wide.
 """
 
 
@@ -185,7 +198,7 @@ class CandidateMemoryService:
         if profile is None:
             return {"skipped": "no_profile"}
 
-        messages = await CandidateMemoryService._load_messages(db, conversation_id)
+        messages = await CandidateMemoryService._load_candidate_messages(db, candidate_id)
         if not messages:
             return {"skipped": "no_messages"}
 
@@ -237,6 +250,16 @@ class CandidateMemoryService:
         data["id"] = str(data["id"])
         data["skills"] = list(data.get("skills") or [])
         return data
+
+    @staticmethod
+    async def _load_candidate_messages(
+        db: asyncpg.Connection,
+        candidate_id: str,
+    ) -> list[dict[str, str]]:
+        """Cross-conversation transcript for the self-learning memory loop."""
+        from hireloop_api.services.chat_sessions import load_candidate_chat_messages
+
+        return await load_candidate_chat_messages(db, candidate_id, limit=_MAX_MESSAGES)
 
     @staticmethod
     async def _load_messages(db: asyncpg.Connection, conversation_id: str) -> list[dict[str, str]]:
@@ -406,6 +429,19 @@ class CandidateMemoryService:
             if merged_facts:
                 state["career_facts"] = merged_facts
 
+        raw_neg = parsed.get("negative_preferences")
+        if isinstance(raw_neg, dict):
+            for kind in ("companies", "titles"):
+                items = raw_neg.get(kind)
+                if not isinstance(items, list):
+                    continue
+                for raw in items:
+                    val = str(raw).strip()
+                    if val:
+                        state = apply_negative_preference(state, kind=kind, value=val)
+
+        turns = state.get("memory_turn_count")
+        state["memory_turn_count"] = (int(turns) if isinstance(turns, int) else 0) + 1
         now = datetime.now(UTC).isoformat()
         state["memory_updated_at"] = now
         state["last_conversation_id"] = conversation_id
@@ -439,6 +475,31 @@ async def run_memory_update(settings: Settings, candidate_id: str, conversation_
     try:
         pool = await get_db_pool(settings)
         async with pool.acquire() as conn:
+            user_row = await conn.fetchrow(
+                "SELECT user_id FROM public.candidates WHERE id = $1::uuid",
+                uuid.UUID(candidate_id),
+            )
+            if user_row and user_row["user_id"]:
+                try:
+                    logged = await conn.fetchval(
+                        """
+                        SELECT 1 FROM public.consent_log
+                        WHERE user_id = $1::uuid AND purpose = 'chat_memory_learning'
+                        LIMIT 1
+                        """,
+                        user_row["user_id"],
+                    )
+                    if not logged:
+                        await conn.execute(
+                            """
+                            INSERT INTO public.consent_log (user_id, purpose, granted)
+                            VALUES ($1::uuid, 'chat_memory_learning', TRUE)
+                            """,
+                            user_row["user_id"],
+                        )
+                except Exception as exc:
+                    logger.debug("consent_log_insert_skipped", error=str(exc))
+
             result = await CandidateMemoryService.update_from_conversation(
                 conn, candidate_id, conversation_id, settings
             )
