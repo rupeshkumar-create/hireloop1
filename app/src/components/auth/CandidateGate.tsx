@@ -3,20 +3,16 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { fetchMyProfile } from "@/lib/api/profile";
-
-const SKIP_PREFIXES = ["/onboarding", "/signup", "/auth", "/voice", "/login"];
+import { isPublicPath } from "@/lib/public-routes";
 
 export function CandidateGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(() =>
-    SKIP_PREFIXES.some((p) => pathname?.startsWith(p)) ||
-    pathname?.startsWith("/recruiter"),
-  );
+  const [ready, setReady] = useState(() => isPublicPath(pathname));
 
   useEffect(() => {
     if (!pathname) return;
-    if (SKIP_PREFIXES.some((p) => pathname.startsWith(p))) {
+    if (isPublicPath(pathname)) {
       setReady(true);
       return;
     }
