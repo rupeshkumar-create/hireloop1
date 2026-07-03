@@ -43,12 +43,15 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 
 **Authentication → URL configuration**
 
-| Setting | Local dev | Production (later) |
-|---------|-----------|-------------------|
-| Site URL | `http://localhost:3001` | `https://hireloop1-app-orcin.vercel.app` |
-| Redirect URLs | `http://localhost:3001/auth/callback`, `http://localhost:3001/auth/confirm` | `https://hireloop1-app.vercel.app/auth/callback`, `…/auth/confirm` |
+| Setting | Local dev | Production (Vercel) |
+|---------|-----------|---------------------|
+| Site URL | `http://localhost:3001` | `https://hireloop1-app.vercel.app` |
+| Redirect URLs | `http://localhost:3001/auth/callback`, `…/auth/confirm`, `http://localhost:3001/**` | `https://hireloop1-app.vercel.app/auth/callback`, `…/auth/confirm`, `…/**` |
 
-Add `http://localhost:3001/**` under redirect URLs if you use query params on callback.
+**Do not use port 3000** (`web/` marketing) as Site URL. Auth runs on **`app/`** (port **3001** locally).
+If Site URL is `http://127.0.0.1:3000`, LinkedIn redirects to the marketing homepage with `/?code=…` and sign-in fails.
+
+Add `http://127.0.0.1:3001/auth/callback` if you browse the app as `127.0.0.1` (not `localhost`).
 
 **Email sign-in links (important):** Default Supabase templates send users to
 `supabase.co/auth/v1/verify` with a PKCE token that **only works in the same
