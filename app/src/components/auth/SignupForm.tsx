@@ -333,9 +333,12 @@ export function SignupForm() {
             <p className="text-small font-medium text-ink-900">Check your email</p>
             <p className="mt-1 text-xs text-ink-500 leading-relaxed">
               We sent a sign-in link to{" "}
-              <span className="text-ink-800">{email}</span>. Open it and tap{" "}
-              <span className="font-medium text-ink-700">Confirm email address</span>{" "}
-              — you&apos;ll come back here signed in.
+              <span className="text-ink-800">{email}</span>. Open it in any browser —
+              you&apos;ll land back in Hireloop signed in.
+            </p>
+            <p className="mt-2 text-[11px] text-ink-400 leading-relaxed">
+              Link stuck on supabase.co for more than a few seconds? Close that tab,
+              click &ldquo;Use a different email&rdquo; below, and request a fresh link.
             </p>
           </div>
 

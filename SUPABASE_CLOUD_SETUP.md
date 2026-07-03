@@ -50,6 +50,19 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 
 Add `http://localhost:3001/**` under redirect URLs if you use query params on callback.
 
+**Email sign-in links (important):** Default Supabase templates send users to
+`supabase.co/auth/v1/verify` with a PKCE token that **only works in the same
+browser** where you requested the link — it hangs in incognito/temp-mail tabs.
+This repo ships token_hash templates that open your app directly:
+
+```bash
+python3 scripts/patch_supabase_email_templates.py
+```
+
+Or paste `supabase/templates/confirmation.html` and `magic_link.html` into
+**Authentication → Email Templates** in the dashboard (Confirm signup + Magic link).
+After updating, request a **new** sign-in email; old links still use the broken URL.
+
 ---
 
 ## 4. LinkedIn OIDC provider

@@ -5,8 +5,7 @@ export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
   // OAuth/email callback — must NOT run session refresh before exchangeCodeForSession.
-  // getUser() here clears or rotates PKCE cookies → "code challenge does not match".
-  if (pathname.startsWith("/auth/callback")) {
+  if (pathname.startsWith("/auth/callback") || pathname.startsWith("/auth/confirm")) {
     return NextResponse.next();
   }
 

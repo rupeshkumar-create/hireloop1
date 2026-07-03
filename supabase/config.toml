@@ -15,3 +15,13 @@ major_version = 15
 [studio]
 enabled = true
 port = 54323
+
+# Email templates — link straight to the app with token_hash (works cross-browser / incognito).
+# Push to cloud: python3 scripts/patch_supabase_email_templates.py
+[auth.email.template.confirmation]
+subject = "Confirm your Hireloop signup"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.magic_link]
+subject = "Your Hireloop sign-in link"
+content_path = "./supabase/templates/magic_link.html"
