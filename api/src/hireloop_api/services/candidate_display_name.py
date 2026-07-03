@@ -82,12 +82,11 @@ async def resolve_candidate_display_name(
         uuid.UUID(candidate_id),
     )
     resume_name = await fetch_primary_resume_full_name(db, candidate_id)
-    linkedin_name = _linkedin_display_name(
-        candidate_row["linkedin_data"] if candidate_row else None
-    )
+    linkedin_raw = candidate_row.get("linkedin_data") if candidate_row else None
+    linkedin_name = _linkedin_display_name(linkedin_raw)
     return pick_display_name(
-        user_full_name=user_row["full_name"] if user_row else None,
-        email=user_row["email"] if user_row else None,
+        user_full_name=user_row.get("full_name") if user_row else None,
+        email=user_row.get("email") if user_row else None,
         resume_full_name=resume_name,
         linkedin_full_name=linkedin_name,
     )
