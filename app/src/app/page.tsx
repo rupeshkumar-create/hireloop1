@@ -20,10 +20,8 @@ import { ChatPreview } from "@/components/landing/ChatPreview";
 /**
  * App landing page (app.hireloop.in) — chat-first.
  *
- * Sells the single idea behind Hireloop: you don't fill in forms, you talk to
- * Aarya — and it does the whole hunt (find → score → tailor → introduce). The
- * hero pairs that promise with a live, auto-playing chat demo and funnels into
- * /signup. If the visitor is already signed in, CTAs point at /dashboard.
+ * One idea: you don't fill in forms, you talk to Aarya, and it runs the whole
+ * hunt (find → score → tailor → introduce). Minimal, to-the-point copy.
  */
 export default async function RootPage() {
   const supabase = await createClient();
@@ -32,7 +30,7 @@ export default async function RootPage() {
   } = await supabase.auth.getUser();
 
   const primaryHref = user ? "/dashboard" : "/signup";
-  const primaryLabel = user ? "Go to dashboard" : "Start free — takes a minute";
+  const primaryLabel = user ? "Go to dashboard" : "Start free";
 
   return (
     <main className="min-h-screen bg-paper-0">
@@ -54,7 +52,7 @@ export default async function RootPage() {
               What you get
             </a>
             <a href="#trust" className="text-small text-ink-600 transition-colors hover:text-ink-900">
-              Why trust it
+              Trust
             </a>
           </nav>
 
@@ -79,34 +77,24 @@ export default async function RootPage() {
       </header>
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden">
-        {/* decorative accent glow */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -top-24 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full opacity-[0.14] blur-3xl"
-          style={{
-            background:
-              "radial-gradient(closest-side, #B9F84C, transparent)",
-          }}
-        />
-        <div className="relative mx-auto max-w-page px-6 pt-16 pb-16 md:pt-24">
+      <section>
+        <div className="mx-auto max-w-page px-6 pt-16 pb-16 md:pt-24">
           <div className="grid items-center gap-12 md:grid-cols-2 md:gap-16">
             {/* Copy */}
             <div className="space-y-6">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-paper-1 px-3 py-1 text-micro font-medium text-ink-600 ring-1 ring-ink-100">
                 <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />
-                AI recruiting for India, the US &amp; the UK
+                AI recruiting · India, US &amp; UK
               </span>
 
               <h1 className="text-display text-ink-900">
-                Don&apos;t apply into the void.{" "}
+                Stop applying.{" "}
                 <span className="text-accent">Get introduced.</span>
               </h1>
 
               <p className="max-w-md text-body text-ink-700 leading-relaxed">
-                Aarya is your AI recruiter. Tell it what you want — by text or
-                voice — and it finds live roles, scores your fit, tailors your
-                CV, and hands you a warm intro. The whole hunt, in one chat.
+                Your AI recruiter. It finds live roles, scores your fit, tailors
+                your CV, and gets you a warm intro — in one chat.
               </p>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -121,21 +109,22 @@ export default async function RootPage() {
                   href="#how"
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 px-6 py-3.5 text-body font-medium text-ink-800 transition-colors hover:bg-ink-50"
                 >
-                  See how it works
+                  How it works
                 </a>
               </div>
 
               <ul className="flex flex-wrap gap-x-5 gap-y-2 pt-1">
-                {[
-                  "Free to start",
-                  "LinkedIn or email sign-in",
-                  "No credit card",
-                ].map((item) => (
-                  <li key={item} className="inline-flex items-center gap-1.5 text-micro text-ink-500">
-                    <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} />
-                    {item}
-                  </li>
-                ))}
+                {["Free to start", "LinkedIn or email", "No credit card"].map(
+                  (item) => (
+                    <li
+                      key={item}
+                      className="inline-flex items-center gap-1.5 text-micro text-ink-500"
+                    >
+                      <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} />
+                      {item}
+                    </li>
+                  ),
+                )}
               </ul>
             </div>
 
@@ -151,10 +140,10 @@ export default async function RootPage() {
       <section className="border-y border-ink-100 bg-paper-1">
         <div className="mx-auto grid max-w-page grid-cols-2 gap-6 px-6 py-8 md:grid-cols-4">
           {[
-            { Icon: Mic, label: "Text or voice", sub: "Same copilot either way" },
-            { Icon: Briefcase, label: "Live roles", sub: "Real openings, scored for fit" },
-            { Icon: Send, label: "Warm intros", sub: "Not cold applications" },
-            { Icon: Zap, label: "In one chat", sub: "Find, tailor, apply, prep" },
+            { Icon: Mic, label: "Text or voice", sub: "Type or talk" },
+            { Icon: Briefcase, label: "Live roles", sub: "Scored for fit" },
+            { Icon: Send, label: "Warm intros", sub: "Not cold applies" },
+            { Icon: Zap, label: "One chat", sub: "Search to intro" },
           ].map(({ Icon, label, sub }) => (
             <div key={label} className="flex items-start gap-3">
               <Icon className="mt-0.5 h-5 w-5 shrink-0 text-accent" strokeWidth={1.5} />
@@ -173,10 +162,9 @@ export default async function RootPage() {
           <p className="text-micro font-semibold uppercase tracking-wide text-accent">
             How it works
           </p>
-          <h2 className="text-h1 text-ink-900">One chat does the whole job hunt</h2>
+          <h2 className="text-h1 text-ink-900">One chat. The whole hunt.</h2>
           <p className="text-body text-ink-700">
-            Everything happens in the conversation. Aarya does the legwork in the
-            background — and shows you exactly what it did.
+            Aarya does the work and shows you every step.
           </p>
         </div>
 
@@ -185,20 +173,20 @@ export default async function RootPage() {
             {
               Icon: MessageSquare,
               step: "01",
-              title: "Tell Aarya what you want",
-              body: "Role, location, salary, must-haves — in plain words, by text or voice.",
+              title: "Say what you want",
+              body: "Role, location, pay — in plain words.",
             },
             {
               Icon: Search,
               step: "02",
-              title: "It searches & scores",
-              body: "Aarya pulls live roles in your market, ranks your fit, and surfaces the strongest matches.",
+              title: "It finds & scores",
+              body: "Live roles in your market, ranked by fit.",
             },
             {
               Icon: Send,
               step: "03",
-              title: "Warm intros, not cold applies",
-              body: "Ask for an intro and Aarya hands it to the recruiter — you skip the résumé void.",
+              title: "Get introduced",
+              body: "Aarya hands you to the recruiter — no résumé void.",
             },
           ].map(({ Icon, step, title, body }) => (
             <li
@@ -225,10 +213,9 @@ export default async function RootPage() {
             <p className="text-micro font-semibold uppercase tracking-wide text-accent">
               What you get
             </p>
-            <h2 className="text-h1 text-ink-900">A recruiter, a coach, and a career strategist</h2>
+            <h2 className="text-h1 text-ink-900">A recruiter, coach, and strategist.</h2>
             <p className="text-body text-ink-700">
-              Not another job board. Aarya works your search end to end — and
-              helps you grow into the roles you want next.
+              Your whole search — plus a plan for what&apos;s next.
             </p>
           </div>
 
@@ -236,33 +223,33 @@ export default async function RootPage() {
             {[
               {
                 Icon: MessageSquare,
-                title: "Conversational, not forms",
-                body: "Talk or type. No endless fields — Aarya builds your profile from your CV and the chat.",
+                title: "Chat, not forms",
+                body: "Talk or type. Aarya builds your profile from your CV.",
               },
               {
                 Icon: Briefcase,
-                title: "Real roles, scored for you",
-                body: "Actual open roles in your market, ranked by genuine fit — never recycled global listings.",
+                title: "Roles scored for you",
+                body: "Real openings, ranked by genuine fit.",
               },
               {
                 Icon: Send,
                 title: "Warm intros",
-                body: "Ask, and Aarya hands your profile to the recruiter — instead of a one-way application.",
+                body: "Handed to the recruiter, not into the void.",
               },
               {
                 Icon: FileText,
-                title: "CV tailored per role",
-                body: "One click turns your résumé into a role-specific, recruiter-ready version for each job.",
+                title: "CV per role",
+                body: "One click to a role-ready résumé.",
               },
               {
                 Icon: GraduationCap,
-                title: "Personal learning roadmap",
-                body: "A résumé-aware, hour-a-day plan to close the gap to any role — with progress tracking.",
+                title: "Learning roadmap",
+                body: "An hour-a-day plan to close any gap.",
               },
               {
                 Icon: Brain,
                 title: "Career intelligence",
-                body: "Your archetype, market value, and likely next move — each tied to roles you can act on.",
+                body: "Your value and next move — tied to real roles.",
               },
             ].map(({ Icon, title, body }) => (
               <div
@@ -285,12 +272,11 @@ export default async function RootPage() {
         <div className="grid gap-10 md:grid-cols-2 md:items-center">
           <div className="space-y-4">
             <p className="text-micro font-semibold uppercase tracking-wide text-accent">
-              Why trust it
+              Trust
             </p>
             <h2 className="text-h1 text-ink-900">No black box. No spam.</h2>
             <p className="text-body text-ink-700 leading-relaxed">
-              Aarya works for you, in the open. You see every action it takes,
-              and your profile is only shared when you say so.
+              You see every action. Your profile is shared only when you say so.
             </p>
           </div>
           <div className="space-y-4">
@@ -298,12 +284,12 @@ export default async function RootPage() {
               {
                 Icon: Zap,
                 title: "See every action",
-                body: "Aarya logs each step it takes on your behalf, so nothing happens behind your back.",
+                body: "Every step Aarya takes is logged.",
               },
               {
                 Icon: ShieldCheck,
                 title: "Your data stays yours",
-                body: "Your profile is fully isolated and shared only with your consent. We never cold-spam recruiters.",
+                body: "Shared only with your consent. Never spammed.",
               },
             ].map(({ Icon, title, body }) => (
               <div key={title} className="flex gap-3 rounded-xl border border-ink-100 bg-paper-1 p-5">
@@ -323,12 +309,8 @@ export default async function RootPage() {
         <div className="mx-auto max-w-page px-6 py-20 text-center">
           <div className="mx-auto max-w-xl space-y-6">
             <h2 className="text-h1 text-paper-0">
-              Your next role is one conversation away
+              Your next role is one chat away.
             </h2>
-            <p className="text-body text-paper-0/70">
-              Start chatting with Aarya now. Type or talk — it&apos;s the same
-              copilot either way.
-            </p>
             <div className="flex flex-col items-center gap-3">
               <Link
                 href={primaryHref}
@@ -338,7 +320,7 @@ export default async function RootPage() {
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               </Link>
               <span className="text-micro text-paper-0/50">
-                Free to start · No credit card
+                Free · No credit card
               </span>
             </div>
           </div>
