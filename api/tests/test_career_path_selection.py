@@ -25,6 +25,15 @@ def test_parse_prioritize_chip_message() -> None:
     assert parse_career_path_selection(msg, OPTIONS) == OPTIONS[1]
 
 
+def test_parse_prioritize_senior_category_manager_fashion() -> None:
+    msg = (
+        'I want to prioritize the "Senior Category Manager - Fashion" career path. '
+        "Show me matching jobs for this direction."
+    )
+    options = ["Senior Category Manager - Fashion", "Head of Buying", "Director"]
+    assert parse_career_path_selection(msg, options) == options[0]
+
+
 def test_parse_title_substring() -> None:
     assert (
         parse_career_path_selection("Head of Buying please", OPTIONS) == OPTIONS[1]

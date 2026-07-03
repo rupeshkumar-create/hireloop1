@@ -87,10 +87,55 @@ export function clearAaryaSession(userId?: string | null): void {
 
 /** Thrown when the conversation no longer exists server-side; callers retry. */
 export class StaleSessionError extends Error {
-  constructor() {
-    super("Conversation not found");
+  constructor(message = "Conversation not found") {
+    super(message);
     this.name = "StaleSessionError";
   }
+}
+
+function parseApiErrorDetail(res: Response, body: unknown): string {
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === "object" && item && "msg" in item) {
+          return String((item as { msg: string }).msg);
+        }
+        return String(item);
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (res.status === 404) {
+    return "Conversation not found — starting a fresh chat.";
+  }
+  return `Request failed (${res.status})`;
+}
+
+async function openPrimarySession(): Promise<string> {
+  const getRes = await apiAuthFetch("/api/v1/chat/sessions/primary", {
+    cache: "no-store",
+  });
+  if (getRes.ok) {
+    const data = (await getRes.json()) as { conversation_id: string };
+    return data.conversation_id;
+  }
+
+  // Older API builds only expose POST /sessions (same behaviour).
+  const postRes = await apiAuthFetch("/api/v1/chat/sessions", {
+    method: "POST",
+    cache: "no-store",
+  });
+  if (postRes.ok) {
+    const data = (await postRes.json()) as { conversation_id: string };
+    return data.conversation_id;
+  }
+
+  const errBody = await postRes.json().catch(() => ({}));
+  throw new Error(parseApiErrorDetail(postRes, errBody));
 }
 
 export function readVoiceSendOnPause(): boolean {
@@ -115,19 +160,7 @@ export function storeVoiceSendOnPause(enabled: boolean): void {
 
 /** Return the user's canonical Supabase-backed Aarya conversation id. */
 export async function resolvePrimaryAaryaSession(): Promise<string> {
-  const res = await apiAuthFetch("/api/v1/chat/sessions/primary", {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const detail =
-      typeof (errBody as { detail?: unknown }).detail === "string"
-        ? (errBody as { detail: string }).detail
-        : "Could not open chat session";
-    throw new Error(detail);
-  }
-  const data = (await res.json()) as { conversation_id: string };
-  return data.conversation_id;
+  return openPrimarySession();
 }
 
 export async function createAaryaSession(): Promise<string> {
@@ -258,19 +291,14 @@ export async function streamAaryaMessage(
   );
 
   if (!res.ok || !res.body) {
+    const errBody = await res.json().catch(() => ({}));
+    const detail = parseApiErrorDetail(res, errBody);
     // The stored conversation was deleted (e.g. data reset) — forget it so the
     // caller can create a fresh session and retry instead of dead-ending.
     if (res.status === 404) {
       clearAaryaSession();
-      throw new StaleSessionError();
+      throw new StaleSessionError(detail);
     }
-    const errBody = await res.json().catch(() => ({}));
-    const detail =
-      typeof (errBody as { detail?: unknown }).detail === "string"
-        ? (errBody as { detail: string }).detail
-        : res.ok
-          ? "No response stream"
-          : `Request failed (${res.status})`;
     throw new Error(detail);
   }
 

@@ -52,6 +52,7 @@ from hireloop_api.services.chat_stream import (
     sse_status,
     sse_text,
 )
+from hireloop_api.services.matching import MatchingEngine
 from hireloop_api.services.memory import (
     CandidateMemoryService,
     format_known_facts,
@@ -265,6 +266,23 @@ def _emit_tool_status(msg: object, *, voice_mode: bool) -> str:
         spoken_filler=tool_status_spoken_filler(tool_name) if voice_mode else None,
         eta_sec=tool_status_eta(tool_name),
     )
+
+
+def _friendly_stream_error(exc: Exception) -> str:
+    """Turn raw LLM/HTTP exceptions into user-safe chat error text."""
+    text = str(exc).strip()
+    lower = text.lower()
+    if "not found" in lower and "conversation" not in lower:
+        return (
+            "The AI service returned an error (model or endpoint not found). "
+            "Please try again — if this keeps happening, check OPENROUTER_API_KEY "
+            "and model names on the API server."
+        )
+    if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
+        return "AI service authentication failed. Please try again later."
+    if "rate limit" in lower or "429" in lower:
+        return "I'm getting a lot of requests right now. Please wait a moment and try again."
+    return text[:500]
 
 
 class CreateSessionResponse(BaseModel):
@@ -581,6 +599,27 @@ async def send_message(
             career_path_pending = []
             clear_session_tool_cache(conversation_id, "job_search")
 
+        user_intent = _detect_likely_intent(body.content)
+        wants_jobs = user_intent == "job_search" or bool(career_path_just_prioritized)
+        if wants_jobs:
+            ms_count = await db.fetchval(
+                """
+                SELECT count(*) FROM public.match_scores
+                WHERE candidate_id = $1::uuid
+                """,
+                uuid.UUID(candidate_id),
+            )
+            if not ms_count:
+                try:
+                    engine = MatchingEngine(db)
+                    await engine.score_candidate(candidate_id, limit=100)
+                except Exception as exc:
+                    logger.warning(
+                        "pre_job_search_scoring_failed",
+                        candidate_id=candidate_id,
+                        error=str(exc)[:200],
+                    )
+
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
         # conversation never loses its latest turns to the window.
@@ -603,7 +642,6 @@ async def send_message(
     if len(history) > max_history_messages:
         history = history[-max_history_messages:]
 
-    user_intent = _detect_likely_intent(body.content)
     include_prefetch = user_intent == "job_search"
 
     messages = [
@@ -752,7 +790,7 @@ async def send_message(
                     )
                 yield sse_done()
             else:
-                err_text = str(exc)[:500]
+                err_text = _friendly_stream_error(exc)
                 yield sse_error(err_text)
                 yield sse_done()
 

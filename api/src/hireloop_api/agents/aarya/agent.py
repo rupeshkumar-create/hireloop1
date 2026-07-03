@@ -959,16 +959,30 @@ def build_aarya_graph(settings: Settings) -> Any:
             active = llm_primary
         # Resilience: if the fast model errors (e.g. a misconfigured / invalid
         # model ID), fall back to the primary so chat never hard-fails on a turn.
-        if use_fast and not voice_budget_done and not no_tools_turn:
-            try:
-                response = await active.ainvoke(messages)
-            except Exception as exc:
-                logger.warning("aarya_fast_model_failed_fallback_to_primary", error=str(exc)[:200])
-                response = await (llm_primary_plain if voice_budget_done else llm_primary).ainvoke(
-                    messages
-                )
+        fallback = llm_primary_plain if voice_budget_done else llm_primary
+        if no_tools_turn:
+            fallback = llm_fast_plain
+        elif use_fast:
+            fallback = llm_primary_plain if voice_budget_done else llm_primary
         else:
+            fallback = llm_fast_plain if voice_budget_done else llm_fast
+
+        try:
             response = await active.ainvoke(messages)
+        except Exception as exc:
+            logger.warning(
+                "aarya_llm_invoke_failed_trying_fallback",
+                error=str(exc)[:200],
+                use_fast=use_fast,
+            )
+            try:
+                response = await fallback.ainvoke(messages)
+            except Exception as fallback_exc:
+                logger.error(
+                    "aarya_llm_fallback_failed",
+                    error=str(fallback_exc)[:200],
+                )
+                raise fallback_exc from exc
 
         return {
             "messages": [response],

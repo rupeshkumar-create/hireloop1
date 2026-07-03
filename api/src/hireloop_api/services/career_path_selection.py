@@ -46,9 +46,9 @@ def parse_career_path_selection(message: str, options: list[str]) -> str | None:
 
     lower = text.lower()
 
-    # Explicit "prioritize …" messages from UI chips.
+    # Explicit "prioritize …" messages from UI chips (straight or curly quotes).
     m = re.search(
-        r'prioritize the ["\u201c](.+?)["\u201d] career path',
+        r"prioritize the ['\"\u2018\u2019\u201c\u201d](.+?)['\"\u2018\u2019\u201c\u201d] career path",
         text,
         flags=re.IGNORECASE,
     )
