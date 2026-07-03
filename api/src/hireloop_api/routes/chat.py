@@ -272,16 +272,22 @@ def _friendly_stream_error(exc: Exception) -> str:
     """Turn raw LLM/HTTP exceptions into user-safe chat error text."""
     text = str(exc).strip()
     lower = text.lower()
+    if (
+        "402" in lower
+        or "requires more credits" in lower
+        or "can only afford" in lower
+        or "openrouter" in lower
+        or "error code:" in lower
+        or "{'error'" in lower
+        or '"error"' in lower
+    ):
+        return "Failed."
     if "not found" in lower and "conversation" not in lower:
-        return (
-            "The AI service returned an error (model or endpoint not found). "
-            "Please try again — if this keeps happening, check OPENROUTER_API_KEY "
-            "and model names on the API server."
-        )
+        return "Failed."
     if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
-        return "AI service authentication failed. Please try again later."
+        return "Failed."
     if "rate limit" in lower or "429" in lower:
-        return "I'm getting a lot of requests right now. Please wait a moment and try again."
+        return "Failed."
     return text[:500]
 
 
@@ -635,16 +641,21 @@ async def send_message(
                         error=str(exc)[:200],
                     )
 
-        if career_path_just_prioritized:
+        search_title = career_path_just_prioritized or (
+            str(career_path_prioritized) if user_intent == "job_search" and career_path_prioritized else None
+        )
+        search_city: str | None = None
+        if search_title:
             from hireloop_api.agents.aarya import tools as aarya_tools
             from hireloop_api.services.career_path_selection import (
                 extract_find_role_and_city,
             )
 
             _, city = extract_find_role_and_city(body.content)
+            search_city = city
             try:
                 js_kwargs: dict[str, object] = {
-                    "query_text": career_path_just_prioritized,
+                    "query_text": search_title,
                 }
                 if city:
                     js_kwargs["location_city"] = city
@@ -720,6 +731,19 @@ async def send_message(
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
+    deterministic_job_reply: str | None = None
+    if search_title and user_intent == "job_search":
+        location_text = f" in {search_city}" if search_city else ""
+        if prefetched_jobs:
+            deterministic_job_reply = (
+                f"I found matching roles for {search_title}{location_text}. "
+                "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
+            )
+        else:
+            deterministic_job_reply = (
+                f"I searched for {search_title}{location_text}, but I couldn’t find live matches yet. "
+                "Try widening the role title or location and I’ll search again."
+            )
 
     logger.info(
         "aarya_turn_start",
@@ -740,6 +764,21 @@ async def send_message(
             )
             if include_prefetch and prefetched_jobs:
                 yield sse_jobs(prefetched_jobs)
+            if deterministic_job_reply:
+                full_response = deterministic_job_reply
+                yield sse_text(deterministic_job_reply)
+                try:
+                    await _persist_assistant_reply(
+                        settings, conversation_id, full_response, title_hint
+                    )
+                except Exception as save_exc:
+                    logger.error(
+                        "assistant_message_save_failed",
+                        error=str(save_exc),
+                        conversation_id=conversation_id,
+                    )
+                yield sse_done()
+                return
 
             async with pool.acquire() as db:
                 config = {"configurable": {"db": db, "thread_id": conversation_id}}

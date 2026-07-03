@@ -85,6 +85,9 @@ Finding jobs — the right order:
 - If they have not picked a primary target role yet, offer the top 3 options ONCE.
   When they reply with 1/2/3, a role title, or "option 2", call
   prioritize_career_path immediately — never ask the same question twice.
+- If you asked them which path to search and they answer with a generic command
+  like "find me jobs" or "search now", default to option 1 and search. Do not
+  keep asking them to choose.
 - If turn context shows career_path_locked, job_search is allowed — do NOT re-ask.
 - THEN call job_search once per promising target_title from the path to surface
   real openings. Lead with the best-fit roles.
@@ -98,6 +101,9 @@ Important rules:
   time.
 - Missing CTC or location preferences should not block job discovery. If needed,
   show reasonable matches first and ask salary/location as follow-up filters.
+- Never expose internal wording like "the system wants/needs me to..." or
+  "the tool requires...". Speak as Aarya: "I'll focus this search on..." or
+  "I'll start with...".
 - Job location type: profile_read shows remote_preference (any | remote_only |
   onsite_only). When the user asks for only remote roles, only on-site/non-remote
   roles, or to stop seeing remote jobs: call update_job_preferences with the right
@@ -393,6 +399,17 @@ def _prefer_fast_model(
     return False
 
 
+def _is_openrouter_low_credit_error(exc: Exception) -> bool:
+    """OpenRouter returns 402 when credits are insufficient for max_tokens."""
+    text = str(exc).lower()
+    return (
+        "402" in text
+        or "requires more credits" in text
+        or "can only afford" in text
+        or "add more credits" in text
+    )
+
+
 def build_turn_context_prompt(
     *,
     messages: list[BaseMessage],
@@ -440,8 +457,9 @@ def build_turn_context_prompt(
             numbered = "; ".join(f"{i + 1}. {t}" for i, t in enumerate(pending[:3]))
             guidance.append(
                 "- career_path_pending: user must pick ONE primary target before job_search. "
-                f"Options: {numbered}. If they reply 1/2/3 or a title, call "
-                "prioritize_career_path then job_search — ask at most once."
+                f"Options: {numbered}. If they reply 1/2/3, a title, or a generic "
+                "job-search command like 'find me jobs', call prioritize_career_path "
+                "(default to option 1 for generic commands) then job_search — ask at most once."
             )
     if last_text:
         guidance.append(f"- candidate_signal: {last_text[:240]}")
@@ -842,26 +860,30 @@ def build_aarya_graph(settings: Settings) -> Any:
     # OpenRouter as the LLM provider (R3)
     # extra_headers: identifies this app to OpenRouter (required for rate limits
     # and analytics — see openrouter.ai/docs#headers)
-    def _make_llm(model: str) -> Any:
+    chat_max_tokens = max(128, int(settings.openrouter_chat_max_tokens or 700))
+    low_credit_tokens = max(64, int(settings.openrouter_low_credit_max_tokens or 256))
+    free_model = (settings.openrouter_free_model or "").strip()
+
+    def _make_llm(model: str, *, max_tokens: int) -> Any:
         return ChatOpenAI(
             model=model,
             openai_api_key=settings.openrouter_api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             default_headers={
                 "HTTP-Referer": "https://app.hireloop.in",
                 "X-Title": "Hireloop - Aarya Career AI",
             },
         ).bind_tools(TOOL_DEFINITIONS)  # type: ignore[arg-type]
 
-    def _make_llm_plain(model: str) -> Any:
+    def _make_llm_plain(model: str, *, max_tokens: int) -> Any:
         return ChatOpenAI(
             model=model,
             openai_api_key=settings.openrouter_api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             default_headers={
                 "HTTP-Referer": "https://app.hireloop.in",
                 "X-Title": "Hireloop - Aarya Career AI",
@@ -871,11 +893,24 @@ def build_aarya_graph(settings: Settings) -> Any:
     # Two tiers: the heavy primary for tool selection / reasoning, and a fast,
     # cheap model for short conversational turns and tool-result summarisation.
     # Routing per turn (see _prefer_fast_model) is the main latency lever.
-    llm_primary = _make_llm(settings.openrouter_primary_model)
-    llm_fast = _make_llm(settings.openrouter_fallback_model or settings.openrouter_primary_model)
-    llm_primary_plain = _make_llm_plain(settings.openrouter_primary_model)
-    llm_fast_plain = _make_llm_plain(
-        settings.openrouter_fallback_model or settings.openrouter_primary_model
+    fast_model = settings.openrouter_fallback_model or settings.openrouter_primary_model
+    llm_primary = _make_llm(settings.openrouter_primary_model, max_tokens=chat_max_tokens)
+    llm_fast = _make_llm(fast_model, max_tokens=chat_max_tokens)
+    llm_primary_plain = _make_llm_plain(
+        settings.openrouter_primary_model, max_tokens=chat_max_tokens
+    )
+    llm_fast_plain = _make_llm_plain(fast_model, max_tokens=chat_max_tokens)
+    llm_primary_low = _make_llm(
+        settings.openrouter_primary_model, max_tokens=low_credit_tokens
+    )
+    llm_fast_low = _make_llm(fast_model, max_tokens=low_credit_tokens)
+    llm_primary_plain_low = _make_llm_plain(
+        settings.openrouter_primary_model, max_tokens=low_credit_tokens
+    )
+    llm_fast_plain_low = _make_llm_plain(fast_model, max_tokens=low_credit_tokens)
+    llm_free = _make_llm(free_model, max_tokens=low_credit_tokens) if free_model else None
+    llm_free_plain = (
+        _make_llm_plain(free_model, max_tokens=low_credit_tokens) if free_model else None
     )
 
     async def agent_node(state: AaryaState, config: RunnableConfig) -> dict:
@@ -961,38 +996,73 @@ def build_aarya_graph(settings: Settings) -> Any:
         voice_budget_done = bool(state.get("voice_mode")) and state.get("tool_rounds", 0) >= 1
         if no_tools_turn:
             active = llm_fast_plain
+            active_low = llm_fast_plain_low
         elif voice_budget_done:
             active = llm_fast_plain if use_fast else llm_primary_plain
+            active_low = llm_fast_plain_low if use_fast else llm_primary_plain_low
         elif use_fast:
             active = llm_fast
+            active_low = llm_fast_low
         else:
             active = llm_primary
+            active_low = llm_primary_low
         # Resilience: if the fast model errors (e.g. a misconfigured / invalid
         # model ID), fall back to the primary so chat never hard-fails on a turn.
         fallback = llm_primary_plain if voice_budget_done else llm_primary
+        fallback_low = llm_primary_plain_low if voice_budget_done else llm_primary_low
         if no_tools_turn:
             fallback = llm_fast_plain
+            fallback_low = llm_fast_plain_low
         elif use_fast:
             fallback = llm_primary_plain if voice_budget_done else llm_primary
+            fallback_low = llm_primary_plain_low if voice_budget_done else llm_primary_low
         else:
             fallback = llm_fast_plain if voice_budget_done else llm_fast
+            fallback_low = llm_fast_plain_low if voice_budget_done else llm_fast_low
 
-        try:
-            response = await active.ainvoke(messages)
-        except Exception as exc:
-            logger.warning(
-                "aarya_llm_invoke_failed_trying_fallback",
-                error=str(exc)[:200],
-                use_fast=use_fast,
-            )
+        free_candidate = llm_free_plain if (no_tools_turn or voice_budget_done) else llm_free
+        attempts: list[tuple[str, Any]] = [
+            ("active", active),
+            ("fallback", fallback),
+            ("active_low_credit", active_low),
+            ("fallback_low_credit", fallback_low),
+        ]
+        if free_candidate is not None:
+            attempts.append(("openrouter_free", free_candidate))
+
+        response = None
+        first_exc: Exception | None = None
+        for label, runnable in attempts:
             try:
-                response = await fallback.ainvoke(messages)
-            except Exception as fallback_exc:
-                logger.error(
-                    "aarya_llm_fallback_failed",
-                    error=str(fallback_exc)[:200],
+                response = await runnable.ainvoke(messages)
+                if label != "active":
+                    logger.warning(
+                        "aarya_llm_fallback_succeeded",
+                        fallback=label,
+                        use_fast=use_fast,
+                    )
+                break
+            except Exception as exc:
+                first_exc = first_exc or exc
+                low_credit = _is_openrouter_low_credit_error(exc)
+                logger.warning(
+                    "aarya_llm_attempt_failed",
+                    attempt=label,
+                    low_credit=low_credit,
+                    error=str(exc)[:200],
                 )
-                raise fallback_exc from exc
+                if not low_credit and label in {
+                    "active_low_credit",
+                    "fallback_low_credit",
+                    "openrouter_free",
+                }:
+                    continue
+        if response is None:
+            logger.error(
+                "aarya_llm_all_attempts_failed",
+                error=str(first_exc)[:200] if first_exc else "unknown",
+            )
+            raise first_exc or RuntimeError("Aarya LLM failed")
 
         return {
             "messages": [response],

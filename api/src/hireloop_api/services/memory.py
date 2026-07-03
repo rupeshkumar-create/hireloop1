@@ -288,7 +288,7 @@ class CandidateMemoryService:
             openai_api_key=settings.openrouter_api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.1,
-            max_tokens=1200,
+            max_tokens=max(256, int(settings.openrouter_low_credit_max_tokens or 256)),
             default_headers={
                 "HTTP-Referer": "https://app.hireloop.in",
                 "X-Title": "Hireloop - Aarya Memory",

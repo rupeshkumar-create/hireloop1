@@ -81,6 +81,7 @@ import {
   resolvePrimaryAaryaSession,
   readVoiceSendOnPause,
   StaleSessionError,
+  sanitizeChatError,
   storeAaryaSession,
   streamAaryaMessage,
   type AaryaStreamCallbacks,
@@ -793,8 +794,8 @@ export function ChatInterface({
         if ((err as Error).name !== "AbortError") {
           const message =
             err instanceof Error && err.message
-              ? err.message
-              : "Something went wrong. Please try again.";
+              ? sanitizeChatError(err.message)
+              : "Failed.";
 
           if (accumulated.trim() && !streamFinalized) {
             finalize();
@@ -808,7 +809,7 @@ export function ChatInterface({
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `Sorry, I ran into an issue. ${message}`,
+                content: message === "Failed." ? "Failed." : `Sorry, I ran into an issue. ${message}`,
                 content_type: "text",
                 created_at: new Date().toISOString(),
               },

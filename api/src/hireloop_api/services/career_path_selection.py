@@ -28,6 +28,11 @@ _AFFIRMATIVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_GENERIC_JOB_SEARCH_RE = re.compile(
+    r"\b(?:find|search|show|surface|hunt)\b.*\b(?:job|jobs|role|roles|match|matches|opening|openings)\b",
+    re.IGNORECASE,
+)
+
 _FIND_ROLE_IN_CITY_RE = re.compile(
     r"\b(?:find|search(?:ing)?\s+for|show(?:\s+me)?|looking\s+for)\s+"
     r"(.+?)\s+in\s+([A-Za-z][\w.-]+)"
@@ -127,6 +132,10 @@ def is_affirmative_reply(message: str) -> bool:
     return bool(_AFFIRMATIVE_RE.match((message or "").strip()))
 
 
+def is_generic_job_search_reply(message: str) -> bool:
+    return bool(_GENERIC_JOB_SEARCH_RE.search((message or "").strip()))
+
+
 def parse_career_path_selection(
     message: str,
     options: list[str],
@@ -176,8 +185,9 @@ def parse_career_path_selection(
         if re.search(rf"\b{re.escape(word)}\b", lower) and idx < len(options):
             return options[idx]
 
-    # Short affirmatives — map to what Aarya just proposed, else default to option 1.
-    if is_affirmative_reply(text) and recent_assistant_message:
+    # Short affirmatives or generic "find me jobs" replies after Aarya asked the
+    # picker should not reopen the same picker. Use the implied/first option.
+    if (is_affirmative_reply(text) or is_generic_job_search_reply(text)) and recent_assistant_message:
         implied = assistant_implied_option(recent_assistant_message, options)
         if implied:
             return implied

@@ -5,6 +5,7 @@ from hireloop_api.services.career_path_selection import (
     career_path_options,
     extract_find_role_and_city,
     is_affirmative_reply,
+    is_generic_job_search_reply,
     parse_career_path_selection,
 )
 
@@ -62,6 +63,22 @@ def test_parse_yes_defaults_to_first_when_assistant_asked_pick_one() -> None:
     assert (
         parse_career_path_selection(
             "Yes",
+            FASHION_OPTIONS,
+            recent_assistant_message=assistant,
+        )
+        == FASHION_OPTIONS[0]
+    )
+
+
+def test_parse_generic_find_jobs_defaults_to_first_after_picker() -> None:
+    assistant = (
+        "Which one should I search for first in Bengaluru? Pick one and "
+        "I'll surface the live roles at 50 LPA."
+    )
+    assert is_generic_job_search_reply("Find me the Job.")
+    assert (
+        parse_career_path_selection(
+            "Find me the Job.",
             FASHION_OPTIONS,
             recent_assistant_message=assistant,
         )

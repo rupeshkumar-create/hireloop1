@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # Fast lane: cheap/low-latency model for short, high-volume utility calls
     # (match-feed rationales, classification) where the strong model is overkill.
     openrouter_fast_model: str = "anthropic/claude-haiku-4.5"
+    # Free fallback router. OpenRouter filters for requested capabilities (tools,
+    # max_tokens, etc.) and routes to currently available free models.
+    openrouter_free_model: str = "openrouter/free"
+    # Chat response budget. Keep this modest: Aarya replies are short and high
+    # max_tokens can trigger OpenRouter 402 when credits are low.
+    openrouter_chat_max_tokens: int = 700
+    # Emergency retry budget when OpenRouter says the account can only afford a
+    # small completion. 256 is intentionally below the 268-token example error.
+    openrouter_low_credit_max_tokens: int = 256
     # Opt-in: generate Aarya's per-card "why you fit" rationale on the match feed
     # via an LLM call (top of the first screen only). Off by default so it never
     # fires in tests/dev without an explicit MATCH_RATIONALE_ENABLED=true.

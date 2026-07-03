@@ -115,6 +115,25 @@ function parseApiErrorDetail(res: Response, body: unknown): string {
   return `Request failed (${res.status})`;
 }
 
+export function sanitizeChatError(message: string): string {
+  const lower = (message || "").toLowerCase();
+  if (
+    lower.includes("402") ||
+    lower.includes("requires more credits") ||
+    lower.includes("can only afford") ||
+    lower.includes("openrouter") ||
+    lower.includes("error code:") ||
+    lower.includes("{'error'") ||
+    lower.includes('"error"') ||
+    lower.includes("api key") ||
+    lower.includes("unauthorized") ||
+    lower.includes("rate limit")
+  ) {
+    return "Failed.";
+  }
+  return message || "Failed.";
+}
+
 async function openPrimarySession(): Promise<string> {
   const getRes = await apiAuthFetch("/api/v1/chat/sessions/primary", {
     cache: "no-store",
@@ -369,7 +388,7 @@ export async function streamAaryaMessage(
   }
 
   if (streamError) {
-    throw new Error(streamError);
+    throw new Error(sanitizeChatError(streamError));
   }
 
   if (!sawDone && accumulated.length > 0) {

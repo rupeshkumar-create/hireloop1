@@ -107,6 +107,9 @@ def test_default_models_are_valid_openrouter_ids() -> None:
     s = Settings(_env_file=None, environment="development")  # type: ignore[call-arg]
     assert s.openrouter_primary_model == "anthropic/claude-opus-4.7"
     assert s.openrouter_fallback_model == "anthropic/claude-haiku-4.5"
+    assert s.openrouter_free_model == "openrouter/free"
+    assert s.openrouter_chat_max_tokens <= 700
+    assert s.openrouter_low_credit_max_tokens <= 256
     for model in (s.openrouter_primary_model, s.openrouter_fallback_model):
         assert model.startswith("anthropic/")
         assert "latest" not in model  # the one that broke (claude-haiku-latest)
