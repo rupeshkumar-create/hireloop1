@@ -26,6 +26,7 @@ from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.services.display_name import pick_display_name
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
@@ -182,6 +183,46 @@ def _build_profile_updates_from_resume(
     return updates, fields_updated
 
 
+async def _sync_user_display_name_from_resume(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    resume_full_name: str | None,
+) -> None:
+    """Persist résumé name on users.full_name when the current name is email-derived."""
+    name = (resume_full_name or "").strip()
+    if not name:
+        return
+
+    row = await db.fetchrow(
+        """
+        SELECT full_name, email
+        FROM public.users
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        uuid.UUID(user_id),
+    )
+    if not row:
+        return
+
+    resolved = pick_display_name(
+        user_full_name=row["full_name"],
+        email=row["email"],
+        resume_full_name=name,
+    )
+    current = (row["full_name"] or "").strip()
+    if resolved and resolved != current:
+        await db.execute(
+            """
+            UPDATE public.users
+            SET full_name = $2, updated_at = NOW()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            uuid.UUID(user_id),
+            resolved,
+        )
+
+
 @router.post("/upload", response_model=ResumeUploadResponse, status_code=201)
 async def upload_resume(
     file: Annotated[UploadFile, File(description="PDF or DOCX resume, max 10MB")],
@@ -282,6 +323,12 @@ async def upload_resume(
 
     logger.info("resume_parsed", candidate_id=candidate_id, skills_count=len(parsed.skills))
 
+    await _sync_user_display_name_from_resume(
+        db,
+        user_id=user_id,
+        resume_full_name=parsed.full_name,
+    )
+
     # DPDP audit: record consent for resume upload/parsing (non-fatal if it fails)
     try:
         await db.execute(
@@ -378,6 +425,12 @@ async def apply_to_profile(
             uuid.UUID(candidate_id),
             *values,
         )
+
+    await _sync_user_display_name_from_resume(
+        db,
+        user_id=user_id,
+        resume_full_name=parsed.full_name,
+    )
 
     logger.info(
         "profile_updated_from_resume",

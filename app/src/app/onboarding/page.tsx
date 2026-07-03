@@ -51,25 +51,40 @@ export default async function OnboardingPage() {
     }
   }
 
-  // Fetch candidate name so the unlock choice can personalise the greeting.
-  // Failure is non-fatal — the flow still renders without a name.
+  // Prefer résumé-derived name from the API over email-local-part on users.full_name.
   let candidateName: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      // Supabase client isn't generated with the DB schema here, so `.from` is
-      // untyped; we assert the row shape on the result below instead of `any`.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase as any)
-        .from("users")
-        .select("full_name")
-        .eq("id", user.id)
-        .single() as { data: { full_name: string | null } | null };
-      candidateName = data?.full_name ?? undefined;
+  if (token) {
+    try {
+      const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (profileRes.ok) {
+        const profileData = (await profileRes.json()) as {
+          user?: { full_name?: string | null };
+        };
+        candidateName = profileData.user?.full_name ?? undefined;
+      }
+    } catch {
+      /* non-fatal */
     }
-  } catch {
-    // Swallow — not blocking
+  }
+  if (!candidateName) {
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data } = await (supabase as any)
+          .from("users")
+          .select("full_name")
+          .eq("id", user.id)
+          .single() as { data: { full_name: string | null } | null };
+        candidateName = data?.full_name ?? undefined;
+      }
+    } catch {
+      // Swallow — not blocking
+    }
   }
 
   return <OnboardingFlow candidateName={candidateName} />;

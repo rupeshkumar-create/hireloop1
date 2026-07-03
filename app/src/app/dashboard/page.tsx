@@ -156,7 +156,23 @@ export default async function DashboardPage({
 
   let conversationId: string | undefined;
   let canSeeAdmin = false;
+  let candidateName: string | undefined = profile?.full_name ?? undefined;
   if (token) {
+    try {
+      const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (profileRes.ok) {
+        const profileData = (await profileRes.json()) as {
+          user?: { full_name?: string | null };
+        };
+        candidateName = profileData.user?.full_name ?? candidateName;
+      }
+    } catch {
+      /* use Supabase users.full_name */
+    }
+
     try {
       const sessRes = await fetch(`${API_URL}/api/v1/chat/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -188,7 +204,7 @@ export default async function DashboardPage({
   return (
     <DashboardClient
       conversationId={conversationId}
-      candidateName={profile?.full_name ?? undefined}
+      candidateName={candidateName}
       initialInput={initMessage}
       initialPanel={initialPanel}
       canApplyOrIntro={canApply}

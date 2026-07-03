@@ -28,6 +28,7 @@ from hireloop_api.markets import (
     phone_matches_market,
 )
 from hireloop_api.services.consent import log_consent
+from hireloop_api.services.display_name import pick_display_name
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     apply_negative_preference,
@@ -363,8 +364,6 @@ async def get_my_profile(
     )
 
     linkedin_name = extract_linkedin_display_name(candidate_row.get("linkedin_data"))
-    if linkedin_name and not user_payload.get("full_name"):
-        user_payload["full_name"] = linkedin_name
 
     try:
         healed = await heal_candidate_headline_from_linkedin(
@@ -384,6 +383,7 @@ async def get_my_profile(
     resume_education: list[dict[str, Any]] = []
     candidate_id = candidate_row.get("id")
     resume_filename: str | None = None
+    resume_full_name: str | None = None
     if candidate_id is not None:
         resume_row = await db.fetchrow(
             """
@@ -403,6 +403,9 @@ async def get_my_profile(
             except (ValueError, TypeError):
                 parsed = None
         if isinstance(parsed, dict):
+            raw_resume_name = parsed.get("full_name")
+            if isinstance(raw_resume_name, str) and raw_resume_name.strip():
+                resume_full_name = raw_resume_name.strip()
             raw_exp = parsed.get("work_experience")
             if isinstance(raw_exp, list):
                 experience = [e for e in raw_exp if isinstance(e, dict)]
@@ -458,6 +461,15 @@ async def get_my_profile(
                 },
                 idempotency_key=f"career_intel:{candidate_id}",
             )
+
+    display_name = pick_display_name(
+        user_full_name=user_payload.get("full_name"),
+        email=user_payload.get("email"),
+        resume_full_name=resume_full_name,
+        linkedin_full_name=linkedin_name,
+    )
+    if display_name:
+        user_payload["full_name"] = display_name
 
     return {
         "user": user_payload,
