@@ -25,7 +25,7 @@ export async function middleware(request: NextRequest) {
       searchParams.has("error"))
   ) {
     const url = request.nextUrl.clone();
-    url.pathname = "/auth/callback";
+    url.pathname = searchParams.has("token_hash") ? "/auth/confirm" : "/auth/callback";
     return NextResponse.redirect(url);
   }
 

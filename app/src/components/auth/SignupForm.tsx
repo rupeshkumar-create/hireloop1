@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
+import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
@@ -31,7 +32,6 @@ export function SignupForm() {
   const [email, setEmail] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [showCode, setShowCode] = useState(false);
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -121,12 +121,11 @@ export function SignupForm() {
     // Same role cookie as LinkedIn so /auth/bootstrap provisions the right side.
     document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
     try {
-      const redirectTo = `${window.location.origin}/auth/callback`;
+      const redirectTo = `${window.location.origin}/auth/confirm`;
       const { error } = await supabase.auth.signInWithOtp({
         email: addr,
         options: {
           shouldCreateUser: true, // same flow signs up new users and signs in returning ones
-          // Needed when Supabase sends a confirmation link instead of (or as well as) a code.
           emailRedirectTo: redirectTo,
         },
       });
@@ -180,29 +179,13 @@ export function SignupForm() {
         setErrorMessage("Verified, but no session was created. Please try again.");
         return;
       }
-      // Mirror the OAuth callback: bootstrap the profile + route by role / new-user.
-      const res = await fetch(`${API_URL}/api/v1/auth/bootstrap`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ role }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        role?: string;
-        is_new_user?: boolean;
-      };
-      if (!res.ok) {
-        setErrorMessage(
-          (data as { detail?: string }).detail ??
-            "Account setup failed. Please try signing in again.",
-        );
-        return;
-      }
-      await routeAfterAuth(data.role, data.is_new_user);
+      const destination = await finishAuthSession(session.access_token, role);
+      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+      router.replace(destination);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Verification failed.");
+      setErrorMessage(
+        error instanceof Error ? error.message : "Verification failed.",
+      );
     } finally {
       setLoadingAction(null);
     }
@@ -332,54 +315,43 @@ export function SignupForm() {
           <div className="rounded-lg border border-ink-100 bg-paper-1 p-4 text-center">
             <p className="text-small font-medium text-ink-900">Check your email</p>
             <p className="mt-1 text-xs text-ink-500 leading-relaxed">
-              We sent a sign-in link to{" "}
-              <span className="text-ink-800">{email}</span>. Open it in any browser —
-              you&apos;ll land back in Hireloop signed in.
+              We sent a sign-in link and a <strong>6-digit code</strong> to{" "}
+              <span className="text-ink-800">{email}</span>. Enter the code below (most reliable with
+              temp mail), or use the link and tap <strong>Continue</strong> on the next screen.
             </p>
             <p className="mt-2 text-[11px] text-ink-400 leading-relaxed">
-              Link stuck on supabase.co for more than a few seconds? Close that tab,
-              click &ldquo;Use a different email&rdquo; below, and request a fresh link.
+              Link says invalid or expired? Request a fresh email — automated scanners often open
+              links before you do. The code still works.
             </p>
           </div>
 
-          {!showCode ? (
-            <button
-              type="button"
-              onClick={() => setShowCode(true)}
-              className="w-full text-xs text-ink-500 hover:text-ink-900"
+          <form onSubmit={handleVerifyCode} className="space-y-3">
+            <Input
+              type="text"
+              inputMode="numeric"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              placeholder="6-digit code"
+              autoComplete="one-time-code"
+              required
+            />
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={loadingAction === "email-verify"}
+              disabled={otpCode.length < 6 || loadingAction !== null}
+              className="rounded-lg"
             >
-              Got a 6-digit code in the email instead? Enter it
-            </button>
-          ) : (
-            <form onSubmit={handleVerifyCode} className="space-y-3">
-              <Input
-                type="text"
-                inputMode="numeric"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                placeholder="6-digit code"
-                autoComplete="one-time-code"
-                required
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                size="lg"
-                fullWidth
-                loading={loadingAction === "email-verify"}
-                disabled={otpCode.length < 6 || loadingAction !== null}
-                className="rounded-lg"
-              >
-                {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
-              </Button>
-            </form>
-          )}
+              {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
+            </Button>
+          </form>
 
           <button
             type="button"
             onClick={() => {
               setOtpSent(false);
-              setShowCode(false);
               setOtpCode("");
               setInfoMessage("");
             }}

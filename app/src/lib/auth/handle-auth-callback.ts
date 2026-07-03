@@ -1,49 +1,15 @@
 /**
- * Shared auth callback logic — OAuth code exchange and email token_hash verification.
- * Used by /auth/callback and /auth/confirm (legacy/template alias).
+ * Shared auth callback logic — OAuth code exchange only.
+ * Email magic links land on /auth/confirm (user must click — avoids scanner burn).
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import type { EmailOtpType } from "@supabase/supabase-js";
 import { SIGNUP_ROLE_COOKIE, type SignupRole } from "@/lib/auth/constants";
+import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { createClient } from "@/lib/supabase/server";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-const OTP_TYPES: ReadonlySet<EmailOtpType> = new Set([
-  "signup",
-  "invite",
-  "magiclink",
-  "recovery",
-  "email_change",
-  "email",
-]);
 
 function parseRole(raw: string | undefined): SignupRole {
   return raw === "recruiter" ? "recruiter" : "candidate";
-}
-
-async function verifyEmailTokenHash(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  tokenHash: string,
-  tokenType: string | null,
-): Promise<string | null> {
-  const preferred = tokenType && OTP_TYPES.has(tokenType as EmailOtpType)
-    ? [tokenType as EmailOtpType]
-    : [];
-  const fallbacks: EmailOtpType[] = ["email", "signup", "magiclink"];
-  const attempts = [...preferred, ...fallbacks.filter((t) => !preferred.includes(t))];
-
-  let lastError: string | null = null;
-  for (const type of attempts) {
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash: tokenHash,
-      type,
-    });
-    if (!error) return null;
-    lastError = error.message;
-  }
-  return lastError ?? "Invalid or expired link.";
 }
 
 export async function handleAuthCallback(request: Request): Promise<NextResponse> {
@@ -67,41 +33,42 @@ export async function handleAuthCallback(request: Request): Promise<NextResponse
     return NextResponse.redirect(redirectUrl);
   }
 
+  // Legacy / misconfigured templates may still point at /auth/callback — forward to
+  // the confirm interstitial without verifying (email scanners must not burn the token).
+  if (tokenHash) {
+    const confirmUrl = new URL("/auth/confirm", origin);
+    confirmUrl.searchParams.set("token_hash", tokenHash);
+    if (tokenType) confirmUrl.searchParams.set("type", tokenType);
+    return NextResponse.redirect(confirmUrl);
+  }
+
   const cookieStore = await cookies();
   const roleCookie = cookieStore.get(SIGNUP_ROLE_COOKIE)?.value;
   const role = parseRole(roleCookie);
 
   const supabase = await createClient();
 
-  if (code) {
-    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-    if (exchangeError) {
-      const msg = exchangeError.message;
-      const friendly =
-        msg.toLowerCase().includes("code challenge") ||
-        msg.toLowerCase().includes("code verifier")
-          ? "Email link opened in a different browser than where you signed up. Request a new sign-in link on the signup page and open it in any browser."
-          : msg;
-      const redirectUrl = new URL("/signup", origin);
-      redirectUrl.searchParams.set("error", "auth_failed");
-      redirectUrl.searchParams.set("message", friendly);
-      return NextResponse.redirect(redirectUrl);
-    }
-  } else if (tokenHash) {
-    const verifyError = await verifyEmailTokenHash(supabase, tokenHash, tokenType);
-    if (verifyError) {
-      const redirectUrl = new URL("/signup", origin);
-      redirectUrl.searchParams.set("error", "verification_failed");
-      redirectUrl.searchParams.set("message", verifyError);
-      return NextResponse.redirect(redirectUrl);
-    }
-  } else {
+  if (!code) {
     const redirectUrl = new URL("/signup", origin);
     redirectUrl.searchParams.set("error", "auth_failed");
     redirectUrl.searchParams.set(
       "message",
       "Sign-in link is incomplete or expired. Request a new link from the signup page.",
     );
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+  if (exchangeError) {
+    const msg = exchangeError.message;
+    const friendly =
+      msg.toLowerCase().includes("code challenge") ||
+      msg.toLowerCase().includes("code verifier")
+        ? "Email link opened in a different browser than where you signed up. Request a new sign-in link on the signup page and open it in any browser."
+        : msg;
+    const redirectUrl = new URL("/signup", origin);
+    redirectUrl.searchParams.set("error", "auth_failed");
+    redirectUrl.searchParams.set("message", friendly);
     return NextResponse.redirect(redirectUrl);
   }
 
@@ -113,38 +80,14 @@ export async function handleAuthCallback(request: Request): Promise<NextResponse
 
   if (session?.access_token) {
     try {
-      const bootstrapRes = await fetch(`${API_URL}/api/v1/auth/bootstrap`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ role }),
-      });
-      if (bootstrapRes.ok) {
-        const data = (await bootstrapRes.json().catch(() => null)) as
-          | { role?: string; is_new_user?: boolean }
-          | null;
-        const resolvedRole = data?.role ?? role;
-        if (resolvedRole === "recruiter") {
-          computedNext = "/recruiter";
-        } else {
-          computedNext = data?.is_new_user ? "/onboarding" : "/dashboard";
-        }
-      } else {
-        const errBody = (await bootstrapRes.json().catch(() => null)) as
-          | { detail?: string }
-          | null;
-        const redirectUrl = new URL("/signup", origin);
-        redirectUrl.searchParams.set("error", "bootstrap_failed");
-        redirectUrl.searchParams.set(
-          "message",
-          errBody?.detail ?? "Account setup failed. Please try signing in again.",
-        );
-        return NextResponse.redirect(redirectUrl);
-      }
+      computedNext = await finishAuthSession(session.access_token, role);
     } catch (err) {
-      console.error("Auth bootstrap failed:", err);
+      const message =
+        err instanceof Error ? err.message : "Account setup failed. Please try signing in again.";
+      const redirectUrl = new URL("/signup", origin);
+      redirectUrl.searchParams.set("error", "bootstrap_failed");
+      redirectUrl.searchParams.set("message", message);
+      return NextResponse.redirect(redirectUrl);
     }
   }
 
@@ -155,7 +98,7 @@ export async function handleAuthCallback(request: Request): Promise<NextResponse
     ? NextResponse.redirect(`${origin}${safeNext}`)
     : NextResponse.redirect(
         new URL(
-          "/signup?error=auth_failed&message=Email+confirmed+but+no+session.+Request+a+new+sign-in+link.",
+          "/signup?error=auth_failed&message=Sign-in+completed+but+no+session.+Request+a+new+link.",
           origin,
         ),
       );

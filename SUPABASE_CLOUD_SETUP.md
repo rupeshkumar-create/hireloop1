@@ -46,7 +46,7 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 | Setting | Local dev | Production (later) |
 |---------|-----------|-------------------|
 | Site URL | `http://localhost:3001` | `https://hireloop1-app-orcin.vercel.app` |
-| Redirect URLs | `http://localhost:3001/auth/callback` | `https://hireloop1-app-orcin.vercel.app/auth/callback` |
+| Redirect URLs | `http://localhost:3001/auth/callback`, `http://localhost:3001/auth/confirm` | `https://hireloop1-app.vercel.app/auth/callback`, `…/auth/confirm` |
 
 Add `http://localhost:3001/**` under redirect URLs if you use query params on callback.
 
