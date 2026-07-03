@@ -31,6 +31,7 @@ export function SignupForm() {
   const [email, setEmail] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
+  const [showCode, setShowCode] = useState(false);
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -134,10 +135,7 @@ export function SignupForm() {
         return;
       }
       setOtpSent(true);
-      setInfoMessage(
-        `We emailed ${addr}. Tap Confirm email address in that message to sign in, ` +
-          `or enter the 6-digit code below if your email includes one.`,
-      );
+      setInfoMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
     } finally {
@@ -326,39 +324,59 @@ export function SignupForm() {
             disabled={!email.trim() || loadingAction !== null}
             className="rounded-lg font-semibold"
           >
-            {loadingAction === "email-send" ? "Sending…" : "Email me a login code"}
+            {loadingAction === "email-send" ? "Sending…" : "Email me a sign-in link"}
           </Button>
         </form>
       ) : (
-        <form onSubmit={handleVerifyCode} className="space-y-3">
-          <p className="text-xs text-ink-500 leading-relaxed">
-            Fastest: open the email and tap <span className="font-medium text-ink-700">Confirm email address</span>.
-            You&apos;ll return here signed in. Only use the box below if the email shows a 6-digit code.
-          </p>
-          <Input
-            type="text"
-            inputMode="numeric"
-            value={otpCode}
-            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
-            placeholder="Login code"
-            autoComplete="one-time-code"
-            required
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={loadingAction === "email-verify"}
-            disabled={otpCode.length < 6 || loadingAction !== null}
-            className="rounded-lg"
-          >
-            {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
-          </Button>
+        <div className="space-y-3">
+          <div className="rounded-lg border border-ink-100 bg-paper-1 p-4 text-center">
+            <p className="text-small font-medium text-ink-900">Check your email</p>
+            <p className="mt-1 text-xs text-ink-500 leading-relaxed">
+              We sent a sign-in link to{" "}
+              <span className="text-ink-800">{email}</span>. Open it and tap{" "}
+              <span className="font-medium text-ink-700">Confirm email address</span>{" "}
+              — you&apos;ll come back here signed in.
+            </p>
+          </div>
+
+          {!showCode ? (
+            <button
+              type="button"
+              onClick={() => setShowCode(true)}
+              className="w-full text-xs text-ink-500 hover:text-ink-900"
+            >
+              Got a 6-digit code in the email instead? Enter it
+            </button>
+          ) : (
+            <form onSubmit={handleVerifyCode} className="space-y-3">
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                placeholder="6-digit code"
+                autoComplete="one-time-code"
+                required
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={loadingAction === "email-verify"}
+                disabled={otpCode.length < 6 || loadingAction !== null}
+                className="rounded-lg"
+              >
+                {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
+              </Button>
+            </form>
+          )}
+
           <button
             type="button"
             onClick={() => {
               setOtpSent(false);
+              setShowCode(false);
               setOtpCode("");
               setInfoMessage("");
             }}
@@ -366,11 +384,11 @@ export function SignupForm() {
           >
             Use a different email
           </button>
-        </form>
+        </div>
       )}
 
       <p className="text-xs text-ink-500 text-center">
-        Email sign-in sends a confirmation link or a one-time code. Resume upload happens in onboarding.
+        Email sign-in sends a secure link to your inbox. Resume upload happens in onboarding.
       </p>
 
       {DEV_EMAIL_LOGIN && (
