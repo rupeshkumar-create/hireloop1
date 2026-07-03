@@ -398,6 +398,7 @@ async def apply_to_profile(
         logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
 
     from hireloop_api.services.background_jobs import (
+        AARYA_AUTO_INGEST,
         CAREER_INTELLIGENCE_UPDATE,
         CAREER_PATH_UPDATE,
         RESUME_EMBED_SCORE,
@@ -421,6 +422,12 @@ async def apply_to_profile(
         kind=CAREER_PATH_UPDATE,
         payload={"candidate_id": candidate_id},
         idempotency_key=f"career_path_update:{candidate_id}",
+    )
+    await enqueue_job(
+        db,
+        kind=AARYA_AUTO_INGEST,
+        payload={"candidate_id": candidate_id},
+        idempotency_key=f"aarya_auto_ingest:{candidate_id}",
     )
 
     return ApplyToProfileResponse(

@@ -2,11 +2,14 @@ import uuid
 
 import pytest
 
+from hireloop_api.config import Settings
 from hireloop_api.routes.resumes import (
     _build_profile_updates_from_resume,
     _ensure_candidate_for_resume_upload,
     _prepare_candidate_resume_storage,
+    apply_to_profile,
 )
+from hireloop_api.services.background_jobs import AARYA_AUTO_INGEST
 from hireloop_api.services.resume_parser import ParsedResume
 
 
@@ -96,3 +99,85 @@ def test_resume_profile_updates_include_structured_career_json() -> None:
     assert updates["career_analysis"] == {"current_position": "Senior Software Engineer"}
     assert "career_profile" in fields_updated
     assert "career_analysis" in fields_updated
+
+
+class ApplyResumeDb:
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+        self.executed: list[tuple[str, tuple[object, ...]]] = []
+        parsed = ParsedResume(
+            current_title="Go-To-Market Lead",
+            current_company="Candidately",
+            years_experience=10,
+            skills=["Artificial Intelligence", "Digital Strategy", "Automation", "Sales"],
+            summary="B2B SaaS GTM for staffing agencies and recruiters.",
+        )
+        self._parsed_data = parsed.model_dump_json()
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        if "FROM public.resumes" in query:
+            return {
+                "candidate_id": self.candidate_id,
+                "parsed_data": self._parsed_data,
+            }
+        if "FROM public.candidates" in query:
+            return {
+                "headline": None,
+                "summary": None,
+                "current_title": None,
+                "current_company": None,
+                "years_experience": None,
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "current_ctc": None,
+                "notice_period_days": None,
+                "skills": [],
+                "linkedin_url": None,
+                "github_url": None,
+                "location_city": None,
+                "location_state": None,
+                "career_profile": None,
+                "career_analysis": None,
+            }
+        return None
+
+    async def execute(self, query: str, *args: object) -> str:
+        self.executed.append((query, args))
+        return "OK"
+
+
+@pytest.mark.asyncio
+async def test_apply_resume_enqueues_candidate_specific_job_ingest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = ApplyResumeDb()
+    enqueued: list[tuple[str, dict[str, object], str | None]] = []
+
+    async def fake_enqueue_job(
+        db_arg: object,
+        *,
+        kind: str,
+        payload: dict[str, object],
+        idempotency_key: str | None = None,
+        **kwargs: object,
+    ) -> uuid.UUID:
+        enqueued.append((kind, payload, idempotency_key))
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        fake_enqueue_job,
+    )
+
+    await apply_to_profile(
+        resume_id=str(uuid.uuid4()),
+        current_user={"id": str(uuid.uuid4())},
+        settings=Settings(_env_file=None, environment="test"),  # type: ignore[call-arg]
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert (
+        AARYA_AUTO_INGEST,
+        {"candidate_id": str(db.candidate_id)},
+        f"aarya_auto_ingest:{db.candidate_id}",
+    ) in enqueued
