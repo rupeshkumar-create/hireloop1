@@ -2,7 +2,6 @@ import Link from "next/link";
 import {
   Brain,
   Briefcase,
-  Check,
   FileText,
   GraduationCap,
   MessageSquare,
@@ -10,10 +9,10 @@ import {
   Search,
   Send,
   ShieldCheck,
-  Sparkles,
   Zap,
 } from "lucide-react";
 import { ChatPreviewLazy } from "@/components/landing/ChatPreviewLazy";
+import { HeroAudience } from "@/components/landing/HeroAudience";
 import { LandingCta } from "@/components/landing/LandingCta";
 import { LandingNav } from "@/components/landing/LandingNav";
 
@@ -31,48 +30,7 @@ export default function RootPage() {
       <section>
         <div className="mx-auto max-w-page px-6 pt-16 pb-16 md:pt-24">
           <div className="grid items-center gap-12 md:grid-cols-2 md:gap-16">
-            <div className="space-y-6 landing-hero-in">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-paper-1 px-3 py-1 text-micro font-medium text-ink-600 ring-1 ring-ink-100">
-                <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />
-                AI recruiting · India, US &amp; UK
-              </span>
-
-              <h1 className="text-display text-ink-900">
-                Stop applying.{" "}
-                <span className="text-accent">Get introduced.</span>
-              </h1>
-
-              <p className="max-w-md text-body text-ink-700 leading-relaxed">
-                Your AI recruiter. It finds live roles, scores your fit,
-                tailors your CV, and gets you a warm intro — in one chat.
-              </p>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <LandingCta
-                  className="rounded-lg bg-accent px-6 py-3.5 text-body font-medium text-on-accent transition-colors hover:bg-accent-hover"
-                />
-                <a
-                  href="#how"
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 px-6 py-3.5 text-body font-medium text-ink-800 transition-colors hover:bg-ink-50"
-                >
-                  How it works
-                </a>
-              </div>
-
-              <ul className="flex flex-wrap gap-x-5 gap-y-2 pt-1">
-                {["Free to start", "LinkedIn or email", "No credit card"].map(
-                  (item) => (
-                    <li
-                      key={item}
-                      className="inline-flex items-center gap-1.5 text-micro text-ink-500"
-                    >
-                      <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} />
-                      {item}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
+            <HeroAudience />
 
             <div className="md:pl-4 landing-hero-in landing-hero-in-delay">
               <ChatPreviewLazy />
@@ -248,6 +206,51 @@ export default function RootPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── For recruiters ───────────────────────────────────────────────── */}
+      <section id="recruiters" className="border-t border-ink-100 bg-paper-1">
+        <div className="mx-auto max-w-page px-6 py-16 md:py-24">
+          <div className="grid gap-10 md:grid-cols-2 md:items-center">
+            <div className="space-y-4">
+              <p className="text-micro font-semibold uppercase tracking-wide text-accent">
+                For recruiters &amp; hiring managers
+              </p>
+              <h2 className="text-h1 text-ink-900">Hiring? Meet Nitya.</h2>
+              <p className="text-body text-ink-700 leading-relaxed">
+                Describe the role in plain words. Nitya surfaces pre-scored,
+                genuinely-interested candidates and warms up the intro — so you
+                skip cold sourcing and start conversations.
+              </p>
+              <Link
+                href="/signup?role=recruiter"
+                className="group inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3.5 text-body font-medium text-on-accent transition-colors hover:bg-accent-hover"
+              >
+                Start hiring
+                <Send className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" strokeWidth={1.5} />
+              </Link>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[
+                { Icon: Search, title: "Describe the role", body: "Plain words — Nitya builds the brief." },
+                { Icon: Zap, title: "Pre-scored matches", body: "Ranked candidates, not a résumé pile." },
+                { Icon: Send, title: "Warm intros", body: "Candidates who opted in — not cold DMs." },
+                { Icon: ShieldCheck, title: "Consent-first", body: "Profiles shared only with permission." },
+              ].map(({ Icon, title, body }) => (
+                <div
+                  key={title}
+                  className="group space-y-2 rounded-xl border border-ink-100 bg-paper-0 p-5 transition-all duration-200 hover:-translate-y-1 hover:border-ink-300"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent transition-transform duration-200 group-hover:scale-110">
+                    <Icon className="h-4 w-4" strokeWidth={1.5} />
+                  </span>
+                  <h3 className="text-h3 text-ink-900">{title}</h3>
+                  <p className="text-small text-ink-700 leading-relaxed">{body}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
