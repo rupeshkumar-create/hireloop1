@@ -42,6 +42,7 @@ import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { SUPPORTED_MARKETS, type MarketCode } from "@/lib/markets";
+import type { SignupMethod } from "@/lib/auth/signup-method";
 
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
@@ -132,12 +133,18 @@ function Bubble({ children }: { children: React.ReactNode }) {
 function WelcomeStep({
   onNext,
   candidateName,
+  signupMethod,
 }: {
   onNext: () => void;
   candidateName?: string;
+  signupMethod: SignupMethod;
 }) {
   const firstName = candidateName?.split(" ")[0];
   const greeting = firstName ? `Hey ${firstName}!` : "Hey!";
+  const introMessage =
+    signupMethod === "linkedin"
+      ? `${greeting} I'm Aarya. I'm pulling matches from your LinkedIn profile now. One quick screen — then your job matches are ready on the dashboard.`
+      : `${greeting} I'm Aarya. On the next screen, upload your CV — I'll read your experience and line up job matches on your dashboard.`;
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-paper-0 px-6 py-12 text-center">
@@ -145,11 +152,7 @@ function WelcomeStep({
 
       <div className="mt-8 max-w-sm">
         <Bubble>
-          <p className="text-body text-ink-900 leading-relaxed">
-            {greeting} I&apos;m Aarya. I&apos;m pulling matches from your
-            LinkedIn profile now. One quick screen — then your job matches are
-            ready on the dashboard.
-          </p>
+          <p className="text-body text-ink-900 leading-relaxed">{introMessage}</p>
         </Bubble>
       </div>
 
@@ -175,9 +178,11 @@ function WelcomeStep({
 function ActivationStep({
   onBack,
   candidateName,
+  signupMethod,
 }: {
   onBack: () => void;
   candidateName?: string;
+  signupMethod: SignupMethod;
 }) {
   const router = useRouter();
   const firstName = candidateName?.split(" ")[0] ?? "there";
@@ -198,7 +203,9 @@ function ActivationStep({
     if (saving) return;
     if (!resumeFile) {
       setError(
-        "Upload your CV — LinkedIn sign-in alone can't see your experience. (You can add your LinkedIn URL later from the dashboard.)",
+        signupMethod === "linkedin"
+          ? "Upload your CV — LinkedIn sign-in alone can't see your experience. (You can add your LinkedIn URL later from the dashboard.)"
+          : "Upload your CV — I need your experience to find real matches. (You can add your LinkedIn URL later from the dashboard.)",
       );
       return;
     }
@@ -263,6 +270,12 @@ function ActivationStep({
     }
   }
 
+  const activationPrompt = parsed
+    ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll get the job search ready.`
+    : signupMethod === "linkedin"
+      ? `Almost there, ${firstName}! LinkedIn sign-in only shares your name and email — upload your CV so I can pull your experience and show real matches.`
+      : `Almost there, ${firstName}! Upload your CV so I can pull your experience and show real matches.`;
+
   return (
     <div className="min-h-screen bg-paper-0 flex items-center px-6 py-12">
       <div className="max-w-lg mx-auto w-full">
@@ -279,11 +292,7 @@ function ActivationStep({
         <div className="flex items-start gap-3 mb-6">
           <AaryaFace size="md" />
           <Bubble>
-            <p className="text-body text-ink-900">
-              {parsed
-                ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll get the job search ready.`
-                : `Almost there, ${firstName}! LinkedIn sign-in only shares your name and email — upload your CV so I can pull your experience and show real matches.`}
-            </p>
+            <p className="text-body text-ink-900">{activationPrompt}</p>
           </Bubble>
         </div>
 
@@ -510,7 +519,13 @@ function ActivationStep({
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
-export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
+export function OnboardingFlow({
+  candidateName,
+  signupMethod = "email",
+}: {
+  candidateName?: string;
+  signupMethod?: SignupMethod;
+}) {
   const [step, setStep] = useState(0);
   const [hydrated, setHydrated] = useState(false);
 
@@ -554,6 +569,7 @@ export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
         <WelcomeStep
           onNext={() => setStep(1)}
           candidateName={candidateName}
+          signupMethod={signupMethod}
         />
       );
 
@@ -562,6 +578,7 @@ export function OnboardingFlow({ candidateName }: { candidateName?: string }) {
         <ActivationStep
           onBack={() => setStep(0)}
           candidateName={candidateName}
+          signupMethod={signupMethod}
         />
       );
 

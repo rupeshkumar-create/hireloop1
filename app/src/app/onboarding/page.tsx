@@ -1,5 +1,5 @@
 /**
- * Onboarding entry — shown after LinkedIn sign-in for candidates.
+ * Onboarding entry — shown after candidate sign-up (LinkedIn or email).
  *
  * Steps (client-side in OnboardingFlow v2):
  *   0  Welcome
@@ -10,6 +10,7 @@
 
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { resolveSignupMethod } from "@/lib/auth/signup-method";
 import { createClient } from "@/lib/supabase/server";
 import { OnboardingFlow } from "./OnboardingFlow";
 
@@ -87,5 +88,9 @@ export default async function OnboardingPage() {
     }
   }
 
-  return <OnboardingFlow candidateName={candidateName} />;
+  const signupMethod = resolveSignupMethod(user);
+
+  return (
+    <OnboardingFlow candidateName={candidateName} signupMethod={signupMethod} />
+  );
 }
