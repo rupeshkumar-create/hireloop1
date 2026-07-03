@@ -71,7 +71,7 @@ export function DashboardClient({
   conversationId: initialConvoId,
   candidateName,
   initialInput,
-  initialPanel = "jobs",
+  initialPanel,
   canApplyOrIntro = true,
   hasResume = false,
   hasVoiceSession = false,
@@ -85,7 +85,7 @@ export function DashboardClient({
   const { toast } = useToast();
   const [activeConvoId, setActiveConvoId] = useState<string | null>(initialConvoId ?? null);
   const [pendingIntros, setPendingIntros] = useState(false);
-  const [activePanel, setActivePanel] = useState<PanelId | null>(initialPanel ?? "jobs");
+  const [activePanel, setActivePanel] = useState<PanelId | null>(initialPanel ?? null);
   const [signingOut, setSigningOut] = useState(false);
   const [injected, setInjected] = useState<{ text: string; nonce: number } | null>(null);
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());

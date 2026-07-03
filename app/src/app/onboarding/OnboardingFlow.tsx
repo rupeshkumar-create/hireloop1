@@ -255,7 +255,7 @@ function ActivationStep({
 
       clearOnboardingProgress();
       markDashboardWelcomePending();
-      router.push("/dashboard?panel=jobs");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -486,7 +486,7 @@ function ActivationStep({
               ) : undefined
             }
           >
-            {saving ? "Finishing…" : "Looks good — open Jobs"}
+            {saving ? "Finishing…" : "Looks good — meet Aarya"}
           </Button>
 
           <button

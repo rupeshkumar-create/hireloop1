@@ -190,7 +190,7 @@ export default async function DashboardPage({
       conversationId={conversationId}
       candidateName={profile?.full_name ?? undefined}
       initialInput={initMessage}
-      initialPanel={initialPanel ?? "jobs"}
+      initialPanel={initialPanel}
       canApplyOrIntro={canApply}
       hasResume={hasResume}
       hasVoiceSession={hasVoiceSession}
