@@ -206,9 +206,10 @@ async def get_match_feed(
                     )
         _first_score_locks.pop(str(candidate["id"]), None)
 
-    if rows:
-        result = [_serialize_cached_match_row(r) for r in rows]
-    else:
+    result = _serialize_current_quality_cached_rows(
+        rows, candidate=dict(candidate), min_score=min_score
+    )
+    if not result:
         result = await _fetch_fallback_match_rows(
             db,
             candidate=dict(candidate),
@@ -425,12 +426,21 @@ async def get_match_feed_count(
     if not candidate.get("market"):
         market = await fetch_candidate_market(db, candidate["id"])
 
-    total = await _count_cached_match_rows(
+    cached_rows = await _fetch_cached_match_rows(
         db,
         candidate_id=candidate["id"],
         min_score=min_score,
+        limit=100,
+        offset=0,
         remote_preference=remote_pref,
         market=market,
+    )
+    total = len(
+        _serialize_current_quality_cached_rows(
+            cached_rows,
+            candidate=dict(candidate),
+            min_score=min_score,
+        )
     )
 
     if total == 0:
@@ -442,12 +452,21 @@ async def get_match_feed_count(
             scored=scored,
         )
         if scored:
-            total = await _count_cached_match_rows(
+            cached_rows = await _fetch_cached_match_rows(
                 db,
                 candidate_id=candidate["id"],
                 min_score=min_score,
+                limit=100,
+                offset=0,
                 remote_preference=remote_pref,
                 market=market,
+            )
+            total = len(
+                _serialize_current_quality_cached_rows(
+                    cached_rows,
+                    candidate=dict(candidate),
+                    min_score=min_score,
+                )
             )
 
     if total == 0:
@@ -526,6 +545,7 @@ async def _fetch_cached_match_rows(
             j.ctc_max,
             j.salary_currency,
             j.skills_required,
+            j.description,
             j.apply_url,
             ms.overall_score,
             ms.skills_score,
@@ -637,6 +657,72 @@ def _serialize_cached_match_row(row: asyncpg.Record | dict) -> dict:
     return item
 
 
+def _serialize_current_quality_cached_rows(
+    rows: list[asyncpg.Record],
+    *,
+    candidate: dict,
+    min_score: float,
+) -> list[dict]:
+    """Serialize cached match_scores only if they still pass current quality gates.
+
+    Cached scores can predate domain-fit fixes. Re-check the job/candidate pair at
+    serve time so stale rows like hotel sales for a staffing-SaaS GTM profile do
+    not remain visible until the next full recompute.
+    """
+    result: list[dict] = []
+    for row in rows:
+        current = _current_quality_score(row, candidate=candidate)
+        if current is None or current["overall"] < min_score:
+            continue
+        result.append(_serialize_cached_match_row(row))
+    return result
+
+
+def _candidate_quality_row(candidate: dict) -> dict:
+    return {
+        "full_name": candidate.get("full_name"),
+        "current_title": candidate.get("current_title"),
+        "current_company": candidate.get("current_company"),
+        "headline": candidate.get("headline"),
+        "summary": candidate.get("summary"),
+        "years_experience": candidate.get("years_experience"),
+        "skills": list(candidate.get("skills") or []),
+        "expected_ctc_min": candidate.get("expected_ctc_min"),
+        "expected_ctc_max": candidate.get("expected_ctc_max"),
+        "location_city": candidate.get("location_city"),
+        "location_state": candidate.get("location_state"),
+        "remote_preference": candidate.get("remote_preference"),
+        "open_to_relocation": bool(candidate.get("open_to_relocation")),
+        "location_scope": candidate.get("location_scope"),
+        "target_titles": list(candidate.get("target_titles") or []),
+    }
+
+
+def _job_quality_row(row_dict: dict) -> dict:
+    return {
+        "title": row_dict.get("title"),
+        "company_name": row_dict.get("company_name"),
+        "description": row_dict.get("description"),
+        "seniority": row_dict.get("seniority"),
+        "skills_required": list(row_dict.get("skills_required") or []),
+        "is_remote": bool(row_dict.get("is_remote")),
+        "location_city": row_dict.get("location_city"),
+        "location_state": row_dict.get("location_state"),
+        "ctc_min": row_dict.get("ctc_min"),
+        "ctc_max": row_dict.get("ctc_max"),
+    }
+
+
+def _current_quality_score(row: asyncpg.Record | dict, *, candidate: dict) -> dict | None:
+    row_dict = dict(row)
+    cand_row = _candidate_quality_row(candidate)
+    job_row = _job_quality_row(row_dict)
+    score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
+    if not should_persist_match(cand_row, job_row, score):
+        return None
+    return score
+
+
 async def _fetch_fallback_match_rows(
     db: asyncpg.Connection,
     *,
@@ -720,35 +806,8 @@ async def _fetch_fallback_match_rows(
 def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict) -> dict | None:
     row_dict = dict(row)
     job_skills = list(row_dict.get("skills_required") or [])
-    cand_row = {
-        "full_name": candidate.get("full_name"),
-        "current_title": candidate.get("current_title"),
-        "current_company": candidate.get("current_company"),
-        "headline": candidate.get("headline"),
-        "summary": candidate.get("summary"),
-        "years_experience": candidate.get("years_experience"),
-        "skills": list(candidate.get("skills") or []),
-        "expected_ctc_min": candidate.get("expected_ctc_min"),
-        "expected_ctc_max": candidate.get("expected_ctc_max"),
-        "location_city": candidate.get("location_city"),
-        "location_state": candidate.get("location_state"),
-        "remote_preference": candidate.get("remote_preference"),
-        "open_to_relocation": bool(candidate.get("open_to_relocation")),
-        "location_scope": candidate.get("location_scope"),
-        "target_titles": list(candidate.get("target_titles") or []),
-    }
-    job_row = {
-        "title": row_dict.get("title"),
-        "company_name": row_dict.get("company_name"),
-        "description": row_dict.get("description"),
-        "seniority": row_dict.get("seniority"),
-        "skills_required": job_skills,
-        "is_remote": bool(row_dict.get("is_remote")),
-        "location_city": row_dict.get("location_city"),
-        "location_state": row_dict.get("location_state"),
-        "ctc_min": row_dict.get("ctc_min"),
-        "ctc_max": row_dict.get("ctc_max"),
-    }
+    cand_row = _candidate_quality_row(candidate)
+    job_row = _job_quality_row(row_dict)
     score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
     if not should_persist_match(cand_row, job_row, score):
         return None

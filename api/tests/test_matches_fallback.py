@@ -58,6 +58,107 @@ class FakeDb:
         return []
 
 
+class CachedAccorDb:
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        assert "public.candidates" in query
+        return {
+            "id": self.candidate_id,
+            "current_title": "Go-To-Market Lead",
+            "current_company": "Candidately",
+            "headline": "Helping recruiters turn resumes into client-ready submissions",
+            "summary": "B2B SaaS GTM for staffing agencies, Bullhorn workflows, demos, adoption, onboarding.",
+            "years_experience": 10,
+            "skills": ["Artificial Intelligence", "Digital Strategy", "Automation", "Sales"],
+            "location_city": "Bengaluru",
+            "location_state": "Karnataka",
+            "expected_ctc_min": None,
+            "expected_ctc_max": None,
+            "remote_preference": "any",
+            "open_to_relocation": False,
+            "location_scope": "country",
+            "aarya_state": {},
+            "market": "IN",
+            "target_titles": ["Head of GTM", "Sales Operations Lead", "GTM Lead"],
+        }
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        if "FROM public.match_scores" in query:
+            return [
+                {
+                    "job_id": uuid.uuid4(),
+                    "title": "Associate Director of Sales - Mumbai",
+                    "company_name": "AccorHotel",
+                    "location_city": "Mumbai",
+                    "location_state": "Maharashtra",
+                    "is_remote": False,
+                    "employment_type": "full_time",
+                    "seniority": "director",
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "salary_currency": "INR",
+                    "skills_required": ["sales", "hospitality"],
+                    "description": "Accor hospitality hotel sales leadership in Mumbai.",
+                    "apply_url": "https://example.com/accor",
+                    "overall_score": 0.56,
+                    "skills_score": 0.8,
+                    "experience_score": 0.9,
+                    "location_score": 0.9,
+                    "ctc_score": 0.5,
+                    "explanation": "Moderate match from an old scoring run.",
+                    "llm_rationale": None,
+                    "llm_rationale_at": None,
+                    "computed_at": datetime.now(UTC),
+                    "has_kit": False,
+                    "intro_status": None,
+                }
+            ]
+        if "FROM public.jobs" in query:
+            return [
+                {
+                    "job_id": uuid.uuid4(),
+                    "title": "Go-To-Market Lead - Staffing SaaS",
+                    "company_name": "RecruitOS",
+                    "location_city": "Bengaluru",
+                    "location_state": "Karnataka",
+                    "is_remote": True,
+                    "employment_type": "full_time",
+                    "seniority": "lead",
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "salary_currency": "INR",
+                    "skills_required": [
+                        "sales",
+                        "saas",
+                        "staffing",
+                        "automation",
+                        "artificial intelligence",
+                    ],
+                    "description": (
+                        "Own GTM for an AI automation B2B SaaS platform used by staffing "
+                        "agencies, recruiters, and onboarding teams."
+                    ),
+                    "apply_url": "https://example.com/recruitos",
+                    "skills_overlap": 1,
+                    "scraped_at": datetime.now(UTC),
+                }
+            ]
+        return []
+
+
+class CachedAccorOnlyDb(CachedAccorDb):
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        if "FROM public.match_scores" in query:
+            return await super().fetch(query, *args)
+        return []
+
+    async def fetchval(self, query: str, *args: object) -> int:
+        assert "FROM public.match_scores" in query
+        return 1
+
+
 @pytest.mark.asyncio
 async def test_match_feed_falls_back_to_visible_jobs_when_scores_are_empty(
     monkeypatch: pytest.MonkeyPatch,
@@ -80,6 +181,31 @@ async def test_match_feed_falls_back_to_visible_jobs_when_scores_are_empty(
     assert result[0]["employment_type"] == "full_time"
     assert result[0]["overall_score"] > 0
     assert "Aarya" in (result[0]["explanation"] or "")
+
+
+@pytest.mark.asyncio
+async def test_match_feed_filters_stale_cached_accor_row_and_uses_strict_fallback() -> None:
+    result = await matches.get_match_feed(
+        min_score=0.45,
+        limit=10,
+        offset=0,
+        current_user={"id": str(uuid.uuid4())},
+        db=CachedAccorDb(),  # type: ignore[arg-type]
+    )
+
+    assert [row["company_name"] for row in result] == ["RecruitOS"]
+    assert result[0]["title"] == "Go-To-Market Lead - Staffing SaaS"
+
+
+@pytest.mark.asyncio
+async def test_match_count_ignores_stale_cached_accor_row() -> None:
+    result = await matches.get_match_feed_count(
+        min_score=0.45,
+        current_user={"id": str(uuid.uuid4())},
+        db=CachedAccorOnlyDb(),  # type: ignore[arg-type]
+    )
+
+    assert result == {"total": 0}
 
 
 def test_fallback_drops_dental_sales_job_for_staffing_saas_gtm_candidate() -> None:

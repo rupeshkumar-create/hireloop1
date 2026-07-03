@@ -31,7 +31,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-accent text-accent-fg hover:bg-accent-hover active:bg-accent-hover " +
+    "bg-accent text-on-accent hover:bg-accent-hover hover:text-on-accent active:bg-accent-hover active:text-on-accent " +
     "disabled:bg-ink-100 disabled:text-ink-300",
   secondary:
     "bg-transparent border border-ink-200 text-ink-900 hover:bg-ink-50 hover:border-ink-300 active:bg-ink-50 " +
@@ -86,11 +86,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...props}
     >
       {loading ? (
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        <Loader2 className="h-4 w-4 animate-spin text-inherit" aria-hidden />
       ) : (
         leftIcon
       )}
-      {children && <span>{children}</span>}
+      {children && <span className="text-inherit">{children}</span>}
       {!loading && rightIcon}
     </button>
   );

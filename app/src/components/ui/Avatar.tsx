@@ -22,7 +22,7 @@ const SIZE: Record<Size, string> = {
 const TONE: Record<Tone, string> = {
   light:  "bg-ink-50 text-ink-700",
   dark:   "bg-ink-900 text-paper-0",
-  accent: "bg-accent text-accent-fg",
+  accent: "bg-accent text-on-accent",
 };
 
 export function Avatar({

@@ -1344,7 +1344,7 @@ export function ChatInterface({
                     className={cn(
                       "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
                       !isStreaming
-                        ? "bg-accent text-accent-fg hover:bg-accent-hover"
+                        ? "bg-accent text-on-accent hover:bg-accent-hover"
                         : "bg-ink-100 text-ink-300 cursor-not-allowed",
                     )}
                   >

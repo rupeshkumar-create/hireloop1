@@ -155,7 +155,7 @@ export function ExperienceEnrichmentForm() {
             type="button"
             onClick={saveProfile}
             disabled={isSaving || isLoading}
-            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-paper-0 hover:bg-accent-hover disabled:opacity-60"
+            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:opacity-60"
           >
             {isSaving ? "Saving..." : "Save profile"}
           </button>

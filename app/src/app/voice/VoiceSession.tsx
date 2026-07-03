@@ -617,7 +617,7 @@ export function VoiceSession({
               type="button"
               onClick={() => void handleMicTap()}
               title="Done speaking — send"
-              className="w-16 h-16 rounded-full bg-accent text-paper-0 flex items-center justify-center shadow-2 hover:bg-accent-hover transition-all"
+              className="w-16 h-16 rounded-full bg-accent text-on-accent flex items-center justify-center shadow-2 hover:bg-accent-hover transition-all"
             >
               <Mic className="h-6 w-6" strokeWidth={1.5} />
             </button>
@@ -628,7 +628,7 @@ export function VoiceSession({
             <button
               type="button"
               onClick={() => void startCall()}
-              className="w-20 h-20 rounded-full bg-accent hover:bg-accent-hover text-accent-fg flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95"
+              className="w-20 h-20 rounded-full bg-accent hover:bg-accent-hover text-on-accent flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95"
               aria-label="Start call with Aarya"
             >
               <Mic className="h-7 w-7" strokeWidth={1.5} />

@@ -282,7 +282,7 @@ export function ResumeUpload({
             <button
               type="button"
               onClick={handleApplyToProfile}
-              className="flex-1 bg-accent hover:bg-accent-hover text-paper-0 font-semibold py-2.5 px-4 rounded-xl text-sm transition-colors"
+              className="flex-1 bg-accent hover:bg-accent-hover text-on-accent font-semibold py-2.5 px-4 rounded-xl text-sm transition-colors"
             >
               Apply to my profile →
             </button>

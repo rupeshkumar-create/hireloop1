@@ -354,7 +354,7 @@ function ActivationStep({
                 >
                   {tosAccepted && (
                     <svg viewBox="0 0 12 10" fill="none" className="w-3 h-2.5">
-                      <path d="M1 5l3 3 7-7" stroke="currentColor" className="text-accent-fg" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M1 5l3 3 7-7" stroke="currentColor" className="text-on-accent" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   )}
                 </div>
@@ -390,7 +390,7 @@ function ActivationStep({
                 >
                   {marketingConsent && (
                     <svg viewBox="0 0 12 10" fill="none" className="w-3 h-2.5">
-                      <path d="M1 5l3 3 7-7" stroke="currentColor" className="text-accent-fg" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M1 5l3 3 7-7" stroke="currentColor" className="text-on-accent" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   )}
                 </div>

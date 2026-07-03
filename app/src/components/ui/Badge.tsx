@@ -17,7 +17,7 @@ type Tone = "muted" | "strong" | "accent";
 const TONE: Record<Tone, string> = {
   muted:  "bg-ink-100 text-ink-800 border-ink-200",
   strong: "bg-ink-900 text-paper-0 border-ink-900",
-  accent: "bg-accent text-accent-fg border-accent",
+  accent: "bg-accent text-on-accent border-accent",
 };
 
 export function Badge({

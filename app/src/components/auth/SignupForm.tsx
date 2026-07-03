@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
 type Role = "candidate" | "recruiter";
+type LoadingAction = "linkedin" | "email-send" | "email-verify" | "dev" | null;
 
 const DEV_EMAIL_LOGIN = process.env.NEXT_PUBLIC_DEV_EMAIL_LOGIN === "true";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -22,7 +23,7 @@ export function SignupForm() {
     [searchParams]
   );
   const [role, setRole] = useState<Role>(defaultRole);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [devEmail, setDevEmail] = useState("");
@@ -63,8 +64,29 @@ export function SignupForm() {
     }
   }, [searchParams]);
 
+  async function routeAfterAuth(
+    resolvedRole: string | undefined,
+    isNewUser: boolean | undefined,
+  ) {
+    const redirectParam = searchParams.get("redirect");
+    const safeRedirect =
+      redirectParam?.startsWith("/") && !redirectParam.startsWith("//")
+        ? redirectParam
+        : null;
+
+    if (resolvedRole === "recruiter") {
+      router.push(safeRedirect?.startsWith("/recruiter") ? safeRedirect : "/recruiter");
+      return;
+    }
+    if (safeRedirect && !safeRedirect.startsWith("/recruiter")) {
+      router.push(safeRedirect);
+      return;
+    }
+    router.push(isNewUser ? "/onboarding" : "/dashboard");
+  }
+
   async function handleLinkedInSignIn() {
-    setIsLoading(true);
+    setLoadingAction("linkedin");
     setErrorMessage("");
     setInfoMessage("");
     document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
@@ -84,7 +106,7 @@ export function SignupForm() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Authentication failed");
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   }
 
@@ -92,20 +114,19 @@ export function SignupForm() {
     e.preventDefault();
     const addr = email.trim();
     if (!addr) return;
-    setIsLoading(true);
+    setLoadingAction("email-send");
     setErrorMessage("");
     setInfoMessage("");
     // Same role cookie as LinkedIn so /auth/bootstrap provisions the right side.
     document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
     try {
-      // Pure 6-digit OTP flow — no emailRedirectTo, so Supabase does NOT mint a
-      // PKCE magic link (which fails with "code challenge does not match code
-      // verifier" when the link is opened by an email scanner or another tab).
-      // The user types the code; verifyOtp validates it without PKCE.
+      const redirectTo = `${window.location.origin}/auth/callback`;
       const { error } = await supabase.auth.signInWithOtp({
         email: addr,
         options: {
           shouldCreateUser: true, // same flow signs up new users and signs in returning ones
+          // Needed when Supabase sends a confirmation link instead of (or as well as) a code.
+          emailRedirectTo: redirectTo,
         },
       });
       if (error) {
@@ -113,28 +134,45 @@ export function SignupForm() {
         return;
       }
       setOtpSent(true);
-      setInfoMessage(`We emailed a login code to ${addr}.`);
+      setInfoMessage(
+        `We emailed ${addr}. Tap Confirm email address in that message to sign in, ` +
+          `or enter the 6-digit code below if your email includes one.`,
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
+  }
+
+  async function verifyEmailOtp(token: string) {
+    const addr = email.trim();
+    const attempts: Array<"email" | "signup"> = ["email", "signup"];
+    let lastError: string | null = null;
+    for (const type of attempts) {
+      const { error } = await supabase.auth.verifyOtp({
+        email: addr,
+        token,
+        type,
+      });
+      if (!error) return null;
+      lastError = error.message;
+    }
+    return lastError ?? "Invalid or expired code.";
   }
 
   async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
     const token = otpCode.trim();
     if (token.length < 6) return;
-    setIsLoading(true);
+    setLoadingAction("email-verify");
     setErrorMessage("");
     try {
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token,
-        type: "email",
-      });
-      if (error) {
-        setErrorMessage(error.message);
+      const verifyError = await verifyEmailOtp(token);
+      if (verifyError) {
+        setErrorMessage(
+          `${verifyError} If your email only has a confirmation link, tap that link instead of entering a code.`,
+        );
         return;
       }
       const {
@@ -157,22 +195,25 @@ export function SignupForm() {
         role?: string;
         is_new_user?: boolean;
       };
-      if (data.role === "recruiter") {
-        router.push("/recruiter");
-      } else {
-        router.push(data.is_new_user ? "/onboarding" : "/dashboard");
+      if (!res.ok) {
+        setErrorMessage(
+          (data as { detail?: string }).detail ??
+            "Account setup failed. Please try signing in again.",
+        );
+        return;
       }
+      await routeAfterAuth(data.role, data.is_new_user);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Verification failed.");
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   }
 
   async function handleDevEmailSignIn(e: React.FormEvent) {
     e.preventDefault();
     if (!DEV_EMAIL_LOGIN) return;
-    setIsLoading(true);
+    setLoadingAction("dev");
     setErrorMessage("");
     setInfoMessage("");
     try {
@@ -181,7 +222,11 @@ export function SignupForm() {
         password: devPassword,
       });
       if (error) {
-        setErrorMessage(error.message);
+        setErrorMessage(
+          error.message === "Invalid login credentials"
+            ? "Invalid email or password. Demo users must exist in Supabase Auth — run scripts/seed_dev.sql on your project."
+            : error.message,
+        );
         return;
       }
       const {
@@ -191,19 +236,29 @@ export function SignupForm() {
         setErrorMessage("Sign-in succeeded but no session was created.");
         return;
       }
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
+      const bootstrapRes = await fetch(`${API_URL}/api/v1/auth/bootstrap`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ role }),
       });
-      if (!meRes.ok) {
-        setErrorMessage("Signed in but could not load your profile.");
+      const data = (await bootstrapRes.json().catch(() => ({}))) as {
+        role?: string;
+        is_new_user?: boolean;
+        detail?: string;
+      };
+      if (!bootstrapRes.ok) {
+        setErrorMessage(data.detail ?? "Signed in but account setup failed.");
         return;
       }
-      const me = (await meRes.json()) as { role?: string };
-      router.push(me.role === "recruiter" ? "/recruiter" : "/dashboard");
+      await routeAfterAuth(data.role, data.is_new_user);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Sign-in failed");
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   }
 
@@ -230,16 +285,18 @@ export function SignupForm() {
         </div>
       </div>
 
-      {/* LinkedIn keeps its brand blue — lime is reserved for our own primary
-          actions, and white-on-lime fails contrast anyway. */}
-      <button
+      <Button
         type="button"
-        disabled={isLoading}
+        variant="primary"
+        size="lg"
+        fullWidth
+        disabled={loadingAction !== null}
+        loading={loadingAction === "linkedin"}
         onClick={handleLinkedInSignIn}
-        className="w-full rounded-lg bg-[#0A66C2] px-6 py-3.5 text-body font-semibold text-white transition-colors hover:bg-[#004182] disabled:opacity-60"
+        className="rounded-lg font-semibold"
       >
-        {isLoading ? "Redirecting..." : "Continue with LinkedIn"}
-      </button>
+        {loadingAction === "linkedin" ? "Redirecting..." : "Continue with LinkedIn"}
+      </Button>
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center">
@@ -260,16 +317,24 @@ export function SignupForm() {
             autoComplete="email"
             required
           />
-          <button
+          <Button
             type="submit"
-            disabled={isLoading || !email.trim()}
-            className="w-full rounded-lg border border-ink-200 bg-transparent py-3 font-semibold text-ink-900 transition-colors hover:bg-ink-50 hover:border-ink-300 disabled:opacity-60"
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={loadingAction === "email-send"}
+            disabled={!email.trim() || loadingAction !== null}
+            className="rounded-lg font-semibold"
           >
-            {isLoading ? "Sending…" : "Email me a login code"}
-          </button>
+            {loadingAction === "email-send" ? "Sending…" : "Email me a login code"}
+          </Button>
         </form>
       ) : (
         <form onSubmit={handleVerifyCode} className="space-y-3">
+          <p className="text-xs text-ink-500 leading-relaxed">
+            Fastest: open the email and tap <span className="font-medium text-ink-700">Confirm email address</span>.
+            You&apos;ll return here signed in. Only use the box below if the email shows a 6-digit code.
+          </p>
           <Input
             type="text"
             inputMode="numeric"
@@ -284,11 +349,11 @@ export function SignupForm() {
             variant="primary"
             size="lg"
             fullWidth
-            loading={isLoading}
-            disabled={otpCode.length < 6}
+            loading={loadingAction === "email-verify"}
+            disabled={otpCode.length < 6 || loadingAction !== null}
             className="rounded-lg"
           >
-            {isLoading ? "Verifying…" : "Verify & continue"}
+            {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
           </Button>
           <button
             type="button"
@@ -305,8 +370,7 @@ export function SignupForm() {
       )}
 
       <p className="text-xs text-ink-500 text-center">
-        The same code signs you up or logs you in. We&apos;ll collect your experience via resume
-        upload in onboarding.
+        Email sign-in sends a confirmation link or a one-time code. Resume upload happens in onboarding.
       </p>
 
       {DEV_EMAIL_LOGIN && (
@@ -332,10 +396,10 @@ export function SignupForm() {
           />
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={loadingAction !== null}
             className="w-full rounded-lg border border-ink-200 bg-transparent py-2.5 text-sm font-medium text-ink-900 hover:bg-ink-50 hover:border-ink-300 disabled:opacity-60"
           >
-            {isLoading ? "Signing in…" : "Sign in with email (dev)"}
+            {loadingAction === "dev" ? "Signing in…" : "Sign in with email (dev)"}
           </button>
           <p className="text-[11px] text-ink-500 leading-snug">
             Candidate password: <span className="font-mono">DemoCandidate26!</span>
@@ -385,7 +449,7 @@ function decodeAuthError(errorCode: string, message: string | null): string {
       "Providers → LinkedIn (OIDC) is enabled with valid Client ID/Secret, " +
       "(2) LinkedIn app has “Sign In with LinkedIn using OpenID Connect” product, " +
       "(3) LinkedIn redirect URL is https://blwudfxurykzyutkqkoi.supabase.co/auth/v1/callback, " +
-      "(4) Supabase redirect URLs include https://hireloop1-app-orcin.vercel.app/auth/callback " +
+      "(4) Supabase redirect URLs include https://hireloop1-app.vercel.app/auth/callback " +
       "and http://localhost:3001/auth/callback. " +
       "If config looks correct, upgrade GoTrue in Supabase → Settings → Infrastructure (≥ v2.149)."
     );

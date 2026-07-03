@@ -338,7 +338,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
     return (
       <Shell onClose={onClose}>
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-paper-0">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-on-accent">
             <Check className="h-4 w-4" strokeWidth={2.5} />
           </span>
           <p className="text-small font-semibold text-ink-900">
@@ -364,7 +364,7 @@ export function ProfileCompletionFlow({ profile, completeness, onClose, onSaved 
     return (
       <Shell onClose={onClose}>
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-paper-0">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-on-accent">
             <Check className="h-4 w-4" strokeWidth={2.5} />
           </span>
           <p className="text-small font-semibold text-ink-900">

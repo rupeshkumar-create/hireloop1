@@ -45,7 +45,7 @@ const config: Config = {
       accent: {
         DEFAULT: "#B9F84C",  // electric lime
         hover:   "#A8EA3A",
-        fg:      "#0F1400",  // near-black text on lime
+        fg:      "#000000",  // black text on lime — use class text-on-accent
         // Reserved low-emphasis tint for focus rings only.
         ring:    "rgba(185, 248, 76, 0.30)",
       },

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Kanban, Loader2 } from "lucide-react";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
@@ -49,7 +49,7 @@ export default function PipelinePage() {
   const [loading, setLoading] = useState(true);
   const [moving, setMoving] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [r, pipeline] = await Promise.all([
@@ -61,11 +61,11 @@ export default function PipelinePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
   useEffect(() => {
     void load();
-  }, [id]);
+  }, [load]);
 
   async function advance(pipelineId: string, stage: string) {
     setMoving(pipelineId);

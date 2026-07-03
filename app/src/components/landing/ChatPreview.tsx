@@ -190,8 +190,8 @@ export function ChatPreview() {
             <Mic className="relative h-4 w-4 text-accent" strokeWidth={1.75} />
           </span>
           {/* Send */}
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
-            <Send className="h-3.5 w-3.5 text-paper-0" strokeWidth={1.5} />
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent">
+            <Send className="h-3.5 w-3.5" strokeWidth={1.5} />
           </span>
         </div>
       </div>

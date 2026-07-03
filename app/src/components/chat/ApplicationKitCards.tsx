@@ -112,7 +112,7 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
               {kit.mock_interview?.path && (
                 <Link
                   href={kit.mock_interview.path}
-                  className="flex items-center gap-2 rounded-lg border border-accent bg-accent px-3 py-2 text-small text-accent-fg hover:bg-accent-hover sm:col-span-2"
+                  className="flex items-center gap-2 rounded-lg border border-accent bg-accent px-3 py-2 text-small text-on-accent hover:bg-accent-hover sm:col-span-2"
                 >
                   <GraduationCap className="h-4 w-4 shrink-0" />
                   Start mock interview

@@ -272,7 +272,7 @@ export default function MockInterviewSessionPage() {
                 className={cn(
                   "shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
                   input.trim() && !loading
-                    ? "bg-accent text-paper-0"
+                    ? "bg-accent text-on-accent"
                     : "text-ink-300 cursor-not-allowed"
                 )}
               >

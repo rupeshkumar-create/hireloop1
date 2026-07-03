@@ -1,20 +1,9 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import { ToastProvider } from "@/components/ui";
 import { CandidateGate } from "@/components/auth/CandidateGate";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AppWarmup } from "@/components/providers/AppWarmup";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 const APP_ORIGIN =
   process.env.NEXT_PUBLIC_APP_URL ??
@@ -41,10 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en-IN" suppressHydrationWarning>
-      <head />
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-paper-0 text-ink-900`}
-      >
+      <body className="font-sans antialiased min-h-screen bg-paper-0 text-ink-900">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-ink-900 focus:px-4 focus:py-2 focus:text-paper-0"

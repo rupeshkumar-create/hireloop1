@@ -34,7 +34,7 @@ export default function Error({
           <button
             type="button"
             onClick={reset}
-            className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-small font-medium text-accent-fg hover:bg-accent-hover transition-colors"
+            className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-small font-medium text-on-accent hover:bg-accent-hover transition-colors"
           >
             Try again
           </button>
