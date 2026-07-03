@@ -45,6 +45,10 @@ from hireloop_api.services.linkedin_oauth import (
     extract_linkedin_profile_url,
     heal_candidate_headline_from_linkedin,
 )
+from hireloop_api.services.supabase_auth_admin import (
+    ensure_oauth_email_confirmed,
+    is_oauth_signup,
+)
 from hireloop_api.services.whatsapp.msg91 import Msg91Client
 
 logger = structlog.get_logger()
@@ -292,6 +296,7 @@ async def bootstrap_user(
     Called from /auth/callback (app) with Bearer token.
     """
     user_id = uuid.UUID(str(current_user["id"]))
+    supabase_user: dict[str, Any] = current_user.get("_supabase_user") or {}
 
     # Never downgrade an existing recruiter when the signup tab was "Job Seeker".
     has_recruiter = await db.fetchval(
@@ -327,7 +332,6 @@ async def bootstrap_user(
         #
         # Save LinkedIn/OAuth profile payload from Supabase for downstream enrichment.
         # DPDP note: we redact any token-like fields before persisting.
-        supabase_user: dict[str, Any] = current_user.get("_supabase_user") or {}
 
         def _redact(value: Any) -> Any:
             if isinstance(value, dict):
@@ -419,20 +423,26 @@ async def bootstrap_user(
                 user_id,
             )
 
-    # Welcome email on signup. bootstrap runs on every login, but
-    # maybe_send_signup_confirmation is idempotent (consent_log dedupe), so this
-    # fires exactly once per user — and no-ops if no email provider is set.
-    # Wired here because the old phone-flow trigger is no longer in the path.
+    # LinkedIn/OAuth: trust the IdP — confirm email server-side, no verification mail.
+    # Email/magic-link signups still verify via Supabase's inbox link or OTP.
     try:
-        await maybe_send_signup_confirmation(
-            db,
-            settings,
-            user_id=user_id,
-            email=current_user.get("email"),
-            full_name=current_user.get("full_name"),
-        )
-    except Exception as exc:  # never block signup on email
-        logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
+        await ensure_oauth_email_confirmed(settings, supabase_user)
+    except Exception as exc:
+        logger.warning("oauth_email_confirm_failed", user_id=str(user_id), error=str(exc)[:200])
+
+    # Welcome email only for email signups (not LinkedIn/OAuth — avoids confusion
+    # with Supabase's "confirm your email" message).
+    if not is_oauth_signup(supabase_user):
+        try:
+            await maybe_send_signup_confirmation(
+                db,
+                settings,
+                user_id=user_id,
+                email=current_user.get("email"),
+                full_name=current_user.get("full_name"),
+            )
+        except Exception as exc:  # never block signup on email
+            logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
 
     # `is_new_user` lets /auth/callback route first-time candidates into the
     # onboarding wizard while sending returning users straight to their home.
