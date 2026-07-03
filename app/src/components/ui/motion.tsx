@@ -78,6 +78,57 @@ export function FadeUp({
   );
 }
 
+/** Single scroll-triggered fade-up — animates once when it enters the viewport. */
+export function Reveal({
+  children,
+  className,
+  delay = 0,
+  y = 18,
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+  y?: number;
+}) {
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }}
+      transition={{ duration: 0.5, delay, ease: [0.21, 0.47, 0.32, 0.98] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** Scroll-triggered staggered container — pair with <StaggerItem> children. */
+export function RevealStagger({
+  children,
+  className,
+  delay = 0,
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+}) {
+  return (
+    <motion.div
+      className={className}
+      initial="hidden"
+      whileInView="show"
+      viewport={{ once: true, margin: "-80px" }}
+      variants={{
+        hidden: {},
+        show: { transition: { staggerChildren: 0.09, delayChildren: delay } },
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 /** Press feedback for interactive cards (subtle scale, spring back). */
 export function Pressable({
   children,
