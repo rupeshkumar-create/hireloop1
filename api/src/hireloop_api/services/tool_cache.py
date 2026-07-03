@@ -41,3 +41,10 @@ def get_cached(key: str) -> Any | None:
 
 def set_cached(key: str, value: Any) -> None:
     _store[key] = (time.monotonic(), value)
+
+
+def clear_session_tool_cache(session_id: str, tool_name: str | None = None) -> None:
+    """Drop cached tool results for a conversation (e.g. after career path lock-in)."""
+    prefix = f"{session_id}:{tool_name}:" if tool_name else f"{session_id}:"
+    for key in [k for k in _store if k.startswith(prefix)]:
+        del _store[key]

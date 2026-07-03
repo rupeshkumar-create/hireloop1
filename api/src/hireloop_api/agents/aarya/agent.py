@@ -37,7 +37,12 @@ from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.config import Settings
-from hireloop_api.services.tool_cache import cache_key, get_cached, set_cached
+from hireloop_api.services.tool_cache import (
+    cache_key,
+    clear_session_tool_cache,
+    get_cached,
+    set_cached,
+)
 
 logger = structlog.get_logger()
 
@@ -77,6 +82,10 @@ Your capabilities:
 Finding jobs — the right order:
 - When the user wants to find jobs or plan their next move, FIRST call
   build_career_path. Briefly share the path (where they are → where they can go).
+- If they have not picked a primary target role yet, offer the top 3 options ONCE.
+  When they reply with 1/2/3, a role title, or "option 2", call
+  prioritize_career_path immediately — never ask the same question twice.
+- If turn context shows career_path_locked, job_search is allowed — do NOT re-ask.
 - THEN call job_search once per promising target_title from the path to surface
   real openings. Lead with the best-fit roles.
 
@@ -379,6 +388,9 @@ def build_turn_context_prompt(
     profile_completeness: int | None = None,
     known_facts: str = "",
     candidate_display_name: str | None = None,
+    career_path_prioritized_title: str | None = None,
+    career_path_just_prioritized: str | None = None,
+    career_path_pending_options: list[str] | None = None,
 ) -> str:
     """Build compact, deterministic guidance for the next Aarya turn."""
     last_text = _last_human_text(messages).strip()
@@ -394,6 +406,28 @@ def build_turn_context_prompt(
             f"- candidate_name: {name} (authoritative — from their profile/résumé; "
             "always greet and address them by this name unless they correct you)"
         )
+
+    just_locked = (career_path_just_prioritized or "").strip()
+    locked = (career_path_prioritized_title or "").strip()
+    if just_locked:
+        guidance.append(
+            f"- career_path_locked: {just_locked} (user JUST chose this — call "
+            "job_search now; do NOT ask them to pick again)"
+        )
+    elif locked:
+        guidance.append(
+            f"- career_path_locked: {locked} (already saved — proceed with job_search; "
+            "never re-ask which path to focus on)"
+        )
+    else:
+        pending = [o.strip() for o in (career_path_pending_options or []) if o and o.strip()]
+        if pending:
+            numbered = "; ".join(f"{i + 1}. {t}" for i, t in enumerate(pending[:3]))
+            guidance.append(
+                "- career_path_pending: user must pick ONE primary target before job_search. "
+                f"Options: {numbered}. If they reply 1/2/3 or a title, call "
+                "prioritize_career_path then job_search — ask at most once."
+            )
     if last_text:
         guidance.append(f"- candidate_signal: {last_text[:240]}")
 
@@ -504,6 +538,9 @@ class AaryaState(TypedDict, total=False):
     profile_completeness: int | None  # authoritative % shown in the UI pill
     prefetched_jobs: list[dict[str, Any]]  # warmup shortlist injected at turn start
     candidate_display_name: str | None  # résumé/profile name — overrides stale memory
+    career_path_prioritized_title: str | None
+    career_path_just_prioritized: str | None
+    career_path_pending_options: list[str]
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -653,6 +690,27 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "prioritize_career_path",
+            "description": (
+                "Lock in the candidate's chosen primary target role from their career "
+                "path (required before job_search). Use when they pick 1/2/3 or name "
+                "a path title. Pass the number or full title."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Chosen path title, or 1/2/3 for the offered list",
+                    },
+                },
+                "required": ["title"],
             },
         },
     },
@@ -855,6 +913,9 @@ def build_aarya_graph(settings: Settings) -> Any:
                 profile_completeness=state.get("profile_completeness"),
                 known_facts=(state.get("known_facts") or ""),
                 candidate_display_name=state.get("candidate_display_name"),
+                career_path_prioritized_title=state.get("career_path_prioritized_title"),
+                career_path_just_prioritized=state.get("career_path_just_prioritized"),
+                career_path_pending_options=state.get("career_path_pending_options"),
             )
             messages = [SystemMessage(content=prompt), *messages]
 
@@ -959,6 +1020,12 @@ def build_aarya_graph(settings: Settings) -> Any:
                     )
                     if isinstance(result, dict) and isinstance(result.get("job_cards"), list):
                         cards = result["job_cards"]
+                elif tool_name == "prioritize_career_path":
+                    result = await aarya_tools.prioritize_career_path(
+                        db, user_id, session_id, **tool_args
+                    )
+                    if isinstance(result, dict) and result.get("prioritized_title"):
+                        clear_session_tool_cache(session_id, "job_search")
                 elif tool_name == "build_career_path":
                     result = await aarya_tools.build_career_path(db, user_id, session_id, settings)
                 elif tool_name == "get_match_score":

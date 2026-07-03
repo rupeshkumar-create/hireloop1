@@ -39,6 +39,11 @@ from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
+from hireloop_api.services.career_path import CareerPathService
+from hireloop_api.services.career_path_selection import (
+    career_path_options,
+    try_apply_career_path_selection,
+)
 from hireloop_api.services.chat_stream import (
     sse_done,
     sse_error,
@@ -53,6 +58,7 @@ from hireloop_api.services.memory import (
 )
 from hireloop_api.services.ranking import dedupe_jobs
 from hireloop_api.services.rate_limit import check_rate_limit
+from hireloop_api.services.tool_cache import clear_session_tool_cache
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -499,6 +505,25 @@ async def send_message(
             body.content_type,
         )
 
+        career_path_row = await CareerPathService.get_latest(db, candidate_id)
+        career_path_prioritized = (
+            (career_path_row or {}).get("prioritized_title") or None
+        )
+        career_path_pending = (
+            career_path_options(career_path_row)
+            if career_path_row and not career_path_prioritized
+            else []
+        )
+        career_path_just_prioritized = await try_apply_career_path_selection(
+            db,
+            candidate_id,
+            body.content,
+        )
+        if career_path_just_prioritized:
+            career_path_prioritized = career_path_just_prioritized
+            career_path_pending = []
+            clear_session_tool_cache(conversation_id, "job_search")
+
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
         # conversation never loses its latest turns to the window.
@@ -548,6 +573,9 @@ async def send_message(
         "profile_completeness": profile_completeness,
         "prefetched_jobs": prefetched_jobs if include_prefetch else [],
         "candidate_display_name": display_name,
+        "career_path_prioritized_title": career_path_prioritized,
+        "career_path_just_prioritized": career_path_just_prioritized,
+        "career_path_pending_options": career_path_pending,
     }
 
     graph = get_aarya_graph(settings)

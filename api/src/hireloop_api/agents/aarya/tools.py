@@ -32,6 +32,7 @@ import structlog
 from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market, fetch_user_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.services.career_path_selection import career_path_options
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     normalize_remote_preference,
@@ -449,19 +450,16 @@ async def job_search(
         has_real_path = bool(path and (path.get("target_titles") or path.get("steps")))
         if has_real_path and not path.get("prioritized_title"):
             duration_ms = int((time.monotonic() - t0) * 1000)
+            options = career_path_options(path)
             block_result = {
                 "blocked": True,
                 "reason": "prioritize_career_path",
                 "message": (
-                    "Pick one of your top career paths before I search jobs — "
-                    "it keeps your matches focused."
+                    "Career path is not locked in yet. Call prioritize_career_path "
+                    "with the title the user chose (1→first option, 2→second, etc.), "
+                    "then call job_search again. Do not re-ask if they already answered."
                 ),
-                "path_options": [
-                    s.get("title")
-                    for s in (path.get("steps") or [])
-                    if s.get("level") in ("next", "future") and s.get("title")
-                ][:3]
-                or (path.get("target_titles") or [])[:3],
+                "path_options": options,
             }
             await _write_action(
                 db,
@@ -811,6 +809,72 @@ async def direct_apply(
         session_id,
         "direct_apply",
         {"job_id": job_id},
+        result,
+        duration_ms,
+    )
+    return result
+
+
+async def prioritize_career_path(
+    db: asyncpg.Connection,
+    user_id: str,
+    session_id: str,
+    title: str,
+) -> dict[str, Any]:
+    """Lock in the candidate's chosen target role before job_search."""
+    import time
+
+    from hireloop_api.services.career_path import CareerPathService
+
+    t0 = time.monotonic()
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+        uuid.UUID(user_id),
+    )
+    if not candidate:
+        result: dict[str, Any] = {"error": "Candidate profile not found"}
+    else:
+        path = await CareerPathService.get_latest(db, str(candidate["id"]))
+        if not path:
+            result = {"error": "Generate a career path first (build_career_path)."}
+        else:
+            pick = (title or "").strip()
+            options = career_path_options(path)
+            if options and pick.isdigit() and 1 <= int(pick) <= len(options):
+                pick = options[int(pick) - 1]
+            elif options:
+                from hireloop_api.services.career_path_selection import (
+                    parse_career_path_selection,
+                )
+
+                resolved = parse_career_path_selection(pick, options)
+                if resolved:
+                    pick = resolved
+            try:
+                updated = await CareerPathService.prioritize(db, str(candidate["id"]), pick)
+            except ValueError as exc:
+                result = {"error": str(exc)}
+            else:
+                if not updated:
+                    result = {"error": "Could not save career path choice."}
+                else:
+                    result = {
+                        "prioritized_title": updated.get("prioritized_title"),
+                        "path_options": options,
+                        "message": (
+                            f"Locked in {updated.get('prioritized_title')}. "
+                            "You can call job_search now."
+                        ),
+                    }
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    await _write_action(
+        db,
+        "aarya",
+        user_id,
+        session_id,
+        "prioritize_career_path",
+        {"title": title},
         result,
         duration_ms,
     )
