@@ -378,6 +378,7 @@ def build_turn_context_prompt(
     open_questions: list[str],
     profile_completeness: int | None = None,
     known_facts: str = "",
+    candidate_display_name: str | None = None,
 ) -> str:
     """Build compact, deterministic guidance for the next Aarya turn."""
     last_text = _last_human_text(messages).strip()
@@ -387,6 +388,12 @@ def build_turn_context_prompt(
         f"- mode: {'voice' if voice_mode else 'text'}",
         f"- likely_intent: {likely_intent}",
     ]
+    name = (candidate_display_name or "").strip()
+    if name:
+        guidance.append(
+            f"- candidate_name: {name} (authoritative — from their profile/résumé; "
+            "always greet and address them by this name unless they correct you)"
+        )
     if last_text:
         guidance.append(f"- candidate_signal: {last_text[:240]}")
 
@@ -496,6 +503,7 @@ class AaryaState(TypedDict, total=False):
     open_questions: list[str]  # profile gaps to weave into the conversation
     profile_completeness: int | None  # authoritative % shown in the UI pill
     prefetched_jobs: list[dict[str, Any]]  # warmup shortlist injected at turn start
+    candidate_display_name: str | None  # résumé/profile name — overrides stale memory
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -846,6 +854,7 @@ def build_aarya_graph(settings: Settings) -> Any:
                 open_questions=open_questions,
                 profile_completeness=state.get("profile_completeness"),
                 known_facts=(state.get("known_facts") or ""),
+                candidate_display_name=state.get("candidate_display_name"),
             )
             messages = [SystemMessage(content=prompt), *messages]
 

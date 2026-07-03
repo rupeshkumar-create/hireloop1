@@ -37,6 +37,7 @@ from hireloop_api.deps import (
 )
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.chat_stream import (
     sse_done,
@@ -472,8 +473,15 @@ async def send_message(
 
         candidate_id = str(convo["candidate_id"])
         memory_summary = await CandidateMemoryService.get_memory_summary(db, candidate_id)
+        career_facts = await CandidateMemoryService.get_career_facts(db, candidate_id)
+        display_name = await resolve_candidate_display_name(
+            db,
+            user_id=str(current_user["id"]),
+            candidate_id=candidate_id,
+        )
         known_facts = format_known_facts(
-            await CandidateMemoryService.get_career_facts(db, candidate_id)
+            career_facts,
+            canonical_name=display_name,
         )
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
@@ -539,6 +547,7 @@ async def send_message(
         "open_questions": open_questions,
         "profile_completeness": profile_completeness,
         "prefetched_jobs": prefetched_jobs if include_prefetch else [],
+        "candidate_display_name": display_name,
     }
 
     graph = get_aarya_graph(settings)

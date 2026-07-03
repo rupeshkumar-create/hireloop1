@@ -65,3 +65,24 @@ def test_turn_context_omits_known_facts_when_empty() -> None:
         known_facts="",
     )
     assert "known_facts" not in prompt
+
+
+def test_format_known_facts_uses_canonical_name() -> None:
+    out = format_known_facts(
+        {"preferred_name": "Kavya", "work_mode": "Remote"},
+        canonical_name="Vivek Kumar",
+    )
+    assert "preferred name: Vivek Kumar" in out
+    assert "Kavya" not in out
+
+
+def test_turn_context_includes_authoritative_candidate_name() -> None:
+    prompt = build_turn_context_prompt(
+        messages=[HumanMessage(content="hello")],
+        voice_mode=False,
+        memory="",
+        open_questions=[],
+        candidate_display_name="Vivek Kumar",
+    )
+    assert "candidate_name: Vivek Kumar" in prompt
+    assert "authoritative" in prompt

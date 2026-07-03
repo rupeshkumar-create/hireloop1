@@ -98,8 +98,17 @@ async def profile_read(
     if not row:
         result = {"error": "Candidate profile not found"}
     else:
+        from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
+
         result = dict(row)
         result["id"] = str(result["id"])
+        resolved_name = await resolve_candidate_display_name(
+            db,
+            user_id=user_id,
+            candidate_id=str(result["id"]),
+        )
+        if resolved_name:
+            result["full_name"] = resolved_name
 
     duration_ms = int((time.monotonic() - t0) * 1000)
     await _write_action(db, "aarya", user_id, session_id, "profile_read", {}, result, duration_ms)

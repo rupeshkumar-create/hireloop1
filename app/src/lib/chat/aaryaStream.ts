@@ -45,28 +45,40 @@ type StreamPayload = {
 export const AARYA_SESSION_STORAGE_KEY = "hireloop_aarya_session_id";
 export const VOICE_SEND_ON_PAUSE_KEY = "hireloop_voice_send_on_pause";
 
-export function readStoredAaryaSession(): string | null {
+export function aaryaSessionStorageKey(userId?: string | null): string {
+  return userId ? `${AARYA_SESSION_STORAGE_KEY}_${userId}` : AARYA_SESSION_STORAGE_KEY;
+}
+
+export function readStoredAaryaSession(userId?: string | null): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return localStorage.getItem(AARYA_SESSION_STORAGE_KEY);
+    const scoped = userId ? localStorage.getItem(aaryaSessionStorageKey(userId)) : null;
+    if (scoped) return scoped;
+    // Legacy global key — only used when user id is not known yet.
+    if (!userId) return localStorage.getItem(AARYA_SESSION_STORAGE_KEY);
+    return null;
   } catch {
     return null;
   }
 }
 
-export function storeAaryaSession(id: string): void {
+export function storeAaryaSession(id: string, userId?: string | null): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(AARYA_SESSION_STORAGE_KEY, id);
+    localStorage.setItem(aaryaSessionStorageKey(userId), id);
+    if (userId) {
+      localStorage.removeItem(AARYA_SESSION_STORAGE_KEY);
+    }
   } catch {
     /* ignore quota / private mode */
   }
 }
 
 /** Forget the stored conversation id (e.g. after a 404 — it was deleted). */
-export function clearAaryaSession(): void {
+export function clearAaryaSession(userId?: string | null): void {
   if (typeof window === "undefined") return;
   try {
+    localStorage.removeItem(aaryaSessionStorageKey(userId));
     localStorage.removeItem(AARYA_SESSION_STORAGE_KEY);
   } catch {
     /* ignore */
@@ -153,6 +165,36 @@ export async function prefetchAaryaWarmup(
     prefetchedJobs: Array.isArray(data.prefetched_jobs) ? data.prefetched_jobs : [],
     matchCount: Number(data.match_count) || 0,
   };
+}
+
+export type AaryaHistoryMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  content_type: "text" | "voice";
+  created_at: string;
+};
+
+/** Load the full message history for a conversation (paginated server-side). */
+export async function fetchAaryaChatHistory(
+  conversationId: string
+): Promise<AaryaHistoryMessage[]> {
+  const out: AaryaHistoryMessage[] = [];
+  const pageSize = 100;
+  let offset = 0;
+  for (;;) {
+    const res = await apiAuthFetch(
+      `/api/v1/chat/sessions/${conversationId}/messages?limit=${pageSize}&offset=${offset}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) break;
+    const batch = (await res.json()) as AaryaHistoryMessage[];
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+    offset += pageSize;
+  }
+  return out;
 }
 
 /**

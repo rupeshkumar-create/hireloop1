@@ -127,7 +127,9 @@ that aren't obviously already known. Do not invent.
 - career_facts: structured identity + preference fields they stated in chat or \
 on a voice call. Only fill when explicit; merge newer answers over older ones. \
 desired_salary is INR per annum integer. industry_preference is a list of \
-industries they want to work in.
+industries they want to work in. For preferred_name: ONLY set when the candidate \
+clearly states their own name in chat/voice. NEVER copy a name from their résumé \
+PDF, a reference, a manager, or anyone else mentioned in the document.
 - memory_summary: rewrite the running memory into ONE updated third-person \
 summary that folds in anything new from this conversation — goals, preferences, \
 constraints, companies they like/dislike, family/relocation constraints, \
@@ -491,14 +493,23 @@ _FACT_LABELS: dict[str, str] = {
 }
 
 
-def format_known_facts(facts: dict[str, Any], *, max_chars: int = 600) -> str:
+def format_known_facts(
+    facts: dict[str, Any],
+    *,
+    max_chars: int = 600,
+    canonical_name: str | None = None,
+) -> str:
     """
     Render captured career_facts into one compact line for prompt injection, so
     Aarya uses what we already know (preferred name, work mode, target role,
     relocation, etc.) instead of re-asking. Pure + bounded. Empty in → "".
     """
     if not isinstance(facts, dict):
-        return ""
+        facts = {}
+    else:
+        facts = dict(facts)
+    if canonical_name and canonical_name.strip():
+        facts["preferred_name"] = canonical_name.strip()
     parts: list[str] = []
     for key, label in _FACT_LABELS.items():
         val = facts.get(key)

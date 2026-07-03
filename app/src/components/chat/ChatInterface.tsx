@@ -77,6 +77,7 @@ import { dedupeJobs } from "@/lib/chat/dedupeJobs";
 import {
   createAaryaSession,
   ensureAaryaSession,
+  fetchAaryaChatHistory,
   readStoredAaryaSession,
   readVoiceSendOnPause,
   StaleSessionError,
@@ -255,6 +256,8 @@ export function ChatInterface({
   const [showCoachMark, setShowCoachMark] = useState(false);
   const [hinglishHint, setHinglishHint] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
   const holdActiveRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
@@ -308,19 +311,66 @@ export function ChatInterface({
     setSendImmediately(readVoiceSendOnPause());
     setReplyMode(readChatReplyMode());
     setShowCoachMark(!readChatCoachSeen());
-    void warmupChatContext().then((snap) => {
-      setWarmup(snap);
-      if (snap.sessionId && !sessionIdRef.current) {
-        sessionIdRef.current = snap.sessionId;
-        setSessionId(snap.sessionId);
-        storeAaryaSession(snap.sessionId);
-      }
-    }).catch(() => {});
     void createClient()
       .auth.getUser()
-      .then(({ data }) => setAuthUserId(data.user?.id ?? null))
+      .then(({ data }) => {
+        const uid = data.user?.id ?? null;
+        setAuthUserId(uid);
+        return warmupChatContext().then((snap) => {
+          setWarmup(snap);
+          if (!sessionIdRef.current) {
+            const id =
+              conversationIdProp ?? snap.sessionId ?? readStoredAaryaSession(uid);
+            if (id) {
+              sessionIdRef.current = id;
+              setSessionId(id);
+              storeAaryaSession(id, uid);
+            }
+          }
+        });
+      })
       .catch(() => {});
-  }, []);
+  }, [conversationIdProp]);
+
+  // Restore the full conversation thread whenever we know the session id.
+  useEffect(() => {
+    const sid = sessionId;
+    if (!sid || historyLoadedForRef.current === sid) return;
+
+    let cancelled = false;
+    setHistoryLoading(true);
+    void fetchAaryaChatHistory(sid)
+      .then((rows) => {
+        if (cancelled) return;
+        historyLoadedForRef.current = sid;
+        const visible = rows.filter((m) => m.role === "user" || m.role === "assistant");
+        if (visible.length > 0) {
+          setMessages((prev) =>
+            prev.length > 0
+              ? prev
+              : visible.map((m) => ({
+                  id: m.id,
+                  role: m.role as "user" | "assistant",
+                  content: m.content,
+                  content_type: (m.content_type === "voice" ? "voice" : "text") as
+                    | "text"
+                    | "voice",
+                  created_at: m.created_at,
+                }))
+          );
+        }
+      })
+      .catch(() => {
+        /* non-fatal — empty state or new session */
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
@@ -612,11 +662,11 @@ export function ChatInterface({
 
       try {
         let currentSessionId = await ensureAaryaSession(
-          sessionIdRef.current ?? readStoredAaryaSession(),
+          sessionIdRef.current ?? readStoredAaryaSession(authUserId),
           (id) => {
             sessionIdRef.current = id;
             setSessionId(id);
-            storeAaryaSession(id);
+            storeAaryaSession(id, authUserId);
             onSessionCreated?.(id);
           }
         );
@@ -699,7 +749,7 @@ export function ChatInterface({
             currentSessionId = await createAaryaSession();
             sessionIdRef.current = currentSessionId;
             setSessionId(currentSessionId);
-            storeAaryaSession(currentSessionId);
+            storeAaryaSession(currentSessionId, authUserId);
             onSessionCreated?.(currentSessionId);
             streamResult = await runStream(currentSessionId);
           } else {
@@ -976,7 +1026,7 @@ export function ChatInterface({
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  const isEmpty = messages.length === 0 && !streamingContent;
+  const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
 
   return (
     <div className={cn("flex flex-col h-full bg-paper-0", className)}>

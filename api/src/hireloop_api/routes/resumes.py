@@ -26,7 +26,7 @@ from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
-from hireloop_api.services.display_name import pick_display_name
+from hireloop_api.services.candidate_display_name import sync_preferred_name_from_resume
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
@@ -187,40 +187,16 @@ async def _sync_user_display_name_from_resume(
     db: asyncpg.Connection,
     *,
     user_id: str,
+    candidate_id: str,
     resume_full_name: str | None,
 ) -> None:
-    """Persist résumé name on users.full_name when the current name is email-derived."""
-    name = (resume_full_name or "").strip()
-    if not name:
-        return
-
-    row = await db.fetchrow(
-        """
-        SELECT full_name, email
-        FROM public.users
-        WHERE id = $1::uuid AND deleted_at IS NULL
-        """,
-        uuid.UUID(user_id),
+    """Persist résumé name on users + Aarya career_facts when appropriate."""
+    await sync_preferred_name_from_resume(
+        db,
+        user_id=user_id,
+        candidate_id=candidate_id,
+        resume_full_name=resume_full_name,
     )
-    if not row:
-        return
-
-    resolved = pick_display_name(
-        user_full_name=row["full_name"],
-        email=row["email"],
-        resume_full_name=name,
-    )
-    current = (row["full_name"] or "").strip()
-    if resolved and resolved != current:
-        await db.execute(
-            """
-            UPDATE public.users
-            SET full_name = $2, updated_at = NOW()
-            WHERE id = $1::uuid AND deleted_at IS NULL
-            """,
-            uuid.UUID(user_id),
-            resolved,
-        )
 
 
 @router.post("/upload", response_model=ResumeUploadResponse, status_code=201)
@@ -326,6 +302,7 @@ async def upload_resume(
     await _sync_user_display_name_from_resume(
         db,
         user_id=user_id,
+        candidate_id=candidate_id,
         resume_full_name=parsed.full_name,
     )
 
@@ -429,6 +406,7 @@ async def apply_to_profile(
     await _sync_user_display_name_from_resume(
         db,
         user_id=user_id,
+        candidate_id=candidate_id,
         resume_full_name=parsed.full_name,
     )
 
