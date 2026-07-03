@@ -22,12 +22,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { fetchMyProfile } from "@/lib/api/profile";
-import {
-  DEFAULT_MATCH_FEED_FILTERS,
-  fetchMatchFeed,
-  fetchMatchFeedCount,
-  type MatchedJob,
-} from "@/lib/api/matches";
+import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds } from "@/lib/api/saved-jobs";
 import { createClient } from "@/lib/supabase/client";
@@ -114,8 +109,6 @@ export function DashboardClient({
         if (!cancelled) setSavedJobIds(new Set());
       });
 
-    void fetchMatchFeed(DEFAULT_MATCH_FEED_FILTERS).catch(() => {});
-    void fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS).catch(() => {});
     void fetchMyProfile().catch(() => {});
     void fetchIntros()
       .then((rows) => {

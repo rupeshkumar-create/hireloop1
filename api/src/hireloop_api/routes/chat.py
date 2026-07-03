@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
@@ -334,11 +334,12 @@ async def _prefetch_top_jobs(
 
 @router.get("/warmup")
 async def chat_warmup(
+    include_jobs: bool = Query(default=False),
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
-    Prefetch profile context + top matches before the first chat/voice turn.
+    Prefetch profile context before the first chat/voice turn.
     Called on dashboard and /voice mount to hide cold-start latency.
     """
     candidate = await db.fetchrow(
@@ -354,28 +355,34 @@ async def chat_warmup(
         }
 
     candidate_id = str(candidate["id"])
-    market = await fetch_candidate_market(db, candidate["id"])
-    vis = job_visible_for_market_sql(market_param="$2")
     profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
-    prefetched = await _prefetch_top_jobs(db, candidate_id, limit=5)
-    match_count = await db.fetchval(
-        f"""
-        SELECT count(*) FROM public.match_scores ms
-        JOIN public.jobs j ON j.id = ms.job_id
-        WHERE ms.candidate_id = $1::uuid
-          AND j.is_active = TRUE
-          AND {vis}
-          AND j.deleted_at IS NULL
-        """,
-        candidate["id"],
-        market,
-    )
+    prefetched: list[dict] = []
+    match_count = 0
+    if include_jobs:
+        market = await fetch_candidate_market(db, candidate["id"])
+        vis = job_visible_for_market_sql(market_param="$2")
+        prefetched = await _prefetch_top_jobs(db, candidate_id, limit=5)
+        match_count = int(
+            await db.fetchval(
+                f"""
+                SELECT count(*) FROM public.match_scores ms
+                JOIN public.jobs j ON j.id = ms.job_id
+                WHERE ms.candidate_id = $1::uuid
+                  AND j.is_active = TRUE
+                  AND {vis}
+                  AND j.deleted_at IS NULL
+                """,
+                candidate["id"],
+                market,
+            )
+            or 0
+        )
 
     return {
         "ok": True,
         "profile_completeness": profile_completeness,
         "prefetched_jobs": prefetched,
-        "match_count": int(match_count or 0),
+        "match_count": match_count,
     }
 
 

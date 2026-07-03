@@ -59,9 +59,8 @@ type FetchMatchFeedOptions = {
 
 // ── In-memory match feed cache ───────────────────────────────────────────────
 //
-// The dashboard warms the first jobs page before the user opens the Jobs panel.
-// MatchFeed can then paint cached jobs immediately and revalidate quietly,
-// avoiding the open-panel → skeleton flash that makes the app feel slow.
+// MatchFeed owns this cache after the user explicitly starts job search. Keeping
+// it here prevents duplicate requests while filters or tabs re-render.
 
 const _matchFeedCache = new Map<string, MatchedJob[]>();
 const _matchFeedInFlight = new Map<string, Promise<MatchedJob[]>>();

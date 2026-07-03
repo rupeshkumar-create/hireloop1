@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
+import { Button, EmptyState } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export type JobsPanelProps = {
@@ -43,10 +45,15 @@ export function JobsPanel({
   onAskAarya,
 }: JobsPanelProps) {
   const [tab, setTab] = useState<JobsTab>(initialTab ?? "matches");
+  const [hasRequestedMatches, setHasRequestedMatches] = useState(false);
 
   function selectTab(next: JobsTab) {
     setTab(next);
     onTabChange?.(next);
+  }
+
+  function showMatches() {
+    setHasRequestedMatches(true);
   }
 
   // Keep the local tab in sync when the URL explicitly changes (?tab=path/saved).
@@ -113,17 +120,25 @@ export function JobsPanel({
 
       <div key={tab} className="flex-1 min-h-0 overflow-hidden animate-fade-in">
         {tab === "matches" ? (
-          <MatchFeed
-            conversationId={conversationId}
-            onRequestIntro={onRequestIntro}
-            onDirectApply={onDirectApply}
-            applyLocked={!canApplyOrIntro}
-            matchSourceBadge={!hasResume ? "linkedin" : undefined}
-            savedJobIds={savedJobIds}
-            onSavedChange={onSavedChange}
-            onAskAarya={onAskAarya}
-            className="h-full p-5"
-          />
+          hasRequestedMatches ? (
+            <MatchFeed
+              conversationId={conversationId}
+              onRequestIntro={onRequestIntro}
+              onDirectApply={onDirectApply}
+              applyLocked={!canApplyOrIntro}
+              matchSourceBadge={!hasResume ? "linkedin" : undefined}
+              savedJobIds={savedJobIds}
+              onSavedChange={onSavedChange}
+              onAskAarya={onAskAarya}
+              className="h-full p-5"
+            />
+          ) : (
+            <MatchSearchLauncher
+              hasResume={hasResume}
+              onShowMatches={showMatches}
+              onAskAarya={onAskAarya}
+            />
+          )
         ) : tab === "path" ? (
           <CareerPathPanel
             conversationId={conversationId}
@@ -143,6 +158,53 @@ export function JobsPanel({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function MatchSearchLauncher({
+  hasResume,
+  onShowMatches,
+  onAskAarya,
+}: {
+  hasResume?: boolean;
+  onShowMatches: () => void;
+  onAskAarya?: () => void;
+}) {
+  return (
+    <div className="h-full overflow-y-auto p-5">
+      <EmptyState
+        className="min-h-full py-10"
+        icon={<Sparkles strokeWidth={1.5} />}
+        title="Ready to search"
+        description={
+          hasResume
+            ? "Aarya has your CV. Start the feed when you want fresh, quality-checked roles."
+            : "Upload a CV to sharpen the feed, or start with your current profile."
+        }
+        action={
+          <div className="flex flex-col items-center gap-2 sm:flex-row">
+            <Button
+              variant="primary"
+              size="md"
+              onClick={onShowMatches}
+              leftIcon={<Search className="h-4 w-4" strokeWidth={1.5} />}
+            >
+              Show me jobs
+            </Button>
+            {onAskAarya && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={onAskAarya}
+                leftIcon={<SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />}
+              >
+                Add preferences
+              </Button>
+            )}
+          </div>
+        }
+      />
     </div>
   );
 }

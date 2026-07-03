@@ -30,7 +30,7 @@ export function DashboardWelcomeBanner({
   const matches =
     matchCount != null && matchCount > 0
       ? `${matchCount} ${matchCount === 1 ? "match" : "matches"} ranked for you`
-      : "I'm finding roles for your profile";
+      : "your Jobs panel is ready";
 
   function dismiss() {
     setVisible(false);
@@ -49,8 +49,8 @@ export function DashboardWelcomeBanner({
       <AaryaBubble className="flex-1 min-w-0 !rounded-lg !rounded-tl-sm">
         <p className="text-small font-semibold text-ink-900">You&apos;re in, {name}</p>
         <p className="text-small text-ink-600 mt-1 leading-relaxed">
-          {matches}. Tap <strong className="font-medium text-ink-800">Matches</strong> to browse,
-          or chat with me on the right anytime.
+          {matches}. Tap <strong className="font-medium text-ink-800">Show me jobs</strong> when
+          you want Aarya to start the feed.
         </p>
       </AaryaBubble>
       <button

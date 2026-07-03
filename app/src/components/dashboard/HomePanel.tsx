@@ -24,11 +24,6 @@ import {
   type CandidateVisibility,
   type MyProfileData,
 } from "@/lib/api/profile";
-import {
-  DEFAULT_MATCH_FEED_FILTERS,
-  fetchMatchFeedCount,
-  getCachedMatchFeedCount,
-} from "@/lib/api/matches";
 import { fetchIntros, getCachedIntros, type IntroRequest } from "@/lib/api/intros";
 import { fetchCareerIntelligence, fetchCareerPath } from "@/lib/api/career";
 import { fetchGoogleStatus } from "@/lib/api/gmail";
@@ -82,12 +77,10 @@ export type HomePanelProps = {
 function SetupChecklist({
   profile,
   googleConnected,
-  jobCount,
   onOpenPanel,
 }: {
   profile: MyProfileData | null;
   googleConnected: boolean | null;
-  jobCount: number | null;
   onOpenPanel: (id: PanelId) => void;
 }) {
   const profileDone = profile?.candidate?.profile_complete === true;
@@ -130,7 +123,7 @@ function SetupChecklist({
     {
       id: "paths",
       label: "Review career paths",
-      hint: "Pick a direction before Aarya searches roles.",
+      hint: "Optional: compare directions after you see starter roles.",
       done: careerPathDone,
       cta: "View paths",
       panel: "jobs" as PanelId,
@@ -148,7 +141,7 @@ function SetupChecklist({
   if (steps.every((s) => s.done)) return null;
 
   const doneCount = steps.filter((s) => s.done).length;
-  const essentialsDone = profileDone && resumeDone && careerPathDone;
+  const essentialsDone = profileDone && resumeDone;
 
   return (
     <FadeUp>
@@ -198,14 +191,14 @@ function SetupChecklist({
             ))}
           </ul>
 
-          {essentialsDone && jobCount != null && jobCount > 0 && (
+          {essentialsDone && (
             <button
               type="button"
               onClick={() => onOpenPanel("jobs")}
               className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-small font-medium text-on-accent hover:bg-accent-hover transition-colors"
             >
               <Search className="h-4 w-4" strokeWidth={1.5} />
-              See your {jobCount} {jobCount === 1 ? "match" : "matches"}
+              Open Jobs
             </button>
           )}
         </CardBody>
@@ -230,9 +223,7 @@ export function HomePanel({
   const activeIntroCount = (rows: IntroRequest[]) =>
     rows.filter((r) => !["declined", "expired", "cancelled"].includes(r.status)).length;
 
-  const [jobCount, setJobCount] = useState<number | null>(
-    () => getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS),
-  );
+  const jobCount: number | null = null;
   const [introCount, setIntroCount] = useState<number | null>(() => {
     const cached = getCachedIntros();
     return cached ? activeIntroCount(cached) : null;
@@ -249,10 +240,6 @@ export function HomePanel({
   const [intelCompleteness, setIntelCompleteness] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
-      .then((total) => setJobCount(total))
-      .catch(() => setJobCount(0));
-
     fetchIntros()
       .then((rows) => setIntroCount(activeIntroCount(rows)))
       .catch(() => setIntroCount(0));
@@ -304,7 +291,7 @@ export function HomePanel({
     Icon: React.ElementType;
     onClick: () => void;
   }[] = [
-    { label: "See my matches", Icon: Briefcase, onClick: () => onOpenPanel("jobs") },
+    { label: "Show me jobs", Icon: Briefcase, onClick: () => onOpenPanel("jobs") },
     {
       label: "Plan career paths",
       Icon: Search,
@@ -349,7 +336,6 @@ export function HomePanel({
         introCount={introCount}
         intelCompleteness={intelCompleteness}
         onOpenPanel={onOpenPanel}
-        onSendToChat={onSendToChat}
       />
 
       {showProfileBoosters && (
@@ -370,7 +356,6 @@ export function HomePanel({
           <SetupChecklist
             profile={profileData}
             googleConnected={googleConnected}
-            jobCount={jobCount}
             onOpenPanel={onOpenPanel}
           />
           {profileReady && !hasCareerPath && (

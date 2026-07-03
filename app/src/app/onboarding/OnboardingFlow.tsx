@@ -281,7 +281,7 @@ function ActivationStep({
           <Bubble>
             <p className="text-body text-ink-900">
               {parsed
-                ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll start finding your matches.`
+                ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll get the job search ready.`
                 : `Almost there, ${firstName}! LinkedIn sign-in only shares your name and email — upload your CV so I can pull your experience and show real matches.`}
             </p>
           </Bubble>
@@ -486,7 +486,7 @@ function ActivationStep({
               ) : undefined
             }
           >
-            {saving ? "Finishing…" : "Looks good — show my matches"}
+            {saving ? "Finishing…" : "Looks good — open Jobs"}
           </Button>
 
           <button

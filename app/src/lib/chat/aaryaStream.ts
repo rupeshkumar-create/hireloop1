@@ -126,13 +126,20 @@ export async function ensureAaryaSession(
   return id;
 }
 
-/** Prefetch profile + top matches before first turn (voice + chat). */
-export async function prefetchAaryaWarmup(): Promise<{
+/** Prefetch profile/chat metadata before first turn. Jobs are opt-in. */
+export async function prefetchAaryaWarmup(
+  options: { includeJobs?: boolean } = {}
+): Promise<{
   profileCompleteness: number;
   prefetchedJobs: MatchedJob[];
   matchCount: number;
 }> {
-  const res = await apiAuthFetch("/api/v1/chat/warmup", { cache: "no-store" });
+  const params = new URLSearchParams();
+  if (options.includeJobs) params.set("include_jobs", "true");
+  const qs = params.toString();
+  const res = await apiAuthFetch(`/api/v1/chat/warmup${qs ? `?${qs}` : ""}`, {
+    cache: "no-store",
+  });
   if (!res.ok) {
     return { profileCompleteness: 0, prefetchedJobs: [], matchCount: 0 };
   }

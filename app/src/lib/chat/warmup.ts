@@ -1,11 +1,6 @@
 import { fetchCareerIntelligence } from "@/lib/api/career";
 import { fetchCareerPath } from "@/lib/api/career";
-import {
-  DEFAULT_MATCH_FEED_FILTERS,
-  fetchMatchFeed,
-  fetchMatchFeedCount,
-  type MatchedJob,
-} from "@/lib/api/matches";
+import type { MatchedJob } from "@/lib/api/matches";
 import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
 import { ensureAaryaSession, prefetchAaryaWarmup, readStoredAaryaSession } from "@/lib/chat/aaryaStream";
 
@@ -25,7 +20,7 @@ let cached: ChatWarmupSnapshot | null = null;
 let inflight: Promise<ChatWarmupSnapshot> | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Prefetch profile + matches so first "Find jobs" isn't a cold start. */
+/** Prefetch profile/chat context without starting job search. */
 export async function warmupChatContext(
   options: { force?: boolean } = {}
 ): Promise<ChatWarmupSnapshot> {
@@ -50,16 +45,14 @@ export async function warmupChatContext(
       warmedAt: Date.now(),
     };
 
-    const [profileRes, countRes, intelRes, apiWarmup, pathRes] = await Promise.allSettled([
+    const [profileRes, intelRes, apiWarmup, pathRes] = await Promise.allSettled([
       fetchMyProfile(),
-      fetchMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS),
       fetchCareerIntelligence(),
-      prefetchAaryaWarmup(),
+      prefetchAaryaWarmup({ includeJobs: false }),
       fetchCareerPath().catch(() => null),
     ]);
 
     if (profileRes.status === "fulfilled") snapshot.profile = profileRes.value;
-    if (countRes.status === "fulfilled") snapshot.matchCount = countRes.value;
     if (intelRes.status === "fulfilled" && intelRes.value?.data_completeness != null) {
       snapshot.profileCompleteness = Math.min(
         100,
@@ -85,8 +78,6 @@ export async function warmupChatContext(
     } catch {
       /* session created lazily on first message */
     }
-
-    void fetchMatchFeed(DEFAULT_MATCH_FEED_FILTERS).catch(() => {});
 
     cached = snapshot;
     inflight = null;

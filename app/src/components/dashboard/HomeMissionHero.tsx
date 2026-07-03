@@ -33,16 +33,12 @@ function profileCompletenessPercent(
 
 function deriveNextAction({
   profile,
-  hasCareerPath,
   matchCount,
   onOpenPanel,
-  onSendToChat,
 }: {
   profile: MyProfileData | null;
-  hasCareerPath: boolean;
   matchCount: number | null;
   onOpenPanel: (id: PanelId) => void;
-  onSendToChat: (text: string) => void;
 }): NextAction {
   if (!profile?.resume_filename) {
     return {
@@ -58,23 +54,16 @@ function deriveNextAction({
       onClick: () => onOpenPanel("profile"),
     };
   }
-  if (!hasCareerPath) {
+  if (matchCount != null && matchCount > 0) {
     return {
-      label: "Pick a career path",
-      hint: "Choose a direction before Aarya surfaces roles.",
+      label: "View your matches",
+      hint: `${matchCount} roles ranked for you — start with the strongest fits.`,
       onClick: () => onOpenPanel("jobs"),
     };
   }
-  if ((matchCount ?? 0) === 0) {
-    return {
-      label: "Ask Aarya to find roles",
-      hint: "She'll search jobs in your market, ranked for your profile.",
-      onClick: () => onSendToChat("Find me the best matching jobs for my profile right now."),
-    };
-  }
   return {
-    label: "View your matches",
-    hint: `${matchCount} roles ranked for you — start with the strongest fits.`,
+    label: "Show me jobs",
+    hint: "Start with resume-based matches; career paths can refine the direction later.",
     onClick: () => onOpenPanel("jobs"),
   };
 }
@@ -117,7 +106,6 @@ export function HomeMissionHero({
   introCount,
   intelCompleteness,
   onOpenPanel,
-  onSendToChat,
 }: {
   firstName: string;
   profile: MyProfileData | null;
@@ -126,7 +114,6 @@ export function HomeMissionHero({
   introCount: number | null;
   intelCompleteness: number | null;
   onOpenPanel: (id: PanelId) => void;
-  onSendToChat: (text: string) => void;
 }) {
   const completeness = profileCompletenessPercent(
     profile,
@@ -136,10 +123,8 @@ export function HomeMissionHero({
   );
   const next = deriveNextAction({
     profile,
-    hasCareerPath,
     matchCount: jobCount,
     onOpenPanel,
-    onSendToChat,
   });
 
   const stats = [
@@ -189,7 +174,7 @@ export function HomeMissionHero({
             <div className="min-w-0">
               <p className="text-micro text-ink-500">{label}</p>
               <p className="text-h3 font-semibold text-ink-900 leading-none">
-                {value == null ? "…" : value}
+                {value == null && label === "Matches" ? "Start" : value == null ? "…" : value}
               </p>
             </div>
           </button>
