@@ -13,12 +13,17 @@ export async function middleware(request: NextRequest) {
   // OAuth callback safety net. Supabase redirects to its configured Site URL
   // (the domain root) instead of our redirectTo (/auth/callback) when the
   // redirect URL isn't allow-listed for this deployment's domain. In that case
-  // the auth `code` lands on "/" and nothing exchanges it, so the user just
-  // sees the landing page. Forward it to the callback handler (same domain, so
-  // the PKCE code_verifier cookie is preserved) to complete the sign-in.
+  // the auth `code` — OR an `error` (e.g. bad_oauth_state) — lands on "/" and
+  // nothing handles it, so the user just sees the landing page with a dirty
+  // URL. Forward it to the callback handler (same domain, so the PKCE
+  // code_verifier cookie is preserved): a `code` completes sign-in, an `error`
+  // is turned into a friendly "sign-in failed, try again" on /signup — never
+  // the email-verification screen.
   if (
     pathname === "/" &&
-    (searchParams.has("code") || searchParams.has("token_hash"))
+    (searchParams.has("code") ||
+      searchParams.has("token_hash") ||
+      searchParams.has("error"))
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/callback";
