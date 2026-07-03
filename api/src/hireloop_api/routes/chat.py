@@ -589,10 +589,25 @@ async def send_message(
             if career_path_row and not career_path_prioritized
             else []
         )
+
+        last_assistant_row = await db.fetchrow(
+            """
+            SELECT content FROM public.messages
+            WHERE conversation_id = $1::uuid AND role = 'assistant'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            coerce_uuid(conversation_id),
+        )
+        recent_assistant = (
+            last_assistant_row["content"] if last_assistant_row else None
+        )
+
         career_path_just_prioritized = await try_apply_career_path_selection(
             db,
             candidate_id,
             body.content,
+            recent_assistant_message=recent_assistant,
         )
         if career_path_just_prioritized:
             career_path_prioritized = career_path_just_prioritized
@@ -620,6 +635,35 @@ async def send_message(
                         error=str(exc)[:200],
                     )
 
+        if career_path_just_prioritized:
+            from hireloop_api.agents.aarya import tools as aarya_tools
+            from hireloop_api.services.career_path_selection import (
+                extract_find_role_and_city,
+            )
+
+            _, city = extract_find_role_and_city(body.content)
+            try:
+                js_kwargs: dict[str, object] = {
+                    "query_text": career_path_just_prioritized,
+                }
+                if city:
+                    js_kwargs["location_city"] = city
+                js_result = await aarya_tools.job_search(
+                    db,
+                    str(current_user["id"]),
+                    conversation_id,
+                    settings=settings,
+                    **js_kwargs,
+                )
+                if isinstance(js_result, dict) and js_result.get("job_cards"):
+                    prefetched_jobs = list(js_result["job_cards"])
+            except Exception as exc:
+                logger.warning(
+                    "pre_turn_job_search_failed",
+                    candidate_id=candidate_id,
+                    error=str(exc)[:200],
+                )
+
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
         # conversation never loses its latest turns to the window.
@@ -642,7 +686,7 @@ async def send_message(
     if len(history) > max_history_messages:
         history = history[-max_history_messages:]
 
-    include_prefetch = user_intent == "job_search"
+    include_prefetch = user_intent == "job_search" or bool(career_path_just_prioritized)
 
     messages = [
         HumanMessage(content=r["content"])

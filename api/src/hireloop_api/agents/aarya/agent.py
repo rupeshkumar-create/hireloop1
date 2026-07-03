@@ -222,6 +222,15 @@ def _last_human_text(messages: list[BaseMessage]) -> str:
     return ""
 
 
+def _last_assistant_text(messages: list[BaseMessage]) -> str:
+    """Return the latest assistant-authored text before the current user turn."""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            content = message.content
+            return content if isinstance(content, str) else str(content)
+    return ""
+
+
 def _detect_likely_intent(text: str) -> str:
     """Small deterministic turn classifier used only as prompt guidance."""
     lowered = text.lower()
@@ -416,8 +425,9 @@ def build_turn_context_prompt(
     locked = (career_path_prioritized_title or "").strip()
     if just_locked:
         guidance.append(
-            f"- career_path_locked: {just_locked} (user JUST chose this — call "
-            "job_search now; do NOT ask them to pick again)"
+            f"- career_path_locked: {just_locked} (user JUST chose this — job_search "
+            "was or will be run automatically; summarize matches in your reply and "
+            "do NOT ask them to pick a path again)"
         )
     elif locked:
         guidance.append(
@@ -1004,6 +1014,27 @@ def build_aarya_graph(settings: Settings) -> Any:
         action_count = state["action_count"]
         ui_job_cards: list[dict[str, Any]] = list(state.get("ui_job_cards") or [])
 
+        async def _auto_job_search(
+            *,
+            user_id: str,
+            session_id: str,
+            query_text: str,
+        ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+            from hireloop_api.services.career_path_selection import extract_find_role_and_city
+
+            last_human = _last_human_text(state["messages"])
+            _, city = extract_find_role_and_city(last_human)
+            kwargs: dict[str, Any] = {"query_text": query_text}
+            if city:
+                kwargs["location_city"] = city
+            js = await aarya_tools.job_search(
+                db, user_id, session_id, settings=settings, **kwargs
+            )
+            cards: list[dict[str, Any]] = []
+            if isinstance(js, dict) and isinstance(js.get("job_cards"), list):
+                cards = js["job_cards"]
+            return js, cards
+
         async def _execute_one(tool_call: dict[str, Any]) -> tuple[ToolMessage, int, list[dict]]:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
@@ -1011,6 +1042,7 @@ def build_aarya_graph(settings: Settings) -> Any:
             session_id = state["session_id"]
             local_actions = 0
             cards: list[dict] = []
+            extra_actions = 0
 
             try:
                 cacheable = tool_name in ("profile_read", "job_search")
@@ -1045,8 +1077,56 @@ def build_aarya_graph(settings: Settings) -> Any:
                     )
                     if isinstance(result, dict) and result.get("prioritized_title"):
                         clear_session_tool_cache(session_id, "job_search")
+                        title = str(result["prioritized_title"])
+                        js_result, js_cards = await _auto_job_search(
+                            user_id=user_id,
+                            session_id=session_id,
+                            query_text=title,
+                        )
+                        result = {
+                            **result,
+                            "auto_job_search": True,
+                            "job_search": js_result,
+                        }
+                        cards = js_cards
+                        extra_actions = 1
                 elif tool_name == "build_career_path":
                     result = await aarya_tools.build_career_path(db, user_id, session_id, settings)
+                    if isinstance(result, dict) and not result.get("error"):
+                        from hireloop_api.services.career_path_selection import (
+                            career_path_options,
+                            parse_career_path_selection,
+                        )
+
+                        options = career_path_options(result)
+                        last_human = _last_human_text(state["messages"])
+                        if options and _detect_likely_intent(last_human) == "job_search":
+                            chosen = parse_career_path_selection(
+                                last_human,
+                                options,
+                                recent_assistant_message=_last_assistant_text(state["messages"]),
+                            )
+                            if chosen:
+                                prio = await aarya_tools.prioritize_career_path(
+                                    db, user_id, session_id, title=chosen
+                                )
+                                if isinstance(prio, dict) and prio.get("prioritized_title"):
+                                    clear_session_tool_cache(session_id, "job_search")
+                                    title = str(prio["prioritized_title"])
+                                    js_result, js_cards = await _auto_job_search(
+                                        user_id=user_id,
+                                        session_id=session_id,
+                                        query_text=title,
+                                    )
+                                    result = {
+                                        **result,
+                                        "auto_prioritized": title,
+                                        "auto_job_search": True,
+                                        "prioritize": prio,
+                                        "job_search": js_result,
+                                    }
+                                    cards = js_cards
+                                    extra_actions = 2
                 elif tool_name == "get_match_score":
                     result = await aarya_tools.get_match_score(db, user_id, session_id, **tool_args)
                 elif tool_name == "request_intro":
@@ -1068,7 +1148,7 @@ def build_aarya_graph(settings: Settings) -> Any:
                 else:
                     result = {"error": f"Unknown tool: {tool_name}"}
 
-                local_actions = 1
+                local_actions = 1 + extra_actions
 
             except Exception as exc:
                 logger.error("tool_execution_error", tool=tool_name, error=str(exc))
