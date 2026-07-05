@@ -65,6 +65,10 @@ class CareerPath(BaseModel):
 
 class PrioritizePathRequest(BaseModel):
     title: str
+    # Optional full confirmed set from the kickoff multi-select (preferred
+    # first). When present it replaces target_titles so find-jobs and path
+    # resumes work off what the candidate actually chose.
+    selected_titles: list[str] | None = None
 
 
 class CareerPathResponse(BaseModel):
@@ -262,7 +266,9 @@ async def prioritize_career_path(
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
     try:
-        path = await CareerPathService.prioritize(db, candidate_id, title)
+        path = await CareerPathService.prioritize(
+            db, candidate_id, title, selected_titles=body.selected_titles
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if path is None:

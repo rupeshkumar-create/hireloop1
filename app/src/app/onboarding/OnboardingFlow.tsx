@@ -339,7 +339,9 @@ function ActivationStep({
 
       clearOnboardingProgress();
       markDashboardWelcomePending();
-      router.push("/dashboard");
+      // Land in chat with the guided career kickoff: path multi-select →
+      // package → review → job search for the preferred path.
+      router.push("/dashboard?kickoff=career");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {

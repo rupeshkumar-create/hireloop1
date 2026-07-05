@@ -121,6 +121,10 @@ import {
   CareerPathOptionCards,
   type CareerPathOption,
 } from "@/components/career/CareerPathOptionCards";
+import {
+  CareerKickoffFlow,
+  type KickoffResult,
+} from "./CareerKickoffFlow";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -184,6 +188,8 @@ interface ChatInterfaceProps {
   candidateName?: string;
   /** Open the 15-min voice deep-dive modal on mount (e.g. ?voice=deep). */
   initialVoiceDeepDive?: boolean;
+  /** Start the guided career kickoff flow (post-onboarding, ?kickoff=career). */
+  initialKickoff?: boolean;
   /**
    * Programmatically inject + auto-send a message (e.g. a quick action or
    * coaching prompt from a side panel). The `nonce` makes repeated identical
@@ -222,12 +228,14 @@ export function ChatInterface({
   onSessionCreated,
   candidateName,
   initialVoiceDeepDive = false,
+  initialKickoff = false,
   injectedMessage,
   savedJobIds = new Set(),
   onSavedChange,
   onRequestIntro,
 }: ChatInterfaceProps) {
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
+  const [kickoffActive, setKickoffActive] = useState(initialKickoff);
   const [input, setInput]             = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming]  = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -1094,9 +1102,35 @@ export function ChatInterface({
     }
   };
 
+  // ── Career kickoff (post-onboarding guided flow) ────────────────────────
+
+  const handleKickoffComplete = useCallback((result: KickoffResult) => {
+    setKickoffActive(false);
+    const content =
+      result.jobs.length > 0
+        ? `Here are the top **${result.preferredTitle}** roles I found for you. ` +
+          "Use Save, Request intro, or Apply on any card — and I'm generating a " +
+          "tailored resume for each of your career paths in the background."
+        : `Your career paths are saved and I'm pulling fresh **${result.preferredTitle}** ` +
+          "openings right now — they'll appear in your Jobs panel in a few minutes. " +
+          "Meanwhile, ask me anything about your career.";
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `kickoff-${Date.now()}`,
+        role: "assistant",
+        content,
+        content_type: "text",
+        created_at: new Date().toISOString(),
+        jobs: result.jobs,
+      },
+    ]);
+  }, []);
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
+  const showKickoff = kickoffActive && isEmpty;
 
   return (
     <div className={cn("flex flex-col h-full bg-paper-0", className)}>
@@ -1104,7 +1138,12 @@ export function ChatInterface({
       {/* ── Messages ──────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-5 py-8 space-y-6">
-          {isEmpty ? (
+          {showKickoff ? (
+            <CareerKickoffFlow
+              onComplete={handleKickoffComplete}
+              onSkip={() => setKickoffActive(false)}
+            />
+          ) : isEmpty ? (
             <EmptyState
               onPick={(p) => void sendMessage(p)}
               onUploadResume={() => fileInputRef.current?.click()}

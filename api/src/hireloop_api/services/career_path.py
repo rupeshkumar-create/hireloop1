@@ -134,8 +134,14 @@ class CareerPathService:
         db: asyncpg.Connection,
         candidate_id: str,
         title: str,
+        selected_titles: list[str] | None = None,
     ) -> dict[str, Any] | None:
-        """Set the prioritized target role on the candidate's latest career path."""
+        """Set the prioritized target role on the candidate's latest career path.
+
+        When ``selected_titles`` is given (kickoff multi-select, preferred
+        first), it replaces target_titles so downstream job search and path
+        resumes are scoped to the candidate's confirmed choices.
+        """
         title = title.strip()
         if not title:
             raise ValueError("Title required")
@@ -150,17 +156,45 @@ class CareerPathService:
         )
         if not row:
             return None
-        updated = await db.fetchrow(
-            """
-            UPDATE public.career_paths
-            SET prioritized_title = $2, updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, "current_role", summary, steps, target_titles,
-                      target_locations, model, created_at, updated_at, prioritized_title
-            """,
-            row["id"],
-            title,
-        )
+
+        cleaned_selection: list[str] = []
+        if selected_titles:
+            seen: set[str] = set()
+            for raw in selected_titles:
+                t = str(raw).strip()
+                if t and t.lower() not in seen:
+                    seen.add(t.lower())
+                    cleaned_selection.append(t[:120])
+            cleaned_selection = cleaned_selection[:5]
+            # The prioritized title always leads the confirmed set.
+            if title.lower() not in {t.lower() for t in cleaned_selection}:
+                cleaned_selection.insert(0, title)
+
+        if cleaned_selection:
+            updated = await db.fetchrow(
+                """
+                UPDATE public.career_paths
+                SET prioritized_title = $2, target_titles = $3, updated_at = NOW()
+                WHERE id = $1
+                RETURNING id, "current_role", summary, steps, target_titles,
+                          target_locations, model, created_at, updated_at, prioritized_title
+                """,
+                row["id"],
+                title,
+                cleaned_selection,
+            )
+        else:
+            updated = await db.fetchrow(
+                """
+                UPDATE public.career_paths
+                SET prioritized_title = $2, updated_at = NOW()
+                WHERE id = $1
+                RETURNING id, "current_role", summary, steps, target_titles,
+                          target_locations, model, created_at, updated_at, prioritized_title
+                """,
+                row["id"],
+                title,
+            )
         await db.execute(
             """
             UPDATE public.candidates

@@ -82,6 +82,11 @@ export function DashboardClient({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
+  // Post-onboarding guided flow (?kickoff=career) — read once on mount so the
+  // wizard survives the URL cleanup below.
+  const [initialKickoff] = useState(
+    () => searchParams?.get("kickoff") === "career",
+  );
   const [activeConvoId, setActiveConvoId] = useState<string | null>(initialConvoId ?? null);
   const [pendingIntros, setPendingIntros] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelId | null>(initialPanel ?? null);
@@ -308,6 +313,7 @@ export function DashboardClient({
             initialInput={initialInput}
             candidateName={candidateName}
             initialVoiceDeepDive={initialVoiceDeepDive}
+            initialKickoff={initialKickoff}
             injectedMessage={injected}
             className="h-full"
             onSessionCreated={(id) => setActiveConvoId(id)}

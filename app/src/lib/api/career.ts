@@ -90,12 +90,22 @@ export async function generateCareerPath(): Promise<CareerPath> {
   return data.path;
 }
 
-/** Prioritize one career path title — unlocks job search along that direction. */
-export async function prioritizeCareerPath(title: string): Promise<CareerPath> {
+/** Prioritize one career path title — unlocks job search along that direction.
+ *  Pass selectedTitles (preferred first) to save the full confirmed set as
+ *  target_titles, e.g. from the kickoff multi-select. */
+export async function prioritizeCareerPath(
+  title: string,
+  selectedTitles?: string[],
+): Promise<CareerPath> {
   const res = await apiAuthFetch("/api/v1/career/path/prioritize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({
+      title,
+      ...(selectedTitles && selectedTitles.length > 0
+        ? { selected_titles: selectedTitles }
+        : {}),
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
