@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Smoke-test the production Railway API (truthful-forgiveness / hireloop1).
+# Service: https://railway.com/project/7f42f8d6-2192-4a15-912e-3d79a1869885/service/3e2955b3-628f-4855-8462-ccb93a258dc4?environmentId=38fa0ffc-f032-4ed0-8ef8-1be3e7fee969
 # Usage: ./scripts/smoke_railway.sh [RAILWAY_URL] [VERCEL_APP_URL]
 set -euo pipefail
 
