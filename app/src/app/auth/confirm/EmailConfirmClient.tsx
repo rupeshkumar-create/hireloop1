@@ -24,7 +24,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
     setLoading(true);
     setErrorMessage("");
 
-    const attempts: EmailOtpType[] = [type, "email", "signup"].filter(
+    const attempts: EmailOtpType[] = ["signup", "email", "magiclink", type].filter(
       (value, index, arr) => arr.indexOf(value) === index,
     );
 

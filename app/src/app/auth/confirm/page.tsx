@@ -1,10 +1,12 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
+import { redirect } from "next/navigation";
 import { EmailConfirmClient } from "./EmailConfirmClient";
 
 type PageProps = {
   searchParams: Promise<{
     token_hash?: string;
     type?: string;
+    code?: string;
   }>;
 };
 
@@ -19,6 +21,14 @@ const OTP_TYPES = new Set<string>([
 
 export default async function EmailConfirmPage({ searchParams }: PageProps) {
   const params = await searchParams;
+  const code = params.code?.trim();
+  if (code) {
+    const qs = new URLSearchParams({ code });
+    const signupRole = params.type;
+    if (signupRole) qs.set("signup_role", signupRole);
+    redirect(`/auth/callback?${qs.toString()}`);
+  }
+
   const tokenHash = params.token_hash?.trim() ?? "";
   const rawType = params.type?.trim() ?? "email";
   const type: EmailOtpType = OTP_TYPES.has(rawType)

@@ -9,6 +9,7 @@ import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 import { ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl } from "@/lib/api/base-url";
 import { decodeAuthError } from "@/lib/auth/auth-errors";
+import { verifyEmailCode } from "@/lib/auth/email-otp";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
@@ -161,19 +162,7 @@ export function SignupForm() {
   }
 
   async function verifyEmailOtp(token: string) {
-    const addr = email.trim();
-    const attempts: Array<"email" | "signup"> = ["email", "signup"];
-    let lastError: string | null = null;
-    for (const type of attempts) {
-      const { error } = await supabase.auth.verifyOtp({
-        email: addr,
-        token,
-        type,
-      });
-      if (!error) return null;
-      lastError = error.message;
-    }
-    return lastError ?? "Invalid or expired code.";
+    return verifyEmailCode(supabase, email.trim(), token);
   }
 
   async function handleVerifyCode(e: React.FormEvent) {
@@ -185,8 +174,11 @@ export function SignupForm() {
     try {
       const verifyError = await verifyEmailOtp(token);
       if (verifyError) {
+        const lowered = verifyError.toLowerCase();
         setErrorMessage(
-          `${verifyError} If your email only has a confirmation link, tap that link instead of entering a code.`,
+          lowered.includes("invalid") || lowered.includes("expired")
+            ? "That code expired or was already used. Tap “Use a different email”, send a fresh code, and enter it within a few minutes — don't open the email link if you're using the code."
+            : `${verifyError} Request a new code from signup if this keeps failing.`,
         );
         return;
       }

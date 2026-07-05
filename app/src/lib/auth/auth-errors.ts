@@ -55,7 +55,9 @@ export function decodeAuthError(
 
   if (
     message?.toLowerCase().includes("code challenge") ||
-    message?.toLowerCase().includes("code verifier")
+    message?.toLowerCase().includes("code verifier") ||
+    message?.toLowerCase().includes("invalid flow state") ||
+    message?.toLowerCase().includes("already been used")
   ) {
     return formatPkceError(resolvedContext);
   }

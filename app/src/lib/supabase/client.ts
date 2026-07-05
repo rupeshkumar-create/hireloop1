@@ -8,5 +8,11 @@ import { getSupabasePublicEnv } from "@/lib/supabase/env";
 
 export function createClient() {
   const { url, anonKey } = getSupabasePublicEnv();
-  return createBrowserClient<Database>(url, anonKey);
+  return createBrowserClient<Database>(url, anonKey, {
+    auth: {
+      // We exchange OAuth codes manually in /auth/callback. Leaving this on
+      // races with exchangeCodeForSession and burns the one-time code (PKCE error).
+      detectSessionInUrl: false,
+    },
+  });
 }

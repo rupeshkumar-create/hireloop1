@@ -10,6 +10,7 @@ import {
   type SignupRole,
 } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
+import { exchangeOAuthCodeOnce } from "@/lib/auth/oauth-exchange";
 import { decodeAuthError } from "@/lib/auth/auth-errors";
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 
@@ -79,10 +80,15 @@ export function AuthCallbackClient() {
     const explicitNext = searchParams.get("next");
 
     void (async () => {
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      const { error: exchangeError } = await exchangeOAuthCodeOnce(supabase, code);
       if (exchangeError) {
-        setErrorMessage(decodeAuthError("auth_failed", exchangeError.message, "oauth"));
-        return;
+        const {
+          data: { session: recovered },
+        } = await supabase.auth.getSession();
+        if (!recovered?.access_token) {
+          setErrorMessage(decodeAuthError("auth_failed", exchangeError.message, "oauth"));
+          return;
+        }
       }
 
       const {
@@ -116,7 +122,7 @@ export function AuthCallbackClient() {
         !!explicitNext && explicitNext.startsWith("/") && explicitNext !== "/onboarding";
       router.replace(isRealDeepLink ? explicitNext : destination);
     })();
-  }, [router, searchParams]);
+  }, [router, searchParams, supabase]);
 
   if (errorMessage) {
     return (
