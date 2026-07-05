@@ -44,6 +44,7 @@ type StreamPayload = {
 
 export const AARYA_SESSION_STORAGE_KEY = "hireloop_aarya_session_id";
 export const VOICE_SEND_ON_PAUSE_KEY = "hireloop_voice_send_on_pause";
+const STREAM_IDLE_TIMEOUT_MS = 45_000;
 
 export function aaryaSessionStorageKey(userId?: string | null): string {
   return userId ? `${AARYA_SESSION_STORAGE_KEY}_${userId}` : AARYA_SESSION_STORAGE_KEY;
@@ -330,6 +331,25 @@ export async function streamAaryaMessage(
   let hinglishHint = false;
   const jobs: MatchedJob[] = [];
 
+  async function readNextChunk(): Promise<ReadableStreamReadResult<Uint8Array>> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error("Aarya took too long to respond. Please try again."));
+          }, STREAM_IDLE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (err) {
+      await reader.cancel().catch(() => undefined);
+      throw err;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
   const consumeFrames = () => {
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? "";
@@ -374,7 +394,7 @@ export async function streamAaryaMessage(
   };
 
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readNextChunk();
     if (value) {
       buffer += decoder.decode(value, { stream: true });
       consumeFrames();

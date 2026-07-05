@@ -51,7 +51,24 @@ async def test_job_search_falls_back_to_top_matches_when_query_filters_zero() ->
 
     class _DB:
         async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
-            return {"id": cand_id, "remote_preference": "any"}
+            return {
+                "id": cand_id,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "Senior Product Manager, Growth",
+                "current_company": "Razorpay",
+                "full_name": "Candidate",
+                "headline": "Growth product leader",
+                "summary": "Builds payments growth loops and product-led growth systems",
+                "years_experience": 8,
+                "skills": ["growth", "product", "payments"],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": False,
+                "location_scope": "city",
+            }
 
         async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
             has_scores = "ms.candidate_id" in query
@@ -73,3 +90,154 @@ async def test_job_search_falls_back_to_top_matches_when_query_filters_zero() ->
 
     assert len(out["matches"]) == 1
     assert out["matches"][0]["title"] == "Senior Product Manager (Growth)"
+
+
+async def test_job_search_does_not_block_on_unprioritized_career_path() -> None:
+    cand_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+
+    class _DB:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "COALESCE(NULLIF(c.market" in query:
+                return {"market": "IN"}
+            if "FROM public.career_paths" in query:
+                return {
+                    "id": uuid.uuid4(),
+                    "current_role": "GTM Lead",
+                    "summary": "Go-to-market leader",
+                    "steps": [{"title": "Head of GTM"}],
+                    "target_titles": ["Head of GTM"],
+                    "target_locations": ["Bengaluru"],
+                    "model": "test",
+                    "prioritized_title": None,
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            return {
+                "id": cand_id,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "GTM Lead",
+                "current_company": "Candidately",
+                "headline": "Staffing SaaS go-to-market leader",
+                "summary": "AI resume builder for staffing agencies",
+                "years_experience": 8,
+                "skills": ["sales", "automation", "digital strategy"],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": False,
+                "location_scope": "city",
+            }
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            if "FROM public.match_scores" not in query:
+                return []
+            return [
+                {
+                    "id": job_id,
+                    "title": "Head of GTM - Staffing SaaS",
+                    "location_city": "Bengaluru",
+                    "location_state": "Karnataka",
+                    "is_remote": False,
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "skills_required": ["sales", "automation"],
+                    "employment_type": "full_time",
+                    "seniority": "lead",
+                    "apply_url": "https://example.test/gtm",
+                    "company_name": "RecruitOS",
+                    "logo_url": None,
+                    "description": "B2B SaaS platform for staffing and recruiting teams.",
+                    "overall_score": 0.78,
+                    "skills_score": 0.8,
+                    "experience_score": 0.9,
+                    "location_score": 1.0,
+                    "ctc_score": 0.5,
+                    "explanation": "Strong GTM SaaS fit",
+                }
+            ]
+
+        async def execute(self, query: str, *args: object) -> str:
+            return "INSERT 0 1"
+
+    out = await job_search(
+        _DB(),  # type: ignore[arg-type]
+        str(uuid.uuid4()),
+        "sess",
+        "Head of GTM",
+    )
+
+    assert not out.get("blocked")
+    assert len(out["matches"]) == 1
+    assert out["matches"][0]["title"] == "Head of GTM - Staffing SaaS"
+
+
+async def test_job_search_drops_dental_sales_for_staffing_saas_gtm_candidate() -> None:
+    cand_id = uuid.uuid4()
+
+    class _DB:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "COALESCE(NULLIF(c.market" in query:
+                return {"market": "IN"}
+            if "FROM public.career_paths" in query:
+                return None
+            return {
+                "id": cand_id,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "GTM Lead",
+                "current_company": "Candidately",
+                "headline": "B2B SaaS for staffing agencies",
+                "summary": "AI resume builder and recruiting automation",
+                "years_experience": 8,
+                "skills": ["sales", "automation", "digital strategy"],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": False,
+                "location_scope": "city",
+            }
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            if "FROM public.match_scores" not in query:
+                return []
+            return [
+                {
+                    "id": uuid.uuid4(),
+                    "title": "Sales Manager",
+                    "location_city": "Bengaluru",
+                    "location_state": "Karnataka",
+                    "is_remote": False,
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "skills_required": ["sales"],
+                    "employment_type": "full_time",
+                    "seniority": "senior",
+                    "apply_url": "https://example.test/dental",
+                    "company_name": "SmileBright Dental Clinic",
+                    "logo_url": None,
+                    "description": "Dental clinic healthcare practice growth and patient acquisition.",
+                    "overall_score": 0.8,
+                    "skills_score": 0.8,
+                    "experience_score": 0.8,
+                    "location_score": 1.0,
+                    "ctc_score": 0.5,
+                    "explanation": "Stale generic sales score",
+                }
+            ]
+
+        async def execute(self, query: str, *args: object) -> str:
+            return "INSERT 0 1"
+
+    out = await job_search(
+        _DB(),  # type: ignore[arg-type]
+        str(uuid.uuid4()),
+        "sess",
+        "sales",
+    )
+
+    assert out["matches"] == []
+    assert out["job_cards"] == []

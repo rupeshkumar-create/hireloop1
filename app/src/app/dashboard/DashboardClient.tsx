@@ -27,7 +27,6 @@ import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds } from "@/lib/api/saved-jobs";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { warmupChatContext, scheduleIdleWarmupRewarm } from "@/lib/chat/warmup";
 import { DashboardWelcomeBanner } from "@/components/dashboard/DashboardWelcomeBanner";
 import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
@@ -96,9 +95,6 @@ export function DashboardClient({
     router.prefetch("/intros");
     router.prefetch("/dashboard?panel=jobs");
 
-    void warmupChatContext().catch(() => undefined);
-    const stopIdleWarmup = scheduleIdleWarmupRewarm(30_000);
-
     let cancelled = false;
 
     fetchSavedJobIds()
@@ -120,7 +116,6 @@ export function DashboardClient({
 
     return () => {
       cancelled = true;
-      stopIdleWarmup();
     };
   }, [router]);
 

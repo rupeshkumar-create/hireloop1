@@ -46,6 +46,9 @@ from hireloop_api.services.tool_cache import (
 
 logger = structlog.get_logger()
 
+MAX_VOICE_TOOL_ROUNDS = 1
+MAX_TEXT_TOOL_ROUNDS = 3
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 AARYA_SYSTEM_PROMPT = """You are Aarya, Hireloop's AI career partner for job seekers \
@@ -80,17 +83,15 @@ Your capabilities:
     skills, CTC, notice period, location, target roles
 
 Finding jobs — the right order:
-- When the user wants to find jobs or plan their next move, FIRST call
-  build_career_path. Briefly share the path (where they are → where they can go).
-- If they have not picked a primary target role yet, offer the top 3 options ONCE.
-  When they reply with 1/2/3, a role title, or "option 2", call
-  prioritize_career_path immediately — never ask the same question twice.
-- If you asked them which path to search and they answer with a generic command
-  like "find me jobs" or "search now", default to option 1 and search. Do not
-  keep asking them to choose.
-- If turn context shows career_path_locked, job_search is allowed — do NOT re-ask.
-- THEN call job_search once per promising target_title from the path to surface
-  real openings. Lead with the best-fit roles.
+- When the user wants jobs, call job_search directly first so they see starter
+  matches immediately. Do not force a career-path choice before showing roles.
+- Build or refine a career path only when they explicitly ask for direction, when
+  the first search has no strong matches, or when they want to compare paths.
+- If turn context shows career_path_locked, use that title as the search focus
+  and do NOT re-ask which path to focus on.
+- If a career path has options but none is locked, you may use the user's current
+  request or option 1 as a default search focus. Ask them to pick only as a
+  follow-up refinement, never as a blocker.
 
 Important rules:
 - NEVER send an intro email without candidate's explicit approval
@@ -399,6 +400,23 @@ def _prefer_fast_model(
     return False
 
 
+def _tool_round_budget_exhausted(state: dict[str, Any]) -> bool:
+    rounds = int(state.get("tool_rounds") or 0)
+    if bool(state.get("voice_mode")):
+        return rounds >= MAX_VOICE_TOOL_ROUNDS
+    return rounds >= MAX_TEXT_TOOL_ROUNDS
+
+
+def route_after_agent(state: dict[str, Any]) -> Literal["tools", "__end__"]:
+    """Route agent output with a hard budget so tool loops cannot hang chat."""
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        if _tool_round_budget_exhausted(state):
+            return END
+        return "tools"
+    return END
+
+
 def _is_openrouter_low_credit_error(exc: Exception) -> bool:
     """OpenRouter returns 402 when credits are insufficient for max_tokens."""
     text = str(exc).lower()
@@ -456,10 +474,10 @@ def build_turn_context_prompt(
         if pending:
             numbered = "; ".join(f"{i + 1}. {t}" for i, t in enumerate(pending[:3]))
             guidance.append(
-                "- career_path_pending: user must pick ONE primary target before job_search. "
-                f"Options: {numbered}. If they reply 1/2/3, a title, or a generic "
-                "job-search command like 'find me jobs', call prioritize_career_path "
-                "(default to option 1 for generic commands) then job_search — ask at most once."
+                "- career_path_pending: optional refinement only, not a blocker before job_search. "
+                f"Options: {numbered}. If they reply 1/2/3 or a title, call "
+                "prioritize_career_path; otherwise show starter matches first and ask them "
+                "to refine after."
             )
     if last_text:
         guidance.append(f"- candidate_signal: {last_text[:240]}")
@@ -474,17 +492,11 @@ def build_turn_context_prompt(
         )
 
     if likely_intent == "job_search":
-        completeness = profile_completeness or 0
-        if completeness >= 80:
-            guidance.append(
-                "- action_policy: profile is strong (≥80%) — skip build_career_path; "
-                "call job_search directly (use prefetched matches when provided)."
-            )
-        else:
-            guidance.append(
-                "- action_policy: build_career_path before job_search; search roles in the "
-                "candidate's home market only."
-            )
+        guidance.append(
+            "- action_policy: call job_search directly for starter matches; use "
+            "prefetched matches when provided. Build or refine a career path only as a "
+            "follow-up if the user asks for direction or the search is too broad."
+        )
     elif likely_intent == "intro_request":
         guidance.append(
             "- action_policy: require explicit candidate approval before request_intro."
@@ -900,9 +912,7 @@ def build_aarya_graph(settings: Settings) -> Any:
         settings.openrouter_primary_model, max_tokens=chat_max_tokens
     )
     llm_fast_plain = _make_llm_plain(fast_model, max_tokens=chat_max_tokens)
-    llm_primary_low = _make_llm(
-        settings.openrouter_primary_model, max_tokens=low_credit_tokens
-    )
+    llm_primary_low = _make_llm(settings.openrouter_primary_model, max_tokens=low_credit_tokens)
     llm_fast_low = _make_llm(fast_model, max_tokens=low_credit_tokens)
     llm_primary_plain_low = _make_llm_plain(
         settings.openrouter_primary_model, max_tokens=low_credit_tokens
@@ -993,11 +1003,11 @@ def build_aarya_graph(settings: Settings) -> Any:
             last_human_text=last_human,
             has_tool_results=has_tool_results,
         )
-        voice_budget_done = bool(state.get("voice_mode")) and state.get("tool_rounds", 0) >= 1
+        tool_budget_done = _tool_round_budget_exhausted(state)
         if no_tools_turn:
             active = llm_fast_plain
             active_low = llm_fast_plain_low
-        elif voice_budget_done:
+        elif tool_budget_done:
             active = llm_fast_plain if use_fast else llm_primary_plain
             active_low = llm_fast_plain_low if use_fast else llm_primary_plain_low
         elif use_fast:
@@ -1008,19 +1018,19 @@ def build_aarya_graph(settings: Settings) -> Any:
             active_low = llm_primary_low
         # Resilience: if the fast model errors (e.g. a misconfigured / invalid
         # model ID), fall back to the primary so chat never hard-fails on a turn.
-        fallback = llm_primary_plain if voice_budget_done else llm_primary
-        fallback_low = llm_primary_plain_low if voice_budget_done else llm_primary_low
+        fallback = llm_primary_plain if tool_budget_done else llm_primary
+        fallback_low = llm_primary_plain_low if tool_budget_done else llm_primary_low
         if no_tools_turn:
             fallback = llm_fast_plain
             fallback_low = llm_fast_plain_low
         elif use_fast:
-            fallback = llm_primary_plain if voice_budget_done else llm_primary
-            fallback_low = llm_primary_plain_low if voice_budget_done else llm_primary_low
+            fallback = llm_primary_plain if tool_budget_done else llm_primary
+            fallback_low = llm_primary_plain_low if tool_budget_done else llm_primary_low
         else:
-            fallback = llm_fast_plain if voice_budget_done else llm_fast
-            fallback_low = llm_fast_plain_low if voice_budget_done else llm_fast_low
+            fallback = llm_fast_plain if tool_budget_done else llm_fast
+            fallback_low = llm_fast_plain_low if tool_budget_done else llm_fast_low
 
-        free_candidate = llm_free_plain if (no_tools_turn or voice_budget_done) else llm_free
+        free_candidate = llm_free_plain if (no_tools_turn or tool_budget_done) else llm_free
         attempts: list[tuple[str, Any]] = [
             ("active", active),
             ("fallback", fallback),
@@ -1097,9 +1107,7 @@ def build_aarya_graph(settings: Settings) -> Any:
             kwargs: dict[str, Any] = {"query_text": query_text}
             if city:
                 kwargs["location_city"] = city
-            js = await aarya_tools.job_search(
-                db, user_id, session_id, settings=settings, **kwargs
-            )
+            js = await aarya_tools.job_search(db, user_id, session_id, settings=settings, **kwargs)
             cards: list[dict[str, Any]] = []
             if isinstance(js, dict) and isinstance(js.get("job_cards"), list):
                 cards = js["job_cards"]
@@ -1253,12 +1261,7 @@ def build_aarya_graph(settings: Settings) -> Any:
 
     def should_continue(state: AaryaState) -> Literal["tools", "__end__"]:
         """Route: if last message has tool calls → tools, else → end."""
-        last = state["messages"][-1]
-        if isinstance(last, AIMessage) and last.tool_calls:
-            if state.get("voice_mode") and state.get("tool_rounds", 0) >= 1:
-                return END
-            return "tools"
-        return END
+        return route_after_agent(dict(state))
 
     # Build graph
     graph = StateGraph(AaryaState)

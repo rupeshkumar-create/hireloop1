@@ -8,7 +8,13 @@ use the fast/cheap model. These are pure decisions — no LLM, no network.
 
 from __future__ import annotations
 
-from hireloop_api.agents.aarya.agent import _detect_likely_intent, _prefer_fast_model
+from langchain_core.messages import AIMessage
+
+from hireloop_api.agents.aarya.agent import (
+    _detect_likely_intent,
+    _prefer_fast_model,
+    route_after_agent,
+)
 
 
 def test_voice_tool_selection_uses_primary_model() -> None:
@@ -113,3 +119,24 @@ def test_default_models_are_valid_openrouter_ids() -> None:
     for model in (s.openrouter_primary_model, s.openrouter_fallback_model):
         assert model.startswith("anthropic/")
         assert "latest" not in model  # the one that broke (claude-haiku-latest)
+
+
+def test_text_chat_has_tool_round_circuit_breaker() -> None:
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "job_search",
+                        "args": {"query_text": "sales"},
+                    }
+                ],
+            )
+        ],
+        "voice_mode": False,
+        "tool_rounds": 3,
+    }
+
+    assert route_after_agent(state) == "__end__"

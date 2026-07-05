@@ -40,8 +40,74 @@ from hireloop_api.services.job_preferences import (
     remote_filter_sql,
     resolve_remote_preference,
 )
+from hireloop_api.services.match_quality import should_persist_match
+from hireloop_api.services.matching import _assemble_score
 
 logger = structlog.get_logger()
+
+
+def _candidate_quality_row(candidate: dict[str, Any], target_titles: list[str]) -> dict[str, Any]:
+    return {
+        "current_title": candidate.get("current_title"),
+        "current_company": candidate.get("current_company"),
+        "full_name": candidate.get("full_name") or "there",
+        "headline": candidate.get("headline"),
+        "summary": candidate.get("summary"),
+        "years_experience": candidate.get("years_experience"),
+        "skills": list(candidate.get("skills") or []),
+        "expected_ctc_min": candidate.get("expected_ctc_min"),
+        "expected_ctc_max": candidate.get("expected_ctc_max"),
+        "location_city": candidate.get("location_city"),
+        "location_state": candidate.get("location_state"),
+        "remote_preference": candidate.get("remote_preference"),
+        "open_to_relocation": bool(candidate.get("open_to_relocation")),
+        "location_scope": candidate.get("location_scope"),
+        "target_titles": target_titles,
+    }
+
+
+def _job_quality_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": row.get("title"),
+        "company_name": row.get("company_name"),
+        "description": row.get("description"),
+        "seniority": row.get("seniority"),
+        "skills_required": list(row.get("skills_required") or []),
+        "is_remote": bool(row.get("is_remote")),
+        "location_city": row.get("location_city"),
+        "location_state": row.get("location_state"),
+        "ctc_min": row.get("ctc_min"),
+        "ctc_max": row.get("ctc_max"),
+    }
+
+
+def _quality_filter_job_rows(
+    rows: list[Any] | None,
+    *,
+    candidate: dict[str, Any] | None,
+    target_titles: list[str],
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    if candidate is None:
+        return [dict(r) for r in rows]
+
+    cand_row = _candidate_quality_row(candidate, target_titles)
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_dict = dict(row)
+        job_row = _job_quality_row(row_dict)
+        score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
+        if not should_persist_match(cand_row, job_row, score):
+            continue
+        row_dict["overall_score"] = score["overall"]
+        row_dict["skills_score"] = round(score["skills_sim"], 4)
+        row_dict["experience_score"] = round(score["exp_score"], 4)
+        row_dict["location_score"] = round(score["loc_score"], 4)
+        row_dict["ctc_score"] = round(score["ctc_score"], 4)
+        row_dict["explanation"] = row_dict.get("explanation") or score["explanation"]
+        filtered.append(row_dict)
+    return filtered
 
 
 async def _write_action(
@@ -426,9 +492,15 @@ async def job_search(
 
     candidate = await db.fetchrow(
         """
-        SELECT id, remote_preference, market
-        FROM public.candidates
-        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        SELECT c.id, c.remote_preference, c.market,
+               c.current_title, c.current_company, c.headline, c.summary,
+               c.years_experience, c.skills, c.location_city, c.location_state,
+               c.expected_ctc_min, c.expected_ctc_max,
+               c.open_to_relocation, c.location_scope,
+               u.full_name
+        FROM public.candidates c
+        JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
         """,
         uuid.UUID(user_id),
     )
@@ -445,33 +517,11 @@ async def job_search(
     )
     remote_clause = remote_filter_sql(pref)
 
+    target_titles: list[str] = []
     if candidate:
         path = await CareerPathService.get_latest(db, str(candidate["id"]))
-        has_real_path = bool(path and (path.get("target_titles") or path.get("steps")))
-        if has_real_path and not path.get("prioritized_title"):
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            options = career_path_options(path)
-            block_result = {
-                "blocked": True,
-                "reason": "prioritize_career_path",
-                "message": (
-                    "Career path is not locked in yet. Call prioritize_career_path "
-                    "with the title the user chose (1→first option, 2→second, etc.), "
-                    "then call job_search again. Do not re-ask if they already answered."
-                ),
-                "path_options": options,
-            }
-            await _write_action(
-                db,
-                "aarya",
-                user_id,
-                session_id,
-                "job_search",
-                {"query": query_text},
-                block_result,
-                duration_ms,
-            )
-            return {"count": 0, "job_cards": [], "matches": [], **block_result}
+        target_titles = list((path or {}).get("target_titles") or [])
+    candidate_profile = dict(candidate) if candidate else None
 
     rows = None
     if candidate:
@@ -479,7 +529,7 @@ async def job_search(
             f"""
             SELECT j.id, j.title, j.location_city, j.location_state,
                    j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url,
+                   j.employment_type, j.seniority, j.apply_url, j.description,
                    co.name AS company_name, co.logo_url,
                    ms.overall_score, ms.explanation
             FROM public.match_scores ms
@@ -510,6 +560,11 @@ async def job_search(
             limit,
             market,
         )
+        rows = _quality_filter_job_rows(
+            rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+        )
 
     # Step 1b: the candidate HAS ranked matches, but the narrow query/filters
     # zeroed them out — e.g. Aarya searched a niche title like "Growth Designer"
@@ -523,7 +578,7 @@ async def job_search(
             f"""
             SELECT j.id, j.title, j.location_city, j.location_state,
                    j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url,
+                   j.employment_type, j.seniority, j.apply_url, j.description,
                    co.name AS company_name, co.logo_url,
                    ms.overall_score, ms.explanation
             FROM public.match_scores ms
@@ -542,6 +597,11 @@ async def job_search(
             limit,
             market,
         )
+        rows = _quality_filter_job_rows(
+            rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+        )
 
     # Step 2: fallback — unranked keyword search (no match scores yet at all)
     vis_kw = job_visible_for_market_sql(market_param="$6")
@@ -550,7 +610,7 @@ async def job_search(
             f"""
             SELECT j.id, j.title, j.location_city, j.location_state,
                    j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url,
+                   j.employment_type, j.seniority, j.apply_url, j.description,
                    co.name AS company_name, co.logo_url,
                    NULL::real AS overall_score
             FROM public.jobs j
@@ -577,6 +637,11 @@ async def job_search(
             ctc_min,
             limit,
             market,
+        )
+        rows = _quality_filter_job_rows(
+            rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
         )
 
     from hireloop_api.services.job_present import serialize_job_card

@@ -55,5 +55,6 @@ def test_turn_context_prompt_detects_job_search_intent() -> None:
     )
 
     assert "likely_intent: job_search" in prompt
-    assert "build_career_path before job_search" in prompt
+    assert "call job_search directly" in prompt
+    assert "build_career_path before job_search" not in prompt
     assert "remote" in prompt.lower()
