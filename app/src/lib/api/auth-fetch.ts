@@ -54,16 +54,6 @@ export async function getAccessToken(): Promise<string | null> {
   }
 }
 
-function resolveFetchBase(init: RequestInit): string {
-  // Multipart uploads can run 30–90s while the CV is parsed. Next.js/Vercel
-  // rewrites time out on long requests, so large bodies go direct to the API
-  // (CORS is configured on FastAPI for app origins).
-  if (typeof window !== "undefined" && init.body instanceof FormData) {
-    return DIRECT_API_URL;
-  }
-  return getApiBaseUrl();
-}
-
 export async function apiAuthFetch(
   path: string,
   init: RequestInit = {}
@@ -82,7 +72,7 @@ export async function apiAuthFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  const base = resolveFetchBase(init);
+  const base = getApiBaseUrl();
   const url = `${base}${path}`;
 
   try {

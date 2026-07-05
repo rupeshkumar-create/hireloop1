@@ -39,8 +39,38 @@ ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/octet-stream",
 }
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+def _resume_magic_ok(file_bytes: bytes) -> bool:
+    magic = file_bytes[:4]
+    return magic in (b"%PDF", b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
+
+
+def _normalize_resume_mime(content_type: str | None, file_bytes: bytes) -> str:
+    """Browsers (especially mobile) often send application/octet-stream for PDFs."""
+    if content_type in ALLOWED_MIME_TYPES and content_type != "application/octet-stream":
+        return content_type or "application/pdf"
+    if _resume_magic_ok(file_bytes):
+        if file_bytes[:4] == b"%PDF":
+            return "application/pdf"
+        if file_bytes[:4] == b"PK\x03\x04":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return "application/msword"
+    return content_type or "application/octet-stream"
+
+
+def _quick_parse_resume(
+    file_bytes: bytes,
+    *,
+    filename: str,
+    mime_type: str | None,
+) -> ParsedResume:
+    """Fast regex-only parse — returns in milliseconds so onboarding never blocks."""
+    text = ResumeParserService._extract_text(file_bytes, filename, mime_type)
+    return ResumeParserService.parse_from_text(text)
 
 
 class ResumeUploadResponse(BaseModel):
@@ -159,13 +189,13 @@ def _schedule_resume_parse(
     """Run LLM parsing off the upload request so proxies don't time out."""
 
     async def _run() -> None:
-        parsed = await ResumeParserService.parse_best(
-            file_bytes=file_bytes,
-            filename=filename,
-            mime_type=mime_type,
-            settings=settings,
-        )
         try:
+            parsed = await ResumeParserService.parse_best(
+                file_bytes=file_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                settings=settings,
+            )
             pool = await get_db_pool(settings)
             async with pool.acquire() as bg_db:
                 await bg_db.execute(
@@ -345,7 +375,7 @@ async def upload_resume(
     # Parsing is a multi-tier LLM job — cap per user per hour (cost guard).
     check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15)
 
-    # Validate file type
+    # Validate file type (mobile browsers often send application/octet-stream).
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -360,15 +390,19 @@ async def upload_resume(
             detail="File too large. Maximum size is 10MB.",
         )
 
-    # Defense-in-depth: the client-supplied content_type is spoofable, so verify
-    # the file's magic bytes actually match an allowed document type (PDF / DOCX
-    # zip / legacy DOC OLE) before we store or parse it.
-    magic = file_bytes[:4]
-    if magic not in (b"%PDF", b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
+    if not _resume_magic_ok(file_bytes):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File content doesn't look like a PDF or DOCX.",
         )
+
+    normalized_mime = _normalize_resume_mime(file.content_type, file_bytes)
+    filename = file.filename or "resume.pdf"
+    quick_parsed = _quick_parse_resume(
+        file_bytes,
+        filename=filename,
+        mime_type=normalized_mime,
+    )
 
     user_id = current_user["id"]
 
@@ -380,7 +414,7 @@ async def upload_resume(
 
     candidate_id = str(candidate["id"])
     resume_id = str(uuid.uuid4())
-    file_ext = "pdf" if "pdf" in (file.content_type or "") else "docx"
+    file_ext = "pdf" if "pdf" in normalized_mime else "docx"
     storage_path = f"{user_id}/{resume_id}.{file_ext}"
 
     supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key)
@@ -388,7 +422,7 @@ async def upload_resume(
     supabase.storage.from_("resumes").upload(
         path=storage_path,
         file=file_bytes,
-        file_options={"content-type": file.content_type or "application/pdf"},
+        file_options={"content-type": normalized_mime},
     )
 
     logger.info("resume_uploaded", candidate_id=candidate_id, path=storage_path)
@@ -399,7 +433,6 @@ async def upload_resume(
         storage_path=storage_path,
     )
 
-    pending_payload = json.dumps({"_parse_status": "pending"})
     await db.execute(
         """
         INSERT INTO public.resumes
@@ -411,11 +444,18 @@ async def upload_resume(
         uuid.UUID(resume_id),
         uuid.UUID(candidate_id),
         storage_path,
-        file.filename or f"resume.{file_ext}",
+        filename,
         len(file_bytes),
-        file.content_type,
-        pending_payload,
-        None,
+        normalized_mime,
+        quick_parsed.model_dump_json(),
+        quick_parsed.raw_text,
+    )
+
+    await _sync_user_display_name_from_resume(
+        db,
+        user_id=user_id,
+        candidate_id=candidate_id,
+        resume_full_name=quick_parsed.full_name,
     )
 
     _schedule_resume_parse(
@@ -423,17 +463,25 @@ async def upload_resume(
         candidate_id=candidate_id,
         resume_id=resume_id,
         file_bytes=file_bytes,
-        filename=file.filename or f"resume.{file_ext}",
-        mime_type=file.content_type,
+        filename=filename,
+        mime_type=normalized_mime,
         settings=settings,
     )
 
+    was_parsed = bool(quick_parsed.skills or quick_parsed.current_title or quick_parsed.full_name)
     return ResumeUploadResponse(
         resume_id=resume_id,
         file_path=storage_path,
-        parsed=ParsedResume(),
-        parse_status="pending",
-        message="Resume uploaded. Aarya is reading your CV now.",
+        parsed=quick_parsed,
+        parse_status="ready",
+        message=(
+            "Resume uploaded and parsed. Review the data and apply to your profile."
+            if was_parsed
+            else (
+                "Resume uploaded. Aarya is enriching your profile in the background — "
+                "you can continue and refine details from the dashboard."
+            )
+        ),
     )
 
 

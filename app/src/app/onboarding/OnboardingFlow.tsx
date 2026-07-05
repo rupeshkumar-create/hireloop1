@@ -227,6 +227,17 @@ function ActivationStep({
     setError(null);
     try {
       const summary = await uploadResumeAndApply(resumeFile);
+      const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
+        method: "POST",
+        body: JSON.stringify({
+          tos_accepted: true,
+          marketing_emails: marketingConsent,
+        }),
+      });
+      if (!consentRes.ok) {
+        const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? "Couldn't save consent.");
+      }
       setParsed(summary);
     } catch (err) {
       setError(formatOnboardingError(err));
@@ -241,18 +252,6 @@ function ActivationStep({
     setSaving(true);
     setError(null);
     try {
-      const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
-        method: "POST",
-        body: JSON.stringify({
-          tos_accepted: true,
-          marketing_emails: marketingConsent,
-        }),
-      });
-      if (!consentRes.ok) {
-        const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail ?? "Couldn't save consent.");
-      }
-
       const completeRes = await apiAuthFetch("/api/v1/me/complete-onboarding", {
         method: "POST",
         body: JSON.stringify({
@@ -416,7 +415,11 @@ function ActivationStep({
             </label>
           </div>
 
-          {error && <p className="text-small text-ink-700">{error}</p>}
+          {error && (
+            <p className="text-small text-destructive rounded-lg border border-destructive/30 bg-destructive-bg px-3 py-2">
+              {error}
+            </p>
+          )}
 
           <Button
             variant="primary"
@@ -431,7 +434,7 @@ function ActivationStep({
               ) : undefined
             }
           >
-            {saving ? "Reading your CV — up to a minute…" : "Review my CV"}
+            {saving ? "Uploading your CV…" : "Review my CV"}
           </Button>
         </div>
         ) : (
@@ -487,7 +490,11 @@ function ActivationStep({
               )}
           </div>
 
-          {error && <p className="text-small text-ink-700">{error}</p>}
+          {error && (
+            <p className="text-small text-destructive rounded-lg border border-destructive/30 bg-destructive-bg px-3 py-2">
+              {error}
+            </p>
+          )}
 
           <Button
             variant="primary"

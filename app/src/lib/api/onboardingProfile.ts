@@ -89,7 +89,11 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? "Resume upload failed");
+    const detail = (err as { detail?: string }).detail;
+    if (res.status === 401) {
+      throw new Error(detail ?? "Session expired. Sign out and sign in again.");
+    }
+    throw new Error(detail ?? "Resume upload failed");
   }
   const data = (await res.json()) as ResumeUploadPayload;
   const parsed =
@@ -98,12 +102,17 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
       : (data.parsed ?? {});
 
   // Apply parsed fields to the profile (best-effort — don't fail activation).
-  try {
-    await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
-      method: "POST",
-    });
-  } catch {
-    /* non-fatal */
+  const applyRes = await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
+    method: "POST",
+  });
+  if (!applyRes.ok) {
+    const err = await applyRes.json().catch(() => ({}));
+    // Still show the parse summary — profile apply can be retried from dashboard.
+    if (applyRes.status !== 409) {
+      throw new Error(
+        (err as { detail?: string }).detail ?? "Couldn't apply your CV to your profile.",
+      );
+    }
   }
   return parsed;
 }
