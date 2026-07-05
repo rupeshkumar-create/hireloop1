@@ -205,6 +205,7 @@ interface ChatInterfaceProps {
 
 const CHAT_COLUMN_CLASS = "max-w-2xl mx-auto px-4";
 const COMPOSER_TEXT_MAX_H = 80;
+const VOICE_FEATURE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED !== "false";
 
 // ── Option-block parser ───────────────────────────────────────────────────────
 
