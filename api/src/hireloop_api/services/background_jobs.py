@@ -27,6 +27,7 @@ logger = structlog.get_logger()
 # ── Job kinds (stable string identifiers) ─────────────────────────────────────
 
 CAREER_PATH_INGEST = "career_path_ingest"
+POOL_INGEST = "pool_ingest"
 AARYA_AUTO_INGEST = "aarya_auto_ingest"
 RESUME_EMBED_SCORE = "resume_embed_score"
 CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
@@ -254,6 +255,17 @@ async def _handle_career_path_ingest(settings: Settings, payload: dict[str, Any]
     await _ingest_and_rescore(settings, candidate_id, queries, locations)
 
 
+async def _handle_pool_ingest(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.services.career_path_pool import ingest_pool
+
+    await ingest_pool(
+        settings,
+        definition_id=str(payload["definition_id"]),
+        candidate_id=str(payload["candidate_id"]) if payload.get("candidate_id") else None,
+        locations=list(payload.get("locations") or ["India"]),
+    )
+
+
 async def _handle_aarya_auto_ingest(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.agents.aarya.tools import _auto_ingest_for_candidate
 
@@ -437,6 +449,7 @@ async def _handle_hm_enrich(settings: Settings, payload: dict[str, Any]) -> None
 
 _HANDLERS: dict[str, Handler] = {
     CAREER_PATH_INGEST: _handle_career_path_ingest,
+    POOL_INGEST: _handle_pool_ingest,
     AARYA_AUTO_INGEST: _handle_aarya_auto_ingest,
     RESUME_EMBED_SCORE: _handle_resume_embed_score,
     CAREER_INTELLIGENCE_UPDATE: _handle_career_intelligence_update,

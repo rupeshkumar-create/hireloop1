@@ -204,6 +204,14 @@ class CareerPathService:
             uuid.UUID(candidate_id),
             title,
         )
+        try:
+            from hireloop_api.market_db import fetch_candidate_market
+            from hireloop_api.services.career_path_pool import link_path_to_definition
+
+            market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
+            await link_path_to_definition(db, row["id"], title, market=market)
+        except Exception as exc:
+            logger.warning("career_path_definition_link_failed", error=str(exc)[:200])
         return _serialize_path(updated) if updated else None
 
     # ── internals ─────────────────────────────────────────────────────────────

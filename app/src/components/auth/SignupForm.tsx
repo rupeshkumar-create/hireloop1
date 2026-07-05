@@ -147,7 +147,7 @@ export function SignupForm() {
     setInfoMessage("");
     persistSignupRole(role);
     try {
-      const redirectTo = `${window.location.origin}/auth/confirm`;
+      const redirectTo = `${window.location.origin}/auth/confirm?signup_role=${role}`;
       const { error } = await supabase.auth.signInWithOtp({
         email: addr,
         options: {

@@ -5,7 +5,7 @@ import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl, getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 
-const BOOTSTRAP_TIMEOUT_MS = 20_000;
+const BOOTSTRAP_TIMEOUT_MS = 45_000;
 
 export async function finishAuthSession(
   accessToken: string,

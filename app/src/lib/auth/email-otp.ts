@@ -59,8 +59,12 @@ export async function verifyEmailCode(
       }
       lastError = error.message;
     } catch (err) {
+      lastError = err instanceof Error ? err.message : "Verification failed.";
+      if (!lastError.toLowerCase().includes("timeout")) {
+        continue;
+      }
       return {
-        error: err instanceof Error ? err.message : "Verification failed.",
+        error: lastError,
         accessToken: null,
       };
     }

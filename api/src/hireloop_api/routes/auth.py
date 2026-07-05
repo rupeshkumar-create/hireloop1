@@ -24,7 +24,7 @@ from typing import Any, Literal
 import asyncpg
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator, model_validator
 
 from hireloop_api.config import Settings, get_settings
@@ -34,6 +34,7 @@ from hireloop_api.deps import (
     get_current_user_with_supabase,
     get_db,
     get_db_optional,
+    get_db_pool,
     get_supabase_identity,
 )
 from hireloop_api.markets import normalize_market, validate_e164_phone
@@ -287,9 +288,31 @@ async def _verify_twilio_otp(phone: str, otp: str, settings: Settings) -> None:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
+async def _bootstrap_welcome_email(
+    user_id: uuid.UUID,
+    email: str | None,
+    full_name: str | None,
+) -> None:
+    """Fire-and-forget welcome email — must not block bootstrap response."""
+    settings = get_settings()
+    try:
+        pool = await get_db_pool(settings)
+        async with pool.acquire() as conn:
+            await maybe_send_signup_confirmation(
+                conn,
+                settings,
+                user_id=user_id,
+                email=email,
+                full_name=full_name,
+            )
+    except Exception as exc:
+        logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
+
+
 @router.post("/bootstrap", status_code=200)
 async def bootstrap_user(
     body: BootstrapRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user_with_supabase),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
@@ -485,16 +508,12 @@ async def bootstrap_user(
     # Welcome email only for email signups (not LinkedIn/OAuth — avoids confusion
     # with Supabase's "confirm your email" message).
     if not is_oauth_signup(supabase_user):
-        try:
-            await maybe_send_signup_confirmation(
-                db,
-                settings,
-                user_id=user_id,
-                email=current_user.get("email"),
-                full_name=current_user.get("full_name"),
-            )
-        except Exception as exc:  # never block signup on email
-            logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
+        background_tasks.add_task(
+            _bootstrap_welcome_email,
+            user_id,
+            current_user.get("email"),
+            current_user.get("full_name"),
+        )
 
     # `is_new_user` lets /auth/callback route first-time candidates into the
     # onboarding wizard while sending returning users straight to their home.

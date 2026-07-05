@@ -342,16 +342,59 @@ async def find_jobs_for_path(
     target_titles: list[str] = path.get("target_titles") or []
     target_locations: list[str] = path.get("target_locations") or []
     market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
+    prioritized = path.get("prioritized_title") or ""
 
-    # Immediate: existing scored jobs (path titles first).
-    rows = await _fetch_path_jobs(
-        db,
-        candidate_id,
-        target_titles,
-        limit=20,
-        remote_preference=remote_pref,
-        market=market,
+    from hireloop_api.services.career_path_pool import (
+        fetch_scored_pool_jobs,
+        pool_job_count,
+        resolve_definition_for_title,
+        score_pool_for_candidate,
     )
+    from hireloop_api.services.background_jobs import POOL_INGEST, CAREER_PATH_INGEST, enqueue_job
+
+    definition = await resolve_definition_for_title(db, prioritized, market=market)
+    rows: list[asyncpg.Record] = []
+
+    # 1) Shared pool first (senior paths scraped once for all similar candidates).
+    if definition is not None:
+        rows = await fetch_scored_pool_jobs(
+            db,
+            candidate_id,
+            definition["id"],
+            limit=20,
+            remote_preference=remote_pref,
+            market=market,
+        )
+        if not rows:
+            try:
+                await score_pool_for_candidate(db, candidate_id, definition["id"])
+            except Exception as exc:
+                logger.warning("pool_initial_score_failed", error=str(exc)[:200])
+            rows = await fetch_scored_pool_jobs(
+                db,
+                candidate_id,
+                definition["id"],
+                limit=20,
+                remote_preference=remote_pref,
+                market=market,
+            )
+
+    # 2) Supplement with per-candidate path matches when the pool is thin.
+    if len(rows) < 20:
+        extra = await _fetch_path_jobs(
+            db,
+            candidate_id,
+            target_titles,
+            limit=20 - len(rows),
+            remote_preference=remote_pref,
+            market=market,
+        )
+        seen = {str(r["job_id"]) for r in rows}
+        for r in extra:
+            jid = str(r["job_id"])
+            if jid not in seen:
+                rows.append(r)
+                seen.add(jid)
 
     # No cached scores yet → score now so the first click isn't empty.
     if not rows:
@@ -373,19 +416,33 @@ async def find_jobs_for_path(
     if not rows:
         source_available = await _apify_reachable(settings)
 
-    # Background: scrape fresh roles + re-score (durable queue).
-    from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
+    # Background top-up: refresh shared pool for senior paths; per-candidate Apify only
+    # when there is no canonical pool or the pool is still too thin.
+    pool_min = int(definition["pool_min_jobs"]) if definition is not None else 0
+    pool_count = await pool_job_count(db, definition["id"]) if definition is not None else 0
 
-    await enqueue_job(
-        db,
-        kind=CAREER_PATH_INGEST,
-        payload={
-            "candidate_id": candidate_id,
-            "queries": target_titles,
-            "locations": target_locations,
-        },
-        idempotency_key=f"career_path_ingest:{candidate_id}",
-    )
+    if definition is not None and pool_count < pool_min:
+        await enqueue_job(
+            db,
+            kind=POOL_INGEST,
+            payload={
+                "definition_id": str(definition["id"]),
+                "candidate_id": candidate_id,
+                "locations": target_locations,
+            },
+            idempotency_key=f"pool_ingest:{definition['slug']}:{market}",
+        )
+    elif len(rows) < 8:
+        await enqueue_job(
+            db,
+            kind=CAREER_PATH_INGEST,
+            payload={
+                "candidate_id": candidate_id,
+                "queries": target_titles,
+                "locations": target_locations,
+            },
+            idempotency_key=f"career_path_ingest:{candidate_id}",
+        )
 
     jobs = [_serialize_cached_match_row(r) for r in rows]
     for job in jobs:
