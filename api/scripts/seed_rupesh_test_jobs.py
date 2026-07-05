@@ -23,7 +23,10 @@ from hireloop_api.config import get_settings
 from hireloop_api.services.embeddings import EmbeddingService
 from hireloop_api.services.intro_service import publish_role_to_jobs
 from hireloop_api.services.matching import MatchingEngine
-from hireloop_api.services.profile_experience import build_merged_experience, reconcile_candidate_overview
+from hireloop_api.services.profile_experience import (
+    build_merged_experience,
+    reconcile_candidate_overview,
+)
 
 RECRUITER_EMAIL = "rupesh.kumar@candidate.ly"
 COMPANY_ID = uuid.UUID("e1000001-0000-4000-8000-000000000001")
@@ -251,12 +254,16 @@ async def _sync_candidate_from_resume(
     experience = build_merged_experience(
         resume_experience=[e for e in (parsed.get("work_experience") or []) if isinstance(e, dict)],
         linkedin_data=cand.get("linkedin_data"),
-        career_profile=cand.get("career_profile") if isinstance(cand.get("career_profile"), dict) else None,
+        career_profile=cand.get("career_profile")
+        if isinstance(cand.get("career_profile"), dict)
+        else None,
         career_intelligence=None,
         candidate=cand,
         skills=skills,
     )
-    reconciled, fixes = reconcile_candidate_overview(cand, experience, linkedin_data=cand.get("linkedin_data"))
+    reconciled, fixes = reconcile_candidate_overview(
+        cand, experience, linkedin_data=cand.get("linkedin_data")
+    )
 
     set_parts = ["skills = $2::text[]", "profile_complete = TRUE", "updated_at = NOW()"]
     values: list[object] = [row["id"], skills]
@@ -420,7 +427,7 @@ async def main() -> None:
         embedder = EmbeddingService(settings.openrouter_api_key or "", conn)
         engine = MatchingEngine(conn)
 
-        for title, job_id in job_ids:
+        for _title, job_id in job_ids:
             await embedder.embed_job(job_id)
             await engine.score_job(job_id, notify=False)
 

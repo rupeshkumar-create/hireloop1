@@ -260,10 +260,14 @@ async def main() -> None:
             token = await _latest_invite_token(conn, args.candidate)
             if token:
                 base = settings.public_app_url.rstrip("/")
-                print(f"\nInvite link (for manual test if email didn't send):\n  {base}/recruiter/invite?token={token}")
+                print(
+                    f"\nInvite link (for manual test if email didn't send):\n  {base}/recruiter/invite?token={token}"
+                )
         else:
             print("To send the HM invite email, re-run with:  --send-intro")
-            print(f"  Example: .venv/bin/python scripts/seed_hm_invite_test.py --send-intro --candidate {args.candidate}")
+            print(
+                f"  Example: .venv/bin/python scripts/seed_hm_invite_test.py --send-intro --candidate {args.candidate}"
+            )
             print("\nOr ask Aarya as the candidate:")
             print(f'  "Request an intro for job {JOB_ID}"')
     finally:

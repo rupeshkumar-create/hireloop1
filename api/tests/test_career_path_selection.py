@@ -109,9 +109,7 @@ def test_parse_prioritize_senior_category_manager_fashion() -> None:
 
 
 def test_parse_title_substring() -> None:
-    assert (
-        parse_career_path_selection("Head of Buying please", OPTIONS) == OPTIONS[1]
-    )
+    assert parse_career_path_selection("Head of Buying please", OPTIONS) == OPTIONS[1]
 
 
 def test_career_path_options_from_steps() -> None:

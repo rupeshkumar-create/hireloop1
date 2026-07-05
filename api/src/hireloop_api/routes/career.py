@@ -344,13 +344,13 @@ async def find_jobs_for_path(
     market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
     prioritized = path.get("prioritized_title") or ""
 
+    from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, POOL_INGEST, enqueue_job
     from hireloop_api.services.career_path_pool import (
         fetch_scored_pool_jobs,
         pool_job_count,
         resolve_definition_for_title,
         score_pool_for_candidate,
     )
-    from hireloop_api.services.background_jobs import POOL_INGEST, CAREER_PATH_INGEST, enqueue_job
 
     definition = await resolve_definition_for_title(db, prioritized, market=market)
     rows: list[asyncpg.Record] = []
