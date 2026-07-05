@@ -242,7 +242,9 @@ def parse_career_path_selection(
 
     # Short affirmatives or generic "find me jobs" replies after Aarya asked the
     # picker should not reopen the same picker. Use the implied/first option.
-    if (is_affirmative_reply(text) or is_generic_job_search_reply(text)) and recent_assistant_message:
+    if (
+        is_affirmative_reply(text) or is_generic_job_search_reply(text)
+    ) and recent_assistant_message:
         implied = assistant_implied_option(recent_assistant_message, options)
         if implied:
             return implied

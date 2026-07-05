@@ -1,5 +1,16 @@
 import type { User } from "@supabase/supabase-js";
 
+const JUNK_NAME_PREFIX =
+  /^(?:contact|connect|message|view profile|linkedin member)\s+/i;
+
+/** Strip LinkedIn UI junk prefixes (e.g. "Contact Vivek Kumar" → "Vivek Kumar"). */
+export function sanitizeDisplayName(fullName: string | null | undefined): string | undefined {
+  const name = fullName?.trim();
+  if (!name) return undefined;
+  const cleaned = name.replace(JUNK_NAME_PREFIX, "").replace(/\s+/g, " ").trim();
+  return cleaned.length >= 2 ? cleaned : undefined;
+}
+
 function cleanName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -49,7 +60,7 @@ export function displayNameFromSupabaseUser(
 }
 
 export function firstNameFromDisplayName(name: string | undefined): string | undefined {
-  const trimmed = name?.trim();
+  const trimmed = sanitizeDisplayName(name);
   if (!trimmed) return undefined;
   return trimmed.split(/\s+/)[0];
 }

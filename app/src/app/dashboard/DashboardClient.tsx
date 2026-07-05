@@ -27,7 +27,6 @@ import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds } from "@/lib/api/saved-jobs";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { DashboardWelcomeBanner } from "@/components/dashboard/DashboardWelcomeBanner";
 import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
@@ -235,10 +234,6 @@ export function DashboardClient({
       />
 
       <main id="main-content" className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
-        <DashboardWelcomeBanner
-          firstName={candidateName?.split(" ")[0]}
-        />
-
         <div className="flex-1 min-h-0 flex overflow-hidden">
         {activePanel && (
           <div

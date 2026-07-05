@@ -8,7 +8,7 @@ from typing import Any
 
 import asyncpg
 
-from hireloop_api.services.display_name import pick_display_name
+from hireloop_api.services.display_name import pick_display_name, sanitize_display_name
 
 
 async def fetch_primary_resume_full_name(
@@ -37,7 +37,7 @@ async def fetch_primary_resume_full_name(
         return None
     raw = parsed.get("full_name")
     if isinstance(raw, str) and raw.strip():
-        return raw.strip()
+        return sanitize_display_name(raw.strip())
     return None
 
 
@@ -47,7 +47,7 @@ def _linkedin_display_name(linkedin_data: object) -> str | None:
     for key in ("full_name", "fullName", "name"):
         val = linkedin_data.get(key)
         if isinstance(val, str) and val.strip():
-            return val.strip()
+            return sanitize_display_name(val.strip())
     first = linkedin_data.get("first_name") or linkedin_data.get("firstName")
     last = linkedin_data.get("last_name") or linkedin_data.get("lastName")
     if isinstance(first, str) and first.strip():
@@ -110,11 +110,14 @@ async def sync_preferred_name_from_resume(
     )
     name = (resume_full_name or "").strip()
     if name:
-        resolved = pick_display_name(
-            user_full_name=resolved,
-            email=None,
-            resume_full_name=name,
-        ) or name
+        resolved = (
+            pick_display_name(
+                user_full_name=resolved,
+                email=None,
+                resume_full_name=name,
+            )
+            or name
+        )
 
     if not resolved:
         return None

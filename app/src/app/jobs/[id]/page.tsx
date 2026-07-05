@@ -29,20 +29,5 @@ export default async function JobDetailPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/signup");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: profile } = await (supabase as any)
-    .from("users")
-    .select("full_name, avatar_url")
-    .eq("id", user.id)
-    .single() as {
-    data: { full_name: string | null; avatar_url: string | null } | null;
-  };
-
-  return (
-    <JobDetailView
-      jobId={id}
-      userName={profile?.full_name ?? undefined}
-      userAvatarUrl={profile?.avatar_url ?? null}
-    />
-  );
+  return <JobDetailView jobId={id} />;
 }

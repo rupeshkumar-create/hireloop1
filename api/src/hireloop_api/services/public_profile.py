@@ -9,12 +9,15 @@ from typing import Any
 
 import asyncpg
 
-from hireloop_api.services.display_name import pick_display_name
 from hireloop_api.services.display_currency import currency_fields_for_candidate
+from hireloop_api.services.display_name import pick_display_name, sanitize_display_name
 from hireloop_api.services.profile_experience import (
     build_merged_education,
     build_merged_experience,
+    reconcile_candidate_overview,
 )
+
+_ANONYMOUS_SLUG_RE = re.compile(r"^c-[a-f0-9]{8}$")
 
 
 def _slug_base(name: str | None) -> str:
@@ -22,29 +25,29 @@ def _slug_base(name: str | None) -> str:
     return (raw[:28] or "candidate").strip("-")
 
 
-async def ensure_public_slug(
+def _new_anonymous_slug() -> str:
+    return f"c-{secrets.token_hex(4)}"
+
+
+def slug_needs_anonymization(slug: str | None, *, hide_contact: bool) -> bool:
+    """True when a published slug still embeds identity but contact should stay hidden."""
+    if not hide_contact or not slug:
+        return False
+    return _ANONYMOUS_SLUG_RE.fullmatch(slug.strip()) is None
+
+
+async def _persist_public_slug(
     db: asyncpg.Connection,
     candidate_id: uuid.UUID,
-    *,
-    display_name: str | None,
+    slug: str,
 ) -> str:
-    existing = await db.fetchval(
-        """
-        SELECT public_slug FROM public.candidates
-        WHERE id = $1::uuid AND deleted_at IS NULL
-        """,
-        candidate_id,
-    )
-    if existing:
-        return str(existing)
     for _ in range(8):
-        slug = f"{_slug_base(display_name)}-{secrets.token_hex(3)}"
         try:
             await db.execute(
                 """
                 UPDATE public.candidates
                 SET public_slug = $2, updated_at = NOW()
-                WHERE id = $1::uuid AND public_slug IS NULL
+                WHERE id = $1::uuid AND deleted_at IS NULL
                 """,
                 candidate_id,
                 slug,
@@ -56,14 +59,126 @@ async def ensure_public_slug(
             if row:
                 return str(row)
         except asyncpg.UniqueViolationError:
-            continue
-    fallback = f"candidate-{secrets.token_hex(4)}"
+            slug = _new_anonymous_slug()
+    fallback = _new_anonymous_slug()
     await db.execute(
         "UPDATE public.candidates SET public_slug = $2 WHERE id = $1::uuid",
         candidate_id,
         fallback,
     )
     return fallback
+
+
+async def ensure_public_slug(
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+    *,
+    display_name: str | None,
+    hide_contact: bool = False,
+) -> str:
+    """Ensure a shareable slug exists; use opaque slug when contact is hidden."""
+    row = await db.fetchrow(
+        """
+        SELECT public_slug, hide_contact_public
+        FROM public.candidates
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        candidate_id,
+    )
+    hide = hide_contact or bool(row and row["hide_contact_public"])
+    existing = str(row["public_slug"]) if row and row["public_slug"] else None
+
+    if existing and not slug_needs_anonymization(existing, hide_contact=hide):
+        return existing
+
+    if hide:
+        return await _persist_public_slug(db, candidate_id, _new_anonymous_slug())
+
+    if existing:
+        return existing
+
+    named = f"{_slug_base(sanitize_display_name(display_name))}-{secrets.token_hex(3)}"
+    return await _persist_public_slug(db, candidate_id, named)
+
+
+async def sync_public_slug_privacy(
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+    *,
+    hide_contact: bool,
+    display_name: str | None,
+) -> str | None:
+    """Rotate slug when privacy mode changes so old name-bearing links stop working."""
+    row = await db.fetchrow(
+        "SELECT public_slug FROM public.candidates WHERE id = $1::uuid AND deleted_at IS NULL",
+        candidate_id,
+    )
+    if not row:
+        return None
+    if hide_contact:
+        if not row["public_slug"] or slug_needs_anonymization(
+            str(row["public_slug"]), hide_contact=True
+        ):
+            return await ensure_public_slug(
+                db,
+                candidate_id,
+                display_name=display_name,
+                hide_contact=True,
+            )
+        return str(row["public_slug"])
+    if not row["public_slug"]:
+        return await ensure_public_slug(
+            db,
+            candidate_id,
+            display_name=display_name,
+            hide_contact=False,
+        )
+    return str(row["public_slug"])
+
+
+def _redact_public_fields(
+    cand: dict[str, Any],
+    *,
+    hide_contact: bool,
+    display_name: str | None,
+) -> dict[str, Any]:
+    """Strip identifying contact fields from the world-readable payload."""
+    if not hide_contact:
+        return {
+            "display_name": display_name,
+            "headline": cand.get("headline"),
+            "summary": cand.get("summary"),
+            "current_title": cand.get("current_title"),
+            "current_company": cand.get("current_company"),
+            "years_experience": cand.get("years_experience"),
+            "location_city": cand.get("location_city"),
+            "location_state": cand.get("location_state"),
+            "looking_for": cand.get("looking_for"),
+            "linkedin_url": cand.get("linkedin_url"),
+            "contact": {
+                "email": cand.get("email"),
+                "phone": cand.get("phone"),
+                "hidden": False,
+            },
+        }
+
+    return {
+        "display_name": None,
+        "headline": cand.get("headline"),
+        "summary": cand.get("summary"),
+        "current_title": cand.get("current_title"),
+        "current_company": cand.get("current_company"),
+        "years_experience": cand.get("years_experience"),
+        "location_city": None,
+        "location_state": None,
+        "looking_for": cand.get("looking_for"),
+        "linkedin_url": None,
+        "contact": {
+            "email": None,
+            "phone": None,
+            "hidden": True,
+        },
+    }
 
 
 async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, Any] | None:
@@ -93,16 +208,6 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
     )
     hide_contact = bool(cand.get("hide_contact_public"))
 
-    path_resumes = await db.fetch(
-        """
-        SELECT id, path_title, status, updated_at
-        FROM public.career_path_resumes
-        WHERE candidate_id = $1::uuid AND status = 'ready'
-        ORDER BY updated_at DESC
-        """,
-        cand["id"],
-    )
-
     experience = build_merged_experience(
         resume_experience=[],
         linkedin_data=cand.get("linkedin_data"),
@@ -113,6 +218,11 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
         candidate=cand,
         skills=list(cand.get("skills") or []),
     )
+    reconciled, _ = reconcile_candidate_overview(
+        cand,
+        experience,
+        linkedin_data=cand.get("linkedin_data"),
+    )
 
     education = build_merged_education(
         resume_education=[],
@@ -122,35 +232,39 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
         else None,
     )
 
-    currency = currency_fields_for_candidate(cand)
-
-    return {
-        "slug": slug,
-        "display_name": display_name,
-        "headline": cand.get("headline"),
-        "summary": cand.get("summary"),
-        "current_title": cand.get("current_title"),
-        "current_company": cand.get("current_company"),
-        "years_experience": cand.get("years_experience"),
-        "location_city": cand.get("location_city"),
-        "location_state": cand.get("location_state"),
-        "skills": list(cand.get("skills") or []),
-        "looking_for": cand.get("looking_for"),
-        "linkedin_url": cand.get("linkedin_url"),
-        "experience": experience[:8],
-        "education": education[:6],
-        "career_path_resumes": [
+    path_resumes: list[dict[str, Any]] = []
+    if not hide_contact:
+        rows = await db.fetch(
+            """
+            SELECT id, path_title, status, updated_at
+            FROM public.career_path_resumes
+            WHERE candidate_id = $1::uuid AND status = 'ready'
+            ORDER BY updated_at DESC
+            """,
+            cand["id"],
+        )
+        path_resumes = [
             {
                 "id": str(r["id"]),
                 "path_title": r["path_title"],
                 "download_path": f"/api/v1/career/path-resumes/{r['id']}/download",
             }
-            for r in path_resumes
-        ],
-        "contact": {
-            "email": None if hide_contact else cand.get("email"),
-            "phone": None if hide_contact else cand.get("phone"),
-            "hidden": hide_contact,
-        },
+            for r in rows
+        ]
+
+    currency = currency_fields_for_candidate(cand)
+    public_fields = _redact_public_fields(
+        reconciled,
+        hide_contact=hide_contact,
+        display_name=display_name,
+    )
+
+    return {
+        "slug": slug,
+        "skills": list(cand.get("skills") or []),
+        "experience": experience[:8],
+        "education": education[:6],
+        "career_path_resumes": path_resumes,
+        **public_fields,
         **currency,
     }

@@ -28,7 +28,7 @@ from hireloop_api.markets import (
     phone_matches_market,
 )
 from hireloop_api.services.consent import log_consent
-from hireloop_api.services.display_name import pick_display_name
+from hireloop_api.services.display_name import pick_display_name, sanitize_display_name
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
     apply_negative_preference,
@@ -43,6 +43,7 @@ from hireloop_api.services.linkedin_oauth import (
 from hireloop_api.services.profile_experience import (
     build_merged_education,
     build_merged_experience,
+    reconcile_candidate_overview,
 )
 from hireloop_api.services.rate_limit import check_rate_limit
 
@@ -348,10 +349,12 @@ async def publish_public_profile(
     )
     from hireloop_api.services.public_profile import ensure_public_slug
 
+    hide_contact = bool(candidate.get("hide_contact_public"))
     slug = await ensure_public_slug(
         db,
         candidate["id"],
         display_name=user_row["full_name"] if user_row else None,
+        hide_contact=hide_contact,
     )
     await db.execute(
         """
@@ -483,6 +486,51 @@ async def get_my_profile(
             skills=list(candidate_payload.get("skills") or []),
         )
 
+        reconciled, overview_fixes = reconcile_candidate_overview(
+            candidate_payload,
+            experience,
+            linkedin_data=candidate_row.get("linkedin_data"),
+        )
+        candidate_payload.update(
+            {
+                k: reconciled[k]
+                for k in (
+                    "headline",
+                    "summary",
+                    "current_title",
+                    "current_company",
+                    "looking_for",
+                    "years_experience",
+                )
+                if k in reconciled
+            }
+        )
+        if overview_fixes and candidate_id is not None:
+            set_parts = [f"{col} = ${i + 2}" for i, col in enumerate(overview_fixes)]
+            await db.execute(
+                f"""
+                UPDATE public.candidates
+                SET {", ".join(set_parts)}, updated_at = NOW()
+                WHERE id = $1::uuid AND deleted_at IS NULL
+                """,
+                candidate_id,
+                *overview_fixes.values(),
+            )
+            from hireloop_api.services.background_jobs import (
+                CAREER_INTELLIGENCE_UPDATE,
+                enqueue_job,
+            )
+
+            await enqueue_job(
+                db,
+                kind=CAREER_INTELLIGENCE_UPDATE,
+                payload={
+                    "candidate_id": str(candidate_id),
+                    "only_if_missing": False,
+                },
+                idempotency_key=f"career_intel_refresh:{candidate_id}:{len(overview_fixes)}",
+            )
+
         # Education merges the same three persisted sources as experience so it
         # surfaces from CV, LinkedIn, OR resume — whichever the candidate gave.
         education = build_merged_education(
@@ -515,6 +563,17 @@ async def get_my_profile(
     )
     if display_name:
         user_payload["full_name"] = display_name
+        stored_name = sanitize_display_name(user_row.get("full_name"))
+        if stored_name != display_name:
+            await db.execute(
+                """
+                UPDATE public.users
+                SET full_name = $2, updated_at = NOW()
+                WHERE id = $1::uuid AND deleted_at IS NULL
+                """,
+                user_id,
+                display_name,
+            )
 
     from hireloop_api.services.display_currency import currency_fields_for_candidate
 
@@ -787,16 +846,21 @@ async def update_my_profile(
                 )
                 await db.execute(query, *values)
 
-            if updates.get("public_profile_enabled"):
-                from hireloop_api.services.public_profile import ensure_public_slug
+            if "hide_contact_public" in updates or updates.get("public_profile_enabled"):
+                from hireloop_api.services.public_profile import sync_public_slug_privacy
 
                 name_row = await db.fetchrow(
                     "SELECT full_name FROM public.users WHERE id = $1::uuid",
                     user_id,
                 )
-                await ensure_public_slug(
+                hide_row = await db.fetchval(
+                    "SELECT hide_contact_public FROM public.candidates WHERE id = $1::uuid",
+                    candidate["id"],
+                )
+                await sync_public_slug_privacy(
                     db,
                     candidate["id"],
+                    hide_contact=bool(hide_row),
                     display_name=name_row["full_name"] if name_row else None,
                 )
 

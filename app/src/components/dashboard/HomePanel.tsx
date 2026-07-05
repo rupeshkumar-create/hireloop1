@@ -26,12 +26,12 @@ import {
 } from "@/lib/api/profile";
 import { fetchIntros, getCachedIntros, type IntroRequest } from "@/lib/api/intros";
 import { fetchCareerIntelligence, fetchCareerPath } from "@/lib/api/career";
-import { fetchGoogleStatus } from "@/lib/api/gmail";
 import { CareerPathOptionCards } from "@/components/career/CareerPathOptionCards";
 import { CollapsibleSection } from "@/components/dashboard/CollapsibleSection";
 import { HomeMissionHero } from "@/components/dashboard/HomeMissionHero";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import type { PanelId } from "@/lib/dashboard/panel-types";
+import { firstNameFromDisplayName, sanitizeDisplayName } from "@/lib/auth/display-name";
 import { IntelligenceHero } from "@/components/ux";
 import { FadeUp } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
@@ -76,16 +76,13 @@ export type HomePanelProps = {
 
 function SetupChecklist({
   profile,
-  googleConnected,
   onOpenPanel,
 }: {
   profile: MyProfileData | null;
-  googleConnected: boolean | null;
   onOpenPanel: (id: PanelId) => void;
 }) {
   const profileDone = profile?.candidate?.profile_complete === true;
   const resumeDone = !!profile?.resume_filename;
-  const googleDone = googleConnected === true;
   const [careerPathDone, setCareerPathDone] = useState(false);
 
   useEffect(() => {
@@ -127,13 +124,6 @@ function SetupChecklist({
       done: careerPathDone,
       cta: "View paths",
       panel: "jobs" as PanelId,
-    },
-    {
-      id: "google",
-      label: "Connect Google (optional)",
-      hint: "Send intros from your Gmail and get Meet links on calls.",
-      done: googleDone,
-      cta: "Connect",
     },
   ];
 
@@ -218,7 +208,6 @@ export function HomePanel({
   onOpenPanel,
 }: HomePanelProps) {
   const { toast } = useToast();
-  const firstName = candidateName?.split(" ")[0] ?? "there";
 
   const activeIntroCount = (rows: IntroRequest[]) =>
     rows.filter((r) => !["declined", "expired", "cancelled"].includes(r.status)).length;
@@ -233,11 +222,15 @@ export function HomePanel({
   );
   const [savingVis, setSavingVis] = useState<CandidateVisibility | null>(null);
   const [profileData, setProfileData] = useState<MyProfileData | null>(() => getCachedProfile());
-  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   const [hasCareerPath, setHasCareerPath] = useState(false);
   const [intelArchetype, setIntelArchetype] = useState<string | null>(null);
   const [intelNextRole, setIntelNextRole] = useState<string | null>(null);
   const [intelCompleteness, setIntelCompleteness] = useState<number | null>(null);
+
+  const resolvedName =
+    sanitizeDisplayName(profileData?.user?.full_name) ??
+    sanitizeDisplayName(candidateName);
+  const firstName = firstNameFromDisplayName(resolvedName) ?? "there";
 
   useEffect(() => {
     fetchIntros()
@@ -250,10 +243,6 @@ export function HomePanel({
         setVisibility(d.candidate?.visibility ?? "open_to_matches");
       })
       .catch(() => setVisibility("open_to_matches"));
-
-    fetchGoogleStatus()
-      .then((s) => setGoogleConnected(s.connected))
-      .catch(() => setGoogleConnected(null));
 
     fetchCareerPath()
       .then((p) => setHasCareerPath(Boolean(p?.steps?.length || p?.target_titles?.length)))
@@ -355,7 +344,6 @@ export function HomePanel({
         <div className="space-y-4 pt-3">
           <SetupChecklist
             profile={profileData}
-            googleConnected={googleConnected}
             onOpenPanel={onOpenPanel}
           />
           {profileReady && !hasCareerPath && (

@@ -3,7 +3,7 @@ import { HIRELOOP_ARROWS, HIRELOOP_ICONS } from "./hireloop-icons";
 /**
  * HireIcon — the custom Hireloop line-icon set (from the brand asset library).
  *
- * Geometric line system on a 24 grid, 1.75 stroke, round caps/joins. Lines use
+ * Geometric line system on a 24 grid, 1.75 stroke, square caps/joins. Lines use
  * `currentColor`; the signature lime "live node" (`n`) is always the accent.
  *
  *   <HireIcon name="briefcase" />
@@ -32,8 +32,8 @@ export function HireIcon({
       fill="none"
       stroke="currentColor"
       strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      strokeLinecap="square"
+      strokeLinejoin="miter"
       className={className}
       role={title ? "img" : "presentation"}
       aria-hidden={title ? undefined : true}
@@ -72,8 +72,8 @@ export function HireArrow({
       fill="none"
       stroke="currentColor"
       strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      strokeLinecap="square"
+      strokeLinejoin="miter"
       className={className}
       aria-hidden
       dangerouslySetInnerHTML={{ __html: paths }}

@@ -235,7 +235,7 @@ export function CandidateSharingSettings() {
         <CardBody className="space-y-4 !pt-0">
           <ToggleRow
             label="Hide email & phone on public page"
-            description="Visitors still see your experience and skills; contact stays private."
+            description="Your name, email, phone, location, and LinkedIn stay private. Visitors see experience and skills only. The share link uses an anonymous URL."
             checked={hideContact}
             onChange={setHideContact}
           />

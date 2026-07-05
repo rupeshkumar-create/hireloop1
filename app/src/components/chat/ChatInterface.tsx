@@ -61,6 +61,7 @@ import {
   Volume2,
 } from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import { firstNameFromDisplayName } from "@/lib/auth/display-name";
 import {
   parseJobFiltersFromText,
   type JobCardFilters,
@@ -108,6 +109,7 @@ import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import {
   fetchMyProfile,
+  invalidateProfileCache,
   type MyProfileData,
   type RemotePreference,
 } from "@/lib/api/profile";
@@ -1047,10 +1049,13 @@ export function ChatInterface({
         const data: ResumeUploadResponse = await uploadRes.json();
 
         // ── Auto-apply to profile (non-fatal) ──────────────────────────────
+        // replace: a CV uploaded in chat is deliberate — the profile follows it.
         try {
-          await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
-            method: "POST",
-          });
+          await apiAuthFetch(
+            `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
+            { method: "POST" },
+          );
+          invalidateProfileCache();
         } catch {
           // best-effort — don't block the chat message
         }
@@ -1731,7 +1736,7 @@ function EmptyState({
 
   const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage, !profileSparse);
 
-  const firstName = (profile?.user?.full_name || "").trim().split(" ")[0] || "there";
+  const firstName = firstNameFromDisplayName(profile?.user?.full_name) ?? "there";
   const greeting = `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
 
   const handlePathSelect = (opt: CareerPathOption) => {

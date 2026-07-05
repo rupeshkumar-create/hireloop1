@@ -21,7 +21,7 @@ from typing import Annotated, Any, Literal
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -296,12 +296,26 @@ async def _prepare_candidate_resume_storage(
 def _build_profile_updates_from_resume(
     candidate: dict,
     parsed: ParsedResume,
+    *,
+    overwrite: bool = False,
 ) -> tuple[dict[str, object], list[str]]:
+    """Diff parsed resume data against the profile.
+
+    fill (default): only populate fields that are currently empty.
+    overwrite: parsed non-null values win — used when the candidate
+    deliberately replaces their CV and expects the profile to follow it.
+    """
     updates: dict[str, object] = {}
     fields_updated: list[str] = []
 
     def maybe_update(field: str, value: object) -> None:
-        if value and not candidate[field]:
+        if not value:
+            return
+        if overwrite:
+            if candidate[field] != value:
+                updates[field] = value
+                fields_updated.append(field)
+        elif not candidate[field]:
             updates[field] = value
             fields_updated.append(field)
 
@@ -321,7 +335,11 @@ def _build_profile_updates_from_resume(
 
     if parsed.skills:
         existing_skills = set(candidate["skills"] or [])
-        new_skills = existing_skills | set(parsed.skills)
+        if overwrite:
+            # The new CV's skill set is the source of truth on replace.
+            new_skills = set(parsed.skills)
+        else:
+            new_skills = existing_skills | set(parsed.skills)
         if new_skills != existing_skills:
             updates["skills"] = list(new_skills)
             fields_updated.append("skills")
@@ -536,13 +554,17 @@ async def get_resume_status(
 @router.post("/{resume_id}/apply-to-profile", response_model=ApplyToProfileResponse)
 async def apply_to_profile(
     resume_id: str,
+    mode: str = Query(default="fill", pattern="^(fill|replace)$"),
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> ApplyToProfileResponse:
     """
     Copy parsed resume data into the candidate's profile.
-    Only fills fields that are currently empty (never overwrites existing data).
+
+    mode=fill (default): only fills fields that are currently empty.
+    mode=replace: parsed non-null values overwrite the profile — used when the
+    candidate deliberately replaces their CV and expects the overview to update.
     """
     user_id = current_user["id"]
 
@@ -590,7 +612,9 @@ async def apply_to_profile(
         uuid.UUID(candidate_id),
     )
 
-    updates, fields_updated = _build_profile_updates_from_resume(dict(candidate), parsed)
+    updates, fields_updated = _build_profile_updates_from_resume(
+        dict(candidate), parsed, overwrite=(mode == "replace")
+    )
 
     if updates:
         set_clauses: list[str] = []

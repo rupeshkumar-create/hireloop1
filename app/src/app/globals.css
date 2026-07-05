@@ -110,7 +110,7 @@
   :focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px #141414, 0 0 0 4px #B9F84C;
-    border-radius: 6px;
+    border-radius: 0;
   }
 
   /* Selection */
@@ -129,7 +129,7 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
     background-color: #2A2A2A;       /* ink-100 */
-    border-radius: 9999px;
+    border-radius: 0;
     border: 2px solid #141414;       /* paper-0 inset */
   }
   ::-webkit-scrollbar-thumb:hover {

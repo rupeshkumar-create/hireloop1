@@ -33,8 +33,8 @@ function makeIcon(html: string): LucideIcon {
         fill="none"
         stroke={color ?? "currentColor"}
         strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
         className={className}
         {...(rest as React.SVGProps<SVGSVGElement>)}
         dangerouslySetInnerHTML={{ __html: html }}

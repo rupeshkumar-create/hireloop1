@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,7 @@ from hireloop_api.agents.nitya.recruiter_chat import (
 )
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_current_user, get_db, get_recruiter_user
+from hireloop_api.services.display_name import sanitize_display_name
 from hireloop_api.services.recruiter_search import (
     is_role_published,
     load_pipeline_candidates_for_chat,
@@ -171,9 +172,7 @@ async def get_recruiter_profile(
     profile_from_roles = bool(role_rows)
     hiring_focus_source = "roles" if derived_focus else "manual"
     hiring_focus = derived_focus if derived_focus else state.get("hiring_focus")
-    company_name = derived_company if derived_company else (
-        company["name"] if company else None
-    )
+    company_name = derived_company if derived_company else (company["name"] if company else None)
     return {
         "recruiter_id": str(recruiter["id"]),
         "title": recruiter.get("title"),
@@ -228,6 +227,220 @@ async def update_recruiter_profile(
         json.dumps(state),
     )
     return await get_recruiter_profile(current_user=current_user, db=db)
+
+
+@router.get("/dashboard")
+async def recruiter_dashboard(
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Recruiter home — role stats, Nitya chats, and inbox summary."""
+    recruiter = current_user.get("recruiter")
+    if not recruiter:
+        return {
+            "stats": {
+                "active_roles": 0,
+                "pipeline_total": 0,
+                "pending_intros": 0,
+            },
+            "chats": [],
+            "roles": [],
+        }
+
+    recruiter_id = recruiter["id"]
+    stats_row = await db.fetchrow(
+        """
+        SELECT
+          (SELECT count(*)::int FROM public.roles r
+             WHERE r.recruiter_id = $1 AND r.deleted_at IS NULL
+               AND r.status IN ('active', 'hiring', 'draft')) AS active_roles,
+          (SELECT count(*)::int FROM public.role_pipeline p
+             JOIN public.roles r ON r.id = p.role_id
+             WHERE r.recruiter_id = $1 AND r.deleted_at IS NULL) AS pipeline_total,
+          (SELECT count(*)::int FROM public.intro_requests ir
+             WHERE ir.recruiter_id = $1
+               AND ir.direction = 'candidate_to_recruiter'
+               AND ir.status = 'pending') AS pending_intros
+        """,
+        recruiter_id,
+    )
+
+    chat_rows = await db.fetch(
+        """
+        SELECT c.id, c.title, c.role_id, c.updated_at,
+               r.title AS role_title, r.status AS role_status,
+               (
+                 SELECT m.content
+                 FROM public.messages m
+                 WHERE m.conversation_id = c.id
+                   AND m.role IN ('user', 'assistant')
+                 ORDER BY m.created_at DESC
+                 LIMIT 1
+               ) AS last_message
+        FROM public.conversations c
+        LEFT JOIN public.roles r ON r.id = c.role_id
+        WHERE c.recruiter_id = $1
+          AND c.agent = 'nitya'
+          AND c.deleted_at IS NULL
+        ORDER BY c.updated_at DESC
+        LIMIT 20
+        """,
+        recruiter_id,
+    )
+
+    role_rows = await db.fetch(
+        """
+        SELECT id, title, status, location_city, updated_at,
+               (SELECT count(*)::int FROM public.role_pipeline p
+                  WHERE p.role_id = roles.id) AS pipeline_count
+        FROM public.roles
+        WHERE recruiter_id = $1 AND deleted_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 8
+        """,
+        recruiter_id,
+    )
+
+    chats: list[dict[str, Any]] = []
+    for row in chat_rows:
+        d = dict(row)
+        d["id"] = str(d["id"])
+        if d.get("role_id"):
+            d["role_id"] = str(d["role_id"])
+        if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
+            d["updated_at"] = d["updated_at"].isoformat()
+        preview = (d.get("last_message") or "").strip()
+        d["last_message"] = preview[:160] + ("…" if len(preview) > 160 else "")
+        chats.append(d)
+
+    roles: list[dict[str, Any]] = []
+    for row in role_rows:
+        d = dict(row)
+        d["id"] = str(d["id"])
+        if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
+            d["updated_at"] = d["updated_at"].isoformat()
+        roles.append(d)
+
+    return {
+        "stats": dict(stats_row) if stats_row else {},
+        "chats": chats,
+        "roles": roles,
+    }
+
+
+@router.get("/candidates/search")
+async def search_recruiter_candidates(
+    q: str = Query(..., min_length=2, max_length=100),
+    role_id: uuid.UUID | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Find candidates in pipeline or opted-in talent pool."""
+    recruiter = current_user["recruiter"]
+    pattern = f"%{q.strip()}%"
+
+    pipeline_rows = await db.fetch(
+        """
+        SELECT DISTINCT ON (c.id)
+          c.id AS candidate_id,
+          u.full_name,
+          c.headline,
+          c.current_title,
+          c.current_company,
+          c.location_city,
+          c.years_experience,
+          r.id AS role_id,
+          r.title AS role_title,
+          p.stage AS pipeline_stage,
+          p.match_score,
+          'pipeline' AS source
+        FROM public.role_pipeline p
+        JOIN public.roles r ON r.id = p.role_id
+        JOIN public.candidates c ON c.id = p.candidate_id
+        JOIN public.users u ON u.id = c.user_id
+        WHERE r.recruiter_id = $1
+          AND r.deleted_at IS NULL
+          AND c.deleted_at IS NULL
+          AND u.deleted_at IS NULL
+          AND ($2::uuid IS NULL OR r.id = $2::uuid)
+          AND (
+            u.full_name ILIKE $3
+            OR c.headline ILIKE $3
+            OR c.current_title ILIKE $3
+            OR c.current_company ILIKE $3
+            OR EXISTS (
+              SELECT 1 FROM unnest(COALESCE(c.skills, ARRAY[]::text[])) s
+              WHERE s ILIKE $3
+            )
+          )
+        ORDER BY c.id, p.match_score DESC NULLS LAST
+        LIMIT $4
+        """,
+        recruiter["id"],
+        role_id,
+        pattern,
+        limit,
+    )
+
+    seen = {str(r["candidate_id"]) for r in pipeline_rows}
+    discover_rows: list[asyncpg.Record] = []
+    remaining = max(0, limit - len(pipeline_rows))
+    if remaining > 0:
+        exclude_ids = [uuid.UUID(cid) for cid in seen]
+        discover_rows = await db.fetch(
+            """
+            SELECT
+              c.id AS candidate_id,
+              u.full_name,
+              c.headline,
+              c.current_title,
+              c.current_company,
+              c.location_city,
+              c.years_experience,
+              NULL::uuid AS role_id,
+              NULL::text AS role_title,
+              NULL::text AS pipeline_stage,
+              NULL::real AS match_score,
+              'discover' AS source
+            FROM public.candidates c
+            JOIN public.users u ON u.id = c.user_id
+            WHERE c.deleted_at IS NULL
+              AND u.deleted_at IS NULL
+              AND c.share_with_recruiters = TRUE
+              AND c.visibility IN ('open_to_matches', 'exceptional_only')
+              AND NOT (c.id = ANY($3::uuid[]))
+              AND (
+                u.full_name ILIKE $1
+                OR c.headline ILIKE $1
+                OR c.current_title ILIKE $1
+                OR c.current_company ILIKE $1
+                OR EXISTS (
+                  SELECT 1 FROM unnest(COALESCE(c.skills, ARRAY[]::text[])) s
+                  WHERE s ILIKE $1
+                )
+              )
+            ORDER BY c.updated_at DESC NULLS LAST
+            LIMIT $2
+            """,
+            pattern,
+            remaining,
+            exclude_ids,
+        )
+
+    results: list[dict[str, Any]] = []
+    for row in list(pipeline_rows) + list(discover_rows):
+        d = dict(row)
+        cid = str(d["candidate_id"])
+        d["candidate_id"] = cid
+        d["display_name"] = sanitize_display_name(d.get("full_name")) or "Candidate"
+        if d.get("role_id"):
+            d["role_id"] = str(d["role_id"])
+        results.append(d)
+        if len(results) >= limit:
+            break
+
+    return {"query": q.strip(), "count": len(results), "candidates": results}
 
 
 @router.get("/inbox")

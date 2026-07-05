@@ -38,9 +38,7 @@ async def _load_candidate_profile(
     return data
 
 
-async def list_path_resumes(
-    db: asyncpg.Connection, candidate_id: str
-) -> list[dict[str, Any]]:
+async def list_path_resumes(db: asyncpg.Connection, candidate_id: str) -> list[dict[str, Any]]:
     rows = await db.fetch(
         """
         SELECT id, path_title, status, created_at, updated_at
@@ -184,6 +182,7 @@ async def fetch_path_resume_html(
             WHERE cpr.id = $1::uuid
               AND c.public_slug = $2
               AND c.public_profile_enabled = TRUE
+              AND c.hide_contact_public = FALSE
               AND cpr.status = 'ready'
               AND c.deleted_at IS NULL
             """,

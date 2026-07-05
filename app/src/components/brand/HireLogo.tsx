@@ -42,13 +42,13 @@ export function HireLogoMark({
       role="img"
       aria-label="Hireloop"
     >
-      {variant === "app" && <rect width="48" height="48" rx="12" fill="#B9F84C" />}
+      {variant === "app" && <rect width="48" height="48" fill="#B9F84C" />}
       <path
         d={LOOP}
         stroke={c.line}
         strokeWidth="3.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
       />
       <circle cx="14.6" cy="24" r="3.1" fill={c.node} />
       <circle cx="33.4" cy="24" r="3.1" fill={c.node} />

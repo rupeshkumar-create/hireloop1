@@ -87,7 +87,9 @@ async def confirm_user_email(settings: Settings, user_id: uuid.UUID | str) -> bo
     url = f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{uid}"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.put(url, headers=_admin_headers(settings), json={"email_confirm": True})
+            resp = await client.put(
+                url, headers=_admin_headers(settings), json={"email_confirm": True}
+            )
         if resp.status_code in (200, 201):
             return True
         logger.warning(

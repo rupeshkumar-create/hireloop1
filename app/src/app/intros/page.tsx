@@ -11,7 +11,6 @@ export default function IntrosPage() {
   return (
     <AppShell
       title="Intro requests"
-      activeNav="intros"
       backContext="Continue in chat"
       action={
         <Link href="/dashboard?panel=inbox">

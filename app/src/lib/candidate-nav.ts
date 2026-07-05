@@ -1,5 +1,5 @@
 /**
- * Unified candidate navigation — single source for AppShell + Dashboard pills.
+ * Unified candidate navigation — panel links for dashboard + mobile nav.
  */
 
 import {

@@ -39,7 +39,6 @@ import {
   type ParsedResumeSummary,
 } from "@/lib/api/onboardingProfile";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
-import { markDashboardWelcomePending } from "@/lib/dashboard-welcome";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -338,7 +337,6 @@ function ActivationStep({
       }
 
       clearOnboardingProgress();
-      markDashboardWelcomePending();
       // Land in chat with the guided career kickoff: path multi-select →
       // package → review → job search for the preferred path.
       router.push("/dashboard?kickoff=career");

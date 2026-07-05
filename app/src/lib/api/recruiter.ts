@@ -156,6 +156,50 @@ export type RoleListItem = {
   comp_max: number | null;
 };
 
+export type RecruiterDashboardChat = {
+  id: string;
+  title: string | null;
+  role_id: string | null;
+  role_title: string | null;
+  role_status: string | null;
+  updated_at: string;
+  last_message: string;
+};
+
+export type RecruiterDashboardStats = {
+  active_roles: number;
+  pipeline_total: number;
+  pending_intros: number;
+};
+
+export type RecruiterDashboardData = {
+  stats: RecruiterDashboardStats;
+  chats: RecruiterDashboardChat[];
+  roles: Array<{
+    id: string;
+    title: string;
+    status: string;
+    location_city: string | null;
+    pipeline_count: number;
+    updated_at?: string;
+  }>;
+};
+
+export type RecruiterCandidateSearchHit = {
+  candidate_id: string;
+  display_name: string;
+  headline: string | null;
+  current_title: string | null;
+  current_company: string | null;
+  location_city: string | null;
+  years_experience: number | null;
+  role_id: string | null;
+  role_title: string | null;
+  pipeline_stage: string | null;
+  match_score: number | null;
+  source: "pipeline" | "discover";
+};
+
 export function formatCompRange(
   compMin: number | null | undefined,
   compMax: number | null | undefined,
@@ -172,6 +216,19 @@ export function inrToLpa(inr: number | null | undefined): number | null {
 
 export async function listRoles(): Promise<RoleListItem[]> {
   return apiFetch<RoleListItem[]>("/api/v1/recruiter/roles");
+}
+
+export async function fetchRecruiterDashboard(): Promise<RecruiterDashboardData> {
+  return apiFetch<RecruiterDashboardData>("/api/v1/recruiter/dashboard");
+}
+
+export async function searchRecruiterCandidates(
+  query: string,
+  roleId?: string,
+): Promise<{ query: string; count: number; candidates: RecruiterCandidateSearchHit[] }> {
+  const params = new URLSearchParams({ q: query });
+  if (roleId) params.set("role_id", roleId);
+  return apiFetch(`/api/v1/recruiter/candidates/search?${params.toString()}`);
 }
 
 export async function getRole(roleId: string): Promise<RecruiterRole> {

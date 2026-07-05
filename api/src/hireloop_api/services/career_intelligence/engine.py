@@ -330,6 +330,7 @@ class CareerIntelligenceService:
                    c.remote_preference,
                    COALESCE(NULLIF(c.market, ''), u.market, 'IN') AS market,
                    c.career_profile, c.career_analysis, c.linkedin_data, c.aarya_state,
+                   c.career_intelligence,
                    u.full_name, u.email
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id
@@ -346,6 +347,30 @@ class CareerIntelligenceService:
         data["career_analysis"] = _coerce_jsonb(data.get("career_analysis")) or {}
         data["linkedin_data"] = _coerce_jsonb(data.get("linkedin_data")) or {}
         data["aarya_state"] = _coerce_jsonb(data.get("aarya_state")) or {}
+        data["career_intelligence"] = _coerce_jsonb(data.get("career_intelligence")) or {}
+        resume_row = await db.fetchrow(
+            """
+            SELECT parsed_data
+            FROM public.resumes
+            WHERE candidate_id = $1::uuid
+            ORDER BY is_primary DESC, version DESC, created_at DESC
+            LIMIT 1
+            """,
+            uuid.UUID(candidate_id),
+        )
+        resume_exp: list[dict[str, Any]] = []
+        if resume_row and resume_row["parsed_data"]:
+            parsed = resume_row["parsed_data"]
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except (ValueError, TypeError):
+                    parsed = None
+            if isinstance(parsed, dict):
+                raw_exp = parsed.get("work_experience")
+                if isinstance(raw_exp, list):
+                    resume_exp = [e for e in raw_exp if isinstance(e, dict)]
+        data["resume_work_experience"] = resume_exp
         return data
 
     @staticmethod

@@ -259,7 +259,7 @@ async def _ensure_mock_interview(
           id, candidate_id, conversation_id, role_target,
           interview_type, mode, status
         )
-        VALUES ($1, $2, $3, $4, 'role_specific', 'chat', 'in_progress')
+        VALUES ($1, $2, $3, $4, 'recruiter_screen', 'chat', 'in_progress')
         """,
         mock_id,
         candidate_id,
@@ -342,9 +342,13 @@ async def prepare_application_kit(
     existing_resume = await _fetch_existing_tailored_resume(
         db, candidate_id=candidate_id, job_id=str(job["id"])
     )
-    mock = await _ensure_mock_interview(
-        db, candidate_id=candidate_id, job_title=str(job.get("title") or "Role")
-    )
+    try:
+        mock = await _ensure_mock_interview(
+            db, candidate_id=candidate_id, job_title=str(job.get("title") or "Role")
+        )
+    except Exception as exc:
+        logger.warning("application_kit_mock_interview_failed", error=str(exc))
+        mock = {"mock_interview_id": None, "path": None}
 
     text_task = asyncio.create_task(
         _generate_text_assets(settings=settings, profile=profile, job=job)

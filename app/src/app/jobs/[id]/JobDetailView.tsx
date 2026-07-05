@@ -132,15 +132,9 @@ function postedAgo(iso: string | null | undefined): string | null {
 
 type JobDetailViewProps = {
   jobId: string;
-  userName?: string;
-  userAvatarUrl?: string | null;
 };
 
-export function JobDetailView({
-  jobId,
-  userName,
-  userAvatarUrl,
-}: JobDetailViewProps) {
+export function JobDetailView({ jobId }: JobDetailViewProps) {
   const router = useRouter();
   const { toast } = useToast();
 
@@ -229,9 +223,6 @@ export function JobDetailView({
     <AppShell
       title="Job details"
       width="form"
-      activeNav="matches"
-      userName={userName}
-      userAvatarUrl={userAvatarUrl}
       action={
         <Link
           href="/dashboard?panel=jobs"

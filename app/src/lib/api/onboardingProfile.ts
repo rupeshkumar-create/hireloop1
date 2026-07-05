@@ -108,9 +108,12 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
       : (data.parsed ?? {});
 
   // Apply parsed fields to the profile (best-effort — don't fail activation).
-  const applyRes = await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
-    method: "POST",
-  });
+  // replace: the fresh CV wins over any earlier LinkedIn enrichment; the
+  // candidate reviews and corrects everything on the next screen anyway.
+  const applyRes = await apiAuthFetch(
+    `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
+    { method: "POST" },
+  );
   if (!applyRes.ok) {
     const err = await applyRes.json().catch(() => ({}));
     // Still show the parse summary — profile apply can be retried from dashboard.

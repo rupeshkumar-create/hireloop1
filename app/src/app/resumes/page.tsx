@@ -44,7 +44,6 @@ export default function ResumesPage() {
   return (
     <AppShell
       title="Tailored resumes"
-      activeNav="resumes"
       action={
         <Button
           variant="ghost"

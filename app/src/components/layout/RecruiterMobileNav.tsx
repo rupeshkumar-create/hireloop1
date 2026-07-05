@@ -23,6 +23,7 @@ const tabClass = (active: boolean) =>
 
 function isItemActive(item: RecruiterNavItem, pathname: string | null) {
   if (!item.href) return false;
+  if (item.id === "dashboard") return pathname === "/recruiter";
   const base = item.href.split("?")[0];
   if (pathname === base) return true;
   return item.match?.some((m) => pathname?.startsWith(m)) ?? false;

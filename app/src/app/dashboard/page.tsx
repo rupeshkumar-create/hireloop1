@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
 import { VALID_JOBS_TABS, VALID_PANELS, type JobsTab, type PanelId } from "@/lib/dashboard/panel-types";
+import { sanitizeDisplayName } from "@/lib/auth/display-name";
 import { canApplyOrIntro, shouldShowProfileBoosters } from "@/lib/profile/readiness";
 
 export const metadata: Metadata = {
@@ -156,7 +157,8 @@ export default async function DashboardPage({
 
   let conversationId: string | undefined;
   let canSeeAdmin = false;
-  let candidateName: string | undefined = profile?.full_name ?? undefined;
+  let candidateName: string | undefined =
+    sanitizeDisplayName(profile?.full_name) ?? undefined;
   if (token) {
     try {
       const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
@@ -167,7 +169,8 @@ export default async function DashboardPage({
         const profileData = (await profileRes.json()) as {
           user?: { full_name?: string | null };
         };
-        candidateName = profileData.user?.full_name ?? candidateName;
+        candidateName =
+          sanitizeDisplayName(profileData.user?.full_name) ?? candidateName;
       }
     } catch {
       /* use Supabase users.full_name */

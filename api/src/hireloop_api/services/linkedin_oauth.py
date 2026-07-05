@@ -208,11 +208,13 @@ def resolve_linkedin_profile_url(
 
 def extract_linkedin_display_name(linkedin_data: Any) -> str | None:
     """Best-effort display name from Supabase LinkedIn user_metadata / identities."""
+    from hireloop_api.services.display_name import sanitize_display_name
+
     if not linkedin_data:
         return None
     name = _first_string(linkedin_data, _NAME_KEYS)
     if name:
-        return name
+        return sanitize_display_name(name)
     for node in _walk(linkedin_data):
         given = node.get("given_name")
         family = node.get("family_name")
@@ -220,7 +222,7 @@ def extract_linkedin_display_name(linkedin_data: Any) -> str | None:
             parts = [given.strip()]
             if isinstance(family, str) and family.strip():
                 parts.append(family.strip())
-            return " ".join(parts)
+            return sanitize_display_name(" ".join(parts))
     return None
 
 

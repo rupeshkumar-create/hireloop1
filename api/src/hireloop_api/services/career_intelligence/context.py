@@ -28,6 +28,8 @@ from hireloop_api.services.job_preferences import normalize_remote_preference
 from hireloop_api.services.profile_experience import (
     _aarya_role_insights,
     build_merged_experience,
+    enrich_ctx_from_merged_experience,
+    estimate_years_from_experience,
 )
 
 _WORK_MODE_LABELS = {
@@ -39,6 +41,7 @@ _WORK_MODE_LABELS = {
 
 def overlay_all_sources(intel: CareerIntelligence, ctx: dict[str, Any]) -> CareerIntelligence:
     """Apply deterministic overlays from every available data channel."""
+    ctx = enrich_ctx_from_merged_experience(ctx)
     _overlay_columns(intel, ctx)
     _overlay_career_profile(intel, ctx.get("career_profile") or {})
     _overlay_career_analysis(intel, ctx.get("career_analysis") or {})
@@ -312,6 +315,41 @@ def _overlay_linkedin(intel: CareerIntelligence, linkedin_data: dict[str, Any]) 
 
 def _overlay_experience_roles(intel: CareerIntelligence, ctx: dict[str, Any]) -> None:
     """Rich role history from LinkedIn + resume + career_profile, with Aarya bullets."""
+    merged = ctx.get("_merged_experience")
+    if merged is None:
+        merged = build_merged_experience(
+            resume_experience=ctx.get("resume_work_experience"),
+            linkedin_data=ctx.get("linkedin_data"),
+            career_profile=ctx.get("career_profile"),
+            career_intelligence=ctx.get("career_intelligence"),
+            candidate={
+                "current_title": ctx.get("current_title"),
+                "current_company": ctx.get("current_company"),
+            },
+            skills=ctx.get("skills"),
+        )
+
+    if merged:
+        skills = [str(s) for s in (ctx.get("skills") or [])]
+        intel.experience.role_history = [
+            RoleHistoryEntry(
+                title=_str_or_none(m.get("title")),
+                industry=_str_or_none(m.get("industry")),
+                seniority=_str_or_none(m.get("seniority")),
+                function=_str_or_none(m.get("employment_type")),
+                aarya_insights=list(m.get("aarya_insights") or _aarya_role_insights(m, skills))[:5],
+            )
+            for m in merged[:15]
+        ]
+        if not intel.experience.total_years:
+            years = estimate_years_from_experience(
+                merged,
+                fallback=ctx.get("years_experience"),
+            )
+            if years:
+                intel.experience.total_years = years
+        return
+
     if intel.experience.role_history:
         skills = [str(s) for s in (ctx.get("skills") or [])]
         for entry in intel.experience.role_history:
@@ -319,32 +357,6 @@ def _overlay_experience_roles(intel: CareerIntelligence, ctx: dict[str, Any]) ->
                 continue
             role_dict = entry.model_dump()
             entry.aarya_insights = _aarya_role_insights(role_dict, skills)
-        return
-
-    merged = build_merged_experience(
-        resume_experience=None,
-        linkedin_data=ctx.get("linkedin_data"),
-        career_profile=ctx.get("career_profile"),
-        career_intelligence=None,
-        candidate={
-            "current_title": ctx.get("current_title"),
-            "current_company": ctx.get("current_company"),
-        },
-        skills=ctx.get("skills"),
-    )
-    if not merged:
-        return
-
-    intel.experience.role_history = [
-        RoleHistoryEntry(
-            title=_str_or_none(m.get("title")),
-            industry=_str_or_none(m.get("industry")),
-            seniority=_str_or_none(m.get("seniority")),
-            function=_str_or_none(m.get("employment_type")),
-            aarya_insights=list(m.get("aarya_insights") or [])[:5],
-        )
-        for m in merged[:15]
-    ]
 
 
 def infer_deterministic_intelligence(intel: CareerIntelligence, ctx: dict[str, Any]) -> None:

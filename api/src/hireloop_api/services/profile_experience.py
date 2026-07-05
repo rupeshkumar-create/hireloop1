@@ -431,3 +431,258 @@ def _clean_str(value: object) -> str | None:
         return None
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text or None
+
+
+_OVERVIEW_FIELDS = (
+    "headline",
+    "summary",
+    "current_title",
+    "current_company",
+    "looking_for",
+    "years_experience",
+)
+
+_DURATION_ONLY_RE = re.compile(
+    r"^\(?\s*\d+\s*(?:year|yr|years|month|mo|months)",
+    re.I,
+)
+
+
+def _looks_corrupt_overview_value(value: object) -> bool:
+    """Detect mangled parse artifacts in overview columns."""
+    if value is None:
+        return True
+    if isinstance(value, int | float):
+        return False
+    if not isinstance(value, str):
+        return True
+    v = value.strip()
+    if not v or v.casefold() == "new candidate":
+        return True
+    if _DURATION_ONLY_RE.match(v):
+        return True
+    if re.match(r"^\(\d+\s+year", v, re.I):
+        return True
+    # Truncated title like "Senior C" from a bad resume parse.
+    if re.fullmatch(r"senior [a-z]", v, re.I):
+        return True
+    if " at (" in v and "month)" in v:
+        return True
+    if "fashion buying fashion buying" in v.casefold():
+        return True
+    return False
+
+
+def _current_role_from_experience(merged: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not merged:
+        return None
+    for role in merged:
+        if role.get("is_current"):
+            return role
+    return merged[0]
+
+
+def _parse_year_month(raw: str | None) -> tuple[int, int] | None:
+    if not raw:
+        return None
+    text = raw.strip()
+    year_m = re.search(r"(\d{4})", text)
+    if not year_m:
+        return None
+    year = int(year_m.group(1))
+    month_m = re.search(r"-(\d{1,2})\b", text)
+    month = int(month_m.group(1)) if month_m else 1
+    return year, min(max(month, 1), 12)
+
+
+def estimate_years_from_experience(
+    merged: list[dict[str, Any]],
+    *,
+    fallback: int | None = None,
+) -> int | None:
+    """Estimate total years from role date spans, else a conservative role-count heuristic."""
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    total_months = 0.0
+    for role in merged:
+        start = _parse_year_month(_clean_str(role.get("start_date")))
+        if not start:
+            continue
+        if role.get("is_current"):
+            end = (now.year, now.month)
+        else:
+            parsed_end = _parse_year_month(_clean_str(role.get("end_date")))
+            end = parsed_end or (now.year, now.month)
+        months = (end[0] - start[0]) * 12 + (end[1] - start[1])
+        if months > 0:
+            total_months += months
+    if total_months >= 6:
+        return max(1, round(total_months / 12))
+    if merged:
+        return max(fallback or 0, len(merged) * 2) or None
+    return fallback
+
+
+def _build_summary_from_experience(
+    merged: list[dict[str, Any]],
+    skills: list[str] | None,
+) -> str | None:
+    current = _current_role_from_experience(merged)
+    parts: list[str] = []
+    if current:
+        title = _clean_str(current.get("title"))
+        company = _clean_str(current.get("company"))
+        if title and company:
+            parts.append(f"Currently {title} at {company}")
+        elif title:
+            parts.append(f"Currently {title}")
+
+    history: list[str] = []
+    for role in merged[:4]:
+        title = _clean_str(role.get("title"))
+        company = _clean_str(role.get("company"))
+        if title and company:
+            history.append(f"{title} at {company}")
+        elif title:
+            history.append(title)
+    if len(history) > 1:
+        parts.append(f"Background includes {'; '.join(history[1:])}")
+    elif history and not parts:
+        parts.append(history[0])
+
+    skill_list = [str(s).strip() for s in (skills or []) if str(s).strip()][:8]
+    if skill_list:
+        parts.append(f"Skills: {', '.join(skill_list)}")
+    if not parts:
+        return None
+    return ". ".join(parts) + "."
+
+
+def derive_overview_from_experience(
+    merged: list[dict[str, Any]],
+    *,
+    candidate: dict[str, Any] | None = None,
+    linkedin_data: Any = None,
+    skills: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build overview fields from merged work history (richest source of truth)."""
+    current = _current_role_from_experience(merged)
+    current_title = _clean_str(current.get("title")) if current else None
+    current_company = _clean_str(current.get("company")) if current else None
+
+    if current_title and current_company:
+        headline = f"{current_title} at {current_company}"
+    elif current_title:
+        headline = current_title
+    else:
+        headline = best_linkedin_headline(linkedin_data)
+
+    summary = _build_summary_from_experience(merged, skills)
+    years = estimate_years_from_experience(
+        merged,
+        fallback=(candidate or {}).get("years_experience"),
+    )
+
+    looking_for = (candidate or {}).get("looking_for")
+    if _looks_corrupt_overview_value(looking_for):
+        looking_for = None
+    if not looking_for and current_title:
+        lower = current_title.casefold()
+        if "manager" in lower or "director" in lower or "head" in lower:
+            looking_for = current_title
+        elif "senior" not in lower:
+            looking_for = f"Senior {current_title}"
+
+    out: dict[str, Any] = {}
+    if headline:
+        out["headline"] = headline
+    if summary:
+        out["summary"] = summary
+    if current_title:
+        out["current_title"] = current_title
+    if current_company:
+        out["current_company"] = current_company
+    if looking_for:
+        out["looking_for"] = looking_for
+    if years is not None:
+        out["years_experience"] = years
+    return out
+
+
+def reconcile_candidate_overview(
+    candidate: dict[str, Any],
+    merged: list[dict[str, Any]],
+    *,
+    linkedin_data: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Return (display_candidate, db_fixes).
+
+    Overview columns prefer merged experience when stored values are corrupt or
+    clearly out of sync with the current role in ``merged``.
+    """
+    if not merged:
+        return dict(candidate), {}
+
+    derived = derive_overview_from_experience(
+        merged,
+        candidate=candidate,
+        linkedin_data=linkedin_data,
+        skills=list(candidate.get("skills") or []),
+    )
+    current = _current_role_from_experience(merged)
+    exp_title = _clean_str(current.get("title")) if current else None
+    exp_company = _clean_str(current.get("company")) if current else None
+
+    out = dict(candidate)
+    fixes: dict[str, Any] = {}
+
+    for field in _OVERVIEW_FIELDS:
+        stored = candidate.get(field)
+        derived_val = derived.get(field)
+        if derived_val is None:
+            continue
+
+        replace = _looks_corrupt_overview_value(stored)
+        if field == "headline" and exp_title and derived_val:
+            replace = str(stored or "").strip().casefold() != str(derived_val).strip().casefold()
+        elif not replace and field == "headline":
+            replace = stored == candidate.get("full_name") or stored == "New candidate"
+        if not replace and field == "current_title" and exp_title:
+            replace = bool(stored) and str(stored).strip().casefold() != exp_title.casefold()
+        if not replace and field == "current_company" and exp_company:
+            replace = bool(stored) and str(stored).strip().casefold() != exp_company.casefold()
+
+        if replace or (stored in (None, "") and derived_val):
+            out[field] = derived_val
+            if stored != derived_val:
+                fixes[field] = derived_val
+
+    return out, fixes
+
+
+def enrich_ctx_from_merged_experience(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Overlay career-intelligence context with experience-derived overview facts."""
+    merged = build_merged_experience(
+        resume_experience=ctx.get("resume_work_experience"),
+        linkedin_data=ctx.get("linkedin_data"),
+        career_profile=ctx.get("career_profile"),
+        career_intelligence=ctx.get("career_intelligence"),
+        candidate=ctx,
+        skills=ctx.get("skills"),
+    )
+    if not merged:
+        return ctx
+
+    enriched = dict(ctx)
+    enriched["_merged_experience"] = merged
+    reconciled, _ = reconcile_candidate_overview(
+        enriched,
+        merged,
+        linkedin_data=ctx.get("linkedin_data"),
+    )
+    for field in _OVERVIEW_FIELDS:
+        if field in reconciled:
+            enriched[field] = reconciled[field]
+    return enriched

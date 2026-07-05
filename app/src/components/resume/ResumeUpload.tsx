@@ -14,6 +14,7 @@
 import { useState, useRef, useCallback } from "react";
 import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { ApiUnreachableError, apiAuthFetch } from "@/lib/api/auth-fetch";
+import { invalidateProfileCache } from "@/lib/api/profile";
 import { cn } from "@/lib/utils";
 
 interface ParsedResume {
@@ -56,14 +57,17 @@ export function ResumeUpload({
 
   const applyResumeToProfile = useCallback(async (result: UploadResponse) => {
     try {
+      // replace: a deliberately uploaded CV is the source of truth — the
+      // profile overview must follow it, not keep the old values.
       const res = await apiAuthFetch(
-        `/api/v1/resumes/${result.resume_id}/apply-to-profile`,
+        `/api/v1/resumes/${result.resume_id}/apply-to-profile?mode=replace`,
         { method: "POST" }
       );
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail ?? "Failed to apply to profile");
       }
+      invalidateProfileCache();
       setState("done");
       onDone?.(result.resume_id, result.parsed);
     } catch (err) {

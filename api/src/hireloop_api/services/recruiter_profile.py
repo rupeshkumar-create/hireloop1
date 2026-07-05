@@ -33,9 +33,7 @@ def build_hiring_focus_from_roles(role_rows: list[dict[str, Any]]) -> str | None
         loc = ", ".join(part for part in (city, state) if part)
         if loc:
             parts.append(f"({loc})")
-        brief = _first_line(row.get("hiring_brief")) or _first_line(
-            row.get("jd_text"), max_len=100
-        )
+        brief = _first_line(row.get("hiring_brief")) or _first_line(row.get("jd_text"), max_len=100)
         if brief:
             parts.append(f"— {brief}")
         lines.append(" ".join(parts))

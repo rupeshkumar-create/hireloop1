@@ -30,15 +30,19 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
     pathname?.match(/\/recruiter\/roles\/[^/]+\/(intake|pipeline)/)
   );
 
-  const isActive = (item: RecruiterNavItem) =>
-    pathname === item.href ||
-    (item.match?.some((m) => pathname?.startsWith(m)) ?? false);
+  const isActive = (item: RecruiterNavItem) => {
+    if (item.id === "dashboard") return pathname === "/recruiter";
+    return (
+      pathname === item.href ||
+      (item.match?.some((m) => pathname?.startsWith(m)) ?? false)
+    );
+  };
 
   return (
     <div className="flex h-screen bg-paper-0 overflow-hidden">
       <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
         <Link
-          href="/recruiter/inbox"
+          href="/recruiter"
           aria-label="Hireloop recruiter"
           className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900"
         >

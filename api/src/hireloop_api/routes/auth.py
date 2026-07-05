@@ -39,7 +39,6 @@ from hireloop_api.deps import (
 from hireloop_api.markets import normalize_market, validate_e164_phone
 from hireloop_api.services import otp_store
 from hireloop_api.services.bootstrap_roles import can_switch_roles, resolve_bootstrap_role
-from hireloop_api.services.user_profiles import user_profile_flags
 from hireloop_api.services.consent import log_consent
 from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
 from hireloop_api.services.linkedin_oauth import (
@@ -52,6 +51,7 @@ from hireloop_api.services.supabase_auth_admin import (
     ensure_oauth_email_confirmed,
     is_oauth_signup,
 )
+from hireloop_api.services.user_profiles import user_profile_flags
 from hireloop_api.services.whatsapp.msg91 import Msg91Client
 
 logger = structlog.get_logger()

@@ -1,6 +1,6 @@
 // Auto-generated from the Hireloop brand asset library (hireloop-assets.js).
 // Each icon: `l` = line paths (currentColor), `n` = optional lime "live node".
-// Geometric line system on a 24 grid, 1.75 stroke, round caps/joins.
+// Geometric line system on a 24 grid, 1.75 stroke, square caps/joins.
 
 export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
   "loop": {
@@ -11,7 +11,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "l": "<path d=\"M12 4.2c.4 3.1 1.5 4.2 4.6 4.6-3.1.4-4.2 1.5-4.6 4.6-.4-3.1-1.5-4.2-4.6-4.6 3.1-.4 4.2-1.5 4.6-4.6Z\"/><path d=\"M17.5 14.5c.2 1.4.7 1.9 2.1 2.1-1.4.2-1.9.7-2.1 2.1-.2-1.4-.7-1.9-2.1-2.1 1.4-.2 1.9-.7 2.1-2.1Z\"/>"
   },
   "agent": {
-    "l": "<rect x=\"4.5\" y=\"6\" width=\"15\" height=\"11\" rx=\"3.2\"/><path d=\"M12 6V3.5\"/><path d=\"M8.5 20h7\"/>",
+    "l": "<rect x=\"4.5\" y=\"6\" width=\"15\" height=\"11\" rx=\"0\"/><path d=\"M12 6V3.5\"/><path d=\"M8.5 20h7\"/>",
     "n": "<circle cx=\"9.5\" cy=\"11.5\" r=\"1.4\"/><circle cx=\"14.5\" cy=\"11.5\" r=\"1.4\"/>"
   },
   "brain": {
@@ -23,7 +23,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "n": "<circle cx=\"12\" cy=\"12\" r=\"1.6\"/>"
   },
   "mic": {
-    "l": "<rect x=\"9.3\" y=\"3.5\" width=\"5.4\" height=\"10.5\" rx=\"2.7\"/><path d=\"M6 11.2a6 6 0 0 0 12 0\"/><path d=\"M12 17.2v3.3\"/>",
+    "l": "<rect x=\"9.3\" y=\"3.5\" width=\"5.4\" height=\"10.5\" rx=\"0\"/><path d=\"M6 11.2a6 6 0 0 0 12 0\"/><path d=\"M12 17.2v3.3\"/>",
     "n": "<circle cx=\"12\" cy=\"8.5\" r=\"1.3\"/>"
   },
   "mic-off": {
@@ -31,7 +31,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
   },
   "waveform": {
     "l": "<path d=\"M4 11v2M7.5 8.5v7M14.5 6v12M18 9v6M20.5 11v2\"/>",
-    "n": "<rect x=\"10.4\" y=\"4\" width=\"3.2\" height=\"16\" rx=\"1.6\" stroke=\"none\"/>"
+    "n": "<rect x=\"10.4\" y=\"4\" width=\"3.2\" height=\"16\" rx=\"0\" stroke=\"none\"/>"
   },
   "chat": {
     "l": "<path d=\"M5 16.5 4 20l3.4-1a8 8 0 1 0-2.4-2.5Z\"/>",
@@ -39,14 +39,14 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
   },
   "home": {
     "l": "<path d=\"M4 11 12 4.5 20 11\"/><path d=\"M6 9.9V19a1.2 1.2 0 0 0 1.2 1.2h9.6A1.2 1.2 0 0 0 18 19V9.9\"/>",
-    "n": "<rect x=\"10\" y=\"14\" width=\"4\" height=\"6.2\" rx=\"1\" stroke=\"none\"/>"
+    "n": "<rect x=\"10\" y=\"14\" width=\"4\" height=\"6.2\" rx=\"0\" stroke=\"none\"/>"
   },
   "briefcase": {
-    "l": "<rect x=\"3.8\" y=\"7.5\" width=\"16.4\" height=\"12\" rx=\"3\"/><path d=\"M8.4 7.5V6a2.2 2.2 0 0 1 2.2-2.2h2.8A2.2 2.2 0 0 1 15.6 6v1.5\"/><path d=\"M3.8 12.6h16.4\"/>",
+    "l": "<rect x=\"3.8\" y=\"7.5\" width=\"16.4\" height=\"12\" rx=\"0\"/><path d=\"M8.4 7.5V6a2.2 2.2 0 0 1 2.2-2.2h2.8A2.2 2.2 0 0 1 15.6 6v1.5\"/><path d=\"M3.8 12.6h16.4\"/>",
     "n": "<circle cx=\"12\" cy=\"12.6\" r=\"1.5\"/>"
   },
   "inbox": {
-    "l": "<rect x=\"3.8\" y=\"4.5\" width=\"16.4\" height=\"15\" rx=\"3\"/><path d=\"M3.8 14h4.4l1.2 2h5.2l1.2-2h4.4\"/>",
+    "l": "<rect x=\"3.8\" y=\"4.5\" width=\"16.4\" height=\"15\" rx=\"0\"/><path d=\"M3.8 14h4.4l1.2 2h5.2l1.2-2h4.4\"/>",
     "n": "<circle cx=\"12\" cy=\"9\" r=\"1.5\"/>"
   },
   "profile": {
@@ -68,7 +68,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "l": "<circle cx=\"6\" cy=\"6.5\" r=\"2.4\"/><circle cx=\"18\" cy=\"17.5\" r=\"2.4\"/><path d=\"M8.4 6.5H14a3.5 3.5 0 0 1 0 7h-4a3.5 3.5 0 0 0 0 7h5.6\"/>"
   },
   "board": {
-    "l": "<rect x=\"3.8\" y=\"4.5\" width=\"16.4\" height=\"15\" rx=\"3\"/><path d=\"M9 8.5v7M15 8.5v4\"/>",
+    "l": "<rect x=\"3.8\" y=\"4.5\" width=\"16.4\" height=\"15\" rx=\"0\"/><path d=\"M9 8.5v7M15 8.5v4\"/>",
     "n": "<rect x=\"7.5\" y=\"15\" width=\"3\" height=\"0.1\" stroke=\"none\"/><circle cx=\"15\" cy=\"13.5\" r=\"1.4\"/>"
   },
   "company": {
@@ -80,7 +80,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "n": "<circle cx=\"12\" cy=\"10\" r=\"1.5\"/>"
   },
   "calendar": {
-    "l": "<rect x=\"3.8\" y=\"5.5\" width=\"16.4\" height=\"14\" rx=\"3\"/><path d=\"M3.8 9.6h16.4M8.4 3.5v4M15.6 3.5v4\"/>",
+    "l": "<rect x=\"3.8\" y=\"5.5\" width=\"16.4\" height=\"14\" rx=\"0\"/><path d=\"M3.8 9.6h16.4M8.4 3.5v4M15.6 3.5v4\"/>",
     "n": "<circle cx=\"15.5\" cy=\"14\" r=\"1.5\"/>"
   },
   "bell": {
@@ -116,7 +116,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "l": "<path d=\"M6 6 18 18M18 6 6 18\"/>"
   },
   "copy": {
-    "l": "<rect x=\"8.4\" y=\"8.4\" width=\"11.2\" height=\"11.2\" rx=\"2.8\"/><path d=\"M15.6 8.4V6.2A2.2 2.2 0 0 0 13.4 4H6.2A2.2 2.2 0 0 0 4 6.2v7.2A2.2 2.2 0 0 0 6.2 15.6h2.2\"/>"
+    "l": "<rect x=\"8.4\" y=\"8.4\" width=\"11.2\" height=\"11.2\" rx=\"0\"/><path d=\"M15.6 8.4V6.2A2.2 2.2 0 0 0 13.4 4H6.2A2.2 2.2 0 0 0 4 6.2v7.2A2.2 2.2 0 0 0 6.2 15.6h2.2\"/>"
   },
   "download": {
     "l": "<path d=\"M12 4v10M8 10.5l4 4 4-4\"/><path d=\"M5 18.5h14\"/>",
@@ -194,7 +194,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "n": "<circle cx=\"12\" cy=\"13.6\" r=\"1.4\"/>"
   },
   "mail": {
-    "l": "<rect x=\"3.8\" y=\"6\" width=\"16.4\" height=\"12\" rx=\"3\"/><path d=\"m4.4 8 6.5 4.6a2 2 0 0 0 2.2 0L19.6 8\"/>"
+    "l": "<rect x=\"3.8\" y=\"6\" width=\"16.4\" height=\"12\" rx=\"0\"/><path d=\"m4.4 8 6.5 4.6a2 2 0 0 0 2.2 0L19.6 8\"/>"
   },
   "message": {
     "l": "<path d=\"M4.5 6.5A2 2 0 0 1 6.5 4.5h11A2 2 0 0 1 19.5 6.5V14A2 2 0 0 1 17.5 16H9l-4 3.5V16H6.5\"/>",
@@ -208,11 +208,11 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
     "l": "<path d=\"M6.6 4.5 8.5 4a1.4 1.4 0 0 1 1.5.9l1 2.5a1.4 1.4 0 0 1-.4 1.6l-1.3 1a11 11 0 0 0 4.7 4.7l1-1.3a1.4 1.4 0 0 1 1.6-.4l2.5 1a1.4 1.4 0 0 1 .9 1.5l-.5 1.9a1.6 1.6 0 0 1-1.7 1.2A15 15 0 0 1 5.4 6.2 1.6 1.6 0 0 1 6.6 4.5Z\"/>"
   },
   "video": {
-    "l": "<rect x=\"3.5\" y=\"6.5\" width=\"12\" height=\"11\" rx=\"2.6\"/><path d=\"M15.5 10.5 20.5 7.5V16.5L15.5 13.5Z\"/>",
+    "l": "<rect x=\"3.5\" y=\"6.5\" width=\"12\" height=\"11\" rx=\"0\"/><path d=\"M15.5 10.5 20.5 7.5V16.5L15.5 13.5Z\"/>",
     "n": "<circle cx=\"9.5\" cy=\"12\" r=\"1.5\"/>"
   },
   "linkedin": {
-    "l": "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"3.4\"/><path d=\"M8 10.6V16M8 8v.02M11.6 16v-3.2a2 2 0 0 1 4 0V16M11.6 16v-5.4\"/>"
+    "l": "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"0\"/><path d=\"M8 10.6V16M8 8v.02M11.6 16v-3.2a2 2 0 0 1 4 0V16M11.6 16v-5.4\"/>"
   },
   "rupee": {
     "l": "<path d=\"M8 5.5h8M8 9h8M15 5.5c0 3.6-3 5-6 5H8.2l6.5 8\"/>"

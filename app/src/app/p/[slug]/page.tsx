@@ -101,9 +101,9 @@ export default function PublicProfilePage() {
       <main className="max-w-2xl mx-auto px-5 py-8 space-y-6">
         <div className="space-y-2">
           <h1 className="text-h1 font-semibold text-ink-900">
-            {profile.display_name ?? "Candidate"}
+            {profile.display_name ?? profile.headline ?? "Candidate profile"}
           </h1>
-          {profile.headline && (
+          {profile.display_name && profile.headline && (
             <p className="text-body text-ink-600">{profile.headline}</p>
           )}
           <div className="flex flex-wrap gap-3 text-micro text-ink-500">

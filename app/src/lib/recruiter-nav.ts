@@ -5,13 +5,14 @@
 import {
   ArrowLeftRight,
   Briefcase,
+  Home,
   Inbox,
   Plus,
   Settings,
   type LucideIcon,
 } from "@/components/brand/icons";
 
-export type RecruiterNavId = "inbox" | "roles" | "new" | "settings" | "switch";
+export type RecruiterNavId = "dashboard" | "inbox" | "roles" | "new" | "settings" | "switch";
 
 export type RecruiterNavItem = {
   id: RecruiterNavId;
@@ -23,6 +24,7 @@ export type RecruiterNavItem = {
 };
 
 export const RECRUITER_NAV: RecruiterNavItem[] = [
+  { id: "dashboard", label: "Dashboard", href: "/recruiter", Icon: Home },
   { id: "inbox", label: "Inbox", href: "/recruiter/inbox", Icon: Inbox },
   {
     id: "roles",

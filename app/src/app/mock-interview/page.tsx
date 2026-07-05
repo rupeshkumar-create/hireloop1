@@ -51,7 +51,7 @@ export default function MockInterviewLauncherPage() {
   }
 
   return (
-    <AppShell title="Mock interview" activeNav="coaching">
+    <AppShell title="Mock interview">
       <div className="mx-auto w-full max-w-md space-y-6">
 
         {/* Card */}

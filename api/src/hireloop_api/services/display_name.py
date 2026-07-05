@@ -4,6 +4,24 @@ from __future__ import annotations
 
 import re
 
+# LinkedIn / Apify sometimes prefix scraped names with connection labels.
+_JUNK_NAME_PREFIXES = re.compile(
+    r"^(?:contact|connect|message|view profile|linkedin member)\s+",
+    re.I,
+)
+
+
+def sanitize_display_name(full_name: str | None) -> str | None:
+    """Strip LinkedIn UI junk and normalize whitespace from a person name."""
+    name = (full_name or "").strip()
+    if not name:
+        return None
+    cleaned = _JUNK_NAME_PREFIXES.sub("", name).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if len(cleaned) < 2:
+        return None
+    return cleaned
+
 
 def looks_like_email_derived_name(full_name: str | None, email: str | None) -> bool:
     """
@@ -46,9 +64,9 @@ def pick_display_name(
     linkedin_full_name: str | None = None,
 ) -> str | None:
     """Best display name for UI salutations."""
-    resume = (resume_full_name or "").strip()
-    linkedin = (linkedin_full_name or "").strip()
-    current = (user_full_name or "").strip()
+    resume = sanitize_display_name(resume_full_name)
+    linkedin = sanitize_display_name(linkedin_full_name)
+    current = sanitize_display_name(user_full_name)
 
     if resume and (not current or looks_like_email_derived_name(current, email)):
         return resume

@@ -61,7 +61,15 @@ const config: Config = {
         display: ["40px", { lineHeight: "1.1",  fontWeight: "600", letterSpacing: "-0.01em" }],
       },
       borderRadius: {
-        sm: "6px", md: "10px", lg: "14px", xl: "20px", full: "9999px",
+        none: "0",
+        sm: "0",
+        DEFAULT: "0",
+        md: "0",
+        lg: "0",
+        xl: "0",
+        "2xl": "0",
+        "3xl": "0",
+        full: "0",
       },
       boxShadow: {
         "1": "0 1px 2px rgba(14,14,16,0.04), 0 1px 1px rgba(14,14,16,0.02)",
