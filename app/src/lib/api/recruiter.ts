@@ -208,15 +208,20 @@ export type RecruiterCandidateSearchHit = {
   candidate_id: string;
   display_name: string;
   headline: string | null;
+  summary?: string | null;
   current_title: string | null;
   current_company: string | null;
   location_city: string | null;
+  location_state?: string | null;
   years_experience: number | null;
+  looking_for?: string | null;
+  skills?: string[];
   role_id: string | null;
   role_title: string | null;
   pipeline_stage: string | null;
   match_score: number | null;
   source: "pipeline" | "discover";
+  public_profile_url?: string | null;
 };
 
 export function formatCompRange(
@@ -241,6 +246,19 @@ export async function fetchRecruiterDashboard(): Promise<RecruiterDashboardData>
   return apiFetch<RecruiterDashboardData>("/api/v1/recruiter/dashboard", {
     cache: "no-store",
   });
+}
+
+export async function listRecruiterCandidates(
+  query?: string,
+  roleId?: string,
+  limit = 50,
+): Promise<{ query: string | null; count: number; candidates: RecruiterCandidateSearchHit[] }> {
+  const params = new URLSearchParams();
+  if (query?.trim()) params.set("q", query.trim());
+  if (roleId) params.set("role_id", roleId);
+  params.set("limit", String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/v1/recruiter/candidates${qs ? `?${qs}` : ""}`, { cache: "no-store" });
 }
 
 export async function searchRecruiterCandidates(

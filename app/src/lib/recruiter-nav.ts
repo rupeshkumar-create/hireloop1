@@ -9,10 +9,18 @@ import {
   Inbox,
   Plus,
   Settings,
+  Users,
   type LucideIcon,
 } from "@/components/brand/icons";
 
-export type RecruiterNavId = "dashboard" | "inbox" | "roles" | "new" | "settings" | "switch";
+export type RecruiterNavId =
+  | "dashboard"
+  | "inbox"
+  | "candidates"
+  | "roles"
+  | "new"
+  | "settings"
+  | "switch";
 
 export type RecruiterNavItem = {
   id: RecruiterNavId;
@@ -26,6 +34,13 @@ export type RecruiterNavItem = {
 export const RECRUITER_NAV: RecruiterNavItem[] = [
   { id: "dashboard", label: "Dashboard", href: "/recruiter", Icon: Home },
   { id: "inbox", label: "Inbox", href: "/recruiter/inbox", Icon: Inbox },
+  {
+    id: "candidates",
+    label: "Talent",
+    href: "/recruiter/candidates",
+    Icon: Users,
+    match: ["/recruiter/candidates"],
+  },
   {
     id: "roles",
     label: "Roles",

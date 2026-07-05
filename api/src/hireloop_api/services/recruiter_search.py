@@ -383,6 +383,168 @@ async def load_pipeline_candidates_for_chat(
     return [_serialize_candidate_card(r) for r in rows]
 
 
+def _candidate_search_clause(param_ref: str) -> str:
+    """ILIKE filter on name, title, company, headline, skills, looking_for."""
+    return f"""
+      AND (
+        u.full_name ILIKE {param_ref}
+        OR c.headline ILIKE {param_ref}
+        OR c.current_title ILIKE {param_ref}
+        OR c.current_company ILIKE {param_ref}
+        OR c.looking_for ILIKE {param_ref}
+        OR EXISTS (
+          SELECT 1 FROM unnest(COALESCE(c.skills, ARRAY[]::text[])) s
+          WHERE s ILIKE {param_ref}
+        )
+      )
+    """
+
+
+def _serialize_directory_row(row: asyncpg.Record) -> dict[str, Any]:
+    from hireloop_api.services.display_name import sanitize_display_name
+
+    d = dict(row)
+    cid = str(d["candidate_id"])
+    skills = d.get("skills")
+    if isinstance(skills, list):
+        skills_list = [str(s) for s in skills if str(s).strip()]
+    else:
+        skills_list = []
+
+    slug = d.get("public_slug")
+    public_enabled = bool(d.get("public_profile_enabled"))
+    public_url = f"/p/{slug}" if slug and public_enabled else None
+
+    return {
+        "candidate_id": cid,
+        "display_name": sanitize_display_name(d.get("full_name")) or "Candidate",
+        "headline": d.get("headline"),
+        "summary": d.get("summary"),
+        "current_title": d.get("current_title"),
+        "current_company": d.get("current_company"),
+        "location_city": d.get("location_city"),
+        "location_state": d.get("location_state"),
+        "years_experience": d.get("years_experience"),
+        "looking_for": d.get("looking_for"),
+        "skills": skills_list[:12],
+        "role_id": str(d["role_id"]) if d.get("role_id") else None,
+        "role_title": d.get("role_title"),
+        "pipeline_stage": d.get("pipeline_stage"),
+        "match_score": float(d["match_score"]) if d.get("match_score") is not None else None,
+        "source": d.get("source") or "discover",
+        "public_profile_url": public_url,
+    }
+
+
+async def list_recruiter_candidates(
+    db: asyncpg.Connection,
+    *,
+    recruiter_id: uuid.UUID,
+    q: str | None = None,
+    role_id: uuid.UUID | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Pipeline matches plus opted-in talent pool for the recruiter directory."""
+    query = (q or "").strip()
+    pattern = f"%{query}%" if query else None
+    search_sql = _candidate_search_clause("$4") if pattern else ""
+
+    pipeline_rows = await db.fetch(
+        f"""
+        SELECT DISTINCT ON (c.id)
+          c.id AS candidate_id,
+          u.full_name,
+          c.headline,
+          c.summary,
+          c.current_title,
+          c.current_company,
+          c.location_city,
+          c.location_state,
+          c.years_experience,
+          c.skills,
+          c.looking_for,
+          c.public_slug,
+          c.public_profile_enabled,
+          r.id AS role_id,
+          r.title AS role_title,
+          p.stage AS pipeline_stage,
+          p.match_score,
+          'pipeline' AS source
+        FROM public.role_pipeline p
+        JOIN public.roles r ON r.id = p.role_id
+        JOIN public.candidates c ON c.id = p.candidate_id
+        JOIN public.users u ON u.id = c.user_id
+        JOIN public.recruiters rec ON rec.id = r.recruiter_id
+        WHERE r.recruiter_id = $1
+          AND r.deleted_at IS NULL
+          AND c.deleted_at IS NULL
+          AND u.deleted_at IS NULL
+          AND c.user_id <> rec.user_id
+          AND ($2::uuid IS NULL OR r.id = $2::uuid)
+          {search_sql}
+        ORDER BY c.id, p.match_score DESC NULLS LAST
+        LIMIT $3
+        """,
+        recruiter_id,
+        role_id,
+        limit,
+        *([pattern] if pattern else []),
+    )
+
+    seen = {str(r["candidate_id"]) for r in pipeline_rows}
+    remaining = max(0, limit - len(pipeline_rows))
+    discover_rows: list[asyncpg.Record] = []
+    if remaining > 0:
+        exclude_ids = [uuid.UUID(cid) for cid in seen]
+        discover_search = _candidate_search_clause("$2") if pattern else ""
+        discover_rows = await db.fetch(
+            f"""
+            SELECT
+              c.id AS candidate_id,
+              u.full_name,
+              c.headline,
+              c.summary,
+              c.current_title,
+              c.current_company,
+              c.location_city,
+              c.location_state,
+              c.years_experience,
+              c.skills,
+              c.looking_for,
+              c.public_slug,
+              c.public_profile_enabled,
+              NULL::uuid AS role_id,
+              NULL::text AS role_title,
+              NULL::text AS pipeline_stage,
+              NULL::real AS match_score,
+              'discover' AS source
+            FROM public.candidates c
+            JOIN public.users u ON u.id = c.user_id
+            JOIN public.recruiters rec ON rec.id = $3
+            WHERE c.deleted_at IS NULL
+              AND u.deleted_at IS NULL
+              AND c.share_with_recruiters = TRUE
+              AND c.visibility IN ('open_to_matches', 'exceptional_only')
+              AND c.user_id <> rec.user_id
+              AND NOT (c.id = ANY($4::uuid[]))
+              {discover_search}
+            ORDER BY c.updated_at DESC NULLS LAST
+            LIMIT $1
+            """,
+            remaining,
+            *([pattern] if pattern else []),
+            recruiter_id,
+            exclude_ids,
+        )
+
+    results: list[dict[str, Any]] = []
+    for row in list(pipeline_rows) + list(discover_rows):
+        results.append(_serialize_directory_row(row))
+        if len(results) >= limit:
+            break
+    return results
+
+
 async def shortlist_top_candidates(
     db: asyncpg.Connection,
     *,
