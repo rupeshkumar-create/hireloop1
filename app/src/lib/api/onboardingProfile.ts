@@ -93,6 +93,12 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
     if (res.status === 401) {
       throw new Error(detail ?? "Session expired. Sign out and sign in again.");
     }
+    if (res.status === 502 || res.status === 503) {
+      throw new Error(
+        detail ??
+          "API is temporarily unavailable. Check NEXT_PUBLIC_API_URL on Vercel and redeploy.",
+      );
+    }
     throw new Error(detail ?? "Resume upload failed");
   }
   const data = (await res.json()) as ResumeUploadPayload;

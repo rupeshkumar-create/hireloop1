@@ -388,7 +388,14 @@ async def bootstrap_user(
                 user_id,
                 initial_headline,
             )
-            await log_consent(db, user_id=user_id, purpose="profile_creation", granted=True)
+            try:
+                await log_consent(db, user_id=user_id, purpose="profile_creation", granted=True)
+            except Exception as exc:
+                logger.error(
+                    "candidate_consent_log_failed",
+                    user_id=str(user_id),
+                    error=str(exc),
+                )
 
         # Persist linkedin_data blob (best-effort, non-fatal)
         try:

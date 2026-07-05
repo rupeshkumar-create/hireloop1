@@ -419,11 +419,26 @@ async def upload_resume(
 
     supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key)
 
-    supabase.storage.from_("resumes").upload(
-        path=storage_path,
-        file=file_bytes,
-        file_options={"content-type": normalized_mime},
-    )
+    try:
+        supabase.storage.from_("resumes").upload(
+            path=storage_path,
+            file=file_bytes,
+            file_options={"content-type": normalized_mime},
+        )
+    except Exception as exc:
+        logger.error(
+            "resume_storage_upload_failed",
+            candidate_id=candidate_id,
+            path=storage_path,
+            error=str(exc)[:300],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Couldn't store your CV. Check that Supabase Storage bucket "
+                "'resumes' exists and SUPABASE_SERVICE_KEY is set on the API."
+            ),
+        ) from exc
 
     logger.info("resume_uploaded", candidate_id=candidate_id, path=storage_path)
 

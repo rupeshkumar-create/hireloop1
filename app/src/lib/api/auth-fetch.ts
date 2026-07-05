@@ -17,7 +17,7 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
-import { DIRECT_API_URL, getApiBaseUrl } from "@/lib/api/base-url";
+import { API_PROXY_PREFIX, DIRECT_API_URL, getApiBaseUrl, getUploadApiBaseUrl } from "@/lib/api/base-url";
 
 /**
  * Tagged error class so callers can distinguish a true API connectivity
@@ -72,14 +72,16 @@ export async function apiAuthFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  const base = getApiBaseUrl();
+  const multipart = init.body instanceof FormData;
+  const base = multipart ? getUploadApiBaseUrl() : getApiBaseUrl();
   const url = `${base}${path}`;
 
   try {
     return await fetch(url, {
       ...init,
       headers,
-      credentials: "same-origin",
+      // Bearer auth only — cookies are not required for API calls.
+      credentials: base === API_PROXY_PREFIX ? "same-origin" : "omit",
     });
   } catch (err) {
     // Browser fetch only throws on genuine network failures (CORS, DNS,

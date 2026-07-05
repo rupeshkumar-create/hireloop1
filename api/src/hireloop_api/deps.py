@@ -214,7 +214,9 @@ async def _provision_user_row(
     (we never resurrect a soft-deleted account).
     """
     user_id = coerce_uuid(supabase_user["id"])
-    email = str(supabase_user.get("email") or "")
+    email = str(supabase_user.get("email") or "").strip()
+    if not email:
+        email = f"{user_id}@signup.hireloop.internal"
     meta = supabase_user.get("user_metadata") or {}
 
     # SECURITY: `user_metadata` (raw_user_meta_data) is attacker-controlled at
@@ -235,20 +237,38 @@ async def _provision_user_row(
     if market not in ("IN", "US", "GB"):
         market = "IN"
 
-    row = await db.fetchrow(
-        """
-        INSERT INTO public.users (id, email, full_name, avatar_url, role, phone_verified, market)
-        VALUES ($1::uuid, $2, $3, $4, $5, FALSE, $6)
-        ON CONFLICT (id) DO NOTHING
-        RETURNING id, email, phone, full_name, avatar_url, role, phone_verified, market
-        """,
-        user_id,
-        email,
-        full_name,
-        avatar,
-        role,
-        market,
-    )
+    try:
+        row = await db.fetchrow(
+            """
+            INSERT INTO public.users (id, email, full_name, avatar_url, role, phone_verified, market)
+            VALUES ($1::uuid, $2, $3, $4, $5, FALSE, $6)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, email, phone, full_name, avatar_url, role, phone_verified, market
+            """,
+            user_id,
+            email,
+            full_name,
+            avatar,
+            role,
+            market,
+        )
+    except asyncpg.UniqueViolationError:
+        # Another auth identity already owns this email — keep FK row with a stable placeholder.
+        email = f"{user_id}@signup.hireloop.internal"
+        row = await db.fetchrow(
+            """
+            INSERT INTO public.users (id, email, full_name, avatar_url, role, phone_verified, market)
+            VALUES ($1::uuid, $2, $3, $4, $5, FALSE, $6)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, email, phone, full_name, avatar_url, role, phone_verified, market
+            """,
+            user_id,
+            email,
+            full_name,
+            avatar,
+            role,
+            market,
+        )
 
     if row is None:
         # Conflict: a row already exists for this id. Re-select the live row —

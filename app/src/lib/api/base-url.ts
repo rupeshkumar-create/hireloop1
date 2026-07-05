@@ -23,22 +23,37 @@ export function getApiBaseUrl(): string {
 }
 
 /**
+ * Base URL for browser multipart uploads (CV, etc.).
+ *
+ * On Vercel, proxying large FormData through `/hireloop-api` can fail (body
+ * limits / timeouts). Deployed apps upload straight to the public API host;
+ * local dev keeps the same-origin proxy to avoid CORS quirks.
+ */
+export function getUploadApiBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return DIRECT_API_URL;
+  }
+  const isLocalApp =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  const isLoopbackApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(
+    DIRECT_API_URL,
+  );
+  if (!isLocalApp && !isLoopbackApi) {
+    return DIRECT_API_URL;
+  }
+  return API_PROXY_PREFIX;
+}
+
+/**
  * API base for server-side route handlers (OAuth callback, RSC).
  *
- * Prefer looping back through this app's `/hireloop-api` rewrite so bootstrap
- * works on Vercel without server-to-server CORS / wrong localhost defaults.
+ * Always call the FastAPI host directly — never loop back through the Next.js
+ * `/hireloop-api` proxy. A route handler that fetches its own origin (e.g.
+ * `localhost:3001/hireloop-api/...` during `/auth/callback`) can deadlock the
+ * dev server or fail on Vercel. Browser requests still use `getApiBaseUrl()`.
  */
-export function getServerApiBaseUrl(appOrigin?: string): string {
-  const origin = appOrigin?.replace(/\/$/, "");
-  if (origin) {
-    return `${origin}${API_PROXY_PREFIX}`;
-  }
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}${API_PROXY_PREFIX}`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}${API_PROXY_PREFIX}`;
-  }
+export function getServerApiBaseUrl(_appOrigin?: string): string {
   return DIRECT_API_URL;
 }
 

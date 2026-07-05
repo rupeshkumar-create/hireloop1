@@ -22,6 +22,8 @@ export async function finishAuthSession(
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ role }),
+      // OAuth callback runs server-side — don't wait forever if API is down.
+      ...(typeof window === "undefined" ? { signal: AbortSignal.timeout(15_000) } : {}),
     });
   } catch (err) {
     throw new ApiUnreachableError(base, err);
@@ -34,7 +36,12 @@ export async function finishAuthSession(
   };
 
   if (!res.ok) {
-    throw new Error(data.detail ?? "Account setup failed. Please try signing in again.");
+    const detail =
+      data.detail ??
+      (res.status === 502 || res.status === 503
+        ? "API is temporarily unavailable. Check NEXT_PUBLIC_API_URL and redeploy."
+        : "Account setup failed. Please try signing in again.");
+    throw new Error(detail);
   }
 
   const resolvedRole = data.role ?? role;
