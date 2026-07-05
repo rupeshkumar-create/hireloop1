@@ -223,7 +223,39 @@ function ActivationStep({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Editable copies of the parsed CV fields — the candidate corrects anything
+  // wrong here, and the confirmed values (not the raw parse) become the profile.
+  const [editTitle, setEditTitle] = useState("");
+  const [editCompany, setEditCompany] = useState("");
+  const [editYears, setEditYears] = useState("");
+  const [editSkills, setEditSkills] = useState<string[]>([]);
+  const [newSkill, setNewSkill] = useState("");
+  const [lookingFor, setLookingFor] = useState("");
+
   const hasResume = resumeFile !== null;
+
+  function seedEditableFields(summary: ParsedResumeSummary) {
+    setEditTitle(summary.current_title?.trim() ?? "");
+    setEditCompany(summary.current_company?.trim() ?? "");
+    setEditYears(
+      typeof summary.years_experience === "number" && summary.years_experience > 0
+        ? String(summary.years_experience)
+        : "",
+    );
+    setEditSkills((summary.skills ?? []).map((s) => s.trim()).filter(Boolean));
+    setNewSkill("");
+    // Default the search target to the current title; the candidate can retarget.
+    setLookingFor(summary.current_title?.trim() ?? "");
+  }
+
+  function addSkill() {
+    const s = newSkill.trim();
+    if (!s) return;
+    if (!editSkills.some((x) => x.toLowerCase() === s.toLowerCase())) {
+      setEditSkills((prev) => [...prev, s]);
+    }
+    setNewSkill("");
+  }
 
   // Phase 1: upload + parse the CV, then show "here's what I found" for review.
   async function handleUploadAndReview() {
@@ -255,6 +287,7 @@ function ActivationStep({
         const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
         throw new Error(data.detail ?? "Couldn't save consent.");
       }
+      seedEditableFields(summary);
       setParsed(summary);
     } catch (err) {
       setError(await formatOnboardingError(err));
@@ -263,12 +296,34 @@ function ActivationStep({
     }
   }
 
-  // Phase 2: candidate confirmed the parse — record consent + finish onboarding.
+  // Phase 2: candidate confirmed (and possibly corrected) the parse — save the
+  // confirmed fields to the profile, then finish onboarding.
   async function handleConfirm() {
     if (saving) return;
     setSaving(true);
     setError(null);
     try {
+      const corrections: Record<string, unknown> = {};
+      if (editTitle.trim()) corrections.current_title = editTitle.trim();
+      if (editCompany.trim()) corrections.current_company = editCompany.trim();
+      const years = Number.parseInt(editYears, 10);
+      if (Number.isFinite(years) && years >= 0 && years <= 60) {
+        corrections.years_experience = years;
+      }
+      if (editSkills.length > 0) corrections.skills = editSkills;
+      if (lookingFor.trim()) corrections.looking_for = lookingFor.trim();
+
+      if (Object.keys(corrections).length > 0) {
+        const patchRes = await apiAuthFetch("/api/v1/me/profile", {
+          method: "PATCH",
+          body: JSON.stringify(corrections),
+        });
+        if (!patchRes.ok) {
+          const data = (await patchRes.json().catch(() => ({}))) as { detail?: string };
+          throw new Error(data.detail ?? "Couldn't save your profile details.");
+        }
+      }
+
       const completeRes = await apiAuthFetch("/api/v1/me/complete-onboarding", {
         method: "POST",
         body: JSON.stringify({
@@ -461,50 +516,128 @@ function ActivationStep({
               Here&apos;s what I read from your CV
             </p>
             <p className="text-micro text-ink-400">
-              Looks off? Re-upload below — you can also refine details later in
-              your profile.
+              Fix anything I got wrong — these details drive your job matches.
             </p>
           </div>
 
-          <div className="space-y-2 text-small text-ink-800">
-            {parsed?.current_title && (
-              <p>
-                <span className="text-accent">✓</span>{" "}
-                <span className="font-medium">{parsed.current_title}</span>
-                {parsed.current_company ? ` · ${parsed.current_company}` : ""}
+          {!parsed?.current_title &&
+            !(parsed?.skills && parsed.skills.length > 0) && (
+              <p className="text-small text-ink-500">
+                I couldn&apos;t pull much from this file. Fill in the basics
+                below, or re-upload a clearer CV.
               </p>
             )}
-            {typeof parsed?.years_experience === "number" &&
-              parsed.years_experience > 0 && (
-                <p>
-                  <span className="text-accent">✓</span> {parsed.years_experience}{" "}
-                  years of experience
-                </p>
-              )}
-            {parsed?.skills && parsed.skills.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {parsed.skills.slice(0, 8).map((s) => (
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label htmlFor="confirm-title" className="text-small font-medium text-ink-700">
+                  Current title
+                </label>
+                <input
+                  id="confirm-title"
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="e.g. Category Manager"
+                  className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="confirm-company" className="text-small font-medium text-ink-700">
+                  Company
+                </label>
+                <input
+                  id="confirm-company"
+                  type="text"
+                  value={editCompany}
+                  onChange={(e) => setEditCompany(e.target.value)}
+                  placeholder="e.g. Myntra"
+                  className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="confirm-years" className="text-small font-medium text-ink-700">
+                Years of experience
+              </label>
+              <input
+                id="confirm-years"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={60}
+                value={editYears}
+                onChange={(e) => setEditYears(e.target.value)}
+                placeholder="e.g. 6"
+                className="w-full sm:w-32 rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="text-small font-medium text-ink-700">Top skills</span>
+              <div className="flex flex-wrap gap-1.5">
+                {editSkills.map((s) => (
                   <span
                     key={s}
-                    className="text-micro px-2 py-0.5 rounded-sm bg-ink-100 text-ink-700"
+                    className="inline-flex items-center gap-1 text-micro px-2 py-1 rounded-sm bg-ink-100 text-ink-700"
                   >
                     {s}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${s}`}
+                      onClick={() =>
+                        setEditSkills((prev) => prev.filter((x) => x !== s))
+                      }
+                      className="text-ink-400 hover:text-ink-900 transition-colors leading-none"
+                    >
+                      ×
+                    </button>
                   </span>
                 ))}
-                {parsed.skills.length > 8 && (
-                  <span className="text-micro text-ink-400 px-1 py-0.5">
-                    +{parsed.skills.length - 8} more
-                  </span>
-                )}
               </div>
-            )}
-            {!parsed?.current_title &&
-              !(parsed?.skills && parsed.skills.length > 0) && (
-                <p className="text-ink-500">
-                  I couldn&apos;t pull much from this file. Re-upload a clearer
-                  CV, or continue and finish your profile from the dashboard.
-                </p>
-              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newSkill}
+                  onChange={(e) => setNewSkill(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addSkill();
+                    }
+                  }}
+                  placeholder="Add a skill and press Enter"
+                  className="flex-1 rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+                />
+                <button
+                  type="button"
+                  onClick={addSkill}
+                  className="rounded-md border border-ink-200 px-3 py-2 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-1 border-t border-ink-100">
+              <label htmlFor="confirm-looking-for" className="text-small font-medium text-ink-700">
+                What role are you looking for?
+              </label>
+              <input
+                id="confirm-looking-for"
+                type="text"
+                value={lookingFor}
+                onChange={(e) => setLookingFor(e.target.value)}
+                placeholder="e.g. Senior Category Manager"
+                className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+              />
+              <p className="text-micro text-ink-400">
+                Aarya searches for this role first. Keep it simple — a plain
+                title works best.
+              </p>
+            </div>
           </div>
 
           {error && (
