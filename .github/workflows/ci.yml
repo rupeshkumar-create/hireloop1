@@ -54,10 +54,8 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      # NOTE: switch to --frozen-lockfile once the lockfile is regenerated
-      # (the committed lockfile still pins the vulnerable next@15.0.3).
       - name: Install
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
       - name: Typecheck (web + app)
         run: pnpm typecheck
 
