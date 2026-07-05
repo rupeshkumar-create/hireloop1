@@ -24,12 +24,18 @@ export function ResumePreviewModal({
   resumeId,
   jobId,
   jobTitle,
+  initialTab = "resume",
+  coverLetter: coverLetterProp,
+  interviewPrep: interviewPrepProp,
 }: {
   open: boolean;
   onClose: () => void;
   resumeId: string | null;
   jobId: string | null;
   jobTitle?: string | null;
+  initialTab?: Tab;
+  coverLetter?: string | null;
+  interviewPrep?: string | null;
 }) {
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("resume");
@@ -49,14 +55,27 @@ export function ResumePreviewModal({
       ]);
       setHtml(resumeHtml);
       setKit(kitData);
-      // Default to the first tab that actually has content.
-      setTab(resumeHtml ? "resume" : kitData?.cover_letter ? "cover_letter" : "resume");
+      const cover = coverLetterProp ?? kitData?.cover_letter ?? null;
+      const prep = interviewPrepProp ?? kitData?.interview_prep ?? null;
+      const preferred =
+        initialTab === "cover_letter" && cover
+          ? "cover_letter"
+          : initialTab === "interview_prep" && prep
+            ? "interview_prep"
+            : resumeHtml
+              ? "resume"
+              : cover
+                ? "cover_letter"
+                : prep
+                  ? "interview_prep"
+                  : "resume";
+      setTab(preferred);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't load preview");
     } finally {
       setLoading(false);
     }
-  }, [resumeId, jobId]);
+  }, [resumeId, jobId, initialTab, coverLetterProp, interviewPrepProp]);
 
   useEffect(() => {
     if (open) void load();
@@ -79,10 +98,13 @@ export function ResumePreviewModal({
     }
   };
 
+  const coverLetter = coverLetterProp ?? kit?.cover_letter ?? null;
+  const interviewPrep = interviewPrepProp ?? kit?.interview_prep ?? null;
+
   const tabs: { key: Tab; label: string; available: boolean }[] = [
-    { key: "resume", label: "Resume", available: !!html },
-    { key: "cover_letter", label: "Cover letter", available: !!kit?.cover_letter },
-    { key: "interview_prep", label: "Interview prep", available: !!kit?.interview_prep },
+    { key: "resume", label: "Resume (PDF)", available: !!html },
+    { key: "cover_letter", label: "Cover letter", available: !!coverLetter },
+    { key: "interview_prep", label: "Interview prep", available: !!interviewPrep },
   ];
 
   return (
@@ -132,12 +154,17 @@ export function ResumePreviewModal({
         <div className="min-h-[420px]">
           {tab === "resume" &&
             (html ? (
-              <iframe
-                title="Tailored resume preview"
-                srcDoc={html}
-                sandbox="allow-same-origin"
-                className="w-full h-[60vh] rounded-lg border border-ink-200 bg-white"
-              />
+              <div className="space-y-2">
+                <p className="text-micro text-ink-500">
+                  This matches the PDF you get when you save — review formatting before downloading.
+                </p>
+                <iframe
+                  title="Tailored resume preview"
+                  srcDoc={html}
+                  sandbox="allow-same-origin"
+                  className="w-full h-[60vh] rounded-lg border border-ink-200 bg-white"
+                />
+              </div>
             ) : (
               <p className="py-12 text-center text-small text-ink-500">
                 No tailored resume for this role yet.
@@ -145,14 +172,14 @@ export function ResumePreviewModal({
             ))}
 
           {tab === "cover_letter" && (
-            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto">
-              {kit?.cover_letter || "No cover letter for this role yet."}
+            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-4">
+              {coverLetter || "No cover letter for this role yet."}
             </p>
           )}
 
           {tab === "interview_prep" && (
-            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto">
-              {kit?.interview_prep || "No interview prep for this role yet."}
+            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-4">
+              {interviewPrep || "No interview prep for this role yet."}
             </p>
           )}
         </div>
@@ -174,7 +201,7 @@ export function ResumePreviewModal({
             )
           }
         >
-          Download resume
+          Download PDF
         </Button>
       </ModalFooter>
     </Modal>

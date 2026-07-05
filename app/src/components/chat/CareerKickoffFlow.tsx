@@ -521,7 +521,7 @@ function FlowShell({
   stepIndex?: number;
 }) {
   return (
-    <div className="w-full max-w-md mx-auto animate-fade-in">
+    <div className="w-full animate-fade-in">
       <div className="flex items-center gap-2 mb-3">
         <div className="w-8 h-8 rounded-full bg-ink-900 flex items-center justify-center shrink-0">
           <Sparkles className="h-4 w-4 text-paper-0" strokeWidth={1.5} />
