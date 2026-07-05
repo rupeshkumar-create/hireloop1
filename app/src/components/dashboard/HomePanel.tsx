@@ -25,6 +25,7 @@ import {
   type MyProfileData,
 } from "@/lib/api/profile";
 import { fetchIntros, getCachedIntros, type IntroRequest } from "@/lib/api/intros";
+import { fetchGoogleStatus } from "@/lib/api/gmail";
 import { fetchCareerIntelligence, fetchCareerPath } from "@/lib/api/career";
 import { CareerPathOptionCards } from "@/components/career/CareerPathOptionCards";
 import { CollapsibleSection } from "@/components/dashboard/CollapsibleSection";
@@ -84,6 +85,13 @@ function SetupChecklist({
   const profileDone = profile?.candidate?.profile_complete === true;
   const resumeDone = !!profile?.resume_filename;
   const [careerPathDone, setCareerPathDone] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState(false);
+
+  useEffect(() => {
+    fetchGoogleStatus()
+      .then((s) => setGoogleConnected(s.connected && s.send_enabled))
+      .catch(() => setGoogleConnected(false));
+  }, []);
 
   useEffect(() => {
     if (!profileDone || !resumeDone) return;
@@ -124,6 +132,14 @@ function SetupChecklist({
       done: careerPathDone,
       cta: "View paths",
       panel: "jobs" as PanelId,
+    },
+    {
+      id: "google",
+      label: "Connect Google",
+      hint: "Send intro emails to hiring managers who aren't on Hireloop yet.",
+      done: googleConnected,
+      cta: "Connect",
+      panel: "profile" as PanelId,
     },
   ];
 

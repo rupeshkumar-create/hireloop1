@@ -170,31 +170,7 @@ class NityaIntroHandler:
             logger.warning("nitya_no_verified_email", intro_id=intro_id, hm_id=hm_id)
             return {"error": msg, "intro_id": intro_id}
 
-        # ── Step 3: Check Gmail token ─────────────────────────────────────────
-        from hireloop_api.services.email.gmail_oauth import GmailOAuthService
-
-        gmail_svc = GmailOAuthService(
-            google_client_id=self._settings.google_client_id,
-            google_client_secret=self._settings.google_client_secret,
-            db=self._db,
-        )
-        has_gmail = await gmail_svc.has_token(candidate_id)
-        await gmail_svc.close()
-
-        if not has_gmail:
-            msg = "Candidate has not connected Gmail — cannot send intro"
-            await nitya_tools.update_intro_status(
-                db=self._db,
-                user_id=user_id,
-                session_id=session_id,
-                intro_id=intro_id,
-                new_status="declined",
-                error_message=msg,
-            )
-            logger.warning("nitya_no_gmail_token", intro_id=intro_id, candidate_id=candidate_id)
-            return {"error": msg, "intro_id": intro_id}
-
-        # ── Step 4: Draft the intro email ─────────────────────────────────────
+        # ── Step 3: Draft the intro email (candidate approves + sends via Gmail) ─
         draft = await nitya_tools.draft_intro_email(
             db=self._db,
             user_id=user_id,
@@ -215,14 +191,40 @@ class NityaIntroHandler:
             )
             return draft
 
+        from hireloop_api.services.email.gmail_oauth import GmailOAuthService
+
+        gmail_svc = GmailOAuthService(
+            google_client_id=self._settings.google_client_id,
+            google_client_secret=self._settings.google_client_secret,
+            db=self._db,
+        )
+        has_gmail = await gmail_svc.has_token(candidate_id)
+        await gmail_svc.close()
+
+        if not has_gmail:
+            logger.info(
+                "nitya_draft_ready_awaiting_gmail",
+                intro_id=intro_id,
+                candidate_id=candidate_id,
+            )
+            return {
+                "intro_id": intro_id,
+                "draft_ready": True,
+                "gmail_required": True,
+                "subject": draft.get("subject"),
+                "message": (
+                    "Draft ready — connect Google in Profile, then approve send from your inbox."
+                ),
+            }
+
         return {
             "intro_id": intro_id,
             "draft_ready": True,
             "subject": draft.get("subject"),
-            "message": "Draft ready — candidate must approve before send.",
+            "message": "Draft ready — review in your inbox and send from your Gmail.",
         }
 
-        # Step 5 (send) is triggered by POST /intros/{id}/approve-send after preview.
+        # Send is triggered by POST /intros/{id}/approve-send after candidate preview.
 
 
 # ── LISTEN/NOTIFY worker ──────────────────────────────────────────────────────

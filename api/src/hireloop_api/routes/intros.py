@@ -38,6 +38,7 @@ class IntroSummary(BaseModel):
     company_name: str | None
     hm_name: str
     hm_title: str | None
+    direction: str | None = None
     status: str
     created_at: str
     sent_at: str | None
@@ -229,6 +230,7 @@ async def approve_and_send_intro(
     return {"intro_id": intro_id, "status": "sent", "sent": True}
 
 
+@router.post("/{intro_id}/cancel", status_code=200)
 async def cancel_intro(
     intro_id: str,
     current_user: dict = Depends(get_phone_verified_user),
@@ -253,7 +255,7 @@ async def cancel_intro(
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1::uuid
           AND candidate_id = $2::uuid
-          AND status IN ('pending', 'enriching', 'drafting')
+          AND status IN ('pending', 'enriching', 'drafting', 'draft_ready')
         """,
         intro_uuid,
         candidate["id"],

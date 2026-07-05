@@ -15,7 +15,6 @@ All inserts fire the Postgres NOTIFY trigger so the other side updates live.
 from __future__ import annotations
 
 import json
-import secrets
 import uuid
 from typing import Any
 
@@ -261,51 +260,53 @@ async def create_candidate_intro(
         )
 
     if hm and hm["email"]:
-        token = secrets.token_urlsafe(32)
-        invite_id = uuid.uuid4()
+        # External HM with a known email → Gmail cold intro (Nitya drafts; candidate sends).
         await db.execute(
             """
-            INSERT INTO public.recruiter_invites
-              (id, email, token, invited_name, company_id, job_id, candidate_id, status, sent_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'sent', NOW())
+            UPDATE public.hiring_managers
+            SET email_verified = TRUE,
+                enrich_status = 'done',
+                updated_at = NOW()
+            WHERE id = $1::uuid
             """,
-            invite_id,
-            hm["email"],
-            token,
-            hm["full_name"],
-            job["company_id"],
-            job["id"],
-            candidate_id,
+            hm["id"],
         )
+        existing = await db.fetchval(
+            """
+            SELECT id FROM public.intro_requests
+            WHERE candidate_id = $1 AND job_id = $2 AND hiring_manager_id = $3
+            """,
+            candidate_id,
+            job["id"],
+            hm["id"],
+        )
+        if existing:
+            return {
+                "intro_id": str(existing),
+                "status": "pending",
+                "direction": "candidate_to_hm",
+                "message": "You've already requested an intro for this role.",
+            }
         intro_id = uuid.uuid4()
         await db.execute(
             """
             INSERT INTO public.intro_requests
-              (id, candidate_id, job_id, hiring_manager_id, invite_id,
-               direction, status, message)
-            VALUES ($1, $2, $3, $4, $5, 'candidate_to_recruiter', 'invited', $6)
+              (id, candidate_id, job_id, hiring_manager_id, direction, status, message)
+            VALUES ($1, $2, $3, $4, 'candidate_to_hm', 'pending', $5)
             """,
             intro_id,
             candidate_id,
             job["id"],
             hm["id"],
-            invite_id,
             message,
-        )
-        await _send_recruiter_invite_email(
-            to_email=hm["email"],
-            invited_name=hm["full_name"],
-            candidate_name=candidate["full_name"],
-            job_title=job["title"],
-            token=token,
         )
         return {
             "intro_id": str(intro_id),
-            "status": "invited",
-            "direction": "candidate_to_recruiter",
+            "status": "pending",
+            "direction": "candidate_to_hm",
             "message": (
-                "The recruiter isn't on Hireloop yet — we've emailed them "
-                "an invite to view your profile."
+                "Nitya is drafting your intro email. Connect Google in Profile, "
+                "then review and send it from your Gmail."
             ),
         }
 

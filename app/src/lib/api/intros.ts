@@ -32,6 +32,12 @@ export type IntroRequest = {
   replied_at: string | null;
 };
 
+export type IntroDetail = IntroRequest & {
+  draft_email: string | null;
+  error_message: string | null;
+  gmail_connected: boolean;
+};
+
 let _introsCache: IntroRequest[] | null = null;
 let _introsInFlight: Promise<IntroRequest[]> | null = null;
 
@@ -97,6 +103,21 @@ export async function respondToIntro(
   if (_introsCache) {
     _introsCache = _introsCache.map((i) =>
       i.id === introId ? { ...i, status: next } : i
+    );
+  }
+}
+
+/** Full intro detail including Nitya draft email preview. */
+export async function fetchIntroDetail(introId: string): Promise<IntroDetail> {
+  return apiFetch<IntroDetail>(`/api/v1/intros/${introId}`);
+}
+
+/** Candidate approves the draft and sends via their connected Gmail. */
+export async function approveIntroSend(introId: string): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/approve-send`, { method: "POST" });
+  if (_introsCache) {
+    _introsCache = _introsCache.map((i) =>
+      i.id === introId ? { ...i, status: "sent" } : i
     );
   }
 }

@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/intros";
 import { sanitizeDisplayName } from "@/lib/auth/display-name";
 import { IntroChat } from "@/components/intros/IntroChat";
+import { IntroDraftPanel } from "@/components/intros/IntroDraftPanel";
 import { Badge, Button, EmptyState, useToast } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,8 @@ const STATUS_META: Record<
   pending: { tone: "muted", label: "Pending" },
   invited: { tone: "accent", label: "Invite sent" },
   recruiter_notified: { tone: "accent", label: "Notified" },
+  enriching: { tone: "accent", label: "Finding contact" },
+  drafting: { tone: "accent", label: "Drafting email" },
   draft_ready: { tone: "accent", label: "Draft ready" },
   sent: { tone: "strong", label: "Intro sent" },
   accepted: { tone: "strong", label: "Accepted" },
@@ -172,12 +175,18 @@ export function IntrosInboxPanel() {
 
   const fromRecruiter =
     selected?.direction === "recruiter_to_candidate";
+  const isHmEmailIntro = selected?.direction === "candidate_to_hm";
   const canRespond = fromRecruiter && selected?.status === "pending";
   const canCancel =
     selected &&
     !fromRecruiter &&
-    ["pending", "invited", "recruiter_notified"].includes(selected.status);
+    ["pending", "invited", "recruiter_notified", "enriching", "drafting", "draft_ready"].includes(
+      selected.status,
+    );
   const canChat = selected?.status === "accepted";
+  const showDraftPanel =
+    isHmEmailIntro &&
+    ["pending", "enriching", "drafting", "draft_ready"].includes(selected?.status ?? "");
 
   return (
     <div className="flex h-full min-h-0">
@@ -285,11 +294,30 @@ export function IntrosInboxPanel() {
             </div>
 
             <div className="flex-1 min-h-0 flex flex-col p-3">
-              {canChat ? (
+              {showDraftPanel && selected ? (
+                <IntroDraftPanel
+                  introId={selected.id}
+                  onSent={() => {
+                    setIntros((prev) =>
+                      prev.map((i) =>
+                        i.id === selected.id ? { ...i, status: "sent" } : i,
+                      ),
+                    );
+                  }}
+                />
+              ) : canChat ? (
                 <IntroChat introId={selected.id} side="candidate" fillHeight />
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center text-center px-6">
-                  {selected.status === "pending" || selected.status === "sent" ? (
+                  {selected.status === "sent" && isHmEmailIntro ? (
+                    <>
+                      <Clock className="h-8 w-8 text-ink-300 mb-3" strokeWidth={1.5} />
+                      <p className="text-small font-medium text-ink-800">Intro email sent</p>
+                      <p className="text-micro text-ink-500 mt-1 max-w-xs">
+                        Your email went out from your Gmail. We&apos;ll update you if they reply.
+                      </p>
+                    </>
+                  ) : selected.status === "pending" || selected.status === "sent" ? (
                     <>
                       <Clock className="h-8 w-8 text-ink-300 mb-3" strokeWidth={1.5} />
                       <p className="text-small font-medium text-ink-800">

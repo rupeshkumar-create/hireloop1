@@ -26,6 +26,7 @@ import {
   type WorkExperience,
 } from "@/lib/api/profile";
 import { CareerIntelligencePanel } from "@/components/profile/CareerIntelligencePanel";
+import { GoogleConnectCard } from "@/components/profile/GoogleConnectCard";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -320,6 +321,7 @@ export function ProfilePanel({
               </Link>
               .
             </p>
+            <GoogleConnectCard />
             <Card>
               <CardHeader title="Overview" description={profile?.user?.email ?? undefined} />
               <CardBody className="space-y-3 !pt-0">
