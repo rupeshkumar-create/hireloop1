@@ -124,9 +124,9 @@ async def _fetch_path_jobs(
     from hireloop_api.services.job_preferences import remote_filter_sql
 
     patterns = [f"%{t}%" for t in target_titles] or ["%"]
-    token_patterns = [
-        f"%{tok}%" for title in target_titles for tok in _search_tokens(title)
-    ] or ["%"]
+    token_patterns = [f"%{tok}%" for title in target_titles for tok in _search_tokens(title)] or [
+        "%"
+    ]
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$4")
     return await db.fetch(
