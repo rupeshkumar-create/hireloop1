@@ -1102,34 +1102,65 @@ async def nitya_chat_message(
             role_id=role_id,
             brief=brief,
         )
-        sr = await search_candidates_for_role(
-            db,
-            role_id=role_id,
-            limit=25,
-            public_profiles=True,
-            openrouter_api_key=settings.openrouter_api_key,
-        )
-        candidates = sr.candidates
-        search_meta = {
-            "diagnostic": sr.diagnostic,
-            "message": sr.diagnostic_message,
-            "published": sr.published,
-        }
-        await db.execute(
-            """
-            INSERT INTO public.agent_actions
-              (agent, user_id, session_id, action_type, payload, result)
-            VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb, $3::jsonb)
-            """,
-            current_user["id"],
-            conv_id,
-            json.dumps({"count": len(candidates)}),
-        )
+        try:
+            sr = await search_candidates_for_role(
+                db,
+                role_id=role_id,
+                limit=25,
+                public_profiles=True,
+                openrouter_api_key=settings.openrouter_api_key,
+            )
+            candidates = sr.candidates
+            search_meta = {
+                "diagnostic": sr.diagnostic,
+                "message": sr.diagnostic_message,
+                "published": sr.published,
+            }
+            await db.execute(
+                """
+                INSERT INTO public.agent_actions
+                  (agent, user_id, session_id, action_type, payload, result)
+                VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb, $3::jsonb)
+                """,
+                current_user["id"],
+                conv_id,
+                json.dumps({"count": len(candidates)}),
+            )
+        except Exception as exc:
+            logger.exception(
+                "nitya_candidate_search_failed",
+                role_id=str(role_id),
+                error=str(exc)[:300],
+            )
+            search_meta = {
+                "diagnostic": "search_failed",
+                "message": (
+                    "Your hiring brief is saved, but candidate search hit a snag. "
+                    "Try again from the pipeline or ask me to refresh matches."
+                ),
+                "published": published,
+            }
         if candidates:
             reply = (
                 f"Brief saved. I found {len(candidates)} strong matches — "
                 "review them below and request intros in chat."
             )
+            chips = list(POST_BRIEF_CHIPS)
+            await db.execute(
+                """
+                UPDATE public.messages SET content = $2
+                WHERE conversation_id = $1::uuid AND role = 'assistant'
+                  AND id = (
+                    SELECT id FROM public.messages
+                    WHERE conversation_id = $1::uuid AND role = 'assistant'
+                    ORDER BY created_at DESC LIMIT 1
+                  )
+                """,
+                conv_id,
+                reply,
+            )
+        elif search_meta and search_meta.get("diagnostic") in ("search_failed", "no_matches"):
+            reply = search_meta.get("message") or reply
             chips = list(POST_BRIEF_CHIPS)
             await db.execute(
                 """

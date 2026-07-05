@@ -39,14 +39,53 @@ Return ONLY valid JSON (no markdown fences):
 Weights in evaluation_criteria should sum to ~100. No calibration profiles.
 Use India context (LPA, cities). If comp is missing, set comp_structure to unclear."""
 
+ROLE_REMOTE_POLICIES = frozenset({"onsite", "hybrid", "remote", "flex"})
 
-def _lpa_to_inr(lpa: int | float | None) -> int | None:
-    if lpa is None:
+
+def parse_lpa_inr(value: int | float | str | None) -> int | None:
+    """Parse LPA from numbers or strings like '₹40 LPA' / '40-50 LPA' into INR."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(float(value) * 100_000)
+    text = str(value).strip()
+    if not text:
+        return None
+    cleaned = text.replace("₹", "").replace(",", "").lower()
+    match = re.search(r"(\d+(?:\.\d+)?)", cleaned)
+    if not match:
         return None
     try:
-        return int(float(lpa) * 100_000)
+        return int(float(match.group(1)) * 100_000)
     except (TypeError, ValueError):
         return None
+
+
+def normalize_role_remote_policy(value: Any) -> str | None:
+    """Map LLM / free-text remote policy to roles.remote_policy CHECK values."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text or text == "unknown":
+        return None
+    if text in ROLE_REMOTE_POLICIES:
+        return text
+    normalized = text.replace("-", "").replace("_", " ")
+    if normalized in ROLE_REMOTE_POLICIES:
+        return normalized
+    if "remote" in normalized or "wfh" in normalized or "work from home" in normalized:
+        return "remote"
+    if "hybrid" in normalized:
+        return "hybrid"
+    if "onsite" in normalized or "on site" in normalized or "in office" in normalized:
+        return "onsite"
+    if "flex" in normalized:
+        return "flex"
+    return None
+
+
+def _lpa_to_inr(lpa: int | float | str | None) -> int | None:
+    return parse_lpa_inr(lpa)
 
 
 def compute_role_readiness(role: dict[str, Any]) -> dict[str, Any]:
@@ -187,8 +226,8 @@ def _normalize_extraction(
 ) -> dict[str, Any]:
     comp_min = _lpa_to_inr(data.get("comp_min_lpa"))
     comp_max = _lpa_to_inr(data.get("comp_max_lpa"))
-    remote = data.get("remote_policy") or "unknown"
-    if remote == "unknown" and re.search(r"\bremote\b", jd_text, re.I):
+    remote = normalize_role_remote_policy(data.get("remote_policy"))
+    if remote is None and re.search(r"\bremote\b", jd_text, re.I):
         remote = "remote"
 
     missing: list[str] = []
@@ -212,7 +251,7 @@ def _normalize_extraction(
         "comp_max_lpa": data.get("comp_max_lpa"),
         "location_city": data.get("location_city"),
         "location_state": data.get("location_state"),
-        "remote_policy": remote if remote != "unknown" else None,
+        "remote_policy": remote,
         "must_haves": list(data.get("must_haves") or []),
         "nice_to_haves": list(data.get("nice_to_haves") or []),
         "hiring_brief": data.get("hiring_brief") or "",

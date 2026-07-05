@@ -15,7 +15,11 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from hireloop_api.services.role_jd_extract import suggest_chips_for_reply
+from hireloop_api.services.role_jd_extract import (
+    normalize_role_remote_policy,
+    parse_lpa_inr,
+    suggest_chips_for_reply,
+)
 
 logger = structlog.get_logger()
 
@@ -267,21 +271,27 @@ async def persist_role_from_brief(
         jd_structured = {}
 
     evaluation = brief.get("evaluation_criteria") or []
+    if not isinstance(evaluation, list):
+        evaluation = [evaluation] if evaluation else []
     hiring_brief = brief.get("hiring_brief") or ""
     pitch = brief.get("candidate_pitch") or ""
 
-    comp_min = jd_structured.get("comp_min_inr")
-    comp_max = jd_structured.get("comp_max_inr")
-    if comp_min is None and jd_structured.get("comp_min_lpa") is not None:
-        comp_min = int(float(jd_structured["comp_min_lpa"]) * 100_000)
-    if comp_max is None and jd_structured.get("comp_max_lpa") is not None:
-        comp_max = int(float(jd_structured["comp_max_lpa"]) * 100_000)
+    comp_min = parse_lpa_inr(jd_structured.get("comp_min_inr"))
+    comp_max = parse_lpa_inr(jd_structured.get("comp_max_inr"))
+    if comp_min is None:
+        comp_min = parse_lpa_inr(jd_structured.get("comp_min_lpa"))
+    if comp_max is None:
+        comp_max = parse_lpa_inr(jd_structured.get("comp_max_lpa"))
 
     location_city = jd_structured.get("location_city")
     location_state = jd_structured.get("location_state")
-    remote_policy = jd_structured.get("remote_policy")
+    remote_policy = normalize_role_remote_policy(jd_structured.get("remote_policy"))
     must_haves = jd_structured.get("must_haves") or brief.get("must_haves") or []
     nice_haves = jd_structured.get("nice_to_haves") or brief.get("nice_to_haves") or []
+    if not isinstance(must_haves, list):
+        must_haves = [must_haves] if must_haves else []
+    if not isinstance(nice_haves, list):
+        nice_haves = [nice_haves] if nice_haves else []
 
     if role_id:
         row = await db.fetchrow(
@@ -315,7 +325,7 @@ async def persist_role_from_brief(
             comp_max,
             location_city,
             location_state,
-            remote_policy if remote_policy not in ("unknown", None) else None,
+            remote_policy,
             json.dumps(must_haves) if must_haves else None,
             json.dumps(nice_haves) if nice_haves else None,
             recruiter_id,
@@ -357,7 +367,7 @@ async def persist_role_from_brief(
         comp_max,
         location_city,
         location_state,
-        remote_policy if remote_policy not in ("unknown", None) else None,
+        remote_policy,
         json.dumps(must_haves),
         json.dumps(nice_haves),
     )

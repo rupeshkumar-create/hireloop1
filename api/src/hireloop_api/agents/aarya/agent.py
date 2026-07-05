@@ -37,6 +37,10 @@ from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.config import Settings
+from hireloop_api.services.job_search_refresh import (
+    fetch_shown_job_ids,
+    wants_fresh_job_results,
+)
 from hireloop_api.services.tool_cache import (
     cache_key,
     clear_session_tool_cache,
@@ -1099,6 +1103,7 @@ def build_aarya_graph(settings: Settings) -> Any:
             user_id: str,
             session_id: str,
             query_text: str,
+            exclude_job_ids: list[str] | None = None,
         ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             from hireloop_api.services.career_path_selection import extract_find_role_and_city
 
@@ -1107,6 +1112,8 @@ def build_aarya_graph(settings: Settings) -> Any:
             kwargs: dict[str, Any] = {"query_text": query_text}
             if city:
                 kwargs["location_city"] = city
+            if exclude_job_ids:
+                kwargs["exclude_job_ids"] = exclude_job_ids
             js = await aarya_tools.job_search(db, user_id, session_id, settings=settings, **kwargs)
             cards: list[dict[str, Any]] = []
             if isinstance(js, dict) and isinstance(js.get("job_cards"), list):
@@ -1121,11 +1128,17 @@ def build_aarya_graph(settings: Settings) -> Any:
             local_actions = 0
             cards: list[dict] = []
             extra_actions = 0
+            last_human = _last_human_text(state["messages"])
+            fresh_jobs = wants_fresh_job_results(last_human)
+            exclude_job_ids: list[str] = []
+            if fresh_jobs:
+                clear_session_tool_cache(session_id, "job_search")
+                exclude_job_ids = await fetch_shown_job_ids(db, session_id)
 
             try:
                 cacheable = tool_name in ("profile_read", "job_search")
                 ck = cache_key(session_id, tool_name, tool_args if cacheable else None)
-                if cacheable:
+                if cacheable and not (tool_name == "job_search" and fresh_jobs):
                     cached = get_cached(ck)
                     if cached is not None:
                         result = cached
@@ -1144,8 +1157,11 @@ def build_aarya_graph(settings: Settings) -> Any:
                 if tool_name == "profile_read":
                     result = await aarya_tools.profile_read(db, user_id, session_id)
                 elif tool_name == "job_search":
+                    js_args = dict(tool_args)
+                    if exclude_job_ids:
+                        js_args["exclude_job_ids"] = exclude_job_ids
                     result = await aarya_tools.job_search(
-                        db, user_id, session_id, settings=settings, **tool_args
+                        db, user_id, session_id, settings=settings, **js_args
                     )
                     if isinstance(result, dict) and isinstance(result.get("job_cards"), list):
                         cards = result["job_cards"]

@@ -538,8 +538,9 @@ async def job_search(
     ctc_min: int | None = None,
     remote_preference: str | None = None,
     limit: int = 10,
+    exclude_job_ids: list[str] | None = None,
     settings: Settings | None = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """
     Semantic job search using pgvector cosine similarity + pre-computed match scores.
     Falls back to trigram keyword search if embeddings haven't been generated yet.
@@ -554,8 +555,15 @@ async def job_search(
     import time
 
     from hireloop_api.services.career_path import CareerPathService
+    from hireloop_api.services.job_search_refresh import (
+        compute_job_search_fetch_limit,
+        exclude_job_rows,
+    )
 
     t0 = time.monotonic()
+
+    exclude_ids = list(exclude_job_ids or [])
+    fetch_limit = compute_job_search_fetch_limit(limit=limit, exclude_count=len(exclude_ids))
 
     candidate = await db.fetchrow(
         """
@@ -624,7 +632,7 @@ async def job_search(
             skills_filter,
             location_city,
             ctc_min,
-            limit,
+            fetch_limit,
             market,
         )
         step1_filtered = _quality_filter_job_rows(
@@ -657,7 +665,7 @@ async def job_search(
                 LIMIT $2::integer
                 """,
                 candidate["id"],
-                limit,
+                fetch_limit,
                 market,
             )
             rows = _quality_filter_job_rows(
@@ -699,7 +707,7 @@ async def job_search(
             skills_filter,
             location_city,
             ctc_min,
-            limit,
+            fetch_limit,
             market,
         )
         rows = _quality_filter_job_rows(
@@ -747,7 +755,7 @@ async def job_search(
             skills_filter,
             location_city,
             ctc_min,
-            limit,
+            fetch_limit,
             market,
         )
         rows = _quality_filter_job_rows(
@@ -755,6 +763,13 @@ async def job_search(
             candidate=candidate_profile,
             target_titles=target_titles,
             lenient=True,
+        )
+
+    if rows:
+        rows = exclude_job_rows(
+            [dict(r) for r in rows],
+            exclude_job_ids=exclude_ids,
+            limit=limit,
         )
 
     from hireloop_api.services.job_present import serialize_job_card

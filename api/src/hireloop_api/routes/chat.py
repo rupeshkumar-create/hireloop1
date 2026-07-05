@@ -55,6 +55,10 @@ from hireloop_api.services.chat_stream import (
     sse_status,
     sse_text,
 )
+from hireloop_api.services.job_search_refresh import (
+    fetch_shown_job_ids,
+    wants_fresh_job_results,
+)
 from hireloop_api.services.matching import MatchingEngine
 from hireloop_api.services.memory import (
     CandidateMemoryService,
@@ -666,6 +670,11 @@ async def send_message(
             ),
         )
         search_city: str | None = None
+        fresh_jobs = wants_fresh_job_results(body.content)
+        exclude_job_ids: list[str] = []
+        if fresh_jobs:
+            clear_session_tool_cache(conversation_id, "job_search")
+            exclude_job_ids = await fetch_shown_job_ids(db, conversation_id)
         if search_title is not None:
             _, city = extract_find_role_and_city(body.content)
             search_city = city
@@ -675,6 +684,8 @@ async def send_message(
                 }
                 if city:
                     js_kwargs["location_city"] = city
+                if exclude_job_ids:
+                    js_kwargs["exclude_job_ids"] = exclude_job_ids
                 js_result = await aarya_tools.job_search(
                     db,
                     str(current_user["id"]),
@@ -768,10 +779,16 @@ async def send_message(
     if search_title is not None and user_intent == "job_search":
         location_text = f" in {search_city}" if search_city else ""
         if prefetched_jobs:
-            deterministic_job_reply = (
-                f"I found matching roles for {search_title or 'your profile'}{location_text}. "
-                "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
-            )
+            if fresh_jobs:
+                deterministic_job_reply = (
+                    f"Here are more roles for {search_title or 'your profile'}{location_text} — "
+                    "new matches you haven't seen in this chat yet."
+                )
+            else:
+                deterministic_job_reply = (
+                    f"I found matching roles for {search_title or 'your profile'}{location_text}. "
+                    "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
+                )
         else:
             # Only promise a background pull when auto-ingest will actually run
             # (flag on + Apify token present) — otherwise the copy overpromises.
