@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
+import { ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
+import { getApiBaseUrl } from "@/lib/api/base-url";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
@@ -12,7 +14,16 @@ type Role = "candidate" | "recruiter";
 type LoadingAction = "linkedin" | "email-send" | "email-verify" | "dev" | null;
 
 const DEV_EMAIL_LOGIN = process.env.NEXT_PUBLIC_DEV_EMAIL_LOGIN === "true";
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+function formatAuthSetupError(error: unknown): string {
+  if (error instanceof ApiUnreachableError) {
+    return (
+      "Your code was accepted, but we couldn't reach the Hireloop API to finish setup. " +
+      "Check that the API is running and NEXT_PUBLIC_API_URL is set correctly, then try again."
+    );
+  }
+  return error instanceof Error ? error.message : "Verification failed.";
+}
 
 export function SignupForm() {
   const supabase = createClient();
@@ -183,9 +194,16 @@ export function SignupForm() {
       document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
       router.replace(destination);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Verification failed.",
-      );
+      if (error instanceof ApiUnreachableError && typeof window !== "undefined") {
+        const health = await probeApiHealth();
+        if (health.ok) {
+          setErrorMessage(
+            "Your code was accepted, but account setup failed. Please try Verify & continue again.",
+          );
+          return;
+        }
+      }
+      setErrorMessage(formatAuthSetupError(error));
     } finally {
       setLoadingAction(null);
     }
@@ -218,7 +236,7 @@ export function SignupForm() {
         return;
       }
       document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
-      const bootstrapRes = await fetch(`${API_URL}/api/v1/auth/bootstrap`, {
+      const bootstrapRes = await fetch(`${getApiBaseUrl()}/api/v1/auth/bootstrap`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

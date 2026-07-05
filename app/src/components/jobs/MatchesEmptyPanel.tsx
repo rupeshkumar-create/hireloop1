@@ -1,6 +1,6 @@
 "use client";
 
-import { Briefcase, Search } from "lucide-react";
+import { Briefcase, Search } from "@/components/brand/icons";
 import { AaryaBubble } from "@/components/aarya/AaryaBubble";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { Button } from "@/components/ui";

@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPin, Sparkles } from "lucide-react";
+import { MapPin, Sparkles } from "@/components/brand/icons";
 import { ScoreDot } from "@/components/ui";
 import { cn } from "@/lib/utils";
 

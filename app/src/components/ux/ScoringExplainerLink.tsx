@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle } from "@/components/brand/icons";
 
 export function ScoringExplainerLink() {
   const [open, setOpen] = useState(false);

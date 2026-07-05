@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight } from "@/components/brand/icons";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { HireLogo } from "@/components/brand/HireLogo";

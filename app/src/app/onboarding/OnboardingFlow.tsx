@@ -30,7 +30,7 @@ import {
   ArrowRight,
   Check,
   Upload,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
   uploadResumeAndApply,

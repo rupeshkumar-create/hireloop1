@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2, MoreHorizontal } from "lucide-react";
+import { Loader2, MoreHorizontal } from "@/components/brand/icons";
 import {
   RECRUITER_MOBILE_MORE_NAV,
   RECRUITER_MOBILE_PRIMARY_NAV,

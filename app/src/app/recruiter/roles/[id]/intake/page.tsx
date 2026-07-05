@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Mic, Send, Zap } from "lucide-react";
+import { ArrowLeft, Mic, Send, Zap } from "@/components/brand/icons";
 import { useParams } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";

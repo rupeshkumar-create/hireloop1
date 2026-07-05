@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Send } from "lucide-react";
+import { Send } from "@/components/brand/icons";
 import {
   fetchIntroThread,
   sendIntroMessage,

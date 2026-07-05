@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeftRight, Loader2 } from "lucide-react";
+import { ArrowLeftRight, Loader2 } from "@/components/brand/icons";
 import { switchActiveRole, type ActiveRole } from "@/lib/api/role";
 import { Button, useToast } from "@/components/ui";
 

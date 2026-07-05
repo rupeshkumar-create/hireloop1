@@ -28,7 +28,7 @@ import {
   Heart,
   Loader2,
   Send,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import type { MatchedJob } from "@/lib/api/matches";

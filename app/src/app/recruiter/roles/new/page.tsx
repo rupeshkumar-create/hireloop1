@@ -12,7 +12,7 @@ import {
   ArrowRight,
   Briefcase,
   MessageCircle,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import {
   createRole,
   listRoles,

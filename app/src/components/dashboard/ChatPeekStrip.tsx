@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle } from "lucide-react";
+import { MessageCircle } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 type ChatPeekStripProps = {

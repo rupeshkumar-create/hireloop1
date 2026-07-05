@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle } from "lucide-react";
+import { Check, Circle } from "@/components/brand/icons";
 import type { RoleReadiness } from "@/lib/api/recruiter";
 import { cn } from "@/lib/utils";
 

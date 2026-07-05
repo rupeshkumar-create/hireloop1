@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChevronRight, FileText, IndianRupee, Linkedin, MapPin, Mic, X } from "lucide-react";
+import { ChevronRight, FileText, IndianRupee, Linkedin, MapPin, Mic, X } from "@/components/brand/icons";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { Button, Card, CardBody } from "@/components/ui";
 import { getCachedProfile, updateMyProfile } from "@/lib/api/profile";

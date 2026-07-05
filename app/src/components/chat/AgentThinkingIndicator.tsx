@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Sparkles, type LucideIcon } from "lucide-react";
+import { FileText, Sparkles, type LucideIcon } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import { actionMeta, type AgentAction } from "./ActivityTimeline";
 

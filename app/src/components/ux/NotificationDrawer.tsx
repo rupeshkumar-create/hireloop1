@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, X } from "lucide-react";
+import { Bell, X } from "@/components/brand/icons";
 import { useState } from "react";
 import { Button } from "@/components/ui";
 

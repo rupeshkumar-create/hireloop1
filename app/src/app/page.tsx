@@ -10,7 +10,7 @@ import {
   Send,
   ShieldCheck,
   Zap,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { ChatPreviewLazy } from "@/components/landing/ChatPreviewLazy";
 import { HeroAudience } from "@/components/landing/HeroAudience";
 import { LandingCta } from "@/components/landing/LandingCta";

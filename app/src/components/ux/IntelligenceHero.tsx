@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain } from "lucide-react";
+import { Brain } from "@/components/brand/icons";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 

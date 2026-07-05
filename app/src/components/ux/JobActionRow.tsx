@@ -1,6 +1,6 @@
 "use client";
 
-import { Bookmark, Mail, Send } from "lucide-react";
+import { Bookmark, Mail, Send } from "@/components/brand/icons";
 import { Button } from "@/components/ui";
 
 type JobActionRowProps = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle } from "lucide-react";
+import { MessageCircle } from "@/components/brand/icons";
 import { Button, Card, CardBody } from "@/components/ui";
 
 export function SparseProfileCard({ onAskAarya }: { onAskAarya?: () => void }) {

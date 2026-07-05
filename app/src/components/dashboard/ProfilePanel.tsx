@@ -11,7 +11,7 @@ import {
   Loader2,
   MapPin,
   Shield,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import {
   applyProfileToForm,

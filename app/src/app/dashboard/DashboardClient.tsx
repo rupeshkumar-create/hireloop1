@@ -20,7 +20,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { X } from "lucide-react";
+import { X } from "@/components/brand/icons";
 import { fetchMyProfile } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";

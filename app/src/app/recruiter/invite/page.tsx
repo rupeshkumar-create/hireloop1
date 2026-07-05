@@ -12,7 +12,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, CheckCircle, UserPlus } from "lucide-react";
+import { Building2, CheckCircle, UserPlus } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import {
   createRole,

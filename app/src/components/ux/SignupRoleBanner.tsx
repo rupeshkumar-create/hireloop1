@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/components/brand/icons";
 
 export function SignupRoleBanner({ role }: { role: "candidate" | "recruiter" }) {
   const label =

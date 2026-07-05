@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FileText, Mic, Sparkles } from "lucide-react";
+import { FileText, Mic, Sparkles } from "@/components/brand/icons";
 import { Button, Card, CardBody } from "@/components/ui";
 
 type MatchesUnlockGateProps = {

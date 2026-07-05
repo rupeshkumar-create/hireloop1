@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Mic, Send, Sparkles, Zap } from "lucide-react";
+import { Mic, Send, Sparkles, Zap } from "@/components/brand/icons";
 
 type Line =
   | { role: "user"; text: string }

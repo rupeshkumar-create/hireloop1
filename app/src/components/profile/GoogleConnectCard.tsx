@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, Check, Mail } from "lucide-react";
+import { Calendar, Check, Mail } from "@/components/brand/icons";
 
 import { Badge, Button, Card, CardBody, CardHeader, useToast } from "@/components/ui";
 import {

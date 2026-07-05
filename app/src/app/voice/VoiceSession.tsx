@@ -16,7 +16,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, PhoneOff } from "lucide-react";
+import { Mic, MicOff, PhoneOff } from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { streamAaryaMessage, ensureAaryaSession, prefetchAaryaWarmup, readStoredAaryaSession, storeAaryaSession } from "@/lib/chat/aaryaStream";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";

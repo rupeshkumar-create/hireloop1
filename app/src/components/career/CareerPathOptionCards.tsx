@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Loader2, Route, Sparkles } from "lucide-react";
+import { Check, Loader2, Route, Sparkles } from "@/components/brand/icons";
 import {
   fetchCareerPath,
   generateCareerPath,

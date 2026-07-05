@@ -1,6 +1,6 @@
 "use client";
 
-import { Mic } from "lucide-react";
+import { Mic } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 export function AaryaFace({

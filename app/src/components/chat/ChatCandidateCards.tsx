@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Briefcase, Check, MapPin, User } from "lucide-react";
+import { Briefcase, Check, MapPin, User } from "@/components/brand/icons";
 import { Badge, Button, ScoreDot } from "@/components/ui";
 import { formatCompRange } from "@/lib/api/recruiter";
 import type { RankedCandidate, SearchMeta } from "@/lib/api/recruiter";

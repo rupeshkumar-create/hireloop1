@@ -24,7 +24,7 @@ import {
   Phone,
   Sparkles,
   X,
-} from "lucide-react";
+} from "@/components/brand/icons";
 
 import { Button, Card, CardBody, Input, Select, Textarea } from "@/components/ui";
 import {

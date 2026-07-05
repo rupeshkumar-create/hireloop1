@@ -1,6 +1,6 @@
 "use client";
 
-import { Mic, Send, X } from "lucide-react";
+import { Mic, Send, X } from "@/components/brand/icons";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 

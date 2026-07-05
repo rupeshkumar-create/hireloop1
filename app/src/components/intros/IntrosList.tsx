@@ -8,7 +8,7 @@ import {
   Clock,
   MessageCircle,
   XCircle,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import {
   cancelIntro,
   fetchIntros,

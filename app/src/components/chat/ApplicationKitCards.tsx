@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Briefcase, Copy, Download, FileText, GraduationCap, Check } from "lucide-react";
+import { Briefcase, Copy, Download, FileText, GraduationCap, Check } from "@/components/brand/icons";
 import type { ApplicationKit } from "@/lib/api/applicationKit";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { cn } from "@/lib/utils";

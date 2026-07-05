@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Search, SlidersHorizontal, Sparkles } from "@/components/brand/icons";
 import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";

@@ -11,7 +11,7 @@ import {
   FileText,
   Settings,
   type LucideIcon,
-} from "lucide-react";
+} from "@/components/brand/icons";
 
 export type CandidateNavId =
   | "home"

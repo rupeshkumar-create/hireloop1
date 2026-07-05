@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/components/brand/icons";
 
 const PLACEHOLDERS = ["Reading your headline…", "Mapping skills…", "Estimating experience…"];
 

@@ -6,7 +6,7 @@
  *   Resume → Profile → Career paths → Job matches
  */
 
-import { Briefcase, Check, Circle, Route, Upload, User } from "lucide-react";
+import { Briefcase, Check, Circle, Route, Upload, User } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import type { MyProfileData } from "@/lib/api/profile";
 import { Card, CardBody } from "@/components/ui";

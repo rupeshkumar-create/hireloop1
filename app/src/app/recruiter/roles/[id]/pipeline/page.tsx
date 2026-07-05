@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Kanban, Loader2 } from "lucide-react";
+import { ArrowLeft, Kanban, Loader2 } from "@/components/brand/icons";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { ScoreDot } from "@/components/ui/ScoreDot";
 import { RecruiterBreadcrumbs } from "@/components/ux";

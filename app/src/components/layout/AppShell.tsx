@@ -8,7 +8,7 @@
 import { type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Settings } from "lucide-react";
+import { Settings } from "@/components/brand/icons";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import {
   CANDIDATE_NAV,

@@ -28,7 +28,7 @@ import {
   RefreshCw,
   Route,
   Search,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import {
   fetchCareerPath,

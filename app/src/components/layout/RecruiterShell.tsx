@@ -13,7 +13,7 @@ import {
   Loader2,
   Plus,
   Settings,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { switchActiveRole } from "@/lib/api/role";
 import {
   RECRUITER_NAV,

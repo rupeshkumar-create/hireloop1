@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, MapPin, User } from "lucide-react";
+import { Building2, MapPin, User } from "@/components/brand/icons";
 import { Button, Card, CardBody, CardHeader } from "@/components/ui";
 import {
   createRole,

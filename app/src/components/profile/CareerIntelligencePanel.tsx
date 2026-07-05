@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Brain, ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { Brain, ChevronDown, Loader2, RefreshCw } from "@/components/brand/icons";
 import { Badge, Button, Card, CardBody } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { getCachedProfile } from "@/lib/api/profile";

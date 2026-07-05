@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X } from "@/components/brand/icons";
 import { AaryaBubble } from "@/components/aarya/AaryaBubble";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { consumeDashboardWelcome } from "@/lib/dashboard-welcome";

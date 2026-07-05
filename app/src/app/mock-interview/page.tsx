@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Brain } from "lucide-react";
+import { ArrowRight, Brain } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { Button, Card, CardBody, CardHeader, Field, Input, Select } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";

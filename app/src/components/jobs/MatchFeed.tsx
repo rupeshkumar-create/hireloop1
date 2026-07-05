@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, SlidersHorizontal } from "lucide-react";
+import { AlertCircle, SlidersHorizontal } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MATCH_FEED_FILTERS,

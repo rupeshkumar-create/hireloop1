@@ -18,7 +18,7 @@ import {
   ShieldAlert,
   ExternalLink,
   RefreshCw,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { Badge, Button, Card, CardBody, CardHeader } from "@/components/ui";
 

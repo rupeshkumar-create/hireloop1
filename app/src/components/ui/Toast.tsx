@@ -29,7 +29,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Check, AlertCircle, Info, X } from "lucide-react";
+import { Check, AlertCircle, Info, X } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 type ToastKind = "success" | "error" | "info";

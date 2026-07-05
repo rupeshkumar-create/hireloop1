@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Eye, FileText, RefreshCw } from "lucide-react";
+import { Eye, FileText, RefreshCw } from "@/components/brand/icons";
 import {
   listTailoredResumes,
   type TailoredResumeRow,

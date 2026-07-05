@@ -19,7 +19,7 @@ import {
   Send,
   Square,
   Brain,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/api/client";
 import { useVoice } from "@/lib/hooks/useVoice";

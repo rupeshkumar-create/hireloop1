@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle, Clock } from "lucide-react";
+import { ArrowLeft, CheckCircle, Clock } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { Badge, EmptyState } from "@/components/ui";
 

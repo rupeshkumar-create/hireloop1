@@ -58,7 +58,7 @@ import {
   Send,
   Square,
   Volume2,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
   parseJobFiltersFromText,

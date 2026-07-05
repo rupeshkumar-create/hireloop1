@@ -24,7 +24,7 @@ import {
   Loader2,
   Send,
   Sparkles,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
 import { cn } from "@/lib/utils";

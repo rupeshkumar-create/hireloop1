@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle, Clock, MessageCircle, Send } from "lucide-react";
+import { Check, Circle, Clock, MessageCircle, Send } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 const INTRO_STEPS = [

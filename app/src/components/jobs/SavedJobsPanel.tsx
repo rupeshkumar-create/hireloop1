@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Bookmark } from "lucide-react";
+import { AlertCircle, Bookmark } from "@/components/brand/icons";
 import { fetchSavedJobs } from "@/lib/api/saved-jobs";
 import type { MatchedJob } from "@/lib/api/matches";
 import {

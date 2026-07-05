@@ -25,7 +25,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 // ── base field styles shared by input / textarea / select ────────────────────

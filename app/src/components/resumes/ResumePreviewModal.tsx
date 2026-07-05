@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "@/components/brand/icons";
 import { Button, Modal, ModalFooter, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { downloadTailoredResume, fetchTailoredResumeHtml } from "@/lib/api/tailored";

@@ -15,7 +15,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import {
   fetchMyProfile,
   getCachedProfile,

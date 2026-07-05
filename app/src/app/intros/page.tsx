@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle } from "@/components/brand/icons";
 import { AppShell } from "@/components/layout/AppShell";
 import { IntrosList } from "@/components/intros/IntrosList";
 import { BackToAaryaLink, ScoringExplainerLink } from "@/components/ux";

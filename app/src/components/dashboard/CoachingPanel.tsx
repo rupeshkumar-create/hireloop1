@@ -9,7 +9,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   User,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 type CoachingCard = { title: string; desc: string; prompt: string };

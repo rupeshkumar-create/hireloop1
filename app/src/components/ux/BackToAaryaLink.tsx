@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle } from "@/components/brand/icons";
 
 export function BackToAaryaLink({
   context,

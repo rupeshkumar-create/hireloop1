@@ -14,7 +14,7 @@ import {
   Inbox,
   Plus,
   RefreshCw,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { IntroChat } from "@/components/intros/IntroChat";

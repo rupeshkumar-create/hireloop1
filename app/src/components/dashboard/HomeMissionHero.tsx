@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Briefcase, Inbox, Route } from "lucide-react";
+import { ArrowRight, Briefcase, Inbox, Route } from "@/components/brand/icons";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import type { MyProfileData } from "@/lib/api/profile";
 import { cn } from "@/lib/utils";

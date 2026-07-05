@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { X } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 export function Modal({

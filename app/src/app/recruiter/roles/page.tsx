@@ -15,7 +15,7 @@ import {
   Plus,
   RefreshCw,
   XCircle,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import {
   formatCompRange,
   listRoles,

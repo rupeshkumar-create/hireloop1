@@ -14,7 +14,7 @@ import {
   MessageCircle,
   Search,
   Sparkles,
-} from "lucide-react";
+} from "@/components/brand/icons";
 import {
   formatCompRange,
   getRole,

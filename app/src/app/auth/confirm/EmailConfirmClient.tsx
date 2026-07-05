@@ -6,6 +6,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
+import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { Button } from "@/components/ui";
 
 type EmailConfirmClientProps = {
@@ -67,9 +68,20 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
       ?.split("=")[1];
     const role = roleCookie === "recruiter" ? "recruiter" : "candidate";
 
-    const destination = await finishAuthSession(session.access_token, role);
-    document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
-    router.replace(destination);
+    try {
+      const destination = await finishAuthSession(session.access_token, role);
+      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+      router.replace(destination);
+    } catch (err) {
+      setErrorMessage(
+        err instanceof ApiUnreachableError
+          ? "Email verified, but we couldn't reach the Hireloop API to finish setup. Try again in a moment."
+          : err instanceof Error
+            ? err.message
+            : "Account setup failed. Please try again.",
+      );
+      setLoading(false);
+    }
   }
 
   return (

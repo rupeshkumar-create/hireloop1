@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/brand/icons";
 
 type Crumb = { label: string; href?: string };
 

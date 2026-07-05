@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 
 export function CollapsibleSection({

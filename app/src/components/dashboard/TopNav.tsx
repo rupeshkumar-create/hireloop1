@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { HelpCircle, LogOut, Settings, Shield } from "lucide-react";
+import { HelpCircle, LogOut, Settings, Shield } from "@/components/brand/icons";
 import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";

@@ -30,7 +30,7 @@ import {
   Users,
   Zap,
   type LucideIcon,
-} from "lucide-react";
+} from "@/components/brand/icons";
 
 /** A single tool call an agent made during a turn. */
 import type { MatchedJob } from "@/lib/api/matches";

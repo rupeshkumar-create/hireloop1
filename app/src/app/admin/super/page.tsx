@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Search, ShieldAlert, Trash2 } from "lucide-react";
+import { ArrowLeft, Search, ShieldAlert, Trash2 } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { Badge, Button, EmptyState, Input, Select } from "@/components/ui";
 import { cn } from "@/lib/utils";

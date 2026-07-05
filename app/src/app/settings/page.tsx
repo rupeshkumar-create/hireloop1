@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { LogOut, Shield, User } from "lucide-react";
+import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { createClient } from "@/lib/supabase/client";
 import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
