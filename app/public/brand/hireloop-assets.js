@@ -1,0 +1,104 @@
+/* ============================================================
+   HIRELOOP — Custom Asset Library (canonical source)
+   Charcoal + electric-lime. Geometric line system on a 24 grid,
+   1.75 stroke, round caps/joins. Signature: every glyph carries a
+   single lime "live node" — the loop-signal that unifies the set.
+   `l` = stroked line markup (currentColor)
+   `n` = lime node markup (filled var(--accent))  [optional]
+   ============================================================ */
+(function (root) {
+  var ICONS = {
+    /* ── Brand / AI ─────────────────────────────── */
+    loop: { l: '<path d="M9 15.5a3.6 3.6 0 1 1 3.4-2.4"/><path d="M15 8.5a3.6 3.6 0 1 1-3.4 2.4"/>', n: '<circle cx="12" cy="12" r="1.6"/>' },
+    spark: { l: '<path d="M12 4.2c.4 3.1 1.5 4.2 4.6 4.6-3.1.4-4.2 1.5-4.6 4.6-.4-3.1-1.5-4.2-4.6-4.6 3.1-.4 4.2-1.5 4.6-4.6Z"/><path d="M17.5 14.5c.2 1.4.7 1.9 2.1 2.1-1.4.2-1.9.7-2.1 2.1-.2-1.4-.7-1.9-2.1-2.1 1.4-.2 1.9-.7 2.1-2.1Z"/>' },
+    agent: { l: '<rect x="4.5" y="6" width="15" height="11" rx="3.2"/><path d="M12 6V3.5"/><path d="M8.5 20h7"/>', n: '<circle cx="9.5" cy="11.5" r="1.4"/><circle cx="14.5" cy="11.5" r="1.4"/>' },
+    brain: { l: '<path d="M12 5.5A2.6 2.6 0 0 0 7 6.4 2.6 2.6 0 0 0 5.4 11 2.6 2.6 0 0 0 7 15.6 2.6 2.6 0 0 0 12 16.5Z"/><path d="M12 5.5A2.6 2.6 0 0 1 17 6.4 2.6 2.6 0 0 1 18.6 11 2.6 2.6 0 0 1 17 15.6 2.6 2.6 0 0 1 12 16.5Z"/><path d="M12 5.5v13"/>', n: '<circle cx="12" cy="11" r="1.5"/>' },
+    pulse: { l: '<path d="M3.5 12h4l2-5 3 10 2-5h6"/>', n: '<circle cx="12" cy="12" r="1.6"/>' },
+    mic: { l: '<rect x="9.3" y="3.5" width="5.4" height="10.5" rx="2.7"/><path d="M6 11.2a6 6 0 0 0 12 0"/><path d="M12 17.2v3.3"/>', n: '<circle cx="12" cy="8.5" r="1.3"/>' },
+    "mic-off": { l: '<path d="M9.3 6.2A2.7 2.7 0 0 1 14.7 6.5v3.7"/><path d="M14.7 13.4a2.7 2.7 0 0 1-5.4-.7V9.5"/><path d="M6 11.2a6 6 0 0 0 9.2 5.1M18 11.2a6 6 0 0 1-.3 1.8"/><path d="M12 17.2v3.3"/><path d="m4 4 16 16"/>' },
+    waveform: { l: '<path d="M4 11v2M7.5 8.5v7M14.5 6v12M18 9v6M20.5 11v2"/>', n: '<rect x="10.4" y="4" width="3.2" height="16" rx="1.6" stroke="none"/>' },
+    chat: { l: '<path d="M5 16.5 4 20l3.4-1a8 8 0 1 0-2.4-2.5Z"/>', n: '<circle cx="9" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/>' },
+
+    /* ── Navigation ─────────────────────────────── */
+    home: { l: '<path d="M4 11 12 4.5 20 11"/><path d="M6 9.9V19a1.2 1.2 0 0 0 1.2 1.2h9.6A1.2 1.2 0 0 0 18 19V9.9"/>', n: '<rect x="10" y="14" width="4" height="6.2" rx="1" stroke="none"/>' },
+    briefcase: { l: '<rect x="3.8" y="7.5" width="16.4" height="12" rx="3"/><path d="M8.4 7.5V6a2.2 2.2 0 0 1 2.2-2.2h2.8A2.2 2.2 0 0 1 15.6 6v1.5"/><path d="M3.8 12.6h16.4"/>', n: '<circle cx="12" cy="12.6" r="1.5"/>' },
+    inbox: { l: '<rect x="3.8" y="4.5" width="16.4" height="15" rx="3"/><path d="M3.8 14h4.4l1.2 2h5.2l1.2-2h4.4"/>', n: '<circle cx="12" cy="9" r="1.5"/>' },
+    profile: { l: '<circle cx="12" cy="8.4" r="3.6"/><path d="M5.4 19.5a6.6 6.6 0 0 1 13.2 0"/>' },
+    team: { l: '<circle cx="9" cy="8.6" r="3.1"/><path d="M3.6 19a5.4 5.4 0 0 1 10.8 0"/><path d="M15.4 6.1a3.1 3.1 0 0 1 0 5.8"/><path d="M17 13.4a5.4 5.4 0 0 1 3.4 5"/>', n: '<circle cx="9" cy="8.6" r="1.4"/>' },
+    "candidate-add": { l: '<circle cx="9.5" cy="8.4" r="3.6"/><path d="M3.4 19.5a6.4 6.4 0 0 1 10.4-4.7"/><path d="M17.5 13.8v5.4M14.8 16.5h5.4"/>', n: '<circle cx="17.5" cy="16.5" r="1.5"/>' },
+    education: { l: '<path d="M3.4 9 12 5l8.6 4-8.6 4-8.6-4Z"/><path d="M7 11.1v3.9c0 1.5 2.2 2.6 5 2.6s5-1.1 5-2.6v-3.9"/><path d="M20.6 9v4.6"/>', n: '<circle cx="20.6" cy="15.2" r="1.5"/>' },
+    pipeline: { l: '<circle cx="6" cy="6.5" r="2.4"/><circle cx="18" cy="17.5" r="2.4"/><path d="M8.4 6.5H14a3.5 3.5 0 0 1 0 7h-4a3.5 3.5 0 0 0 0 7h5.6"/>' },
+    board: { l: '<rect x="3.8" y="4.5" width="16.4" height="15" rx="3"/><path d="M9 8.5v7M15 8.5v4"/>', n: '<rect x="7.5" y="15" width="3" height="0.1" stroke="none"/><circle cx="15" cy="13.5" r="1.4"/>' },
+    company: { l: '<path d="M5.5 20V6.2a1.6 1.6 0 0 1 1.6-1.6h6.4A1.6 1.6 0 0 1 15.1 6.2V20"/><path d="M15.1 9.5h2.8A1.6 1.6 0 0 1 19.5 11.1V20"/><path d="M4 20h16"/><path d="M8.5 8.5h3M8.5 12h3"/>', n: '<circle cx="9.9" cy="15.5" r="1.4"/>' },
+    bookmark: { l: '<path d="M6.5 4.5h11a1 1 0 0 1 1 1V20l-6.5-4.2L5.5 20V5.5a1 1 0 0 1 1-1Z"/>', n: '<circle cx="12" cy="10" r="1.5"/>' },
+    calendar: { l: '<rect x="3.8" y="5.5" width="16.4" height="14" rx="3"/><path d="M3.8 9.6h16.4M8.4 3.5v4M15.6 3.5v4"/>', n: '<circle cx="15.5" cy="14" r="1.5"/>' },
+    bell: { l: '<path d="M6.2 16.4V11a5.8 5.8 0 0 1 11.6 0v5.4l1.4 2H4.8Z"/><path d="M10 20a2 2 0 0 0 4 0"/>', n: '<circle cx="17" cy="7" r="1.9" stroke="none"/>' },
+    settings: { l: '<path d="M10.4 3.8h3.2l.5 2.3 2 .8 2-1.2 2.3 2.3-1.2 2 .8 2 2.3.5v3.2l-2.3.5-.8 2 1.2 2-2.3 2.3-2-1.2-2 .8-.5 2.3h-3.2l-.5-2.3-2-.8-2 1.2-2.3-2.3 1.2-2-.8-2-2.3-.5v-3.2l2.3-.5.8-2-1.2-2 2.3-2.3 2 1.2 2-.8Z"/>', n: '<circle cx="12" cy="12" r="2.4"/>' },
+    search: { l: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4.6 4.6"/>', n: '<circle cx="10.5" cy="10.5" r="1.6"/>' },
+    filter: { l: '<path d="M4 7h6M14 7h6M4 12h10M18 12h2M4 17h4M12 17h8"/>', n: '<circle cx="12" cy="7" r="2" stroke="none"/><circle cx="16" cy="12" r="2" stroke="none"/><circle cx="10" cy="17" r="2" stroke="none"/>' },
+    logout: { l: '<path d="M14 5.5H7.2A2.2 2.2 0 0 0 5 7.7v8.6A2.2 2.2 0 0 0 7.2 18.5H14"/><path d="M17 8.5 20.5 12 17 15.5M10 12h10.5"/>' },
+    shield: { l: '<path d="M12 3.5 18.5 6v5.5c0 4-2.8 6.9-6.5 8.5-3.7-1.6-6.5-4.5-6.5-8.5V6Z"/>', n: '<circle cx="12" cy="11" r="1.7"/>' },
+
+    /* ── Actions ────────────────────────────────── */
+    plus: { l: '<path d="M12 5v14M5 12h14"/>' },
+    check: { l: '<path d="M4.5 12.5 9.5 17.5 19.5 6.5"/>' },
+    close: { l: '<path d="M6 6 18 18M18 6 6 18"/>' },
+    copy: { l: '<rect x="8.4" y="8.4" width="11.2" height="11.2" rx="2.8"/><path d="M15.6 8.4V6.2A2.2 2.2 0 0 0 13.4 4H6.2A2.2 2.2 0 0 0 4 6.2v7.2A2.2 2.2 0 0 0 6.2 15.6h2.2"/>' },
+    download: { l: '<path d="M12 4v10M8 10.5l4 4 4-4"/><path d="M5 18.5h14"/>', n: '<circle cx="12" cy="18.5" r="0.1"/>' },
+    upload: { l: '<path d="M12 18V8M8 11.5l4-4 4 4"/><path d="M5 5.5h14"/>' },
+    edit: { l: '<path d="M15.6 5.4 18.6 8.4 9 18l-3.6.9L6.3 15.3Z"/><path d="M14.1 6.9 17.1 9.9"/>' },
+    delete: { l: '<path d="M4.5 7h15M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7"/><path d="M6.6 7l.8 11.1A2 2 0 0 0 9.4 20h5.2a2 2 0 0 0 2-1.9L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/>' },
+    refresh: { l: '<path d="M19 8a7 7 0 0 0-12.3-2.3L4.5 8"/><path d="M4.5 4.5V8H8"/><path d="M5 16a7 7 0 0 0 12.3 2.3L19.5 16"/><path d="M19.5 19.5V16H16"/>' },
+    view: { l: '<path d="M3.4 12S6.8 6.4 12 6.4 20.6 12 20.6 12 17.2 17.6 12 17.6 3.4 12 3.4 12Z"/><circle cx="12" cy="12" r="2.8"/>', n: '<circle cx="12" cy="12" r="1.4"/>' },
+    external: { l: '<path d="M13.5 5.5h5v5M18.5 5.5 11 13"/><path d="M17 13.6V16.5A2 2 0 0 1 15 18.5H7.5A2 2 0 0 1 5.5 16.5V9A2 2 0 0 1 7.5 7h2.9"/>' },
+    more: { l: '', n: '<circle cx="5.5" cy="12" r="1.6" stroke="none"/><circle cx="12" cy="12" r="1.6" stroke="none"/><circle cx="18.5" cy="12" r="1.6" stroke="none"/>' },
+    share: { l: '<circle cx="6.5" cy="12" r="2.6"/><circle cx="17.5" cy="6.5" r="2.6"/><circle cx="17.5" cy="17.5" r="2.6"/><path d="M8.8 10.8 15.2 7.7M8.8 13.2 15.2 16.3"/>', n: '<circle cx="17.5" cy="6.5" r="1.2"/>' },
+    link: { l: '<path d="M10 13.5a3.4 3.4 0 0 0 5 .4l2.4-2.4a3.4 3.4 0 0 0-4.8-4.8l-1.4 1.4"/><path d="M14 10.5a3.4 3.4 0 0 0-5-.4L6.6 12.5a3.4 3.4 0 0 0 4.8 4.8l1.4-1.4"/>' },
+    attach: { l: '<path d="M18 7.5 9.6 15.9a2.4 2.4 0 0 0 3.4 3.4l6.5-6.5a4 4 0 0 0-5.7-5.7l-6.7 6.7a5.6 5.6 0 0 0 8 8l4-4"/>' },
+
+    /* ── Status ─────────────────────────────────── */
+    "check-circle": { l: '<circle cx="12" cy="12" r="8"/><path d="M8.4 12 11 14.6 15.6 9.4"/>' },
+    alert: { l: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5"/>', n: '<circle cx="12" cy="15.6" r="1.2"/>' },
+    info: { l: '<circle cx="12" cy="12" r="8"/><path d="M12 11.2v5"/>', n: '<circle cx="12" cy="8.2" r="1.2"/>' },
+    clock: { l: '<circle cx="12" cy="12" r="8"/><path d="M12 7.6V12l3 1.9"/>', n: '<circle cx="12" cy="12" r="1.3"/>' },
+    progress: { l: '<path d="M12 4a8 8 0 1 1-5.6 2.3"/>', n: '<circle cx="12" cy="4" r="1.7"/>' },
+    star: { l: '<path d="M12 4.5 14.3 9.3 19.5 10 15.7 13.7 16.6 19 12 16.5 7.4 19 8.3 13.7 4.5 10 9.7 9.3Z"/>' },
+    flag: { l: '<path d="M6 20V4.5"/><path d="M6 5h9.5l-1.5 3 1.5 3H6"/>', n: '<circle cx="6" cy="4.6" r="1.4"/>' },
+    dot: { l: '<circle cx="12" cy="12" r="7.5"/>', n: '<circle cx="12" cy="12" r="3.2"/>' },
+
+    /* ── Files / comms ──────────────────────────── */
+    file: { l: '<path d="M7 3.6h6.4L18 8.2V18.4A1.6 1.6 0 0 1 16.4 20H7.6A1.6 1.6 0 0 1 6 18.4V5.2A1.6 1.6 0 0 1 7.6 3.6Z"/><path d="M13 3.6V8.2h4.6"/><path d="M9 12.5h6M9 15.5h4"/>', n: '<circle cx="16" cy="15.5" r="1.2"/>' },
+    folder: { l: '<path d="M4 7.5A1.8 1.8 0 0 1 5.8 5.7h3.4l2 2.4h6.9A1.8 1.8 0 0 1 20 9.9V17.7A1.8 1.8 0 0 1 18.2 19.5H5.8A1.8 1.8 0 0 1 4 17.7Z"/>', n: '<circle cx="12" cy="13.6" r="1.4"/>' },
+    mail: { l: '<rect x="3.8" y="6" width="16.4" height="12" rx="3"/><path d="m4.4 8 6.5 4.6a2 2 0 0 0 2.2 0L19.6 8"/>' },
+    message: { l: '<path d="M4.5 6.5A2 2 0 0 1 6.5 4.5h11A2 2 0 0 1 19.5 6.5V14A2 2 0 0 1 17.5 16H9l-4 3.5V16H6.5"/>', n: '<circle cx="9" cy="10.2" r="1.2"/><circle cx="12" cy="10.2" r="1.2"/><circle cx="15" cy="10.2" r="1.2"/>' },
+    send: { l: '<path d="M20 4 3.6 11l6.6 2.3 2.3 6.6L20 4Z"/><path d="M20 4 10.2 13.3"/>', n: '<circle cx="20" cy="4" r="0.1"/>' },
+    phone: { l: '<path d="M6.6 4.5 8.5 4a1.4 1.4 0 0 1 1.5.9l1 2.5a1.4 1.4 0 0 1-.4 1.6l-1.3 1a11 11 0 0 0 4.7 4.7l1-1.3a1.4 1.4 0 0 1 1.6-.4l2.5 1a1.4 1.4 0 0 1 .9 1.5l-.5 1.9a1.6 1.6 0 0 1-1.7 1.2A15 15 0 0 1 5.4 6.2 1.6 1.6 0 0 1 6.6 4.5Z"/>' },
+    video: { l: '<rect x="3.5" y="6.5" width="12" height="11" rx="2.6"/><path d="M15.5 10.5 20.5 7.5V16.5L15.5 13.5Z"/>', n: '<circle cx="9.5" cy="12" r="1.5"/>' },
+    linkedin: { l: '<rect x="4" y="4" width="16" height="16" rx="3.4"/><path d="M8 10.6V16M8 8v.02M11.6 16v-3.2a2 2 0 0 1 4 0V16M11.6 16v-5.4"/>' },
+
+    /* ── Market / money ─────────────────────────── */
+    rupee: { l: '<path d="M8 5.5h8M8 9h8M15 5.5c0 3.6-3 5-6 5H8.2l6.5 8"/>' },
+    chart: { l: '<path d="M4 4v15a1 1 0 0 0 1 1h15"/><path d="M8 15l3.5-4 3 2.5L20 8"/>', n: '<circle cx="20" cy="8" r="1.6"/>' },
+    trending: { l: '<path d="M4 16 9.5 10.5l3 3L20 6"/><path d="M15.5 6H20v4.5"/>', n: '<circle cx="9.5" cy="10.5" r="1.5"/>' }
+  };
+
+  /* ── Arrows (own showcase; some animate) ──────── */
+  var ARROWS = {
+    "arrow-left": '<path d="M20 12H4M10 6 4 12l6 6"/>',
+    "arrow-right": '<path d="M4 12h16M14 6l6 6-6 6"/>',
+    "arrow-up": '<path d="M12 20V4M6 10l6-6 6 6"/>',
+    "arrow-down": '<path d="M12 4v16M6 14l6 6 6-6"/>',
+    "chevron-left": '<path d="M15 6l-6 6 6 6"/>',
+    "chevron-right": '<path d="M9 6l6 6-6 6"/>',
+    "chevron-up": '<path d="M6 15l6-6 6 6"/>',
+    "chevron-down": '<path d="M6 9l6 6 6-6"/>',
+    "loop-back": '<path d="M4.5 9.5A7 7 0 1 1 4 13"/><path d="M4.5 5v4.5H9"/>',
+    "loop-forward": '<path d="M19.5 9.5A7 7 0 1 0 20 13"/><path d="M19.5 5v4.5H15"/>',
+    swap: '<path d="M7 7 4 10l3 3M4 10h13"/><path d="M17 17l3-3-3-3M20 14H7"/>',
+    corner: '<path d="M7 17V8.5A2 2 0 0 1 9 6.5h8"/><path d="M13.5 3l3.5 3.5L13.5 10"/>'
+  };
+
+  var api = { ICONS: ICONS, ARROWS: ARROWS };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  root.HIRELOOP_ASSETS = api;
+})(typeof window !== "undefined" ? window : this);

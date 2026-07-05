@@ -6,6 +6,7 @@ import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { NotificationDrawer } from "@/components/ux";
+import { HireLogoMark } from "@/components/brand/HireLogo";
 import { cn } from "@/lib/utils";
 
 export type TopNavProps = {
@@ -41,9 +42,9 @@ export function TopNav({
         href="/dashboard"
         aria-label="Hireloop home"
         title="Hireloop"
-        className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-ink-900"
+        className="mb-4"
       >
-        <span className="text-small font-semibold text-paper-0">H</span>
+        <HireLogoMark size={36} />
       </Link>
 
       <nav className="flex flex-1 flex-col items-center gap-1">

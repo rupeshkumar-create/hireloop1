@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { HireLogo } from "@/components/brand/HireLogo";
 
 /**
  * Landing nav — auth-aware CTAs without blocking the page on server getUser().
@@ -24,11 +25,8 @@ export function LandingNav() {
   return (
     <header className="sticky top-0 z-30 border-b border-ink-100 bg-paper-0/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-page items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink-900">
-            <span className="text-paper-0 text-h3 font-semibold">H</span>
-          </span>
-          <span className="text-h3 text-ink-900">Hireloop</span>
+        <Link href="/" className="flex items-center gap-2" aria-label="Hireloop home">
+          <HireLogo size={30} />
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex">

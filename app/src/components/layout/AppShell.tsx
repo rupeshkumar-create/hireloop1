@@ -17,6 +17,7 @@ import {
 import { Avatar } from "@/components/ui";
 import { BackToAaryaLink, ContextHeader } from "@/components/ux";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
+import { HireLogoMark } from "@/components/brand/HireLogo";
 import { cn } from "@/lib/utils";
 
 export type AppShellProps = {
@@ -70,12 +71,8 @@ export function AppShell({
       />
       <div className="flex min-h-0 flex-1">
         <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
-          <Link
-            href="/dashboard"
-            aria-label="Hireloop home"
-            className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-ink-900"
-          >
-            <span className="text-small font-semibold text-paper-0">H</span>
+          <Link href="/dashboard" aria-label="Hireloop home" className="mb-4">
+            <HireLogoMark size={36} />
           </Link>
           <nav className="flex flex-1 flex-col items-center gap-1">
             {CANDIDATE_NAV.map((item) => (
