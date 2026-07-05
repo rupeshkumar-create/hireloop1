@@ -958,7 +958,7 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
             primary_val = _sanitize_company_name(primary_val)
             secondary_val = _sanitize_company_name(getattr(secondary, field))
             work_company = _first_work_company(secondary.work_experience or [])
-            title = getattr(primary, "current_title") or getattr(secondary, "current_title")
+            title = primary.current_title or secondary.current_title
             if primary_val and _company_looks_like_title_fragment(primary_val, title):
                 primary_val = None
             merged_company = primary_val or secondary_val or work_company
