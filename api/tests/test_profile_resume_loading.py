@@ -14,6 +14,9 @@ class FakeProfileDb:
         self.user_id = uuid.uuid4()
         self.candidate_id = uuid.uuid4()
 
+    async def execute(self, query: str, *args: object) -> str:
+        return "UPDATE 0"
+
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         if "FROM public.users" in query:
             return {

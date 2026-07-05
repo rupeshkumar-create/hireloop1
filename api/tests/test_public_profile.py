@@ -6,7 +6,7 @@ from hireloop_api.services.public_profile import (
 
 def test_slug_needs_anonymization_when_contact_hidden() -> None:
     assert slug_needs_anonymization("contact-vivek-kumar-a5d2b8", hide_contact=True)
-    assert not slug_needs_anonymization("c-deadbeefcafe", hide_contact=True)
+    assert not slug_needs_anonymization("c-deadbeef", hide_contact=True)
     assert not slug_needs_anonymization("contact-vivek-kumar", hide_contact=False)
 
 
