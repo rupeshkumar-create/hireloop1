@@ -52,6 +52,7 @@ from hireloop_api.services.match_quality import (
     should_persist_match,
 )
 from hireloop_api.services.skills import canonical_skill
+from hireloop_api.services.test_jobs import ensure_test_match_scores
 from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 
 logger = structlog.get_logger()
@@ -859,6 +860,13 @@ class MatchingEngine:
             return 0
 
         market = normalize_market(cand_row.get("market"))
+        await ensure_test_match_scores(
+            self._db,
+            candidate_id,
+            market=market,
+            remote_preference="any",
+        )
+
         vis = job_visible_for_market_sql(market_param="$3")
 
         jobs = await self._db.fetch(

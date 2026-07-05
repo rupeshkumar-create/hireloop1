@@ -31,6 +31,8 @@ import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
+import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
+import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { TopNav } from "@/components/dashboard/TopNav";
 import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
@@ -98,6 +100,8 @@ export function DashboardClient({
     router.prefetch("/resumes");
     router.prefetch("/intros");
     router.prefetch("/dashboard?panel=jobs");
+    router.prefetch("/dashboard?panel=career_path");
+    router.prefetch("/dashboard?panel=tracker");
 
     let cancelled = false;
 
@@ -323,6 +327,16 @@ export function DashboardClient({
                   }
                 />
               )}
+              {activePanel === "career_path" && (
+                <CareerPathPanel
+                  conversationId={activeConvoId ?? undefined}
+                  onRequestIntro={handleRequestIntro}
+                  savedJobIds={savedJobIds}
+                  onSavedChange={handleSavedChange}
+                  className="h-full"
+                />
+              )}
+              {activePanel === "tracker" && <JobTrackerPanel className="h-full" />}
               {activePanel === "coaching" && <CoachingPanel onSendToChat={sendToChat} />}
             </div>
           </div>

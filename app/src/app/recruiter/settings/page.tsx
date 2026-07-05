@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Building2, Briefcase, User } from "@/components/brand/icons";
+import { Building2, Briefcase, LogOut, User } from "@/components/brand/icons";
 import { Button, Card, CardBody, CardHeader, Field, Input, Textarea } from "@/components/ui";
+import { useRecruiterShell } from "@/hooks/useRecruiterShell";
 import {
   fetchRecruiterProfile,
   updateRecruiterProfile,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/api/recruiter";
 
 export default function RecruiterSettingsPage() {
+  const { signingOut, signOut } = useRecruiterShell();
   const [profile, setProfile] = useState<RecruiterProfile | null>(null);
   const [title, setTitle] = useState("");
   const [companyName, setCompanyName] = useState("");
@@ -154,6 +156,21 @@ export default function RecruiterSettingsPage() {
               {saved && <p className="text-micro text-ink-500">Saved.</p>}
             </>
           )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Account" />
+        <CardBody>
+          <Button
+            variant="secondary"
+            loading={signingOut}
+            onClick={() => void signOut()}
+            className="w-full justify-start gap-2"
+          >
+            <LogOut className="h-4 w-4 text-ink-400 shrink-0" strokeWidth={1.5} />
+            {signingOut ? "Signing out…" : "Sign out"}
+          </Button>
         </CardBody>
       </Card>
     </div>

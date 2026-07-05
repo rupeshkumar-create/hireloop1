@@ -6,9 +6,10 @@ export type RailItem = { id: PanelId; label: string; Icon: React.ElementType };
 const NAV_TO_PANEL: Record<string, PanelId> = {
   home: "home",
   matches: "jobs",
+  career_path: "career_path",
+  tracker: "tracker",
   intros: "inbox",
   profile: "profile",
-  // Coaching folded into the chat as starter chips — no longer a nav destination.
 };
 
 /** Desktop top-nav pills — aligned with CANDIDATE_NAV panel items. */

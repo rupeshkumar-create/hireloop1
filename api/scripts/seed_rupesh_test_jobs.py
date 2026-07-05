@@ -442,6 +442,20 @@ async def main() -> None:
 
         print("\nDone — recruiter:", RECRUITER_EMAIL)
         print("Resumes: Profile (4).pdf → Category role | Profile (1).pdf → GTM role")
+
+        from hireloop_api.services.test_jobs import ensure_test_match_scores
+
+        candidate_ids = await conn.fetch(
+            "SELECT id::text FROM public.candidates WHERE deleted_at IS NULL"
+        )
+        for row in candidate_ids:
+            await ensure_test_match_scores(
+                conn,
+                row["id"],
+                market="IN",
+                remote_preference="any",
+            )
+        print(f"Ensured test match scores for {len(candidate_ids)} candidates")
     finally:
         await conn.close()
 

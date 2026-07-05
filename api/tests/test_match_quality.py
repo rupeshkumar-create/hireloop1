@@ -105,3 +105,17 @@ def test_dental_clinic_match_not_persisted_even_if_sales_score_is_inflated() -> 
 
 def test_default_feed_floor_is_quality_first() -> None:
     assert DEFAULT_FEED_MIN_SCORE >= MIN_PERSIST_SCORE
+
+
+def test_hireloop_test_job_bypasses_quality_gates() -> None:
+    from hireloop_api.services.test_jobs import TEST_COMPANY_NAME
+
+    cand = _cand(current_title="Data Analyst", skills=["sql"])
+    test_job = _job(
+        title="Category Planner — Apparel",
+        company_name=TEST_COMPANY_NAME,
+        description="fashion retail",
+        skills_required=["merchandising"],
+    )
+    assert job_in_persona_pool(test_job, cand) is True
+    assert should_persist_match(cand, test_job, {"overall": 0.1}) is True

@@ -11,10 +11,12 @@ import {
   ArrowLeft,
   ArrowRight,
   Briefcase,
+  Link,
   MessageCircle,
 } from "@/components/brand/icons";
 import {
   createRole,
+  importRoleFromUrl,
   listRoles,
   type RoleListItem,
 } from "@/lib/api/recruiter";
@@ -42,6 +44,9 @@ export default function NewRolePage() {
   const [remote, setRemote] = useState("");
   const [seniority, setSeniority] = useState("");
   const [duplicateId, setDuplicateId] = useState("");
+  const [importUrl, setImportUrl] = useState("");
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
   const [pastRoles, setPastRoles] = useState<RoleListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +58,29 @@ export default function NewRolePage() {
       .then(setPastRoles)
       .catch(() => setPastRoles([]));
   }, []);
+
+  async function handleImportUrl() {
+    const url = importUrl.trim();
+    if (!url) return;
+    setImporting(true);
+    setError(null);
+    setImportWarnings([]);
+    try {
+      const res = await importRoleFromUrl(url);
+      if (res.title) setTitle(res.title);
+      if (res.jd_text) setJd(res.jd_text);
+      if (res.comp_min_lpa != null) setCompMin(String(res.comp_min_lpa));
+      if (res.comp_max_lpa != null) setCompMax(String(res.comp_max_lpa));
+      if (res.location_city) setCity(res.location_city);
+      if (res.remote_policy) setRemote(res.remote_policy);
+      if (res.seniority) setSeniority(res.seniority);
+      setImportWarnings(res.warnings || []);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -147,9 +175,44 @@ export default function NewRolePage() {
                 </Field>
 
                 <Field
+                  label="Import from URL"
+                  htmlFor="jd-url"
+                  helper="Paste a public job link — Greenhouse, Lever, or any career page. We'll crawl it and fill the form."
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      id="jd-url"
+                      type="url"
+                      value={importUrl}
+                      onChange={(e) => setImportUrl(e.target.value)}
+                      placeholder="https://boards.greenhouse.io/… or https://jobs.lever.co/…"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      loading={importing}
+                      disabled={!importUrl.trim()}
+                      onClick={() => void handleImportUrl()}
+                      leftIcon={<Link className="h-4 w-4" strokeWidth={1.5} />}
+                    >
+                      Import
+                    </Button>
+                  </div>
+                </Field>
+
+                {importWarnings.length > 0 && (
+                  <ul className="text-small text-ink-600 bg-paper-1 border border-ink-100 rounded-md px-3 py-2 space-y-1">
+                    {importWarnings.map((w) => (
+                      <li key={w}>• {w}</li>
+                    ))}
+                  </ul>
+                )}
+
+                <Field
                   label="Job description"
                   htmlFor="jd-text"
-                  helper="Paste JD — we'll skip chat and show an editable brief card"
+                  helper="Paste JD or import from URL — we'll extract the brief instantly"
                 >
                   <textarea
                     id="jd-text"

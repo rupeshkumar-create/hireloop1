@@ -114,6 +114,7 @@ async def run_nitya_turn(
     user_message: str,
     history: list[dict[str, str]],
     role_context: str | None = None,
+    role: dict[str, Any] | None = None,
     recruiter_turn_count: int = 0,
 ) -> tuple[str, dict[str, Any] | None, list[str]]:
     """
@@ -164,7 +165,7 @@ async def run_nitya_turn(
         # Force parse attempt if model forgot tags on final turn
         logger.warning("nitya_final_turn_no_brief")
 
-    chips = suggest_chips_for_reply(text) if not brief else []
+    chips = suggest_chips_for_reply(text, role) if not brief else []
     return text, brief, chips
 
 

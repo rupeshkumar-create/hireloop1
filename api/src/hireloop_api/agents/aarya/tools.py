@@ -43,6 +43,14 @@ from hireloop_api.services.job_preferences import (
 )
 from hireloop_api.services.match_quality import should_persist_match
 from hireloop_api.services.matching import _assemble_score
+from hireloop_api.services.test_jobs import (
+    TEST_MATCH_EXPLANATION,
+    TEST_MATCH_SCORE,
+    ensure_test_match_scores,
+    fetch_test_jobs,
+    is_test_job,
+    prepend_test_jobs,
+)
 
 logger = structlog.get_logger()
 
@@ -151,6 +159,12 @@ def _quality_filter_job_rows(
     for row in rows:
         row_dict = dict(row)
         job_row = _job_quality_row(row_dict)
+        if is_test_job(row_dict):
+            if row_dict.get("overall_score") is None:
+                row_dict["overall_score"] = TEST_MATCH_SCORE
+            row_dict["explanation"] = row_dict.get("explanation") or TEST_MATCH_EXPLANATION
+            filtered.append(row_dict)
+            continue
         score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
         if not should_persist_match(cand_row, job_row, score):
             continue
@@ -583,6 +597,12 @@ async def job_search(
     market = "IN"
     if candidate:
         market = await fetch_candidate_market(db, candidate["id"])
+        await ensure_test_match_scores(
+            db,
+            str(candidate["id"]),
+            market=market,
+            remote_preference="any",
+        )
 
     vis = job_visible_for_market_sql(market_param="$7")
 
@@ -769,6 +789,21 @@ async def job_search(
         rows = exclude_job_rows(
             [dict(r) for r in rows],
             exclude_job_ids=exclude_ids,
+            limit=limit,
+        )
+
+    if candidate:
+        test_rows = await fetch_test_jobs(db, market=market, remote_preference="any")
+        test_dicts = []
+        for row in test_rows:
+            row_dict = dict(row)
+            row_dict["id"] = row_dict["job_id"]
+            row_dict["overall_score"] = TEST_MATCH_SCORE
+            row_dict["explanation"] = TEST_MATCH_EXPLANATION
+            test_dicts.append(row_dict)
+        rows = prepend_test_jobs(
+            [dict(r) for r in rows],
+            test_dicts,
             limit=limit,
         )
 

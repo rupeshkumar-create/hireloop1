@@ -18,6 +18,7 @@ from hireloop_api.services.domain_fit import (
     domain_fit_multiplier,
 )
 from hireloop_api.services.skills import canonical_skill
+from hireloop_api.services.test_jobs import is_test_job
 from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 
 # Minimum overall score to write match_scores (below → row deleted / skipped).
@@ -86,6 +87,9 @@ def job_in_persona_pool(
 
     Cold-start (no title signals) → allow (recent jobs still scored).
     """
+    if is_test_job(job_row):
+        return True
+
     candidate_titles = candidate_role_titles(cand_row)
     job_title = job_row.get("title")
 
@@ -125,6 +129,9 @@ def should_persist_match(
     Returns False for weak overall scores, hard industry mismatch, or when
     neither title nor skills show real role alignment.
     """
+    if is_test_job(job_row):
+        return True
+
     overall = float(result.get("overall") or 0.0)
     if overall < MIN_PERSIST_SCORE:
         return False

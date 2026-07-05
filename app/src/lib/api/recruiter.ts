@@ -60,6 +60,22 @@ export type CreateRoleResponse = {
   readiness: RoleReadiness;
 };
 
+export type ImportRoleUrlResponse = {
+  title: string | null;
+  jd_text: string | null;
+  comp_min_lpa: number | null;
+  comp_max_lpa: number | null;
+  location_city: string | null;
+  location_state: string | null;
+  remote_policy: string | null;
+  seniority: string | null;
+  source_url: string;
+  source_type: string;
+  extraction?: Record<string, unknown> | null;
+  warnings: string[];
+  ready_for_brief: boolean;
+};
+
 export type UpdateRolePayload = Partial<{
   title: string;
   jd_text: string;
@@ -244,6 +260,15 @@ export async function createRole(
   return apiFetch<CreateRoleResponse>("/api/v1/recruiter/roles", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function importRoleFromUrl(
+  url: string,
+): Promise<ImportRoleUrlResponse> {
+  return apiFetch<ImportRoleUrlResponse>("/api/v1/recruiter/roles/import-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
   });
 }
 

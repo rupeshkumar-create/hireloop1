@@ -13,13 +13,14 @@ import {
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
 import { Modal } from "@/components/ui/Modal";
+import type { PanelId } from "@/lib/dashboard/panel-types";
 import { cn } from "@/lib/utils";
-
-type PanelId = "home" | "inbox" | "profile" | "jobs" | "coaching";
 
 const PANEL_BY_NAV: Partial<Record<CandidateNavId, PanelId>> = {
   home: "home",
   matches: "jobs",
+  career_path: "career_path",
+  tracker: "tracker",
   intros: "inbox",
   profile: "profile",
   coaching: "coaching",

@@ -7,6 +7,8 @@ import {
   GraduationCap,
   Home,
   Inbox,
+  Kanban,
+  Route,
   User,
   FileText,
   Settings,
@@ -16,6 +18,8 @@ import {
 export type CandidateNavId =
   | "home"
   | "matches"
+  | "career_path"
+  | "tracker"
   | "intros"
   | "profile"
   | "coaching"
@@ -41,6 +45,20 @@ export const CANDIDATE_NAV: CandidateNavItem[] = [
     panel: "jobs",
     Icon: Briefcase,
     match: ["/matches", "/jobs"],
+  },
+  {
+    id: "career_path",
+    label: "Career path",
+    href: "/dashboard?panel=career_path",
+    panel: "career_path",
+    Icon: Route,
+  },
+  {
+    id: "tracker",
+    label: "Job tracker",
+    href: "/dashboard?panel=tracker",
+    panel: "tracker",
+    Icon: Kanban,
   },
   {
     id: "intros",
@@ -80,7 +98,7 @@ export const CANDIDATE_MOBILE_PRIMARY_NAV: CandidateNavItem[] = CANDIDATE_NAV.fi
 
 /** Items shown in the mobile More sheet. */
 export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
-  ...CANDIDATE_NAV.filter((n) => ["resumes"].includes(n.id)),
+  ...CANDIDATE_NAV.filter((n) => ["career_path", "tracker", "resumes"].includes(n.id)),
   {
     id: "settings",
     label: "Settings",

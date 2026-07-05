@@ -43,6 +43,12 @@ from hireloop_api.services.ranking import (
     passes_hard_constraints,
 )
 from hireloop_api.services.skills import canonical_skill
+from hireloop_api.services.test_jobs import (
+    ensure_test_match_scores,
+    fetch_test_jobs_for_feed,
+    is_test_job,
+    prepend_test_jobs,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/matches", tags=["matches"])
@@ -160,6 +166,13 @@ async def get_match_feed(
     if not candidate.get("market"):
         market = await fetch_candidate_market(db, candidate["id"])
 
+    await ensure_test_match_scores(
+        db,
+        str(candidate["id"]),
+        market=market,
+        remote_preference="any",
+    )
+
     rows = await _fetch_cached_match_rows(
         db,
         candidate_id=candidate["id"],
@@ -231,7 +244,9 @@ async def get_match_feed(
         excluded_companies=excl_companies,
         excluded_titles=excl_titles,
     )
-    result = [job for job in result if passes_hard_constraints(job, constraints)]
+    result = [
+        job for job in result if is_test_job(job) or passes_hard_constraints(job, constraints)
+    ]
 
     # Presentation layer: on the opening screen (first page), personalise from
     # saved jobs, then de-duplicate and MMR-diversify so the candidate isn't
@@ -249,6 +264,12 @@ async def get_match_feed(
             screen_size=min(limit, 8),
             fuse_signals=("overall_score", "skills_score"),
         )
+        test_jobs = await fetch_test_jobs_for_feed(
+            db,
+            market=market,
+            remote_preference="any",
+        )
+        result = prepend_test_jobs(result, test_jobs, limit=limit)
         # Off the serve path: snapshot the screen and generate/persist rationales
         # on a background connection so the feed returns immediately.
         _schedule_rationale_overlay(dict(candidate), [dict(i) for i in result], limit)
@@ -426,6 +447,13 @@ async def get_match_feed_count(
     if not candidate.get("market"):
         market = await fetch_candidate_market(db, candidate["id"])
 
+    await ensure_test_match_scores(
+        db,
+        str(candidate["id"]),
+        market=market,
+        remote_preference="any",
+    )
+
     cached_rows = await _fetch_cached_match_rows(
         db,
         candidate_id=candidate["id"],
@@ -484,6 +512,14 @@ async def get_match_feed_count(
             market=market,
         )
         total = len(fallback)
+
+    test_jobs = await fetch_test_jobs_for_feed(
+        db,
+        market=market,
+        remote_preference="any",
+    )
+    if test_jobs:
+        total = max(total, len(test_jobs))
 
     return {"total": total}
 

@@ -6,13 +6,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Kanban, Plus, Settings } from "@/components/brand/icons";
+import { Kanban, LogOut, Plus, Settings } from "@/components/brand/icons";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import {
   RECRUITER_NAV,
   type RecruiterNavItem,
 } from "@/lib/recruiter-nav";
 import { RecruiterMobileNav } from "@/components/layout/RecruiterMobileNav";
+import { useRecruiterShell } from "@/hooks/useRecruiterShell";
 import { cn } from "@/lib/utils";
 
 type RecruiterShellProps = {
@@ -21,6 +22,7 @@ type RecruiterShellProps = {
 
 export function RecruiterShell({ children }: RecruiterShellProps) {
   const pathname = usePathname();
+  const { signingOut, signOut } = useRecruiterShell();
 
   if (pathname?.startsWith("/recruiter/onboarding")) {
     return <>{children}</>;
@@ -92,6 +94,16 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
           >
             <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
           </Link>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            disabled={signingOut}
+            title="Sign out"
+            aria-label="Sign out"
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-ink-400 hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-50"
+          >
+            <LogOut className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          </button>
         </div>
       </aside>
 

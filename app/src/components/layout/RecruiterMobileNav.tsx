@@ -3,13 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2, MoreHorizontal } from "@/components/brand/icons";
+import { Loader2, LogOut, MoreHorizontal } from "@/components/brand/icons";
 import {
   RECRUITER_MOBILE_MORE_NAV,
   RECRUITER_MOBILE_PRIMARY_NAV,
   type RecruiterNavItem,
 } from "@/lib/recruiter-nav";
 import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
+import { useRecruiterShell } from "@/hooks/useRecruiterShell";
 import { switchActiveRole } from "@/lib/api/role";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui";
@@ -34,6 +35,7 @@ export function RecruiterMobileNav() {
   const router = useRouter();
   const { toast } = useToast();
   const { canSwitch } = useDualRoleAccess();
+  const { signingOut, signOut } = useRecruiterShell();
   const [moreOpen, setMoreOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
 
@@ -143,6 +145,25 @@ export function RecruiterMobileNav() {
               </li>
             );
           })}
+          <li className="pt-2 mt-2 border-t border-ink-100">
+            <button
+              type="button"
+              disabled={signingOut}
+              onClick={() => {
+                setMoreOpen(false);
+                void signOut();
+              }}
+              className={cn(
+                "w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors",
+                "hover:bg-ink-50 text-ink-700 disabled:opacity-50",
+              )}
+            >
+              <LogOut className="h-5 w-5 shrink-0" strokeWidth={1.5} />
+              <span className="text-body font-medium">
+                {signingOut ? "Signing out…" : "Sign out"}
+              </span>
+            </button>
+          </li>
         </ul>
       </Modal>
     </>

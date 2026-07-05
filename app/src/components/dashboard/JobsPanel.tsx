@@ -4,10 +4,8 @@ import { useEffect, useState } from "react";
 import { Search, SlidersHorizontal, Sparkles } from "@/components/brand/icons";
 import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
-import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
-import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import { Button, EmptyState } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -57,7 +55,7 @@ export function JobsPanel({
     setHasRequestedMatches(true);
   }
 
-  // Keep the local tab in sync when the URL explicitly changes (?tab=path/saved).
+  // Keep the local tab in sync when the URL explicitly changes (?tab=saved).
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
@@ -87,30 +85,6 @@ export function JobsPanel({
           )}
         >
           Matches
-        </button>
-        <button
-          type="button"
-          onClick={() => selectTab("path")}
-          className={cn(
-            "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
-            tab === "path"
-              ? "border-ink-900 text-ink-900"
-              : "border-transparent text-ink-400 hover:text-ink-700",
-          )}
-        >
-          Career paths
-        </button>
-        <button
-          type="button"
-          onClick={() => selectTab("tracker")}
-          className={cn(
-            "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
-            tab === "tracker"
-              ? "border-ink-900 text-ink-900"
-              : "border-transparent text-ink-400 hover:text-ink-700",
-          )}
-        >
-          Tracker
         </button>
         <button
           type="button"
@@ -152,15 +126,7 @@ export function JobsPanel({
               onAskAarya={onAskAarya}
             />
           )
-        ) : tab === "path" ? (
-          <CareerPathPanel
-            conversationId={conversationId}
-            onRequestIntro={onRequestIntro}
-            savedJobIds={savedJobIds}
-            onSavedChange={onSavedChange}
-            className="h-full"
-          />
-        ) : tab === "saved" ? (
+        ) : (
           <SavedJobsPanel
             conversationId={conversationId}
             onRequestIntro={onRequestIntro}
@@ -169,8 +135,6 @@ export function JobsPanel({
             refreshKey={savedJobsRefreshKey}
             className="h-full p-5 flex flex-col"
           />
-        ) : (
-          <JobTrackerPanel className="h-full" />
         )}
       </div>
     </div>

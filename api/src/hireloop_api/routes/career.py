@@ -35,6 +35,11 @@ from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import default_prioritize_title
 from hireloop_api.services.matching import MatchingEngine
 from hireloop_api.services.rate_limit import check_rate_limit
+from hireloop_api.services.test_jobs import (
+    ensure_test_match_scores,
+    fetch_test_jobs_for_feed,
+    prepend_test_jobs,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/career", tags=["career"])
@@ -343,6 +348,13 @@ async def find_jobs_for_path(
     market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
     prioritized = path.get("prioritized_title") or ""
 
+    await ensure_test_match_scores(
+        db,
+        candidate_id,
+        market=market,
+        remote_preference="any",
+    )
+
     from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, POOL_INGEST, enqueue_job
     from hireloop_api.services.career_path_jobs import (
         normalize_path_search_titles,
@@ -466,6 +478,12 @@ async def find_jobs_for_path(
     jobs = [_serialize_cached_match_row(r) for r in rows]
     for job in jobs:
         job.pop("_rationale_cached", None)  # internal flag, not part of the API
+    test_jobs = await fetch_test_jobs_for_feed(
+        db,
+        market=market,
+        remote_preference="any",
+    )
+    jobs = prepend_test_jobs(jobs, test_jobs, limit=20)
     return {
         "jobs": jobs,
         "refreshing": source_available,

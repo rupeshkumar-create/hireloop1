@@ -41,6 +41,12 @@ from hireloop_api.services.role_jd_extract import (
     apply_extraction_to_role,
     compute_role_readiness,
     extract_role_from_jd,
+    suggest_chips_for_reply,
+)
+from hireloop_api.services.role_jd_fetch import (
+    RoleImportError,
+    fetch_role_from_url,
+    merge_import_warnings,
 )
 
 logger = structlog.get_logger()
@@ -98,6 +104,26 @@ class CreateRoleRequest(BaseModel):
         default=None,
         pattern="^(junior|mid|senior|lead|manager|director)$",
     )
+
+
+class ImportRoleUrlRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2048)
+
+
+class ImportRoleUrlResponse(BaseModel):
+    title: str | None = None
+    jd_text: str | None = None
+    comp_min_lpa: int | None = None
+    comp_max_lpa: int | None = None
+    location_city: str | None = None
+    location_state: str | None = None
+    remote_policy: str | None = None
+    seniority: str | None = None
+    source_url: str
+    source_type: str
+    extraction: dict[str, Any] | None = None
+    warnings: list[str] = []
+    ready_for_brief: bool = False
 
 
 class UpdateRoleRequest(BaseModel):
@@ -538,6 +564,86 @@ async def list_roles(
     return out
 
 
+@router.post("/roles/import-url", response_model=ImportRoleUrlResponse)
+async def import_role_from_url(
+    body: ImportRoleUrlRequest,
+    current_user: dict = Depends(get_recruiter_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """
+    Crawl a public job posting URL and return structured fields for the new-role form.
+    Runs the same JD extraction pipeline as paste-JD create when enough text is found.
+    """
+    _ = current_user
+    try:
+        imported = await fetch_role_from_url(body.url.strip())
+    except RoleImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    jd_text = (imported.get("jd_text") or "").strip()
+    title = (imported.get("title") or "").strip() or None
+    extraction: dict[str, Any] | None = None
+
+    comp_min_lpa: int | None = None
+    comp_max_lpa: int | None = None
+    location_city = imported.get("location_city")
+    location_state = imported.get("location_state")
+    remote_policy = imported.get("remote_policy")
+    seniority: str | None = None
+
+    if jd_text and len(jd_text) >= 40 and settings.openrouter_api_key:
+        extraction = await extract_role_from_jd(
+            title=title or "Role",
+            jd_text=jd_text,
+            settings=settings,
+        )
+        title = extraction.get("title") or title
+        if extraction.get("comp_min_lpa") is not None:
+            comp_min_lpa = int(extraction["comp_min_lpa"])
+        elif extraction.get("comp_min"):
+            comp_min_lpa = int(extraction["comp_min"]) // 100_000
+        if extraction.get("comp_max_lpa") is not None:
+            comp_max_lpa = int(extraction["comp_max_lpa"])
+        elif extraction.get("comp_max"):
+            comp_max_lpa = int(extraction["comp_max"]) // 100_000
+        location_city = extraction.get("location_city") or location_city
+        location_state = extraction.get("location_state") or location_state
+        remote_policy = extraction.get("remote_policy") or remote_policy
+        jd_struct = extraction.get("jd_structured") or {}
+        if isinstance(jd_struct, dict):
+            sen = jd_struct.get("seniority")
+            if isinstance(sen, str) and sen in {
+                "junior",
+                "mid",
+                "senior",
+                "lead",
+                "manager",
+                "director",
+            }:
+                seniority = sen
+
+    warnings = merge_import_warnings(imported, extraction)
+    source_note = f"\n\nSource: {imported['source_url']}"
+    if source_note.strip() not in jd_text:
+        jd_text = f"{jd_text}{source_note}"
+
+    return {
+        "title": title,
+        "jd_text": jd_text,
+        "comp_min_lpa": comp_min_lpa,
+        "comp_max_lpa": comp_max_lpa,
+        "location_city": location_city,
+        "location_state": location_state,
+        "remote_policy": remote_policy,
+        "seniority": seniority,
+        "source_url": imported["source_url"],
+        "source_type": imported.get("source_type") or "html",
+        "extraction": extraction,
+        "warnings": warnings,
+        "ready_for_brief": bool(jd_text and len(jd_text) >= 40),
+    }
+
+
 @router.post("/roles", status_code=201)
 async def create_role(
     body: CreateRoleRequest,
@@ -905,7 +1011,10 @@ async def nitya_chat_message(
             (h["content"] for h in reversed(history) if h["role"] == "assistant"),
             "",
         )
-        chips = list(POST_BRIEF_CHIPS) if brief_complete else []
+        if brief_complete:
+            chips = list(POST_BRIEF_CHIPS)
+        else:
+            chips = suggest_chips_for_reply(reply, role_dict) if reply else []
     elif body.bootstrap and brief_complete:
         candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
         if not candidates:
@@ -978,6 +1087,7 @@ async def nitya_chat_message(
             user_message=user_message,
             history=history,
             role_context=_format_role_context(role_dict),
+            role=role_dict,
             recruiter_turn_count=0,
         )
         await db.execute(
@@ -1098,6 +1208,7 @@ async def nitya_chat_message(
                 user_message=user_message,
                 history=history,
                 role_context=_format_role_context(role_dict),
+                role=role_dict,
                 recruiter_turn_count=recruiter_turn_count,
             )
 

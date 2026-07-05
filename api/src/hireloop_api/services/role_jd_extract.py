@@ -115,27 +115,168 @@ def compute_role_readiness(role: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def suggest_chips_for_reply(assistant_text: str) -> list[str]:
-    """Quick-reply chips when Nitya asks about comp, location, or experience."""
+def _parse_jd_structured(role: dict[str, Any]) -> dict[str, Any]:
+    jd_structured = role.get("jd_structured")
+    if isinstance(jd_structured, str):
+        try:
+            jd_structured = json.loads(jd_structured)
+        except (ValueError, TypeError):
+            jd_structured = {}
+    return jd_structured if isinstance(jd_structured, dict) else {}
+
+
+def _inr_to_lpa(inr: int | None) -> int | None:
+    if inr is None:
+        return None
+    return int(inr / 100_000)
+
+
+def _role_comp_lpa(role: dict[str, Any]) -> tuple[int | None, int | None]:
+    """Resolve min/max LPA from role fields, jd_structured, or JD text."""
+    min_lpa = _inr_to_lpa(role.get("comp_min"))
+    max_lpa = _inr_to_lpa(role.get("comp_max"))
+    jd = _parse_jd_structured(role)
+    if min_lpa is None:
+        min_lpa = parse_lpa_inr(jd.get("comp_min_lpa"))
+    if max_lpa is None:
+        max_lpa = parse_lpa_inr(jd.get("comp_max_lpa"))
+    if min_lpa is None and max_lpa is None:
+        jd_text = (role.get("jd_text") or "").strip()
+        if jd_text:
+            match = re.search(r"(\d{1,2})\s*[-\u2013]\s*(\d{1,2})\s*lpa", jd_text, re.I)
+            if match:
+                min_lpa = int(match.group(1))
+                max_lpa = int(match.group(2))
+            else:
+                single = re.search(r"(\d{1,2})\s*lpa", jd_text, re.I)
+                if single:
+                    min_lpa = int(single.group(1))
+                    max_lpa = min_lpa
+    if min_lpa is not None and max_lpa is None:
+        max_lpa = min_lpa
+    return min_lpa, max_lpa
+
+
+def _comp_chips(role: dict[str, Any]) -> list[str]:
+    min_lpa, max_lpa = _role_comp_lpa(role)
+    if min_lpa is not None and max_lpa is not None and min_lpa != max_lpa:
+        return [
+            f"₹{min_lpa}–{max_lpa} LPA fixed only",
+            f"₹{min_lpa}–{max_lpa} LPA + variable",
+            "Fixed + variable + ESOPs",
+        ]
+    if min_lpa is not None:
+        return [
+            f"₹{min_lpa} LPA fixed only",
+            f"₹{min_lpa} LPA + variable",
+            "Fixed + variable + ESOPs",
+        ]
+    return [
+        "Fixed only",
+        "Fixed + variable",
+        "Fixed + variable + ESOPs",
+    ]
+
+
+def _location_chips(role: dict[str, Any]) -> list[str]:
+    city = (role.get("location_city") or "").strip()
+    remote = normalize_role_remote_policy(role.get("remote_policy"))
+    jd = _parse_jd_structured(role)
+    if not city:
+        city = (jd.get("location_city") or "").strip()
+    if remote is None:
+        remote = normalize_role_remote_policy(jd.get("remote_policy"))
+
+    if city:
+        if remote == "remote":
+            return ["Remote only", f"Optional {city} hub", "Hybrid"]
+        if remote == "hybrid":
+            return [f"Hybrid in {city}", "Remote only", f"{city} onsite only"]
+        if remote == "flex":
+            return [f"Hybrid in {city}", "Remote only", "Flexible"]
+        return [f"{city} onsite only", f"Hybrid in {city}", "Remote only"]
+    if remote == "remote":
+        return ["Remote only", "Hybrid", "India — any city"]
+    return ["Remote only", "Hybrid", "Onsite"]
+
+
+def _experience_chips(role: dict[str, Any]) -> list[str]:
+    jd = _parse_jd_structured(role)
+    ymin = jd.get("years_experience_min")
+    ymax = jd.get("years_experience_max")
+    if isinstance(ymin, (int, float)) and isinstance(ymax, (int, float)):
+        return [f"{int(ymin)}–{int(ymax)} years", f"{int(ymax)}+ years", f"Min {int(ymin)} years"]
+    if isinstance(ymin, (int, float)):
+        y = int(ymin)
+        return [f"{y}+ years", f"{y}–{y + 3} years", f"Min {y} years"]
+    seniority = str(jd.get("seniority") or "").lower()
+    by_seniority: dict[str, list[str]] = {
+        "intern": ["0–1 years", "Freshers OK"],
+        "junior": ["0–2 years", "1–3 years"],
+        "mid": ["3–5 years", "5–8 years"],
+        "senior": ["5–8 years", "8+ years"],
+        "lead": ["8–12 years", "10+ years"],
+        "manager": ["8–12 years", "10+ years"],
+        "director": ["12+ years", "15+ years"],
+    }
+    return by_seniority.get(seniority, ["3–5 years", "5–8 years", "8+ years"])
+
+
+def _must_have_chips(role: dict[str, Any]) -> list[str]:
+    must = role.get("must_haves") or []
+    if isinstance(must, str):
+        try:
+            must = json.loads(must)
+        except (ValueError, TypeError):
+            must = []
+    chips = [f"Yes — {str(m).strip()}" for m in must[:3] if str(m).strip()]
+    chips.extend(["That's correct", "Let me clarify…"])
+    return chips
+
+
+def suggest_chips_for_reply(
+    assistant_text: str,
+    role: dict[str, Any] | None = None,
+) -> list[str]:
+    """Quick-reply chips derived from Nitya's question and the role/JD post."""
+    role = role or {}
     t = assistant_text.lower()
     chips: list[str] = []
-    if any(w in t for w in ("lpa", "comp", "salary", "ctc", "budget", "package")):
-        chips.extend(
-            [
-                "₹10 LPA fixed only",
-                "₹10 LPA + variable",
-                "Typo — meant ₹40 LPA",
-                "Yes, tight budget",
-            ]
+    if any(
+        w in t for w in ("lpa", "comp", "salary", "ctc", "budget", "package", "variable", "esop")
+    ):
+        chips.extend(_comp_chips(role))
+    if any(
+        w in t
+        for w in (
+            "location",
+            "remote",
+            "hybrid",
+            "onsite",
+            "bangalore",
+            "bengaluru",
+            "city",
+            "office",
+            "where",
         )
-    if any(w in t for w in ("location", "remote", "hybrid", "onsite", "bangalore", "city")):
-        chips.extend(["Remote only", "Hybrid", "Bangalore only"])
+    ):
+        chips.extend(_location_chips(role))
     if any(w in t for w in ("experience", "years", "seniority", "yoe")):
-        chips.extend(["3-5 years", "5-8 years", "8+ years"])
+        chips.extend(_experience_chips(role))
+    if any(w in t for w in ("must-have", "must have", "skill", "requirement", "qualification")):
+        must_chips = _must_have_chips(role)
+        if len(must_chips) > 2:
+            chips.extend(must_chips)
     if not chips and "?" in assistant_text:
-        chips.append("That's correct")
-        chips.append("Let me clarify…")
-    return chips[:6]
+        chips.extend(["That's correct", "Let me clarify…"])
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for chip in chips:
+        if chip not in seen:
+            seen.add(chip)
+            out.append(chip)
+    return out[:6]
 
 
 async def extract_role_from_jd(

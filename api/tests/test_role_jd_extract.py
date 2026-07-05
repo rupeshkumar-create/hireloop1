@@ -33,11 +33,49 @@ def test_compute_role_readiness_missing_comp() -> None:
     assert readiness["ready_for_search"] is True
 
 
-def test_suggest_chips_comp_question() -> None:
-    chips = suggest_chips_for_reply("What is the comp budget in LPA?")
-    assert "₹10 LPA fixed only" in chips
+def test_suggest_chips_comp_from_role_post() -> None:
+    role = {
+        "title": "Go-To-Market Lead",
+        "comp_min": 2_800_000,
+        "comp_max": 4_500_000,
+        "location_city": "Bengaluru",
+    }
+    chips = suggest_chips_for_reply("What is the comp structure in LPA?", role)
+    assert "₹28–45 LPA fixed only" in chips
+    assert "₹28–45 LPA + variable" in chips
+    assert "₹10 LPA" not in " ".join(chips)
 
 
-def test_suggest_chips_location_question() -> None:
-    chips = suggest_chips_for_reply("Is this remote or Bangalore only?")
+def test_suggest_chips_comp_without_numbers_uses_structure_only() -> None:
+    role = {"title": "Developer", "location_city": "Bengaluru", "jd_text": "Hiring in Bangalore"}
+    chips = suggest_chips_for_reply("What's the comp budget in LPA?", role)
+    assert "Fixed only" in chips
+    assert "Fixed + variable" in chips
+    assert not any("₹10" in c for c in chips)
+
+
+def test_suggest_chips_comp_parsed_from_jd_text() -> None:
+    role = {
+        "title": "Engineer",
+        "jd_text": "Compensation: ₹20–32 LPA. Bengaluru hybrid.",
+    }
+    chips = suggest_chips_for_reply("Confirm the comp range?", role)
+    assert "₹20–32 LPA fixed only" in chips
+
+
+def test_suggest_chips_location_from_role_post() -> None:
+    role = {"location_city": "Bengaluru", "remote_policy": "hybrid"}
+    chips = suggest_chips_for_reply("Is this remote or Bangalore only?", role)
+    assert "Hybrid in Bengaluru" in chips
     assert "Remote only" in chips
+
+
+def test_suggest_chips_experience_from_jd_structured() -> None:
+    role = {
+        "jd_structured": {
+            "years_experience_min": 5,
+            "years_experience_max": 10,
+        }
+    }
+    chips = suggest_chips_for_reply("How many years of experience?", role)
+    assert "5–10 years" in chips

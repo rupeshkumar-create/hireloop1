@@ -21,6 +21,8 @@ const PANEL_HREF: Record<PanelId, string> = {
   inbox: "/dashboard?panel=inbox",
   profile: "/dashboard?panel=profile",
   jobs: "/dashboard?panel=jobs",
+  career_path: "/dashboard?panel=career_path",
+  tracker: "/dashboard?panel=tracker",
   coaching: "/dashboard?panel=coaching",
 };
 
