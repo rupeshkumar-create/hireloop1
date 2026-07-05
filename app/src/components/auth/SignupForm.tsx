@@ -87,7 +87,13 @@ export function SignupForm() {
         : null;
 
     if (resolvedRole === "recruiter") {
-      router.push(safeRedirect?.startsWith("/recruiter") ? safeRedirect : "/recruiter");
+      router.push(
+        safeRedirect?.startsWith("/recruiter")
+          ? safeRedirect
+          : isNewUser
+            ? "/recruiter/onboarding"
+            : "/recruiter/inbox",
+      );
       return;
     }
     if (safeRedirect && !safeRedirect.startsWith("/recruiter")) {
@@ -473,6 +479,11 @@ function decodeAuthError(errorCode: string, message: string | null): string {
       return "Email verification link failed or expired. Request a new one.";
     case "auth_failed":
       return "Authentication callback failed. Please try signing in again.";
+    case "bootstrap_failed":
+      return (
+        message ??
+        "Account setup failed. Check that the API is running and NEXT_PUBLIC_API_URL is set, then try again."
+      );
     case "no_code":
       return "Missing auth code in callback. Please try again.";
     default:

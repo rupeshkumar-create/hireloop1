@@ -2,13 +2,17 @@
  * After Supabase session exists — bootstrap profile and return the in-app destination.
  */
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
-import { getApiBaseUrl } from "@/lib/api/base-url";
+import { getApiBaseUrl, getServerApiBaseUrl } from "@/lib/api/base-url";
 
 export async function finishAuthSession(
   accessToken: string,
   role: "candidate" | "recruiter",
+  options?: { appOrigin?: string },
 ): Promise<string> {
-  const base = getApiBaseUrl();
+  const base =
+    typeof window !== "undefined"
+      ? getApiBaseUrl()
+      : getServerApiBaseUrl(options?.appOrigin);
   let res: Response;
   try {
     res = await fetch(`${base}/api/v1/auth/bootstrap`, {
@@ -34,6 +38,8 @@ export async function finishAuthSession(
   }
 
   const resolvedRole = data.role ?? role;
-  if (resolvedRole === "recruiter") return "/recruiter";
+  if (resolvedRole === "recruiter") {
+    return data.is_new_user ? "/recruiter/onboarding" : "/recruiter/inbox";
+  }
   return data.is_new_user ? "/onboarding" : "/dashboard";
 }

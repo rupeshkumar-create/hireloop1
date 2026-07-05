@@ -23,6 +23,26 @@ export function getApiBaseUrl(): string {
 }
 
 /**
+ * API base for server-side route handlers (OAuth callback, RSC).
+ *
+ * Prefer looping back through this app's `/hireloop-api` rewrite so bootstrap
+ * works on Vercel without server-to-server CORS / wrong localhost defaults.
+ */
+export function getServerApiBaseUrl(appOrigin?: string): string {
+  const origin = appOrigin?.replace(/\/$/, "");
+  if (origin) {
+    return `${origin}${API_PROXY_PREFIX}`;
+  }
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}${API_PROXY_PREFIX}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}${API_PROXY_PREFIX}`;
+  }
+  return DIRECT_API_URL;
+}
+
+/**
  * WebSocket base URL for the FastAPI backend (e.g. live voice streaming).
  *
  * Unlike HTTP requests, we do NOT route WebSockets through the Next.js rewrite

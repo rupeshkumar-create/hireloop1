@@ -298,6 +298,14 @@ async def bootstrap_user(
     user_id = uuid.UUID(str(current_user["id"]))
     supabase_user: dict[str, Any] = current_user.get("_supabase_user") or {}
 
+    # Self-heal: OAuth can beat the auth.users trigger — ensure public.users exists
+    # before we attach candidate/recruiter rows (FK would otherwise 500).
+    if not await _provision_user_row(db, supabase_user):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create your account. Please try signing in again.",
+        )
+
     # Never downgrade an existing recruiter when the signup tab was "Job Seeker".
     has_recruiter = await db.fetchval(
         """
@@ -313,11 +321,13 @@ async def bootstrap_user(
         UPDATE public.users SET
           role = $2,
           updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
         effective_role,
     )
+
+    is_new_user = True
 
     if effective_role == "candidate":
         # ── Signup pipeline, stages 1 → 2 (the fixed order) ──────────────────
@@ -410,18 +420,30 @@ async def bootstrap_user(
         # after DPDP consent (POST /me/onboarding-consent).
     else:
         existing = await db.fetchrow(
-            "SELECT id FROM public.recruiters WHERE user_id = $1",
+            """
+            SELECT id FROM public.recruiters
+            WHERE user_id = $1::uuid AND deleted_at IS NULL
+            """,
             user_id,
         )
         is_new_user = existing is None
-        if not existing:
-            await db.execute(
-                """
-                INSERT INTO public.recruiters (user_id, title)
-                VALUES ($1, 'Hiring Manager')
-                """,
-                user_id,
-            )
+        await db.execute(
+            """
+            INSERT INTO public.recruiters (user_id, title)
+            VALUES ($1::uuid, 'Hiring Manager')
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            user_id,
+        )
+        if is_new_user:
+            try:
+                await log_consent(db, user_id=user_id, purpose="profile_creation", granted=True)
+            except Exception as exc:
+                logger.error(
+                    "recruiter_consent_log_failed",
+                    user_id=str(user_id),
+                    error=str(exc),
+                )
 
     # LinkedIn/OAuth: trust the IdP — confirm email server-side, no verification mail.
     # Email/magic-link signups still verify via Supabase's inbox link or OTP.

@@ -80,7 +80,9 @@ export async function handleAuthCallback(request: Request): Promise<NextResponse
 
   if (session?.access_token) {
     try {
-      computedNext = await finishAuthSession(session.access_token, role);
+      computedNext = await finishAuthSession(session.access_token, role, {
+        appOrigin: origin,
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Account setup failed. Please try signing in again.";
