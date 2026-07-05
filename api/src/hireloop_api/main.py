@@ -38,6 +38,7 @@ from hireloop_api.routes.jobs import router as jobs_router
 from hireloop_api.routes.learning_roadmaps import router as learning_roadmaps_router
 from hireloop_api.routes.matches import router as matches_router
 from hireloop_api.routes.me import router as me_router
+from hireloop_api.routes.mock_interview import router as mock_interview_router
 from hireloop_api.routes.public_profiles import router as public_profiles_router
 from hireloop_api.routes.recruiter import router as recruiter_router
 from hireloop_api.routes.resumes import router as resumes_router
