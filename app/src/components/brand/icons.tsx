@@ -75,6 +75,7 @@ export const IndianRupee = ico("rupee");
 export const Info = ico("info");
 export const Kanban = ico("board");
 export const Linkedin = ico("linkedin");
+export const LinkIcon = ico("link");
 export const Loader2 = ico("progress");
 export const LogOut = ico("logout");
 export const Mail = ico("mail");

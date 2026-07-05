@@ -11,7 +11,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Briefcase,
-  Link,
+  LinkIcon,
   MessageCircle,
 } from "@/components/brand/icons";
 import {
@@ -194,7 +194,7 @@ export default function NewRolePage() {
                       loading={importing}
                       disabled={!importUrl.trim()}
                       onClick={() => void handleImportUrl()}
-                      leftIcon={<Link className="h-4 w-4" strokeWidth={1.5} />}
+                      leftIcon={<LinkIcon className="h-4 w-4" strokeWidth={1.5} />}
                     >
                       Import
                     </Button>

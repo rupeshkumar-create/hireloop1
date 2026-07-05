@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import re
 from html.parser import HTMLParser
-from typing import Any
 
 from docx import Document
 from docx.shared import Pt
