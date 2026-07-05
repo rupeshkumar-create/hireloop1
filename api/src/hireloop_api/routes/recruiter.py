@@ -368,7 +368,7 @@ async def recruiter_candidate_directory(
     current_user: dict = Depends(get_recruiter_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    """Browse opted-in candidates and pipeline matches (optional search filter)."""
+    """Browse live platform candidates and pipeline matches (optional search filter)."""
     recruiter = current_user["recruiter"]
     candidates = await list_recruiter_candidates(
         db,
@@ -758,9 +758,10 @@ async def get_role(
     recruiter = current_user["recruiter"]
     row = await db.fetchrow(
         """
-        SELECT *
-        FROM public.roles
-        WHERE id = $1 AND recruiter_id = $2 AND deleted_at IS NULL
+        SELECT r.*, co.name AS company_name
+        FROM public.roles r
+        LEFT JOIN public.companies co ON co.id = r.company_id
+        WHERE r.id = $1 AND r.recruiter_id = $2 AND r.deleted_at IS NULL
         """,
         role_id,
         recruiter["id"],

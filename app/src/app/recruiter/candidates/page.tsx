@@ -22,7 +22,7 @@ import {
   type RecruiterCandidateSearchHit,
   type RoleListItem,
 } from "@/lib/api/recruiter";
-import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
+import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { RecruiterBreadcrumbs } from "@/components/ux";
 import { cn } from "@/lib/utils";
 
@@ -57,7 +57,7 @@ function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
                 </Badge>
               ) : (
                 <Badge tone="accent" className="shrink-0">
-                  Talent pool
+                  {hit.source === "pipeline" ? "In pipeline" : "Live on Hireloop"}
                 </Badge>
               )}
               {hit.match_score != null && hit.match_score > 0 ? (
@@ -141,7 +141,6 @@ function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
 }
 
 export default function RecruiterCandidatesPage() {
-  const { toast } = useToast();
   const [roles, setRoles] = useState<RoleListItem[]>([]);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
@@ -153,17 +152,16 @@ export default function RecruiterCandidatesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listRecruiterCandidates(search, roleId || undefined);
+      const res = await listRecruiterCandidates(search, roleId || undefined, 100);
       setCandidates(res.candidates);
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
-      toast.error(message);
       setCandidates([]);
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     void listRoles()
@@ -191,7 +189,7 @@ export default function RecruiterCandidatesPage() {
         <div>
           <h1 className="text-h2 font-semibold text-ink-900">Talent</h1>
           <p className="text-small text-ink-500 mt-1">
-            Candidates in your pipelines and the opted-in talent pool.
+            All live candidates on Hireloop — plus anyone already in your role pipelines.
           </p>
         </div>
         <Button
@@ -260,7 +258,7 @@ export default function RecruiterCandidatesPage() {
           description={
             query.trim()
               ? "Try a different search term or clear filters."
-              : "Publish a role or wait for candidates to opt into recruiter sharing."
+              : "No live candidate profiles yet. They appear here once someone completes onboarding on Hireloop."
           }
         />
       ) : (

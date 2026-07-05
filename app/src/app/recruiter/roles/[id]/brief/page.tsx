@@ -17,6 +17,7 @@ import {
 } from "@/components/brand/icons";
 import {
   formatCompRange,
+  fetchRecruiterProfile,
   getRole,
   startRoleSearch,
   updateRole,
@@ -25,7 +26,7 @@ import {
 } from "@/lib/api/recruiter";
 import { getCachedProfile } from "@/lib/api/profile";
 import { marketByCode, type MarketCode } from "@/lib/markets";
-import { compFieldLabel, profileSalaryFromStorage } from "@/lib/salary";
+import { compFieldLabel, profileSalaryFromStorage, profileSalaryToStorage } from "@/lib/salary";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
 import { Button, Card, CardBody, CardHeader, Field, Input } from "@/components/ui";
 
@@ -48,6 +49,7 @@ export default function RoleBriefPage() {
   const [compMax, setCompMax] = useState("");
   const [city, setCity] = useState("");
   const [remote, setRemote] = useState("");
+  const [companyName, setCompanyName] = useState<string | null>(null);
 
   const hydrate = useCallback(
     (r: RecruiterRole) => {
@@ -59,6 +61,9 @@ export default function RoleBriefPage() {
       setCompMax(profileSalaryFromStorage(r.comp_max, market));
       setCity(r.location_city || "");
       setRemote(r.remote_policy || "");
+      if (r.company_name && r.company_name !== "My Company") {
+        setCompanyName(r.company_name);
+      }
       if (r.readiness) setReadiness(r.readiness);
     },
     [market],
@@ -74,6 +79,13 @@ export default function RoleBriefPage() {
       .then(hydrate)
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
+    fetchRecruiterProfile()
+      .then((p) => {
+        if (p.company_name && p.company_name !== "My Company") {
+          setCompanyName(p.company_name);
+        }
+      })
+      .catch(() => {});
   }, [id, hydrate]);
 
   async function saveEdits(): Promise<boolean> {
@@ -107,19 +119,25 @@ export default function RoleBriefPage() {
   async function handleStartSearch() {
     setSearching(true);
     setError(null);
-    const saved = await saveEdits();
-    if (!saved) {
-      setSearching(false);
-      return;
-    }
     try {
+      const saved = await saveEdits();
+      if (!saved) return;
       await startRoleSearch(id);
       router.push(`/recruiter/roles/${id}/intake`);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
       setSearching(false);
     }
   }
+
+  const previewCompMin = compMin
+    ? profileSalaryToStorage(compMin, market)
+    : role?.comp_min ?? null;
+  const previewCompMax = compMax
+    ? profileSalaryToStorage(compMax, market)
+    : role?.comp_max ?? null;
+  const previewPitch = role?.candidate_pitch?.trim() || null;
 
   if (loading) {
     return (
@@ -240,16 +258,22 @@ export default function RoleBriefPage() {
             </div>
 
             {role && (
-              <p className="text-micro text-ink-500 bg-paper-1 rounded-md px-3 py-2">
-                Current comp:{" "}
-                {formatCompRange(role.comp_min, role.comp_max, { market })}
-                {role.candidate_pitch && (
-                  <>
-                    {" · "}
-                    Pitch: {role.candidate_pitch}
-                  </>
-                )}
-              </p>
+              <div className="text-micro text-ink-500 bg-paper-1 rounded-md px-3 py-2 space-y-1">
+                <p>
+                  <span className="font-medium text-ink-700">Company:</span>{" "}
+                  {companyName || "Not set — add in Settings"}
+                </p>
+                <p>
+                  <span className="font-medium text-ink-700">Salary range:</span>{" "}
+                  {formatCompRange(previewCompMin, previewCompMax, { market })}
+                </p>
+                {previewPitch ? (
+                  <p className="line-clamp-3">
+                    <span className="font-medium text-ink-700">Candidate pitch:</span>{" "}
+                    {previewPitch}
+                  </p>
+                ) : null}
+              </div>
             )}
 
             {error && (
@@ -270,19 +294,20 @@ export default function RoleBriefPage() {
                 rightIcon={
                   !searching && <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
                 }
+                className="sm:flex-1"
               >
                 Start search
               </Button>
-              <Link href={`/recruiter/roles/${id}/intake`} className="flex-1">
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  fullWidth
-                  leftIcon={<MessageCircle className="h-4 w-4" strokeWidth={1.5} />}
-                >
-                  Talk to Nitya to refine
-                </Button>
-              </Link>
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                className="sm:flex-1"
+                leftIcon={<MessageCircle className="h-4 w-4" strokeWidth={1.5} />}
+                onClick={() => router.push(`/recruiter/roles/${id}/intake`)}
+              >
+                Talk to Nitya to refine
+              </Button>
             </div>
 
             <Button

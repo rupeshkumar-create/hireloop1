@@ -383,6 +383,27 @@ async def load_pipeline_candidates_for_chat(
     return [_serialize_candidate_card(r) for r in rows]
 
 
+def _live_platform_candidate_sql(*, recruiter_user_param: str) -> str:
+    """Active, non-private candidates with a real profile (not recruiter self)."""
+    return f"""
+      c.deleted_at IS NULL
+      AND u.deleted_at IS NULL
+      AND c.is_active = TRUE
+      AND COALESCE(c.visibility::text, 'open_to_matches') <> 'private'
+      AND c.user_id <> {recruiter_user_param}
+      AND (
+        c.onboarding_complete = TRUE
+        OR c.profile_complete = TRUE
+        OR NULLIF(BTRIM(c.current_title), '') IS NOT NULL
+        OR NULLIF(BTRIM(c.headline), '') IS NOT NULL
+        OR EXISTS (
+          SELECT 1 FROM public.resumes r
+          WHERE r.candidate_id = c.id
+        )
+      )
+    """
+
+
 def _candidate_search_clause(param_ref: str) -> str:
     """ILIKE filter on name, title, company, headline, skills, looking_for."""
     return f"""
@@ -431,7 +452,7 @@ def _serialize_directory_row(row: asyncpg.Record) -> dict[str, Any]:
         "role_title": d.get("role_title"),
         "pipeline_stage": d.get("pipeline_stage"),
         "match_score": float(d["match_score"]) if d.get("match_score") is not None else None,
-        "source": d.get("source") or "discover",
+        "source": d.get("source") or "platform",
         "public_profile_url": public_url,
     }
 
@@ -444,10 +465,15 @@ async def list_recruiter_candidates(
     role_id: uuid.UUID | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Pipeline matches plus opted-in talent pool for the recruiter directory."""
+    """Pipeline matches plus all live platform candidates for the talent directory."""
     query = (q or "").strip()
     pattern = f"%{query}%" if query else None
-    search_sql = _candidate_search_clause("$4") if pattern else ""
+
+    pipeline_params: list[object] = [recruiter_id, role_id, limit]
+    pipeline_search = ""
+    if pattern:
+        pipeline_search = _candidate_search_clause("$4")
+        pipeline_params.append(pattern)
 
     pipeline_rows = await db.fetch(
         f"""
@@ -481,23 +507,25 @@ async def list_recruiter_candidates(
           AND u.deleted_at IS NULL
           AND c.user_id <> rec.user_id
           AND ($2::uuid IS NULL OR r.id = $2::uuid)
-          {search_sql}
+          {pipeline_search}
         ORDER BY c.id, p.match_score DESC NULLS LAST
         LIMIT $3
         """,
-        recruiter_id,
-        role_id,
-        limit,
-        *([pattern] if pattern else []),
+        *pipeline_params,
     )
 
     seen = {str(r["candidate_id"]) for r in pipeline_rows}
     remaining = max(0, limit - len(pipeline_rows))
-    discover_rows: list[asyncpg.Record] = []
+    platform_rows: list[asyncpg.Record] = []
     if remaining > 0:
         exclude_ids = [uuid.UUID(cid) for cid in seen]
-        discover_search = _candidate_search_clause("$2") if pattern else ""
-        discover_rows = await db.fetch(
+        platform_params: list[object] = [remaining, recruiter_id, exclude_ids]
+        platform_search = ""
+        if pattern:
+            platform_search = _candidate_search_clause("$4")
+            platform_params.append(pattern)
+
+        platform_rows = await db.fetch(
             f"""
             SELECT
               c.id AS candidate_id,
@@ -517,28 +545,21 @@ async def list_recruiter_candidates(
               NULL::text AS role_title,
               NULL::text AS pipeline_stage,
               NULL::real AS match_score,
-              'discover' AS source
+              'platform' AS source
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id
-            JOIN public.recruiters rec ON rec.id = $3
-            WHERE c.deleted_at IS NULL
-              AND u.deleted_at IS NULL
-              AND c.share_with_recruiters = TRUE
-              AND c.visibility IN ('open_to_matches', 'exceptional_only')
-              AND c.user_id <> rec.user_id
-              AND NOT (c.id = ANY($4::uuid[]))
-              {discover_search}
+            JOIN public.recruiters rec ON rec.id = $2
+            WHERE {_live_platform_candidate_sql(recruiter_user_param="rec.user_id")}
+              AND NOT (c.id = ANY($3::uuid[]))
+              {platform_search}
             ORDER BY c.updated_at DESC NULLS LAST
             LIMIT $1
             """,
-            remaining,
-            *([pattern] if pattern else []),
-            recruiter_id,
-            exclude_ids,
+            *platform_params,
         )
 
     results: list[dict[str, Any]] = []
-    for row in list(pipeline_rows) + list(discover_rows):
+    for row in list(pipeline_rows) + list(platform_rows):
         results.append(_serialize_directory_row(row))
         if len(results) >= limit:
             break

@@ -37,6 +37,7 @@ export type RecruiterRole = {
   public_slug?: string | null;
   public_listing_enabled?: boolean;
   public_role_url?: string | null;
+  company_name?: string | null;
 };
 
 export type CreateRolePayload = {
@@ -220,7 +221,7 @@ export type RecruiterCandidateSearchHit = {
   role_title: string | null;
   pipeline_stage: string | null;
   match_score: number | null;
-  source: "pipeline" | "discover";
+  source: "pipeline" | "discover" | "platform";
   public_profile_url?: string | null;
 };
 
