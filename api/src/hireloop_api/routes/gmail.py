@@ -109,7 +109,7 @@ def _email_from_id_token(id_token: str | None) -> str:
 
 def _build_auth_url(settings: Settings, user_id: str) -> str:
     """Build the Google consent URL (send-only Gmail + event-only Calendar)."""
-    redirect_uri = f"{settings.public_api_url.rstrip('/')}/api/v1/gmail/callback"
+    redirect_uri = settings.gmail_oauth_redirect_uri
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": redirect_uri,
@@ -146,7 +146,10 @@ async def gmail_auth_url(
     """
     if not settings.google_client_id:
         raise HTTPException(status_code=503, detail="Google OAuth is not configured")
-    return {"auth_url": _build_auth_url(settings, current_user["id"])}
+    return {
+        "auth_url": _build_auth_url(settings, current_user["id"]),
+        "redirect_uri": settings.gmail_oauth_redirect_uri,
+    }
 
 
 @router.get("/callback")
@@ -167,7 +170,7 @@ async def gmail_callback(
         logger.warning("gmail_callback_bad_state")
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
-    redirect_uri = f"{settings.public_api_url.rstrip('/')}/api/v1/gmail/callback"
+    redirect_uri = settings.gmail_oauth_redirect_uri
 
     async with httpx.AsyncClient(timeout=30.0) as http:
         # Exchange code for tokens

@@ -22,6 +22,7 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import get_settings
+from hireloop_api.services.public_role import enable_public_listing
 
 logger = structlog.get_logger()
 
@@ -613,6 +614,14 @@ async def publish_role_to_jobs(
         "SELECT id FROM public.jobs WHERE role_id = $1::uuid AND deleted_at IS NULL",
         uuid.UUID(str(role_id)),
     )
+    public_meta = await enable_public_listing(
+        db,
+        role_id=str(role_id),
+        recruiter_id=str(recruiter_id),
+    )
+    if public_meta.get("error"):
+        return public_meta
+
     if existing:
         await db.execute(
             """
@@ -633,7 +642,11 @@ async def publish_role_to_jobs(
             role["comp_max"],
             skills,
         )
-        return {"job_id": str(existing), "status": "updated"}
+        return {
+            "job_id": str(existing),
+            "status": "updated",
+            **public_meta,
+        }
 
     job_id = uuid.uuid4()
     await db.execute(
@@ -658,4 +671,8 @@ async def publish_role_to_jobs(
         role["comp_max"],
         skills,
     )
-    return {"job_id": str(job_id), "status": "published"}
+    return {
+        "job_id": str(job_id),
+        "status": "published",
+        **public_meta,
+    }

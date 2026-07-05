@@ -36,8 +36,11 @@ async def test_publish_role_enqueues_jobs_and_candidate_intro(
 
     publish_res = await recruiter_api_client.post(f"/api/v1/recruiter/roles/{role_id}/publish")
     assert publish_res.status_code == 201, publish_res.text
-    job_id = publish_res.json().get("job_id")
+    publish_body = publish_res.json()
+    job_id = publish_body.get("job_id")
     assert job_id
+    assert publish_body.get("public_slug")
+    assert publish_body.get("public_role_url", "").startswith("/r/")
 
     job_rows = await db_conn.fetch(
         """

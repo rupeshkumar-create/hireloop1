@@ -58,7 +58,9 @@ export type CareerPathResume = {
   status: string;
   created_at: string | null;
   updated_at: string | null;
+  preview_path: string | null;
   download_path: string | null;
+  docx_path: string | null;
 };
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -140,13 +142,45 @@ export async function generateCareerPathResumes(): Promise<CareerPathResume[]> {
   return data.resumes ?? [];
 }
 
-export async function downloadCareerPathResume(resumeId: string): Promise<void> {
-  const res = await apiAuthFetch(`/api/v1/career/path-resumes/${resumeId}/download`);
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+export async function fetchCareerPathResumePreview(resumeId: string): Promise<string> {
+  const res = await apiAuthFetch(
+    `/api/v1/career/path-resumes/${resumeId}/download?format=html&print_dialog=false`
+  );
+  if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
+  return res.text();
+}
+
+export async function downloadCareerPathResumePdf(resumeId: string): Promise<void> {
+  const res = await apiAuthFetch(
+    `/api/v1/career/path-resumes/${resumeId}/download?format=pdf`
+  );
+  if (!res.ok) throw new Error(`PDF download failed: ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   window.open(url, "_blank", "noopener,noreferrer");
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function downloadCareerPathResumeDocx(resumeId: string): Promise<void> {
+  const res = await apiAuthFetch(
+    `/api/v1/career/path-resumes/${resumeId}/download?format=docx`
+  );
+  if (!res.ok) throw new Error(`Word download failed: ${res.status}`);
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match?.[1] ?? "career-path-resume.docx";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** @deprecated Use preview/PDF/DOC helpers instead. */
+export async function downloadCareerPathResume(resumeId: string): Promise<void> {
+  await downloadCareerPathResumePdf(resumeId);
 }
 
 /**

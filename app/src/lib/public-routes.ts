@@ -5,6 +5,8 @@ const PUBLIC_PREFIXES = [
   "/auth",
   "/onboarding",
   "/voice",
+  "/p/",
+  "/r/",
 ] as const;
 
 export function isPublicPath(pathname: string | null | undefined): boolean {

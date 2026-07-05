@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/api/client";
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { IntroChat } from "@/components/intros/IntroChat";
 import { RecruiterBreadcrumbs } from "@/components/ux";
+import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,7 @@ type RoleRow = {
   title: string;
   status: string;
   pipeline_count: number;
+  public_role_url?: string | null;
 };
 
 type InboxData = {
@@ -373,6 +375,7 @@ export default function RecruiterInboxPage() {
                           {r.pipeline_count} in pipeline
                         </p>
                       </Link>
+                      <ShareRoleLink publicRoleUrl={r.public_role_url} />
                       <Link
                         href={`/recruiter/roles/${r.id}/pipeline`}
                         className="text-micro text-ink-500 hover:text-ink-800 shrink-0"

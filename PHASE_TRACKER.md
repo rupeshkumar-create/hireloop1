@@ -347,10 +347,13 @@ NEVERBOUNCE_API_KEY=secret_YOUR_REAL_KEY  ← neverbounce.com (free tier: 1000/m
 ```
 1. console.cloud.google.com → New project → APIs & Services → OAuth 2.0 Client
 2. Scopes: gmail.send + gmail.readonly
-3. Redirect URI: http://localhost:8000/api/v1/gmail/callback
-4. Add to api/.env:
-   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=your-secret
+3. Redirect URI (add **both** in Google Cloud Console → Credentials → OAuth client):
+   - `http://localhost:8000/api/v1/gmail/callback` (local)
+   - `https://hireloop1-app.vercel.app/hireloop-api/api/v1/gmail/callback` (production)
+4. Railway env:
+   - `PUBLIC_APP_URL=https://hireloop1-app.vercel.app`
+   - Optional: `PUBLIC_API_URL=https://hireloop1-app.vercel.app/hireloop-api`
+   - `GOOGLE_CLIENT_ID=...` and `GOOGLE_CLIENT_SECRET=...`
 5. Restart API
 ```
 

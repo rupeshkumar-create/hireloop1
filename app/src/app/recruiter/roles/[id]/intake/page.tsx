@@ -15,6 +15,7 @@ import { ChatCandidateCards } from "@/components/chat/ChatCandidateCards";
 import { MessageText } from "@/components/chat/MessageText";
 import { PipelineLink } from "@/components/layout/RecruiterShell";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
+import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import {
   fetchNityaChatHistory,
   getRole,
@@ -51,6 +52,7 @@ export default function RoleIntakePage() {
   const [introingId, setIntroingId] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
+  const [publicRoleUrl, setPublicRoleUrl] = useState<string | null>(null);
   const [lastSearchMeta, setLastSearchMeta] = useState<SearchMeta | null>(null);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const bootstrappedRef = useRef(false);
@@ -99,6 +101,7 @@ export default function RoleIntakePage() {
         if (cancelled) return;
         if (role.readiness) setReadiness(role.readiness);
         if (role.hiring_brief) setBriefDone(true);
+        if (role.public_role_url) setPublicRoleUrl(role.public_role_url);
 
         const history = await fetchNityaChatHistory(id);
         if (cancelled) return;
@@ -209,13 +212,16 @@ export default function RoleIntakePage() {
     if (chip.toLowerCase().includes("publish")) {
       setPublishing(true);
       try {
-        await publishRole(id);
+        const result = await publishRole(id);
         setPublished(true);
+        if (result.public_role_url) setPublicRoleUrl(result.public_role_url);
         setMessages((m) => [
           ...m,
           {
             role: "system",
-            content: "Role published to the candidate marketplace.",
+            content: result.public_role_url
+              ? "Role published — share the public link with candidates."
+              : "Role published to the candidate marketplace.",
           },
         ]);
       } catch (e) {
@@ -251,6 +257,8 @@ export default function RoleIntakePage() {
     try {
       await publishAndRequestIntro(id, candidate.candidate_id);
       setPublished(true);
+      const role = await getRole(id);
+      if (role.public_role_url) setPublicRoleUrl(role.public_role_url);
       markIntroRequested(candidate);
       setMessages((m) => [
         ...m,
@@ -369,6 +377,7 @@ export default function RoleIntakePage() {
           </div>
 
           <PipelineLink roleId={id} className="hidden sm:inline-flex" />
+          <ShareRoleLink publicRoleUrl={publicRoleUrl} className="hidden sm:block" />
 
           {actionCount > 0 && (
             <Badge tone="accent">

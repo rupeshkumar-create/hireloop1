@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
 
 from hireloop_api.deps import get_db
-from hireloop_api.services.career_path_resume import fetch_path_resume_html
 from hireloop_api.services.public_profile import fetch_public_profile
+from hireloop_api.services.public_role import fetch_public_role
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -21,13 +20,10 @@ async def get_public_profile(slug: str, db=Depends(get_db)) -> dict:
     return profile
 
 
-@router.get("/profiles/{slug}/resumes/{resume_id}/download", response_class=HTMLResponse)
-async def download_public_path_resume(
-    slug: str,
-    resume_id: str,
-    db=Depends(get_db),
-) -> HTMLResponse:
-    html = await fetch_path_resume_html(db, resume_id=resume_id, public_slug=slug)
-    if not html:
-        raise HTTPException(status_code=404, detail="Resume not found.")
-    return HTMLResponse(content=html)
+@router.get("/roles/{slug}")
+async def get_public_role(slug: str, db=Depends(get_db)) -> dict:
+    """World-readable recruiter role when published to the marketplace."""
+    role = await fetch_public_role(db, slug)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found or not published.")
+    return role

@@ -21,8 +21,8 @@ from typing import Any
 import asyncpg
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
@@ -549,13 +549,42 @@ async def generate_career_path_resumes(
 @router.get("/path-resumes/{resume_id}/download")
 async def download_career_path_resume(
     resume_id: str,
+    file_format: str = Query(default="html", pattern="^(html|pdf|docx)$"),
+    print_dialog: bool = Query(default=True),
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
-) -> HTMLResponse:
+) -> Response:
     from hireloop_api.services.career_path_resume import fetch_path_resume_html
+    from hireloop_api.services.resume_export import html_resume_to_docx
+    from hireloop_api.services.resume_tailor import wrap_print_document
 
     candidate_id = await _resolve_candidate_id(db, current_user["id"])
-    html = await fetch_path_resume_html(db, resume_id=resume_id, candidate_id=candidate_id)
-    if not html:
+    html_fragment, path_title = await fetch_path_resume_html(
+        db, resume_id=resume_id, candidate_id=candidate_id
+    )
+    if not html_fragment:
         raise HTTPException(status_code=404, detail="Resume not found.")
-    return HTMLResponse(content=html)
+
+    safe_title = (path_title or "Career path resume").replace("/", "-")[:80]
+    doc_title = f"{safe_title} — Resume"
+
+    if file_format == "docx":
+        docx_bytes = html_resume_to_docx(html_fragment, title=doc_title)
+        filename = f"{safe_title.replace(' ', '_')}.docx"
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    auto_print = file_format == "pdf" or (file_format == "html" and print_dialog)
+    html_doc = wrap_print_document(
+        html_fragment,
+        title=doc_title,
+        auto_print=auto_print,
+    )
+    disposition = "attachment" if file_format == "pdf" else "inline"
+    return HTMLResponse(
+        content=html_doc,
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_title}.html"'},
+    )

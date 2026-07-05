@@ -24,6 +24,10 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     setReady(false);
 
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) setReady(true);
+    }, 12_000);
+
     fetchMyProfile()
       .then((profile) => {
         if (cancelled) return;
@@ -48,10 +52,14 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
       })
       .catch(() => {
         if (!cancelled) setReady(true);
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
   }, [pathname, router]);
 

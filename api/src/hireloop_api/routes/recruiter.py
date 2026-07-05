@@ -30,6 +30,7 @@ from hireloop_api.agents.nitya.recruiter_chat import (
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_current_user, get_db, get_recruiter_user
 from hireloop_api.services.display_name import sanitize_display_name
+from hireloop_api.services.public_role import public_role_path
 from hireloop_api.services.recruiter_search import (
     is_role_published,
     load_pipeline_candidates_for_chat,
@@ -70,6 +71,11 @@ def _serialize_role(row: asyncpg.Record | dict) -> dict[str, Any]:
         d["created_at"] = d["created_at"].isoformat()
     if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
         d["updated_at"] = d["updated_at"].isoformat()
+    slug = d.get("public_slug")
+    if slug and d.get("public_listing_enabled"):
+        d["public_role_url"] = public_role_path(str(slug))
+    else:
+        d["public_role_url"] = None
     d["readiness"] = compute_role_readiness(d)
     return d
 
@@ -478,7 +484,7 @@ async def recruiter_inbox(
 
     roles = await db.fetch(
         """
-        SELECT id, title, status, updated_at,
+        SELECT id, title, status, updated_at, public_slug, public_listing_enabled,
                (SELECT count(*) FROM public.role_pipeline p
                   WHERE p.role_id = roles.id) AS pipeline_count
         FROM public.roles
@@ -488,9 +494,19 @@ async def recruiter_inbox(
         recruiter["id"],
     )
 
+    role_rows = []
+    for r in roles:
+        d = dict(r)
+        d["id"] = str(d["id"])
+        if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
+            d["updated_at"] = d["updated_at"].isoformat()
+        slug = d.get("public_slug")
+        d["public_role_url"] = public_role_path(str(slug)) if slug and d.get("public_listing_enabled") else None
+        role_rows.append(d)
+
     return {
         "items": [dict(r) for r in intros],
-        "roles": [dict(r) for r in roles],
+        "roles": role_rows,
     }
 
 

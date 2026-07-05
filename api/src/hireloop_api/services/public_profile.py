@@ -232,26 +232,6 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
         else None,
     )
 
-    path_resumes: list[dict[str, Any]] = []
-    if not hide_contact:
-        rows = await db.fetch(
-            """
-            SELECT id, path_title, status, updated_at
-            FROM public.career_path_resumes
-            WHERE candidate_id = $1::uuid AND status = 'ready'
-            ORDER BY updated_at DESC
-            """,
-            cand["id"],
-        )
-        path_resumes = [
-            {
-                "id": str(r["id"]),
-                "path_title": r["path_title"],
-                "download_path": f"/api/v1/career/path-resumes/{r['id']}/download",
-            }
-            for r in rows
-        ]
-
     currency = currency_fields_for_candidate(cand)
     public_fields = _redact_public_fields(
         reconciled,
@@ -264,7 +244,6 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
         "skills": list(cand.get("skills") or []),
         "experience": experience[:8],
         "education": education[:6],
-        "career_path_resumes": path_resumes,
         **public_fields,
         **currency,
     }

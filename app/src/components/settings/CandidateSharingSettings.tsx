@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, ExternalLink, FileText, Shield } from "@/components/brand/icons";
 import {
-  downloadCareerPathResume,
   fetchCareerPathResumes,
   generateCareerPathResumes,
   type CareerPathResume,
@@ -16,6 +15,7 @@ import {
   type MyProfileData,
 } from "@/lib/api/profile";
 import { Button, Card, CardBody, CardFooter, CardHeader, useToast } from "@/components/ui";
+import { PathResumePreviewModal } from "@/components/resumes/PathResumePreviewModal";
 import { cn } from "@/lib/utils";
 
 const CURRENCY_OPTIONS: { id: DisplayCurrency; label: string }[] = [
@@ -25,10 +25,6 @@ const CURRENCY_OPTIONS: { id: DisplayCurrency; label: string }[] = [
   { id: "GBP", label: "British Pound (£)" },
   { id: "EUR", label: "Euro (€)" },
 ];
-
-async function openPathResume(resumeId: string) {
-  await downloadCareerPathResume(resumeId);
-}
 
 export function CandidateSharingSettings() {
   const { toast } = useToast();
@@ -44,6 +40,7 @@ export function CandidateSharingSettings() {
   const [publishing, setPublishing] = useState(false);
   const [pathResumes, setPathResumes] = useState<CareerPathResume[]>([]);
   const [generatingResumes, setGeneratingResumes] = useState(false);
+  const [previewResume, setPreviewResume] = useState<CareerPathResume | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -182,7 +179,7 @@ export function CandidateSharingSettings() {
       <Card>
         <CardHeader
           title="Career path resumes"
-          description="Aarya generates one tailored resume for each of your top 3 path directions."
+          description="Private ATS-style resumes for each path direction. Preview and download — never shown on your public profile."
         />
         <CardBody className="space-y-3 !pt-0">
           {pathResumes.length === 0 ? (
@@ -205,9 +202,9 @@ export function CandidateSharingSettings() {
                       variant="ghost"
                       size="sm"
                       leftIcon={<FileText className="h-3.5 w-3.5" />}
-                      onClick={() => void openPathResume(r.id)}
+                      onClick={() => setPreviewResume(r)}
                     >
-                      Open
+                      Preview
                     </Button>
                   )}
                 </li>
@@ -226,6 +223,13 @@ export function CandidateSharingSettings() {
           </Button>
         </CardFooter>
       </Card>
+
+      <PathResumePreviewModal
+        open={previewResume !== null}
+        onClose={() => setPreviewResume(null)}
+        resumeId={previewResume?.id ?? null}
+        pathTitle={previewResume?.path_title}
+      />
 
       <Card>
         <CardHeader

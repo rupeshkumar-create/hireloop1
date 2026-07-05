@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     ]
 
     # Browser-reachable URL of THIS API (FastAPI). Used to build OAuth redirect
-    # URIs that Google must redirect the browser to — these hit the API directly
-    # (full-page redirect, no CORS), not the Next.js /hireloop-api proxy.
-    # Dev: http://localhost:8000 · Prod: https://api.hireloop.in
+    # URIs that Google must redirect the browser to.
+    # Dev: http://localhost:8000
+    # Prod (Vercel → Railway proxy): https://hireloop1-app.vercel.app/hireloop-api
     public_api_url: str = "http://localhost:8000"
     # Where the OAuth callback sends the browser after success (the SPA origin).
     public_app_url: str = "http://localhost:3001"
@@ -290,6 +290,16 @@ class Settings(BaseSettings):
     _INSECURE_SECRET_DEFAULTS: ClassVar[frozenset[str]] = frozenset({"", "change-me"})
 
     @model_validator(mode="after")
+    def _resolve_public_api_url(self) -> "Settings":
+        """In production, never OAuth-redirect to localhost — use the Vercel proxy."""
+        url = self.public_api_url.rstrip("/")
+        if self.environment == "production" and ("localhost" in url or "127.0.0.1" in url):
+            app = self.public_app_url.rstrip("/")
+            if app and "localhost" not in app and "127.0.0.1" not in app:
+                self.public_api_url = f"{app}/hireloop-api"
+        return self
+
+    @model_validator(mode="after")
     def _enforce_production_secrets(self) -> "Settings":
         """Fail fast on boot if production is left with default/empty secrets."""
         if self.environment != "production":
@@ -319,6 +329,10 @@ class Settings(BaseSettings):
     @property
     def is_test(self) -> bool:
         return self.environment == "test"
+
+    @property
+    def gmail_oauth_redirect_uri(self) -> str:
+        return f"{self.public_api_url.rstrip('/')}/api/v1/gmail/callback"
 
 
 @lru_cache

@@ -34,6 +34,9 @@ export type RecruiterRole = {
   remote_policy: string | null;
   pipeline_count?: number;
   readiness?: RoleReadiness;
+  public_slug?: string | null;
+  public_listing_enabled?: boolean;
+  public_role_url?: string | null;
 };
 
 export type CreateRolePayload = {
@@ -299,7 +302,14 @@ export async function requestCandidateIntro(
   });
 }
 
-export async function publishRole(roleId: string): Promise<Record<string, unknown>> {
+export async function publishRole(roleId: string): Promise<{
+  job_id?: string;
+  status?: string;
+  public_slug?: string;
+  public_role_url?: string;
+  public_listing_enabled?: boolean;
+  error?: string;
+}> {
   return apiFetch(`/api/v1/recruiter/roles/${roleId}/publish`, { method: "POST" });
 }
 

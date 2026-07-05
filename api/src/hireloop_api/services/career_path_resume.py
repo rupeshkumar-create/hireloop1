@@ -12,7 +12,11 @@ from langchain_openai import ChatOpenAI
 from hireloop_api.config import Settings
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import career_path_options
-from hireloop_api.services.resume_tailor import generate_tailored_html
+from hireloop_api.services.profile_experience import (
+    build_merged_education,
+    build_merged_experience,
+)
+from hireloop_api.services.resume_tailor import generate_path_resume_html
 
 logger = structlog.get_logger()
 
@@ -24,9 +28,10 @@ async def _load_candidate_profile(
         """
         SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
                c.years_experience, c.location_city, c.location_state, c.skills,
-               c.looking_for, u.full_name, u.email
+               c.looking_for, c.linkedin_url, c.linkedin_data, c.career_profile,
+               u.full_name, u.email, u.phone
         FROM public.candidates c
-        JOIN public.users u ON u.id = c.user_id
+        JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
         WHERE c.id = $1::uuid AND c.deleted_at IS NULL
         """,
         uuid.UUID(candidate_id),
@@ -35,7 +40,37 @@ async def _load_candidate_profile(
         return None
     data = dict(row)
     data["skills"] = list(data.get("skills") or [])
-    return data
+    career_profile = data.get("career_profile") if isinstance(data.get("career_profile"), dict) else None
+    experience = build_merged_experience(
+        resume_experience=[],
+        linkedin_data=data.get("linkedin_data"),
+        career_profile=career_profile,
+        career_intelligence=None,
+        candidate=data,
+        skills=data["skills"],
+    )
+    education = build_merged_education(
+        resume_education=[],
+        linkedin_data=data.get("linkedin_data"),
+        career_profile=career_profile,
+    )
+    return {
+        "full_name": data.get("full_name"),
+        "email": data.get("email"),
+        "phone": data.get("phone"),
+        "headline": data.get("headline"),
+        "summary": data.get("summary"),
+        "current_title": data.get("current_title"),
+        "current_company": data.get("current_company"),
+        "years_experience": data.get("years_experience"),
+        "location_city": data.get("location_city"),
+        "location_state": data.get("location_state"),
+        "skills": data["skills"],
+        "looking_for": data.get("looking_for"),
+        "linkedin_url": data.get("linkedin_url"),
+        "experience": experience[:10],
+        "education": education[:6],
+    }
 
 
 async def list_path_resumes(db: asyncpg.Connection, candidate_id: str) -> list[dict[str, Any]]:
@@ -55,8 +90,18 @@ async def list_path_resumes(db: asyncpg.Connection, candidate_id: str) -> list[d
             "status": r["status"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            "preview_path": (
+                f"/api/v1/career/path-resumes/{r['id']}/download?format=html&print_dialog=false"
+                if r["status"] == "ready"
+                else None
+            ),
             "download_path": (
-                f"/api/v1/career/path-resumes/{r['id']}/download"
+                f"/api/v1/career/path-resumes/{r['id']}/download?format=pdf"
+                if r["status"] == "ready"
+                else None
+            ),
+            "docx_path": (
+                f"/api/v1/career/path-resumes/{r['id']}/download?format=docx"
                 if r["status"] == "ready"
                 else None
             ),
@@ -89,10 +134,11 @@ async def generate_path_resumes(
         model=settings.openrouter_primary_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.3,
+        temperature=0.25,
     )
 
     path_id = path.get("id")
+    path_summary = path.get("summary")
     results: list[dict[str, Any]] = []
 
     for title in titles:
@@ -109,21 +155,12 @@ async def generate_path_resumes(
             uuid.UUID(str(path_id)) if path_id else None,
             title,
         )
-        virtual_job = {
-            "title": title,
-            "company_name": "Target role",
-            "description": (
-                f"Career direction: {title}. "
-                f"Candidate is positioning for this next-step role based on their "
-                f"profile and career path on Hireloop."
-            ),
-        }
         try:
-            html = await generate_tailored_html(
+            html = await generate_path_resume_html(
                 llm=llm,
                 candidate_profile=profile,
-                job=virtual_job,
-                template="modern",
+                path_title=title,
+                path_summary=str(path_summary) if path_summary else None,
             )
             row = await db.fetchrow(
                 """
@@ -137,12 +174,15 @@ async def generate_path_resumes(
                 html[:500_000],
             )
             if row:
+                rid = str(row["id"])
                 results.append(
                     {
-                        "id": str(row["id"]),
+                        "id": rid,
                         "path_title": row["path_title"],
                         "status": row["status"],
-                        "download_path": f"/api/v1/career/path-resumes/{row['id']}/download",
+                        "preview_path": f"/api/v1/career/path-resumes/{rid}/download?format=html&print_dialog=false",
+                        "download_path": f"/api/v1/career/path-resumes/{rid}/download?format=pdf",
+                        "docx_path": f"/api/v1/career/path-resumes/{rid}/download?format=docx",
                     }
                 )
         except Exception as exc:
@@ -169,35 +209,18 @@ async def fetch_path_resume_html(
     db: asyncpg.Connection,
     *,
     resume_id: str,
-    candidate_id: str | None = None,
-    public_slug: str | None = None,
-) -> str | None:
-    """Owner download, or public download when profile is published."""
-    if public_slug:
-        row = await db.fetchrow(
-            """
-            SELECT cpr.html_content
-            FROM public.career_path_resumes cpr
-            JOIN public.candidates c ON c.id = cpr.candidate_id
-            WHERE cpr.id = $1::uuid
-              AND c.public_slug = $2
-              AND c.public_profile_enabled = TRUE
-              AND c.hide_contact_public = FALSE
-              AND cpr.status = 'ready'
-              AND c.deleted_at IS NULL
-            """,
-            uuid.UUID(resume_id),
-            public_slug,
-        )
-    else:
-        row = await db.fetchrow(
-            """
-            SELECT html_content FROM public.career_path_resumes
-            WHERE id = $1::uuid AND candidate_id = $2::uuid AND status = 'ready'
-            """,
-            uuid.UUID(resume_id),
-            uuid.UUID(candidate_id or ""),
-        )
+    candidate_id: str,
+) -> tuple[str | None, str | None]:
+    """Return (html_fragment, path_title) for the owner only — not public."""
+    row = await db.fetchrow(
+        """
+        SELECT path_title, html_content
+        FROM public.career_path_resumes
+        WHERE id = $1::uuid AND candidate_id = $2::uuid AND status = 'ready'
+        """,
+        uuid.UUID(resume_id),
+        uuid.UUID(candidate_id),
+    )
     if not row or not row["html_content"]:
-        return None
-    return str(row["html_content"])
+        return None, None
+    return str(row["html_content"]), str(row["path_title"])

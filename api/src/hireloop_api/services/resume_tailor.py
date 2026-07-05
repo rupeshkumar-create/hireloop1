@@ -30,6 +30,60 @@ Rules:
 - Use <h1> for name, <h2> for sections: Summary, Experience, Skills, Education
 """
 
+PATH_RESUME_SYSTEM = """You write an ATS-friendly resume tailored to a career-path direction.
+Rules:
+- Never fabricate experience, employers, degrees, or dates
+- Output valid HTML fragment only (no <html>/<head>/<body>, no markdown fences)
+- Single-column layout — NO tables, columns, images, icons, or text boxes
+- Structure:
+  <h1>Full Name</h1>
+  <p class="resume-contact">City, State · email · phone · LinkedIn URL (only if provided)</p>
+  <h2>Professional Summary</h2>
+  <p>2–3 lines positioning the candidate for the target role</p>
+  <h2>Core Skills</h2>
+  <p>comma-separated keyword-rich skills (12–18 items)</p>
+  <h2>Professional Experience</h2>
+  For each role:
+    <h3>Job Title — Company</h3>
+    <p class="role-meta">Mon YYYY – Mon YYYY · Location</p>
+    <ul><li>Quantified achievement bullets (3–5 per recent role)</li></ul>
+  <h2>Education</h2>
+  <p>Degree — Institution · Year</p>
+- Use strong action verbs and metrics where truthful
+- Mirror keywords from the target role title naturally
+- Keep total length to one page (~500–700 words)
+"""
+
+
+async def generate_path_resume_html(
+    *,
+    llm: ChatOpenAI,
+    candidate_profile: dict[str, Any],
+    path_title: str,
+    path_summary: str | None = None,
+) -> str:
+    """LLM generates an ATS-oriented career-path resume HTML fragment."""
+    prompt = f"""Target career direction: {path_title}
+{f'Path context: {path_summary}' if path_summary else ''}
+
+Candidate profile (source of truth — do not invent beyond this):
+{json_dumps_safe(candidate_profile)}
+
+Produce the ATS-friendly resume HTML fragment for the target direction."""
+
+    resp = await llm.ainvoke(
+        [
+            SystemMessage(content=PATH_RESUME_SYSTEM),
+            HumanMessage(content=prompt),
+        ]
+    )
+    content = resp.content if isinstance(resp.content, str) else str(resp.content)
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    return content
+
 
 async def generate_tailored_html(
     *,
@@ -91,19 +145,29 @@ _PRINT_DOC_TEMPLATE = """<!DOCTYPE html>
     background: #fff; max-width: 794px; margin: 24px auto; padding: 48px 56px;
     box-shadow: 0 1px 6px rgba(0,0,0,0.12);
   }}
-  .sheet h1 {{ font-size: 26px; margin: 0 0 2px; letter-spacing: -0.01em; }}
-  .sheet h2 {{
-    font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.08em; color: #444;
-    border-bottom: 1px solid #e5e5e5; padding-bottom: 4px; margin: 22px 0 10px;
+  .sheet h1 {{ font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; font-weight: 700; }}
+  .sheet .resume-contact {{
+    font-size: 12.5px; color: #444; margin: 0 0 16px; line-height: 1.45;
   }}
-  .sheet h3 {{ font-size: 15px; margin: 12px 0 2px; }}
-  .sheet p, .sheet li {{ font-size: 13.5px; }}
-  .sheet ul {{ margin: 6px 0 6px 18px; padding: 0; }}
-  .sheet a {{ color: #1a1a1a; }}
-  .toolbar {{ position: fixed; top: 16px; right: 16px; }}
+  .sheet h2 {{
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.1em; color: #333;
+    border-bottom: 1.5px solid #222; padding-bottom: 3px; margin: 20px 0 8px;
+    font-weight: 700;
+  }}
+  .sheet h3 {{ font-size: 14.5px; margin: 14px 0 2px; font-weight: 600; }}
+  .sheet .role-meta {{ font-size: 12px; color: #555; margin: 0 0 4px; font-style: italic; }}
+  .sheet p, .sheet li {{ font-size: 13px; line-height: 1.5; }}
+  .sheet ul {{ margin: 4px 0 8px 18px; padding: 0; }}
+  .sheet li {{ margin-bottom: 3px; }}
+  .sheet a {{ color: #1a1a1a; text-decoration: none; }}
+  .toolbar {{ position: fixed; top: 16px; right: 16px; display: flex; gap: 8px; }}
   .toolbar button {{
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff;
     background: #1a1a1a; border: 0; border-radius: 999px; padding: 9px 16px;
+  }}
+  .toolbar .hint {{
+    font-size: 12px; color: #666; background: #fff; border: 1px solid #ddd;
+    border-radius: 8px; padding: 8px 12px; max-width: 220px; line-height: 1.35;
   }}
   @media print {{
     body {{ background: #fff; }}
@@ -115,6 +179,7 @@ _PRINT_DOC_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
   <div class="toolbar no-print">
+    <span class="hint">Private preview — use Save as PDF for a one-page ATS file.</span>
     <button type="button" onclick="window.print()">Save as PDF</button>
   </div>
   <div class="sheet">

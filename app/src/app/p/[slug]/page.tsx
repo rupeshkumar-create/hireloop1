@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Briefcase, FileText, Mail, MapPin, Phone } from "@/components/brand/icons";
+import { Briefcase, Mail, MapPin, Phone } from "@/components/brand/icons";
 import { getApiBaseUrl } from "@/lib/api/base-url";
-import { Button, Card, CardBody } from "@/components/ui";
+import { Card, CardBody } from "@/components/ui";
 
 type PublicProfile = {
   slug: string;
@@ -28,11 +28,6 @@ type PublicProfile = {
   education: Array<{
     institution?: string | null;
     degree?: string | null;
-  }>;
-  career_path_resumes: Array<{
-    id: string;
-    path_title: string;
-    download_path: string;
   }>;
   contact: {
     email: string | null;
@@ -187,33 +182,6 @@ export default function PublicProfilePage() {
                   )}
                 </CardBody>
               </Card>
-            ))}
-          </section>
-        )}
-
-        {profile.career_path_resumes.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-h3 font-semibold text-ink-900">Resumes by career path</h2>
-            {profile.career_path_resumes.map((r) => (
-              <div
-                key={r.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-ink-100 bg-paper-1 px-4 py-3"
-              >
-                <span className="text-small text-ink-800">{r.path_title}</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={<FileText className="h-3.5 w-3.5" />}
-                  onClick={() =>
-                    window.open(
-                      `${getApiBaseUrl()}/api/v1/public/profiles/${slug}/resumes/${r.id}/download`,
-                      "_blank"
-                    )
-                  }
-                >
-                  View resume
-                </Button>
-              </div>
             ))}
           </section>
         )}
