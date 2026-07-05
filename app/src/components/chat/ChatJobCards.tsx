@@ -43,7 +43,7 @@ export function ChatJobCards({
   const filterHint = jobFiltersLabel(filters);
 
   return (
-    <div className="w-full max-w-xl space-y-3">
+    <div className="w-full space-y-3">
       <p className="text-small font-medium text-ink-600">
         {filtered.length} role{filtered.length !== 1 ? "s" : ""} found
         {filterHint ? ` · ${filterHint}` : ""}

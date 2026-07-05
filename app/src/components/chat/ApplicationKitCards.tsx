@@ -46,7 +46,7 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
   };
 
   return (
-    <div className="w-full max-w-xl space-y-3">
+    <div className="w-full space-y-3">
       <p className="text-small font-medium text-ink-600">
         Application kit{kits.length !== 1 ? "s" : ""} ready — saved to your list
       </p>

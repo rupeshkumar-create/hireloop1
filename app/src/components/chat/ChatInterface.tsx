@@ -52,10 +52,10 @@ import {
   Loader2,
   Mic,
   Paperclip,
+  PenLine,
   Phone,
   Search,
   Sparkles,
-  MessageSquare,
   Send,
   Square,
   Volume2,
@@ -203,7 +203,8 @@ interface ChatInterfaceProps {
   onRequestIntro?: (job: MatchedJob) => void;
 }
 
-const VOICE_FEATURE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED !== "false";
+const CHAT_COLUMN_CLASS = "max-w-2xl mx-auto px-4";
+const COMPOSER_TEXT_MAX_H = 80;
 
 // ── Option-block parser ───────────────────────────────────────────────────────
 
@@ -456,7 +457,7 @@ export function ChatInterface({
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+    ta.style.height = Math.min(ta.scrollHeight, COMPOSER_TEXT_MAX_H) + "px";
   }, [input]);
 
   useEffect(() => {
@@ -1142,7 +1143,7 @@ export function ChatInterface({
 
       {/* ── Messages ──────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-5 py-8 space-y-6">
+        <div className={cn(CHAT_COLUMN_CLASS, "py-8 space-y-6")}>
           {showKickoff ? (
             <CareerKickoffFlow
               onComplete={handleKickoffComplete}
@@ -1225,7 +1226,7 @@ export function ChatInterface({
               )}
 
               {streamRecovery && !isStreaming && (
-                <div className="rounded-xl border border-ink-200 bg-paper-1 px-4 py-3 space-y-2 max-w-[88%]">
+                <div className="rounded-xl border border-ink-200 bg-paper-1 px-4 py-3 space-y-2 w-full">
                   <p className="text-small text-ink-600">
                     Connection dropped — your partial reply is saved above.
                   </p>
@@ -1278,8 +1279,8 @@ export function ChatInterface({
       </div>
 
       {/* ── Composer ──────────────────────────────────────────────────── */}
-      <div className="shrink-0 bg-paper-0 px-4 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-2xl mx-auto space-y-2">
+      <div className="shrink-0 bg-paper-0 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+        <div className={cn(CHAT_COLUMN_CLASS, "space-y-2")}>
           {showCoachMark && (
             <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
               <p className="text-micro text-ink-700 leading-relaxed">
@@ -1384,17 +1385,17 @@ export function ChatInterface({
                     ? "Edit your voice message above, then send."
                     : "Ask Aarya anything…"
               }
-              rows={2}
+              rows={1}
               disabled={isStreaming || voiceProcessing || Boolean(pendingVoiceTranscript)}
               className={cn(
                 "w-full bg-transparent resize-none text-body text-ink-900",
                 "placeholder:text-ink-400 focus:outline-none leading-relaxed",
-                "px-5 pt-4 pb-2 max-h-[160px] disabled:opacity-60"
+                "px-4 pt-2 pb-1 max-h-[80px] disabled:opacity-60"
               )}
             />
 
             {/* Bottom toolbar */}
-            <div className="flex items-center justify-between px-4 pb-3 pt-1">
+            <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
               {/* Left: resume upload */}
               <button
                 type="button"
@@ -1437,31 +1438,31 @@ export function ChatInterface({
                       type="button"
                       onClick={() => setReplyModeAndPersist("text")}
                       aria-pressed={replyMode === "text"}
+                      aria-label="Text replies only"
                       title="Text replies only"
                       className={cn(
-                        "flex items-center gap-1 rounded-md px-2 py-1 text-micro transition-colors",
+                        "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
                         replyMode === "text"
                           ? "bg-paper-0 text-ink-900 shadow-sm"
                           : "text-ink-500 hover:text-ink-800"
                       )}
                     >
-                      <MessageSquare className="h-3 w-3" strokeWidth={1.5} />
-                      Text
+                      <PenLine className="h-4 w-4" strokeWidth={1.5} />
                     </button>
                     <button
                       type="button"
                       onClick={() => setReplyModeAndPersist("voice")}
                       aria-pressed={replyMode === "voice"}
+                      aria-label="Spoken replies after voice messages"
                       title="Spoken replies after voice messages"
                       className={cn(
-                        "flex items-center gap-1 rounded-md px-2 py-1 text-micro transition-colors",
+                        "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
                         replyMode === "voice"
                           ? "bg-paper-0 text-ink-900 shadow-sm"
                           : "text-ink-500 hover:text-ink-800"
                       )}
                     >
-                      <Volume2 className="h-3 w-3" strokeWidth={1.5} />
-                      Voice
+                      <Mic className="h-4 w-4" strokeWidth={1.5} />
                     </button>
                   </div>
                 )}
@@ -1959,8 +1960,8 @@ function MessageBubble({
         />
       )}
 
-      {/* Message text */}
-      <div className="max-w-[88%] space-y-1">
+      {/* Message text — full column width to align with the composer */}
+      <div className="w-full space-y-1 rounded-lg border border-ink-100 bg-paper-1 px-4 py-3 shadow-sm">
         <MessageText content={text} isUser={false} isStreaming={isStreaming} />
         {message.spoken && !isStreaming && (
           <p className="text-micro text-ink-400 flex items-center gap-1">
@@ -1988,7 +1989,7 @@ function MessageBubble({
 
       {/* Option cards */}
       {options.length > 0 && !isStreaming && (
-        <div className="max-w-[88%] space-y-2">
+        <div className="w-full space-y-2">
           <div className="rounded-xl border border-ink-200 overflow-hidden">
             {options.map((opt, i) => (
               <button

@@ -117,7 +117,7 @@ export function AgentThinkingIndicator({
         className={cn(
           "relative flex items-center gap-3 rounded-2xl rounded-bl-sm",
           "border border-ink-100 bg-paper-1 px-3.5 py-2.5 shadow-sm",
-          "max-w-[88%] min-w-[168px]"
+          "w-full min-w-[168px]"
         )}
       >
         <div className="relative shrink-0" aria-hidden>
