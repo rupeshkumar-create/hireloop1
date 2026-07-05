@@ -28,6 +28,10 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
       .then((profile) => {
         if (cancelled) return;
         if (profile.user?.role === "recruiter") {
+          if (pathname?.startsWith("/onboarding")) {
+            router.replace("/recruiter/onboarding");
+            return;
+          }
           setReady(true);
           return;
         }

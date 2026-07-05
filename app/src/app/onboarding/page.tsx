@@ -10,12 +10,10 @@
 
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolveSignupMethod } from "@/lib/auth/signup-method";
 import { createClient } from "@/lib/supabase/server";
 import { OnboardingFlow } from "./OnboardingFlow";
-
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export const metadata: Metadata = {
   title: "Get started — Hireloop",
@@ -35,16 +33,17 @@ export default async function OnboardingPage() {
     data: { session },
   } = await supabase.auth.getSession();
   const token = session?.access_token;
+  const apiBase = getServerApiBaseUrl();
   if (token) {
     try {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, {
+      const meRes = await fetch(`${apiBase}/api/v1/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
       if (meRes.ok) {
         const me = (await meRes.json()) as { role?: string };
         if (me.role === "recruiter") {
-          redirect("/recruiter");
+          redirect("/recruiter/onboarding");
         }
       }
     } catch {
@@ -56,7 +55,7 @@ export default async function OnboardingPage() {
   let candidateName: string | undefined;
   if (token) {
     try {
-      const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
+      const profileRes = await fetch(`${apiBase}/api/v1/me/profile`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });

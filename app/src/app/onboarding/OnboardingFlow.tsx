@@ -32,6 +32,7 @@ import {
   Upload,
 } from "@/components/brand/icons";
 import { apiAuthFetch, ApiUnreachableError } from "@/lib/api/auth-fetch";
+import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
   type ParsedResumeSummary,
@@ -539,8 +540,24 @@ export function OnboardingFlow({
   candidateName?: string;
   signupMethod?: SignupMethod;
 }) {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [hydrated, setHydrated] = useState(false);
+  const recruiterCheckDone = useRef(false);
+
+  useEffect(() => {
+    if (recruiterCheckDone.current) return;
+    recruiterCheckDone.current = true;
+    void fetchMyProfile()
+      .then((profile) => {
+        if (profile.user?.role === "recruiter") {
+          router.replace("/recruiter/onboarding");
+        }
+      })
+      .catch(() => {
+        /* non-fatal — server page may still redirect */
+      });
+  }, [router]);
 
   useEffect(() => {
     try {

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
+import { SIGNUP_ROLE_COOKIE, SIGNUP_ROLE_QUERY } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl } from "@/lib/api/base-url";
@@ -113,7 +113,7 @@ export function SignupForm() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "linkedin_oidc",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback?${SIGNUP_ROLE_QUERY}=${role}`,
           // LinkedIn OIDC requires these scopes for Supabase to read profile + email.
           scopes: "openid profile email",
         },

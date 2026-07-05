@@ -314,7 +314,12 @@ async def bootstrap_user(
         """,
         user_id,
     )
-    effective_role = "recruiter" if has_recruiter else body.role
+    if body.role == "recruiter":
+        effective_role = "recruiter"
+    elif has_recruiter:
+        effective_role = "recruiter"
+    else:
+        effective_role = "candidate"
 
     await db.execute(
         """

@@ -4,13 +4,13 @@
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SIGNUP_ROLE_COOKIE, type SignupRole } from "@/lib/auth/constants";
+import {
+  SIGNUP_ROLE_COOKIE,
+  SIGNUP_ROLE_QUERY,
+  parseSignupRole,
+} from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { createClient } from "@/lib/supabase/server";
-
-function parseRole(raw: string | undefined): SignupRole {
-  return raw === "recruiter" ? "recruiter" : "candidate";
-}
 
 export async function handleAuthCallback(request: Request): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
@@ -43,8 +43,9 @@ export async function handleAuthCallback(request: Request): Promise<NextResponse
   }
 
   const cookieStore = await cookies();
+  const roleFromQuery = searchParams.get(SIGNUP_ROLE_QUERY);
   const roleCookie = cookieStore.get(SIGNUP_ROLE_COOKIE)?.value;
-  const role = parseRole(roleCookie);
+  const role = parseSignupRole(roleFromQuery ?? roleCookie);
 
   const supabase = await createClient();
 
