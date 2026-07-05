@@ -103,7 +103,13 @@ export function DashboardClient({
 
     fetchSavedJobIds()
       .then((ids) => {
-        if (!cancelled) setSavedJobIds(ids);
+        if (!cancelled) {
+          setSavedJobIds((prev) => {
+            const next = new Set(prev);
+            ids.forEach((id) => next.add(id));
+            return next;
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setSavedJobIds(new Set());
@@ -132,6 +138,24 @@ export function DashboardClient({
     });
     setSavedJobsRefreshKey((k) => k + 1);
   }
+
+  useEffect(() => {
+    if (savedJobsRefreshKey === 0) return;
+    let cancelled = false;
+    fetchSavedJobIds()
+      .then((ids) => {
+        if (cancelled) return;
+        setSavedJobIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.add(id));
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [savedJobsRefreshKey]);
 
   function syncDashboardUrl(panel: PanelId | null, jobsTab?: JobsTab) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");

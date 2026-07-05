@@ -109,8 +109,6 @@ export function SavedJobsPanel({
     void load();
   }, [load, refreshKey]);
 
-  const visibleJobs = jobs.filter((job) => savedJobIds.has(job.job_id));
-
   return (
     <div className={className}>
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 pb-6">
@@ -135,7 +133,7 @@ export function SavedJobsPanel({
           />
         )}
 
-        {!loading && !error && visibleJobs.length === 0 && (
+        {!loading && !error && jobs.length === 0 && (
           <EmptyState
             icon={<Bookmark strokeWidth={1.5} />}
             title="No saved jobs yet"
@@ -145,7 +143,7 @@ export function SavedJobsPanel({
 
         {!loading &&
           !error &&
-          visibleJobs.map((job) => (
+          jobs.map((job) => (
             <JobCard
               key={job.job_id}
               job={job}

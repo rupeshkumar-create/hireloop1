@@ -1083,11 +1083,8 @@ async def list_saved_jobs(
     if not candidate:
         return []
 
-    market = await fetch_candidate_market(db, candidate["id"])
-    vis = job_visible_for_market_sql(market_param="$2")
-
     rows = await db.fetch(
-        f"""
+        """
         SELECT
             j.id AS job_id,
             j.title,
@@ -1117,11 +1114,9 @@ async def list_saved_jobs(
           ON ms.job_id = j.id AND ms.candidate_id = sj.candidate_id
         WHERE sj.candidate_id = $1::uuid
           AND j.deleted_at IS NULL
-          AND {vis}
         ORDER BY sj.saved_at DESC
         """,
         candidate["id"],
-        market,
     )
     return [serialize_job_card(r) for r in rows]
 
