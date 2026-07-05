@@ -10,6 +10,8 @@ import {
   type CandidateNavId,
   type CandidateNavItem,
 } from "@/lib/candidate-nav";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
+import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +90,7 @@ export function CandidateMobileNav({
   onTogglePanel,
 }: CandidateMobileNavProps) {
   const pathname = usePathname();
+  const { canSwitch } = useDualRoleAccess();
   const [moreOpen, setMoreOpen] = useState(false);
   const dashboardMode = Boolean(onTogglePanel);
 
@@ -175,6 +178,13 @@ export function CandidateMobileNav({
               </li>
             );
           })}
+          {canSwitch && (
+            <li>
+              <div className="px-3 py-2">
+                <RoleSwitchButton to="recruiter" target="/recruiter/inbox" />
+              </div>
+            </li>
+          )}
         </ul>
       </Modal>
     </>

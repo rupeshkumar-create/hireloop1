@@ -1057,6 +1057,8 @@ async def rank_candidates_for_job(
         FROM public.match_scores ms
         JOIN public.candidates c ON c.id = ms.candidate_id AND c.deleted_at IS NULL
         WHERE ms.job_id = $1::uuid
+          AND c.share_with_recruiters = TRUE
+          AND c.visibility <> 'private'
         ORDER BY ms.overall_score DESC
         LIMIT $2
         """,

@@ -1,6 +1,6 @@
 import { currencyForMarket, type MarketCode } from "@/lib/markets";
 
-export type SalaryCurrency = "INR" | "USD" | "GBP";
+export type SalaryCurrency = "INR" | "USD" | "GBP" | "EUR";
 
 /** Map market or ISO currency code to a supported salary currency. */
 export function resolveSalaryCurrency(
@@ -9,6 +9,7 @@ export function resolveSalaryCurrency(
   const raw = (marketOrCurrency ?? "IN").toUpperCase();
   if (raw === "USD" || raw === "US") return "USD";
   if (raw === "GBP" || raw === "GB") return "GBP";
+  if (raw === "EUR" || raw === "EU") return "EUR";
   if (raw === "INR" || raw === "IN") return "INR";
   return currencyForMarket(raw) as SalaryCurrency;
 }
@@ -17,6 +18,7 @@ const LOCALE_FOR_CURRENCY: Record<SalaryCurrency, string> = {
   INR: "en-IN",
   USD: "en-US",
   GBP: "en-GB",
+  EUR: "de-DE",
 };
 
 function formatAnnualAmount(amount: number, currency: SalaryCurrency): string {

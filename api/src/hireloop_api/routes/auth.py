@@ -38,7 +38,8 @@ from hireloop_api.deps import (
 )
 from hireloop_api.markets import normalize_market, validate_e164_phone
 from hireloop_api.services import otp_store
-from hireloop_api.services.bootstrap_roles import resolve_bootstrap_role
+from hireloop_api.services.bootstrap_roles import can_switch_roles, resolve_bootstrap_role
+from hireloop_api.services.user_profiles import user_profile_flags
 from hireloop_api.services.consent import log_consent
 from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
 from hireloop_api.services.linkedin_oauth import (
@@ -510,29 +511,20 @@ async def switch_active_role(
     current_user: dict = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
-    """Switch the signed-in account's active role, provisioning the target
-    profile on demand. This lets a single login test both the candidate and
-    recruiter experiences (public.users.role is the authoritative active role —
-    see _resolve_user_role)."""
+    """Switch the signed-in account's active role when both profiles exist."""
     user_id = uuid.UUID(str(current_user["id"]))
+    has_candidate, has_recruiter = await user_profile_flags(db, user_id)
 
     if body.role == "candidate":
-        await db.execute(
-            """
-            INSERT INTO public.candidates (user_id, headline, profile_complete)
-            VALUES ($1, NULL, FALSE)
-            ON CONFLICT (user_id) DO NOTHING
-            """,
-            user_id,
-        )
-    else:
-        await db.execute(
-            """
-            INSERT INTO public.recruiters (user_id, title)
-            VALUES ($1, 'Hiring Manager')
-            ON CONFLICT (user_id) DO NOTHING
-            """,
-            user_id,
+        if not has_candidate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No candidate profile for this account",
+            )
+    elif not has_recruiter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No recruiter profile for this account",
         )
 
     await db.execute(
@@ -540,7 +532,12 @@ async def switch_active_role(
         user_id,
         body.role,
     )
-    return {"ok": True, "role": body.role}
+    return {
+        "ok": True,
+        "role": body.role,
+        "has_candidate": has_candidate,
+        "has_recruiter": has_recruiter,
+    }
 
 
 @router.post("/send-otp", response_model=SendOTPResponse, status_code=200)
@@ -932,12 +929,18 @@ async def save_phone(
 @router.get("/me", status_code=200)
 async def get_me(
     current_user: dict[str, Any] = Depends(get_current_user),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Return current user profile."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    has_candidate, has_recruiter = await user_profile_flags(db, user_id)
     return {
         "id": str(current_user["id"]),
         "email": current_user["email"],
         "role": current_user["role"],
         "phone_verified": current_user["phone_verified"],
         "full_name": current_user["full_name"],
+        "has_candidate": has_candidate,
+        "has_recruiter": has_recruiter,
+        "can_switch_roles": can_switch_roles(has_candidate, has_recruiter),
     }

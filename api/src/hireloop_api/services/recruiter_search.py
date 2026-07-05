@@ -371,6 +371,8 @@ async def load_pipeline_candidates_for_chat(
           ON ms.candidate_id = c.id AND ms.job_id = $3::uuid
         LEFT JOIN public.jobs j ON j.id = $3::uuid
         WHERE p.role_id = $1
+          AND c.share_with_recruiters = TRUE
+          AND c.visibility <> 'private'
         ORDER BY p.match_score DESC NULLS LAST, p.moved_at DESC
         LIMIT $2
         """,

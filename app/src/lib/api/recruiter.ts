@@ -120,6 +120,13 @@ export type SearchMeta = {
   published?: boolean;
 };
 
+export type RecruiterRoleSummary = {
+  id: string;
+  title: string | null;
+  location_city: string | null;
+  status: string | null;
+};
+
 export type RecruiterProfile = {
   recruiter_id: string;
   title: string | null;
@@ -127,6 +134,9 @@ export type RecruiterProfile = {
   company_id: string | null;
   onboarding_complete: boolean;
   hiring_focus: string | null;
+  hiring_focus_source?: "roles" | "manual";
+  profile_from_roles?: boolean;
+  active_roles?: RecruiterRoleSummary[];
 };
 
 export type NityaChatHistory = {

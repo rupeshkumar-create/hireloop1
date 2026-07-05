@@ -145,6 +145,13 @@ async def get_recruiter_profile(
     current_user: dict = Depends(get_recruiter_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
+    from hireloop_api.services.recruiter_profile import (
+        build_hiring_focus_from_roles,
+        fetch_recruiter_role_rows,
+        resolve_company_name_from_roles,
+        serialize_active_roles,
+    )
+
     recruiter = current_user["recruiter"]
     company = None
     if recruiter.get("company_id"):
@@ -158,13 +165,25 @@ async def get_recruiter_profile(
             state = json.loads(state)
         except (ValueError, TypeError):
             state = {}
+    role_rows = await fetch_recruiter_role_rows(db, recruiter["id"])
+    derived_focus = build_hiring_focus_from_roles(role_rows)
+    derived_company = resolve_company_name_from_roles(company, role_rows)
+    profile_from_roles = bool(role_rows)
+    hiring_focus_source = "roles" if derived_focus else "manual"
+    hiring_focus = derived_focus if derived_focus else state.get("hiring_focus")
+    company_name = derived_company if derived_company else (
+        company["name"] if company else None
+    )
     return {
         "recruiter_id": str(recruiter["id"]),
         "title": recruiter.get("title"),
-        "company_name": company["name"] if company else None,
+        "company_name": company_name,
         "company_id": str(recruiter["company_id"]) if recruiter.get("company_id") else None,
         "onboarding_complete": bool(state.get("onboarding_complete")),
-        "hiring_focus": state.get("hiring_focus"),
+        "hiring_focus": hiring_focus,
+        "hiring_focus_source": hiring_focus_source,
+        "profile_from_roles": profile_from_roles,
+        "active_roles": serialize_active_roles(role_rows),
     }
 
 
@@ -181,7 +200,11 @@ async def update_recruiter_profile(
             recruiter["id"],
             body.recruiter_title.strip() or None,
         )
-    if body.company_name and recruiter.get("company_id"):
+    from hireloop_api.services.recruiter_profile import fetch_recruiter_role_rows
+
+    role_rows = await fetch_recruiter_role_rows(db, recruiter["id"])
+    profile_from_roles = bool(role_rows)
+    if body.company_name and recruiter.get("company_id") and not profile_from_roles:
         await db.execute(
             "UPDATE public.companies SET name = $2, updated_at = NOW() WHERE id = $1",
             recruiter["company_id"],
@@ -195,7 +218,7 @@ async def update_recruiter_profile(
             state = {}
     if not isinstance(state, dict):
         state = {}
-    if body.hiring_focus is not None:
+    if body.hiring_focus is not None and not profile_from_roles:
         state["hiring_focus"] = body.hiring_focus.strip() or None
     if body.onboarding_complete is not None:
         state["onboarding_complete"] = body.onboarding_complete

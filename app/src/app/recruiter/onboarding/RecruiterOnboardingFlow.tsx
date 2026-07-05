@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Building2, MapPin, User } from "@/components/brand/icons";
 import { NityaFace } from "@/components/nitya/NityaFace";
-import { Button, Card, CardBody, CardHeader } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Field, Input, Textarea } from "@/components/ui";
 import { fetchMyProfile } from "@/lib/api/profile";
 import {
   createRole,
@@ -92,63 +92,64 @@ function ProfileStep({
       <Card>
         <CardHeader title="Company & hiring" />
         <CardBody className="space-y-4">
-          <label className="block space-y-1.5">
-            <span className="text-small font-medium text-ink-800 flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
-              Company name
-            </span>
-            <input
+          <Field
+            label={
+              <span className="flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Company name
+              </span>
+            }
+          >
+            <Input
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               placeholder="Acme India Pvt Ltd"
-              className="w-full rounded-lg border border-ink-200 px-3 py-2 text-body focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-small font-medium text-ink-800 flex items-center gap-2">
-              <User className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
-              Your title
-            </span>
-            <input
+          </Field>
+          <Field
+            label={
+              <span className="flex items-center gap-2">
+                <User className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Your title
+              </span>
+            }
+          >
+            <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Head of Talent"
-              className="w-full rounded-lg border border-ink-200 px-3 py-2 text-body focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-small font-medium text-ink-800 flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
-              Role you&apos;re hiring for (optional)
-            </span>
-            <input
+          </Field>
+          <Field
+            label={
+              <span className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Role you&apos;re hiring for (optional)
+              </span>
+            }
+          >
+            <Input
               value={roleTitle}
               onChange={(e) => setRoleTitle(e.target.value)}
               placeholder="Senior Backend Engineer"
-              className="w-full rounded-lg border border-ink-200 px-3 py-2 text-body focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-small font-medium text-ink-800">City</span>
-            <input
+          </Field>
+          <Field label="City">
+            <Input
               value={roleCity}
               onChange={(e) => setRoleCity(e.target.value)}
               placeholder="Bangalore"
-              className="w-full rounded-lg border border-ink-200 px-3 py-2 text-body focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-small font-medium text-ink-800">
-              Hiring focus (optional)
-            </span>
-            <textarea
+          </Field>
+          <Field label="Hiring focus (optional)">
+            <Textarea
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
               rows={3}
               placeholder="e.g. Senior backend engineers in Bangalore, fintech"
-              className="w-full rounded-lg border border-ink-200 px-3 py-2 text-body resize-none focus:outline-none focus:ring-2 focus:ring-accent/20"
+              className="resize-none"
             />
-          </label>
+          </Field>
           {error && <p className="text-small text-destructive">{error}</p>}
           <Button
             variant="primary"

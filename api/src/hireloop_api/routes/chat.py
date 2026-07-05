@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.agents.aarya.agent import (
     AaryaState,
     _detect_hinglish,
@@ -42,6 +43,9 @@ from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import (
     career_path_options,
+    default_prioritize_title,
+    extract_find_role_and_city,
+    resolve_job_search_query,
     try_apply_career_path_selection,
 )
 from hireloop_api.services.chat_sessions import get_or_create_primary_conversation
@@ -590,6 +594,14 @@ async def send_message(
         career_path_prioritized = (
             (career_path_row or {}).get("prioritized_title") or None
         )
+        cand_prefs = await db.fetchrow(
+            """
+            SELECT current_title, looking_for
+            FROM public.candidates
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            uuid.UUID(candidate_id),
+        )
         career_path_pending = (
             career_path_options(career_path_row)
             if career_path_row and not career_path_prioritized
@@ -641,16 +653,25 @@ async def send_message(
                         error=str(exc)[:200],
                     )
 
-        search_title = career_path_just_prioritized or (
-            str(career_path_prioritized) if user_intent == "job_search" and career_path_prioritized else None
+        search_title = resolve_job_search_query(
+            body.content,
+            user_intent=user_intent,
+            career_path=career_path_row,
+            prioritized_title=career_path_prioritized,
+            just_prioritized=career_path_just_prioritized,
+            current_title=(
+                str(cand_prefs["current_title"]).strip()
+                if cand_prefs and cand_prefs.get("current_title")
+                else None
+            ),
+            looking_for=(
+                str(cand_prefs["looking_for"]).strip()
+                if cand_prefs and cand_prefs.get("looking_for")
+                else None
+            ),
         )
         search_city: str | None = None
-        if search_title:
-            from hireloop_api.agents.aarya import tools as aarya_tools
-            from hireloop_api.services.career_path_selection import (
-                extract_find_role_and_city,
-            )
-
+        if search_title is not None:
             _, city = extract_find_role_and_city(body.content)
             search_city = city
             try:
@@ -673,6 +694,23 @@ async def send_message(
                     "pre_turn_job_search_failed",
                     candidate_id=candidate_id,
                     error=str(exc)[:200],
+                )
+
+        if wants_jobs and not prefetched_jobs and career_path_row:
+            from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
+
+            ingest_titles = career_path_row.get("target_titles") or []
+            ingest_locations = career_path_row.get("target_locations") or []
+            if ingest_titles:
+                await enqueue_job(
+                    db,
+                    kind=CAREER_PATH_INGEST,
+                    payload={
+                        "candidate_id": candidate_id,
+                        "queries": ingest_titles,
+                        "locations": ingest_locations,
+                    },
+                    idempotency_key=f"career_path_ingest:{candidate_id}",
                 )
 
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
@@ -732,17 +770,19 @@ async def send_message(
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
     deterministic_job_reply: str | None = None
-    if search_title and user_intent == "job_search":
+    if search_title is not None and user_intent == "job_search":
         location_text = f" in {search_city}" if search_city else ""
         if prefetched_jobs:
             deterministic_job_reply = (
-                f"I found matching roles for {search_title}{location_text}. "
+                f"I found matching roles for {search_title or 'your profile'}{location_text}. "
                 "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
             )
         else:
             deterministic_job_reply = (
-                f"I searched for {search_title}{location_text}, but I couldn’t find live matches yet. "
-                "Try widening the role title or location and I’ll search again."
+                f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
+                "but I couldn’t find live matches yet. "
+                "I’m pulling fresh openings in the background — try again in a minute, "
+                "or widen the role title or location."
             )
 
     logger.info(

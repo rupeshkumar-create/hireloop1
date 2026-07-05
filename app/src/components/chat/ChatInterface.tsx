@@ -55,6 +55,7 @@ import {
   Phone,
   Search,
   Sparkles,
+  MessageSquare,
   Send,
   Square,
   Volume2,
@@ -264,6 +265,8 @@ export function ChatInterface({
   const jobsAnnouncedRef = useRef(false);
   const emptySttRetryRef = useRef(false);
   const hinglishActiveRef = useRef(false);
+  /** Live reply-mode for stream TTS — updated synchronously on toggle. */
+  const voiceRepliesEnabledRef = useRef(true);
 
   // Session ID: resolved from prop or created lazily on first send.
   // Use a ref so sendMessage always sees the latest value without needing
@@ -398,7 +401,42 @@ export function ChatInterface({
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
   }, [initialVoiceDeepDive]);
 
-  const textOnlyReplies = replyMode === "text";
+  useEffect(() => {
+    voiceRepliesEnabledRef.current = replyMode === "voice";
+  }, [replyMode]);
+
+  const interruptSpeech = useCallback(() => {
+    stopSpeaking();
+    streamingTtsQueueRef.current = Promise.resolve();
+    spokenStreamRef.current = "";
+  }, [stopSpeaking]);
+
+  const setReplyModeAndPersist = useCallback(
+    (mode: ChatReplyMode) => {
+      voiceRepliesEnabledRef.current = mode === "voice";
+      setReplyMode(mode);
+      storeChatReplyMode(mode);
+      if (mode === "text") interruptSpeech();
+    },
+    [interruptSpeech]
+  );
+
+  const cancelRecording = useCallback(async () => {
+    holdActiveRef.current = false;
+    setPendingVoiceTranscript(null);
+    if (!isRecording) return;
+    try {
+      await stopRecording();
+    } catch {
+      /* ignore */
+    }
+    setVoiceProcessing(false);
+  }, [isRecording, stopRecording]);
+
+  const handleComposerFocus = useCallback(() => {
+    interruptSpeech();
+    if (isRecording) void cancelRecording();
+  }, [cancelRecording, interruptSpeech, isRecording]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -610,9 +648,13 @@ export function ChatInterface({
     async (text: string, options: SendOptions = {}) => {
       if (!text.trim() || isStreaming) return;
 
+      interruptSpeech();
+      if (isRecording) await cancelRecording();
+
       const contentType = options.contentType ?? "text";
       const shouldSpeakReply =
-        options.speakReply ?? (contentType === "voice" && !textOnlyReplies);
+        options.speakReply ??
+        (contentType === "voice" && voiceRepliesEnabledRef.current);
 
       setPendingVoiceTranscript(null);
       setStreamRecovery(null);
@@ -698,7 +740,7 @@ export function ChatInterface({
               setThinkingStatus(formatStatusWithEta(status, meta?.etaSec));
               if (
                 contentType === "voice" &&
-                !textOnlyReplies &&
+                voiceRepliesEnabledRef.current &&
                 meta?.spokenFiller
               ) {
                 speakFiller(meta.spokenFiller);
@@ -730,7 +772,7 @@ export function ChatInterface({
               accumulated = full;
               setThinkingStatus(null);
               setStreamingContent(full);
-              if (shouldSpeakReply && !textOnlyReplies) {
+              if (shouldSpeakReply && voiceRepliesEnabledRef.current) {
                 const newSentences = extractNewCompleteSentences(
                   spokenStreamRef.current,
                   full
@@ -823,7 +865,10 @@ export function ChatInterface({
         abortRef.current = null;
         void warmupChatContext({ force: true }).then(setWarmup).catch(() => {});
         textareaRef.current?.focus();
-        const shouldSpeak = shouldSpeakReply && finalReply.length > 0;
+        const shouldSpeak =
+          shouldSpeakReply &&
+          voiceRepliesEnabledRef.current &&
+          finalReply.length > 0;
         if (shouldSpeak) {
           setMessages((prev) => {
             if (!prev.length) return prev;
@@ -848,7 +893,17 @@ export function ChatInterface({
         }
       }
     },
-    [isStreaming, speak, speakFiller, onSessionCreated, actionCount, textOnlyReplies, attachJobsToLastAssistant]
+    [
+      isStreaming,
+      isRecording,
+      speak,
+      speakFiller,
+      onSessionCreated,
+      actionCount,
+      attachJobsToLastAssistant,
+      interruptSpeech,
+      cancelRecording,
+    ]
   );
 
   const handleJobApply = useCallback(
@@ -894,24 +949,17 @@ export function ChatInterface({
 
   const handleMicToggle = useCallback(async () => {
     if (!VOICE_FEATURE_ENABLED || !isRecording) return;
-    holdActiveRef.current = false;
-    stopSpeaking();
-    setPendingVoiceTranscript(null);
-    try {
-      await stopRecording();
-    } catch {
-      /* ignore */
-    }
-    setVoiceProcessing(false);
-  }, [isRecording, stopRecording, stopSpeaking]);
+    interruptSpeech();
+    await cancelRecording();
+  }, [cancelRecording, interruptSpeech, isRecording]);
 
   const handleMicHoldStart = useCallback(async () => {
     if (!VOICE_FEATURE_ENABLED || isStreaming || voiceProcessing) return;
     holdActiveRef.current = true;
-    stopSpeaking();
+    interruptSpeech();
     setPendingVoiceTranscript(null);
     await startRecording();
-  }, [isStreaming, startRecording, stopSpeaking, voiceProcessing]);
+  }, [interruptSpeech, isStreaming, startRecording, voiceProcessing]);
 
   const handleMicHoldEnd = useCallback(async () => {
     if (!holdActiveRef.current) return;
@@ -1213,7 +1261,7 @@ export function ChatInterface({
               <div className="min-w-0 flex-1">
                 <p className="text-micro font-medium text-ink-800">
                   {isRecording
-                    ? "Listening — hold, then release to send"
+                    ? "Listening — release mic to send, or tap below to type"
                     : voiceProcessing
                       ? "Processing voice…"
                       : isPlaying
@@ -1230,7 +1278,7 @@ export function ChatInterface({
                 {isPlaying && (
                   <button
                     type="button"
-                    onClick={stopSpeaking}
+                    onClick={interruptSpeech}
                     className="text-micro text-ink-600 underline underline-offset-2"
                   >
                     Stop
@@ -1248,11 +1296,7 @@ export function ChatInterface({
                 {replyMode === "voice" && (isPlaying || isRecording) && (
                   <button
                     type="button"
-                    onClick={() => {
-                      stopSpeaking();
-                      setReplyMode("text");
-                      storeChatReplyMode("text");
-                    }}
+                    onClick={() => setReplyModeAndPersist("text")}
                     className="text-micro text-ink-600 underline underline-offset-2"
                   >
                     Text replies
@@ -1282,19 +1326,22 @@ export function ChatInterface({
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                if (isPlaying) interruptSpeech();
+                if (isRecording) void cancelRecording();
+                setInput(e.target.value);
+              }}
+              onFocus={handleComposerFocus}
               onKeyDown={handleKeyDown}
               placeholder={
                 isRecording
-                  ? "Release mic to send…"
+                  ? "Tap here to type instead…"
                   : pendingVoiceTranscript
                     ? "Edit your voice message above, then send."
                     : "Ask Aarya anything…"
               }
               rows={2}
-              disabled={
-                isStreaming || isRecording || Boolean(pendingVoiceTranscript)
-              }
+              disabled={isStreaming || voiceProcessing || Boolean(pendingVoiceTranscript)}
               className={cn(
                 "w-full bg-transparent resize-none text-body text-ink-900",
                 "placeholder:text-ink-400 focus:outline-none leading-relaxed",
@@ -1334,8 +1381,47 @@ export function ChatInterface({
                 }}
               />
 
-              {/* Right: phone + voice */}
+              {/* Right: reply mode + phone + voice */}
               <div className="flex items-center gap-2">
+                {VOICE_FEATURE_ENABLED && (
+                  <div
+                    className="flex items-center rounded-lg border border-ink-100 bg-ink-50/80 p-0.5"
+                    role="group"
+                    aria-label="Reply mode"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setReplyModeAndPersist("text")}
+                      aria-pressed={replyMode === "text"}
+                      title="Text replies only"
+                      className={cn(
+                        "flex items-center gap-1 rounded-md px-2 py-1 text-micro transition-colors",
+                        replyMode === "text"
+                          ? "bg-paper-0 text-ink-900 shadow-sm"
+                          : "text-ink-500 hover:text-ink-800"
+                      )}
+                    >
+                      <MessageSquare className="h-3 w-3" strokeWidth={1.5} />
+                      Text
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReplyModeAndPersist("voice")}
+                      aria-pressed={replyMode === "voice"}
+                      title="Spoken replies after voice messages"
+                      className={cn(
+                        "flex items-center gap-1 rounded-md px-2 py-1 text-micro transition-colors",
+                        replyMode === "voice"
+                          ? "bg-paper-0 text-ink-900 shadow-sm"
+                          : "text-ink-500 hover:text-ink-800"
+                      )}
+                    >
+                      <Volume2 className="h-3 w-3" strokeWidth={1.5} />
+                      Voice
+                    </button>
+                  </div>
+                )}
+
                 {VOICE_FEATURE_ENABLED && (
                   <button
                     type="button"
@@ -1375,10 +1461,21 @@ export function ChatInterface({
                     onFocus={() => void preconnectVoicePipeline()}
                     onPointerDown={(e) => {
                       if (e.pointerType === "mouse" && e.button !== 0) return;
+                      e.currentTarget.setPointerCapture(e.pointerId);
                       void handleMicHoldStart();
                     }}
-                    onPointerUp={() => void handleMicHoldEnd()}
-                    onPointerLeave={() => void handleMicHoldEnd()}
+                    onPointerUp={(e) => {
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      }
+                      void handleMicHoldEnd();
+                    }}
+                    onPointerCancel={(e) => {
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      }
+                      void cancelRecording();
+                    }}
                     disabled={
                       isStreaming ||
                       voiceProcessing ||
@@ -1425,10 +1522,7 @@ export function ChatInterface({
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-ink-800"
-                onClick={() => {
-                  setReplyMode("text");
-                  storeChatReplyMode("text");
-                }}
+                onClick={() => setReplyModeAndPersist("text")}
               >
                 use text replies
               </button>{" "}

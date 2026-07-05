@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { HelpCircle, LogOut, Settings, Shield } from "@/components/brand/icons";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
@@ -76,6 +77,7 @@ export function TopNav({
       </nav>
 
       <div className="mt-2 flex flex-col items-center gap-1">
+        <RoleSwitchButton to="recruiter" target="/recruiter/inbox" variant="icon" />
         <NotificationDrawer
           pendingIntros={pendingIntros}
           categories={NOTIFICATION_CATEGORIES}

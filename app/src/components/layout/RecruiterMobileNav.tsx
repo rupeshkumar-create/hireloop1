@@ -9,6 +9,7 @@ import {
   RECRUITER_MOBILE_PRIMARY_NAV,
   type RecruiterNavItem,
 } from "@/lib/recruiter-nav";
+import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
 import { switchActiveRole } from "@/lib/api/role";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui";
@@ -31,10 +32,15 @@ export function RecruiterMobileNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { toast } = useToast();
+  const { canSwitch } = useDualRoleAccess();
   const [moreOpen, setMoreOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
 
   const moreActive = RECRUITER_MOBILE_MORE_NAV.some((item) => isItemActive(item, pathname));
+
+  const moreItems = RECRUITER_MOBILE_MORE_NAV.filter(
+    (item) => item.action !== "switch-candidate" || canSwitch,
+  );
 
   async function switchToCandidate() {
     if (switching) return;
@@ -91,7 +97,7 @@ export function RecruiterMobileNav() {
 
       <Modal open={moreOpen} onClose={() => setMoreOpen(false)} title="More">
         <ul className="space-y-1 -mx-1">
-          {RECRUITER_MOBILE_MORE_NAV.map((item) => {
+          {moreItems.map((item) => {
             const active = isItemActive(item, pathname);
 
             if (item.action === "switch-candidate") {

@@ -86,6 +86,7 @@ def _quality_filter_job_rows(
     *,
     candidate: dict[str, Any] | None,
     target_titles: list[str],
+    lenient: bool = False,
 ) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -107,7 +108,20 @@ def _quality_filter_job_rows(
         row_dict["ctc_score"] = round(score["ctc_score"], 4)
         row_dict["explanation"] = row_dict.get("explanation") or score["explanation"]
         filtered.append(row_dict)
-    return filtered
+    if filtered or not lenient:
+        return filtered
+    fallback: list[dict[str, Any]] = []
+    for row in rows:
+        row_dict = dict(row)
+        if row_dict.get("overall_score") is None:
+            job_row = _job_quality_row(row_dict)
+            score = _assemble_score(
+                cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None
+            )
+            row_dict["overall_score"] = score["overall"]
+            row_dict["explanation"] = row_dict.get("explanation") or score["explanation"]
+        fallback.append(row_dict)
+    return fallback
 
 
 async def _write_action(
@@ -525,7 +539,7 @@ async def job_search(
 
     rows = None
     if candidate:
-        rows = await db.fetch(
+        step1_raw = await db.fetch(
             f"""
             SELECT j.id, j.title, j.location_city, j.location_state,
                    j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
@@ -560,48 +574,45 @@ async def job_search(
             limit,
             market,
         )
-        rows = _quality_filter_job_rows(
-            rows,
+        step1_filtered = _quality_filter_job_rows(
+            step1_raw,
             candidate=candidate_profile,
             target_titles=target_titles,
         )
-
-    # Step 1b: the candidate HAS ranked matches, but the narrow query/filters
-    # zeroed them out — e.g. Aarya searched a niche title like "Growth Designer"
-    # that no live job title literally contains, or a tight CTC floor. Don't tell
-    # them "no jobs" while the Jobs panel shows 185: fall back to their top-ranked
-    # matches (the same personalized set the match feed serves), keeping only the
-    # hard constraints + their remote preference.
-    vis_fallback = job_visible_for_market_sql(market_param="$3")
-    if candidate and not rows:
-        rows = await db.fetch(
-            f"""
-            SELECT j.id, j.title, j.location_city, j.location_state,
-                   j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url, j.description,
-                   co.name AS company_name, co.logo_url,
-                   ms.overall_score, ms.explanation
-            FROM public.match_scores ms
-            JOIN public.jobs j ON j.id = ms.job_id
-            LEFT JOIN public.companies co ON co.id = j.company_id
-            WHERE ms.candidate_id = $1::uuid
-              AND j.is_active = TRUE
-              AND {vis_fallback}
-              AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
-              {remote_clause}
-            ORDER BY ms.overall_score DESC
-            LIMIT $2::integer
-            """,
-            candidate["id"],
-            limit,
-            market,
-        )
-        rows = _quality_filter_job_rows(
-            rows,
-            candidate=candidate_profile,
-            target_titles=target_titles,
-        )
+        if step1_filtered:
+            rows = step1_filtered
+        elif not step1_raw:
+            # Step 1b: narrow query missed in the DB (not quality-filtered out).
+            vis_fallback = job_visible_for_market_sql(market_param="$3")
+            step1b_raw = await db.fetch(
+                f"""
+                SELECT j.id, j.title, j.location_city, j.location_state,
+                       j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+                       j.employment_type, j.seniority, j.apply_url, j.description,
+                       co.name AS company_name, co.logo_url,
+                       ms.overall_score, ms.explanation
+                FROM public.match_scores ms
+                JOIN public.jobs j ON j.id = ms.job_id
+                LEFT JOIN public.companies co ON co.id = j.company_id
+                WHERE ms.candidate_id = $1::uuid
+                  AND j.is_active = TRUE
+                  AND {vis_fallback}
+                  AND j.deleted_at IS NULL
+                  AND (j.expires_at IS NULL OR j.expires_at > NOW())
+                  {remote_clause}
+                ORDER BY ms.overall_score DESC
+                LIMIT $2::integer
+                """,
+                candidate["id"],
+                limit,
+                market,
+            )
+            rows = _quality_filter_job_rows(
+                step1b_raw,
+                candidate=candidate_profile,
+                target_titles=target_titles,
+                lenient=True,
+            )
 
     # Step 2: fallback — unranked keyword search (no match scores yet at all)
     vis_kw = job_visible_for_market_sql(market_param="$6")

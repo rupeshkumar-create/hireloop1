@@ -110,7 +110,7 @@ export function AppShell({
               <h1 className="truncate text-h2 text-ink-900">{title}</h1>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <RoleSwitchButton to="recruiter" target="/recruiter" />
+              <RoleSwitchButton to="recruiter" target="/recruiter/inbox" />
               {action}
             </div>
           </header>

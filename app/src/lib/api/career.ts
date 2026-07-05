@@ -52,6 +52,15 @@ export type FindJobsResult = {
   source_available?: boolean;
 };
 
+export type CareerPathResume = {
+  id: string;
+  path_title: string;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  download_path: string | null;
+};
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 /** Latest career path for the current candidate, or null if none generated. */
@@ -97,6 +106,37 @@ export async function prioritizeCareerPath(title: string): Promise<CareerPath> {
     throw new Error("No career path returned");
   }
   return data.path;
+}
+
+export async function fetchCareerPathResumes(): Promise<CareerPathResume[]> {
+  const res = await apiAuthFetch("/api/v1/career/path-resumes", { cache: "no-store" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetch path resumes failed: ${res.status}`);
+  }
+  const data: { resumes: CareerPathResume[] } = await res.json();
+  return data.resumes ?? [];
+}
+
+export async function generateCareerPathResumes(): Promise<CareerPathResume[]> {
+  const res = await apiAuthFetch("/api/v1/career/path-resumes/generate", {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Generate path resumes failed: ${res.status}`);
+  }
+  const data: { resumes: CareerPathResume[] } = await res.json();
+  return data.resumes ?? [];
+}
+
+export async function downloadCareerPathResume(resumeId: string): Promise<void> {
+  const res = await apiAuthFetch(`/api/v1/career/path-resumes/${resumeId}/download`);
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /**

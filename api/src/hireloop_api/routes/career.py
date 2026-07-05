@@ -21,6 +21,7 @@ import asyncpg
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
@@ -30,6 +31,7 @@ from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.routes.matches import MatchedJob, _serialize_cached_match_row
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
+from hireloop_api.services.career_path_selection import default_prioritize_title
 from hireloop_api.services.matching import MatchingEngine
 from hireloop_api.services.rate_limit import check_rate_limit
 
@@ -295,10 +297,16 @@ async def find_jobs_for_path(
             detail="Generate your career path first.",
         )
     if not path.get("prioritized_title"):
-        raise HTTPException(
-            status_code=400,
-            detail="Pick one of your top career paths before searching for jobs.",
-        )
+        auto_title = default_prioritize_title(path)
+        if auto_title:
+            updated = await CareerPathService.prioritize(db, candidate_id, auto_title)
+            if updated:
+                path = updated
+        if not path.get("prioritized_title"):
+            raise HTTPException(
+                status_code=400,
+                detail="Pick one of your top career paths before searching for jobs.",
+            )
 
     target_titles: list[str] = path.get("target_titles") or []
     target_locations: list[str] = path.get("target_locations") or []
@@ -397,3 +405,50 @@ async def generate_career_intelligence(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"intelligence": intel}
+
+
+# ── Career-path resumes (one per direction, up to 3) ────────────────────────
+
+
+@router.get("/path-resumes")
+async def list_career_path_resumes(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    from hireloop_api.services.career_path_resume import list_path_resumes
+
+    candidate_id = await _resolve_candidate_id(db, current_user["id"])
+    resumes = await list_path_resumes(db, candidate_id)
+    return {"resumes": resumes}
+
+
+@router.post("/path-resumes/generate")
+async def generate_career_path_resumes(
+    current_user: dict = Depends(get_phone_verified_user),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    from hireloop_api.services.career_path_resume import generate_path_resumes
+
+    candidate_id = await _resolve_candidate_id(db, current_user["id"])
+    check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5)
+    try:
+        resumes = await generate_path_resumes(db, candidate_id, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"resumes": resumes}
+
+
+@router.get("/path-resumes/{resume_id}/download")
+async def download_career_path_resume(
+    resume_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> HTMLResponse:
+    from hireloop_api.services.career_path_resume import fetch_path_resume_html
+
+    candidate_id = await _resolve_candidate_id(db, current_user["id"])
+    html = await fetch_path_resume_html(db, resume_id=resume_id, candidate_id=candidate_id)
+    if not html:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+    return HTMLResponse(content=html)

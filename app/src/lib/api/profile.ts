@@ -1,5 +1,7 @@
 import { apiFetch } from "@/lib/api/client";
 
+export type DisplayCurrency = "auto" | "INR" | "USD" | "GBP" | "EUR";
+
 export type MyProfileData = {
   user: {
     id: string;
@@ -36,6 +38,13 @@ export type MyProfileData = {
     notice_period_days?: number | null;
     is_active?: boolean;
     linkedin_url?: string | null;
+    display_currency?: DisplayCurrency;
+    display_currency_resolved?: string;
+    public_slug?: string | null;
+    public_profile_enabled?: boolean;
+    public_profile_url?: string | null;
+    hide_contact_public?: boolean;
+    share_with_recruiters?: boolean;
   } | null;
   experience?: WorkExperience[];
   education?: Education[];
@@ -134,6 +143,10 @@ export type ProfilePatch = {
   notice_period_days?: number;
   looking_for?: string;
   summary?: string;
+  display_currency?: DisplayCurrency;
+  public_profile_enabled?: boolean;
+  hide_contact_public?: boolean;
+  share_with_recruiters?: boolean;
 };
 
 /** Generic profile PATCH. Invalidates the local profile cache on success. */
@@ -143,6 +156,18 @@ export async function updateMyProfile(patch: ProfilePatch): Promise<void> {
     body: JSON.stringify(patch),
   });
   invalidateProfileCache();
+}
+
+export async function publishPublicProfile(): Promise<{
+  slug: string;
+  public_profile_url: string;
+}> {
+  const data = await apiFetch<{ slug: string; public_profile_url: string }>(
+    "/api/v1/me/public-profile/publish",
+    { method: "POST" }
+  );
+  invalidateProfileCache();
+  return data;
 }
 
 export async function updateMyMarket(market: string): Promise<void> {

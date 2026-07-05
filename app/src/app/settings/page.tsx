@@ -23,6 +23,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
+import { CandidateSharingSettings } from "@/components/settings/CandidateSharingSettings";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { SUPPORTED_MARKETS, type MarketCode, marketByCode } from "@/lib/markets";
 import { cn } from "@/lib/utils";
@@ -199,7 +200,7 @@ export default function SettingsPage() {
               id="settings-market"
               value={market}
               onChange={(e) => setMarket(e.target.value as MarketCode)}
-              className="h-10 w-full rounded-md border border-ink-200 bg-paper-0 px-3 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent/25"
+              className="h-10 w-full rounded-md border border-ink-100 bg-paper-1 px-3 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
             >
               {SUPPORTED_MARKETS.map((m) => (
                 <option key={m.code} value={m.code}>
@@ -224,6 +225,8 @@ export default function SettingsPage() {
             </Button>
           </CardFooter>
         </Card>
+
+        <CandidateSharingSettings />
 
         {/* Notifications */}
         <Card>

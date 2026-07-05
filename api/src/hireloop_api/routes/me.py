@@ -152,6 +152,10 @@ class ProfileUpdateRequest(BaseModel):
     expected_ctc_max: int | None = None
     current_ctc: int | None = None
     notice_period_days: int | None = None
+    display_currency: str | None = None
+    public_profile_enabled: bool | None = None
+    hide_contact_public: bool | None = None
+    share_with_recruiters: bool | None = None
 
 
 def _serialize_value(value: Any) -> Any:
@@ -181,6 +185,8 @@ async def _ensure_candidate_row(
                profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
                open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                current_ctc, notice_period_days,
+               display_currency, public_slug, public_profile_enabled,
+               hide_contact_public, share_with_recruiters,
                is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
@@ -199,6 +205,8 @@ async def _ensure_candidate_row(
                   profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
                   open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                   current_ctc, notice_period_days,
+                  display_currency, public_slug, public_profile_enabled,
+                  hide_contact_public, share_with_recruiters,
                   is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         """,
         user_id,
@@ -324,6 +332,43 @@ async def update_my_market(
     )
 
     return {"ok": True, "market": market}
+
+
+@router.post("/public-profile/publish")
+async def publish_public_profile(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Enable the public profile page and ensure a shareable slug exists."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    candidate = await _ensure_candidate_row(db, user_id)
+    user_row = await db.fetchrow(
+        "SELECT full_name FROM public.users WHERE id = $1::uuid",
+        user_id,
+    )
+    from hireloop_api.services.public_profile import ensure_public_slug
+
+    slug = await ensure_public_slug(
+        db,
+        candidate["id"],
+        display_name=user_row["full_name"] if user_row else None,
+    )
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET public_profile_enabled = TRUE, updated_at = NOW()
+        WHERE id = $1::uuid
+        """,
+        candidate["id"],
+    )
+    await db.execute(
+        """
+        INSERT INTO public.consent_log (user_id, purpose, granted)
+        VALUES ($1::uuid, 'public_profile_publish', TRUE)
+        """,
+        user_id,
+    )
+    return {"ok": True, "slug": slug, "public_profile_url": f"/p/{slug}"}
 
 
 @router.get("/profile")
@@ -470,6 +515,15 @@ async def get_my_profile(
     )
     if display_name:
         user_payload["full_name"] = display_name
+
+    from hireloop_api.services.display_currency import currency_fields_for_candidate
+
+    candidate_payload.update(currency_fields_for_candidate(candidate_payload))
+    slug = candidate_payload.get("public_slug")
+    if candidate_payload.get("public_profile_enabled") and slug:
+        candidate_payload["public_profile_url"] = f"/p/{slug}"
+    else:
+        candidate_payload["public_profile_url"] = None
 
     return {
         "user": user_payload,
@@ -643,7 +697,21 @@ async def update_my_profile(
                 "expected_ctc_max": "expected_ctc_max",
                 "current_ctc": "current_ctc",
                 "notice_period_days": "notice_period_days",
+                "display_currency": "display_currency",
+                "public_profile_enabled": "public_profile_enabled",
+                "hide_contact_public": "hide_contact_public",
+                "share_with_recruiters": "share_with_recruiters",
             }
+            if "display_currency" in updates:
+                from hireloop_api.services.display_currency import VALID_DISPLAY_CURRENCIES
+
+                cur = str(updates["display_currency"] or "auto").lower().strip()
+                if cur not in {c.lower() for c in VALID_DISPLAY_CURRENCIES}:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Invalid display_currency. Use auto, INR, USD, GBP, or EUR.",
+                    )
+                updates["display_currency"] = cur
             if "remote_preference" in updates:
                 pref = normalize_remote_preference(updates["remote_preference"])
                 if pref not in VALID_REMOTE_PREFERENCES:
@@ -718,6 +786,19 @@ async def update_my_profile(
                     "WHERE id = $1::uuid AND deleted_at IS NULL"
                 )
                 await db.execute(query, *values)
+
+            if updates.get("public_profile_enabled"):
+                from hireloop_api.services.public_profile import ensure_public_slug
+
+                name_row = await db.fetchrow(
+                    "SELECT full_name FROM public.users WHERE id = $1::uuid",
+                    user_id,
+                )
+                await ensure_public_slug(
+                    db,
+                    candidate["id"],
+                    display_name=name_row["full_name"] if name_row else None,
+                )
 
         await db.execute(
             """

@@ -1,29 +1,35 @@
 "use client";
 
 /**
- * RoleSwitchButton — flips the signed-in account between the candidate and
- * recruiter experiences (one login can test both). Provisions the target
- * profile server-side, then navigates to that side's home.
+ * RoleSwitchButton — flips between candidate and recruiter when the same login
+ * has both profiles. Hidden for single-role accounts.
  */
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeftRight, Loader2 } from "@/components/brand/icons";
+import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
 import { switchActiveRole, type ActiveRole } from "@/lib/api/role";
 import { Button, useToast } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 export function RoleSwitchButton({
   to,
   target,
+  variant = "button",
 }: {
-  /** Role to switch into. */
   to: ActiveRole;
-  /** Path to land on after switching. */
   target: string;
+  variant?: "button" | "icon";
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  const { canSwitch, loading } = useDualRoleAccess();
   const [busy, setBusy] = useState(false);
+
+  if (loading || !canSwitch) {
+    return null;
+  }
 
   const handleClick = async () => {
     if (busy) return;
@@ -36,6 +42,30 @@ export function RoleSwitchButton({
       setBusy(false);
     }
   };
+
+  const label = to === "recruiter" ? "Recruiter view" : "Candidate view";
+
+  if (variant === "icon") {
+    return (
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        disabled={busy}
+        title={label}
+        aria-label={label}
+        className={cn(
+          "flex h-10 w-10 items-center justify-center rounded-xl text-ink-400",
+          "hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-50",
+        )}
+      >
+        {busy ? (
+          <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
+        ) : (
+          <ArrowLeftRight className="h-[18px] w-[18px]" strokeWidth={1.5} />
+        )}
+      </button>
+    );
+  }
 
   return (
     <Button
@@ -51,7 +81,7 @@ export function RoleSwitchButton({
         )
       }
     >
-      {to === "recruiter" ? "Recruiter view" : "Candidate view"}
+      {label}
     </Button>
   );
 }

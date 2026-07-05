@@ -47,6 +47,61 @@ _ASSISTANT_SEARCH_FOR_RE = re.compile(
 )
 
 
+def default_prioritize_title(path: dict[str, Any] | None) -> str | None:
+    """Best default target role when the candidate has not picked a path yet."""
+    if not path:
+        return None
+    existing = (path.get("prioritized_title") or "").strip()
+    if existing:
+        return existing
+    for step in path.get("steps") or []:
+        if isinstance(step, dict) and step.get("level") == "next":
+            title = str(step.get("title") or "").strip()
+            if title:
+                return title
+    for raw in path.get("target_titles") or []:
+        title = str(raw).strip()
+        if title:
+            return title
+    return None
+
+
+def resolve_job_search_query(
+    message: str,
+    *,
+    user_intent: str,
+    career_path: dict[str, Any] | None,
+    prioritized_title: str | None,
+    just_prioritized: str | None,
+    current_title: str | None = None,
+    looking_for: str | None = None,
+) -> str | None:
+    """
+    Derive the query passed to job_search for a chat turn.
+
+    Returns None when this turn should not run a pre-turn job search.
+    """
+    if just_prioritized:
+        return just_prioritized.strip()
+    role, _city = extract_find_role_and_city(message)
+    if role:
+        return role.strip()
+    if user_intent != "job_search":
+        return None
+    if prioritized_title:
+        return str(prioritized_title).strip()
+    if looking_for:
+        return str(looking_for).strip()
+    if career_path:
+        default = default_prioritize_title(career_path)
+        if default:
+            return default
+    if current_title:
+        return str(current_title).strip()
+    # Empty string → job_search returns top personalized matches (Step 1 / 1b).
+    return ""
+
+
 def career_path_options(path: dict[str, Any] | None) -> list[str]:
     """Top 1–3 selectable path titles (matches job_search gate + UI cards)."""
     if not path:
