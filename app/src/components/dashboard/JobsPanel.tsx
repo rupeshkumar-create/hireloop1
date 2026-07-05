@@ -7,6 +7,7 @@ import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
+import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import { Button, EmptyState } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,18 @@ export function JobsPanel({
         </button>
         <button
           type="button"
+          onClick={() => selectTab("tracker")}
+          className={cn(
+            "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
+            tab === "tracker"
+              ? "border-ink-900 text-ink-900"
+              : "border-transparent text-ink-400 hover:text-ink-700",
+          )}
+        >
+          Tracker
+        </button>
+        <button
+          type="button"
           onClick={() => selectTab("saved")}
           className={cn(
             "inline-flex items-center gap-1.5 px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
@@ -147,7 +160,7 @@ export function JobsPanel({
             onSavedChange={onSavedChange}
             className="h-full"
           />
-        ) : (
+        ) : tab === "saved" ? (
           <SavedJobsPanel
             conversationId={conversationId}
             onRequestIntro={onRequestIntro}
@@ -156,6 +169,8 @@ export function JobsPanel({
             refreshKey={savedJobsRefreshKey}
             className="h-full p-5 flex flex-col"
           />
+        ) : (
+          <JobTrackerPanel className="h-full" />
         )}
       </div>
     </div>

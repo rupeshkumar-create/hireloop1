@@ -98,6 +98,12 @@ async def _resolve_candidate_id(db: asyncpg.Connection, user_id: str) -> str:
     return str(row["id"])
 
 
+# A job with no title relevance to the path must at least be a genuinely good
+# overall match to appear in path results. Below this it's noise ("Founding
+# Designer" search returning a 35% sales role).
+_PATH_JOBS_OFF_TITLE_MIN_SCORE = 0.6
+
+
 async def _fetch_path_jobs(
     db: asyncpg.Connection,
     candidate_id: str,
@@ -107,10 +113,20 @@ async def _fetch_path_jobs(
     remote_preference: str = "any",
     market: str = "IN",
 ) -> list[asyncpg.Record]:
-    """Scored jobs for this candidate, path-matching titles first."""
+    """Scored jobs for this candidate, relevant to the path.
+
+    A job qualifies when its title matches a target title (full phrase or any
+    significant token) OR its overall match score is strong. Returning nothing
+    is fine — the callers show an honest "pulling fresh openings" state, which
+    beats padding the list with unrelated roles.
+    """
+    from hireloop_api.agents.aarya.tools import _search_tokens
     from hireloop_api.services.job_preferences import remote_filter_sql
 
     patterns = [f"%{t}%" for t in target_titles] or ["%"]
+    token_patterns = [
+        f"%{tok}%" for title in target_titles for tok in _search_tokens(title)
+    ] or ["%"]
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$4")
     return await db.fetch(
@@ -130,8 +146,15 @@ async def _fetch_path_jobs(
           AND j.deleted_at IS NULL
           AND j.expires_at > NOW()
           {remote_clause}
+          AND (
+            j.title ILIKE ANY($2::text[])
+            OR j.title ILIKE ANY($5::text[])
+            OR ms.overall_score >= $6
+          )
         ORDER BY
-          (CASE WHEN j.title ILIKE ANY($2::text[]) THEN 0 ELSE 1 END),
+          (CASE WHEN j.title ILIKE ANY($2::text[]) THEN 0
+                WHEN j.title ILIKE ANY($5::text[]) THEN 1
+                ELSE 2 END),
           ms.overall_score DESC
         LIMIT $3
         """,
@@ -139,6 +162,8 @@ async def _fetch_path_jobs(
         patterns,
         limit,
         market,
+        token_patterns,
+        _PATH_JOBS_OFF_TITLE_MIN_SCORE,
     )
 
 

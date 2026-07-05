@@ -1736,7 +1736,7 @@ function EmptyState({
 
   const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage, !profileSparse);
 
-  const firstName = firstNameFromDisplayName(profile?.user?.full_name) ?? "there";
+  const firstName = firstNameFromDisplayName(profile?.user?.full_name ?? undefined) ?? "there";
   const greeting = `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
 
   const handlePathSelect = (opt: CareerPathOption) => {

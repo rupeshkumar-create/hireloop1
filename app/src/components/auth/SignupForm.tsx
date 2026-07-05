@@ -179,24 +179,21 @@ export function SignupForm() {
     setLoadingAction("email-verify");
     setErrorMessage("");
     try {
-      const verifyError = await verifyEmailOtp(token);
-      if (verifyError) {
-        const lowered = verifyError.toLowerCase();
-        setErrorMessage(
-          lowered.includes("invalid") || lowered.includes("expired")
-            ? "That code expired or was already used. Tap “Use a different email”, send a fresh code, and enter it within a few minutes — don't open the email link if you're using the code."
-            : `${verifyError} Request a new code from signup if this keeps failing.`,
-        );
+      const { error: verifyError, accessToken } = await verifyEmailOtp(token);
+      if (verifyError || !accessToken) {
+        if (verifyError) {
+          const lowered = verifyError.toLowerCase();
+          setErrorMessage(
+            lowered.includes("invalid") || lowered.includes("expired")
+              ? "That code expired or was already used. Tap “Use a different email”, send a fresh code, and enter it within a few minutes — don't open the email link if you're using the code."
+              : `${verifyError} Request a new code from signup if this keeps failing.`,
+          );
+        } else {
+          setErrorMessage("Verified, but no session was created. Please try again.");
+        }
         return;
       }
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        setErrorMessage("Verified, but no session was created. Please try again.");
-        return;
-      }
-      const destination = await finishAuthSession(session.access_token, role);
+      const destination = await finishAuthSession(accessToken, role);
       clearSignupRole();
       router.replace(destination);
     } catch (error) {

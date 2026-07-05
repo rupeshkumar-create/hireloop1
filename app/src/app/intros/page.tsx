@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { MessageCircle } from "@/components/brand/icons";
 import { AppShell } from "@/components/layout/AppShell";
-import { IntrosList } from "@/components/intros/IntrosList";
-import { BackToAaryaLink, ScoringExplainerLink } from "@/components/ux";
+import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { Button } from "@/components/ui";
 
 export default function IntrosPage() {
@@ -24,12 +23,8 @@ export default function IntrosPage() {
         </Link>
       }
     >
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <BackToAaryaLink />
-          <ScoringExplainerLink />
-        </div>
-        <IntrosList variant="page" />
+      <div className="h-[calc(100vh-8rem)] min-h-[480px] -mx-4 md:-mx-6 border border-ink-100 rounded-lg overflow-hidden bg-paper-0">
+        <IntrosInboxPanel />
       </div>
     </AppShell>
   );

@@ -33,12 +33,14 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
     );
 
     let lastError: string | null = null;
+    let accessToken: string | null = null;
     for (const attemptType of attempts) {
-      const { error } = await supabase.auth.verifyOtp({
+      const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
         type: attemptType,
       });
       if (!error) {
+        accessToken = data.session?.access_token ?? null;
         lastError = null;
         break;
       }
@@ -56,11 +58,14 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
       return;
     }
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    if (!accessToken) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      accessToken = session?.access_token ?? null;
+    }
 
-    if (!session?.access_token) {
+    if (!accessToken) {
       setErrorMessage("Verified, but no session was created. Please try again from signup.");
       setLoading(false);
       return;
@@ -69,7 +74,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
     const role = readSignupRole();
 
     try {
-      const destination = await finishAuthSession(session.access_token, role);
+      const destination = await finishAuthSession(accessToken, role);
       clearSignupRole();
       router.replace(destination);
     } catch (err) {

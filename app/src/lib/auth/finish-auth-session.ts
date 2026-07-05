@@ -5,6 +5,8 @@ import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl, getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 
+const BOOTSTRAP_TIMEOUT_MS = 20_000;
+
 export async function finishAuthSession(
   accessToken: string,
   role: "candidate" | "recruiter",
@@ -23,10 +25,17 @@ export async function finishAuthSession(
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ role }),
-      // OAuth callback runs server-side — don't wait forever if API is down.
-      ...(typeof window === "undefined" ? { signal: AbortSignal.timeout(15_000) } : {}),
+      signal: AbortSignal.timeout(BOOTSTRAP_TIMEOUT_MS),
     });
   } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new ApiUnreachableError(
+        base,
+        new Error(
+          "Account setup timed out — the API may be unable to reach the database. Try again in a moment.",
+        ),
+      );
+    }
     throw new ApiUnreachableError(base, err);
   }
 
@@ -40,7 +49,7 @@ export async function finishAuthSession(
     const detail =
       data.detail ??
       (res.status === 502 || res.status === 503
-        ? "API is temporarily unavailable. Check NEXT_PUBLIC_API_URL and redeploy."
+        ? "Our servers are temporarily unavailable (database connection issue). Please try again in a minute."
         : "Account setup failed. Please try signing in again.");
     throw new Error(detail);
   }

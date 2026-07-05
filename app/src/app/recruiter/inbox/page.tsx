@@ -20,6 +20,7 @@ import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/component
 import { IntroChat } from "@/components/intros/IntroChat";
 import { RecruiterBreadcrumbs } from "@/components/ux";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 type InboxItem = {
   id: string;
@@ -67,7 +68,7 @@ export default function RecruiterInboxPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [responding, setResponding] = useState<string | null>(null);
-  const [openChat, setOpenChat] = useState<Set<string>>(new Set());
+  const [selectedIntroId, setSelectedIntroId] = useState<string | null>(null);
 
   async function respond(introId: string, accept: boolean) {
     setResponding(introId);
@@ -95,12 +96,7 @@ export default function RecruiterInboxPage() {
   }
 
   function toggleChat(introId: string) {
-    setOpenChat((prev) => {
-      const next = new Set(prev);
-      if (next.has(introId)) next.delete(introId);
-      else next.add(introId);
-      return next;
-    });
+    setSelectedIntroId((prev) => (prev === introId ? null : introId));
   }
 
   async function load() {
@@ -109,6 +105,11 @@ export default function RecruiterInboxPage() {
     try {
       const d = await apiFetch<InboxData>("/api/v1/recruiter/inbox");
       setData(d);
+      const chatItems = (d.items ?? []).filter((i) => i.status === "accepted");
+      setSelectedIntroId((prev) => {
+        if (prev && chatItems.some((i) => i.id === prev)) return prev;
+        return chatItems[0]?.id ?? null;
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -171,11 +172,26 @@ export default function RecruiterInboxPage() {
     const fromCandidate = item.direction === "candidate_to_recruiter";
     const canRespond = fromCandidate && item.status === "pending";
     const canChat = item.status === "accepted";
-    const chatOpen = openChat.has(item.id);
+    const chatOpen = selectedIntroId === item.id;
     return (
       <div
         key={item.id}
-        className="rounded-lg border border-ink-100 bg-paper-1 px-4 py-3"
+        role="button"
+        tabIndex={0}
+        onClick={() => canChat && setSelectedIntroId(item.id)}
+        onKeyDown={(e) => {
+          if (canChat && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            setSelectedIntroId(item.id);
+          }
+        }}
+        className={cn(
+          "rounded-lg border px-4 py-3 transition-colors",
+          chatOpen && canChat
+            ? "border-accent bg-ink-50"
+            : "border-ink-100 bg-paper-1 hover:border-ink-200",
+          canChat && "cursor-pointer",
+        )}
       >
         <div className="flex items-center gap-3">
           <Clock className="h-4 w-4 text-ink-300 shrink-0" strokeWidth={1.5} />
@@ -222,16 +238,21 @@ export default function RecruiterInboxPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => toggleChat(item.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleChat(item.id);
+                }}
               >
-                {chatOpen ? "Hide chat" : "Open chat"}
+                {chatOpen ? "Selected" : "Open chat"}
               </Button>
             )}
           </div>
         )}
 
         {canChat && chatOpen && (
-          <IntroChat introId={item.id} side="recruiter" />
+          <div className="mt-3 h-80" onClick={(e) => e.stopPropagation()}>
+            <IntroChat introId={item.id} side="recruiter" fillHeight />
+          </div>
         )}
       </div>
     );

@@ -32,7 +32,7 @@ import { HomePanel } from "@/components/dashboard/HomePanel";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
 import { TopNav } from "@/components/dashboard/TopNav";
-import { IntrosList } from "@/components/intros/IntrosList";
+import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import { ChatPeekStrip } from "@/components/dashboard/ChatPeekStrip";
 import { type JobsTab, type PanelId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
@@ -241,7 +241,10 @@ export function DashboardClient({
             className={cn(
               "flex flex-col bg-paper-0 overflow-hidden border-ink-100 animate-slide-in-left",
               "absolute inset-0 z-20 w-full",
-              "lg:static lg:inset-auto lg:z-auto lg:w-[clamp(380px,42%,600px)] lg:flex-shrink-0 lg:border-r",
+              "lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:border-r",
+              activePanel === "inbox"
+                ? "lg:w-[clamp(520px,52%,720px)]"
+                : "lg:w-[clamp(380px,42%,600px)]",
             )}
           >
             <div className="flex items-center justify-between h-14 px-5 border-b border-ink-100 shrink-0">
@@ -257,7 +260,7 @@ export function DashboardClient({
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               {activePanel === "home" && (
                 <HomePanel
                   candidateName={candidateName}
@@ -270,7 +273,11 @@ export function DashboardClient({
                   onOpenPanel={openPanel}
                 />
               )}
-              {activePanel === "inbox" && <IntrosList variant="panel" />}
+              {activePanel === "inbox" && (
+                <div className="h-full min-h-0 overflow-hidden">
+                  <IntrosInboxPanel />
+                </div>
+              )}
               {activePanel === "profile" && <ProfilePanel onSendToChat={sendToChat} />}
               {activePanel === "jobs" && (
                 <JobsPanel

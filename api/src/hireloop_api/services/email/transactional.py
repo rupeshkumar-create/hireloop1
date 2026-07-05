@@ -23,6 +23,16 @@ logger = structlog.get_logger()
 _SIGNUP_EMAIL_PURPOSE = "signup_confirmation_email"
 
 
+def _sendgrid_usable(settings: Settings) -> bool:
+    """True when SendGrid has a real API key (not a placeholder like SG....)."""
+    key = (settings.sendgrid_api_key or "").strip()
+    if not key or len(key) < 24:
+        return False
+    if key in ("SG....", "SG...", "SG.."):
+        return False
+    return key.startswith("SG.")
+
+
 def _html_email_configured(settings: Settings) -> bool:
     """True when we can send a raw-HTML email (SMTP or Resend)."""
     smtp = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
@@ -107,7 +117,7 @@ async def maybe_send_signup_confirmation(
     Best-effort — never raises.
     """
     use_html = _html_email_configured(settings)  # SMTP (free, any recipient) or Resend
-    use_sendgrid = bool(settings.sendgrid_api_key and settings.sg_template_signup_confirmation)
+    use_sendgrid = _sendgrid_usable(settings) and bool(settings.sg_template_signup_confirmation)
     if not (use_html or use_sendgrid):
         return {"sent": False, "skipped": "email_unconfigured"}
 
@@ -166,6 +176,80 @@ async def maybe_send_signup_confirmation(
             logger.error("signup_email_consent_log_failed", user_id=str(user_id), error=str(exc))
 
     return {"sent": bool(sent)}
+
+
+async def send_recruiter_invite_email(
+    settings: Settings,
+    *,
+    to_email: str,
+    invited_name: str | None,
+    candidate_name: str,
+    job_title: str,
+    cta_url: str,
+) -> bool:
+    """
+    Invite an unregistered hiring manager to view a candidate intro (R9 transactional).
+
+    Prefer Resend/SMTP HTML — same provider as Supabase Auth signup OTP when
+    ``RESEND_API_KEY`` + ``RESEND_FROM_EMAIL`` match the Supabase custom SMTP setup.
+    SendGrid templates are used only when a real API key and template ID exist.
+    """
+    template_id = settings.sg_template_recruiter_invite or settings.sg_template_intro_status
+    subject = f"{candidate_name} wants an intro — {job_title}"
+    body_html = (
+        f"<p style='font-size:14px;line-height:1.6'><strong>{candidate_name}</strong> "
+        f"requested an intro for <strong>{job_title}</strong> on Hireloop.</p>"
+        "<p style='font-size:14px;line-height:1.6'>You're not on Hireloop yet — "
+        "accept the invite to view their profile and start a conversation.</p>"
+    )
+    html = _email_shell(
+        f"Hi {invited_name or 'there'}, a candidate wants to connect",
+        body_html,
+        cta_url,
+        "View candidate & accept invite",
+    )
+
+    # Same path as signup OTP: Resend (or custom SMTP) from rupesh.kumar@candidate.ly, etc.
+    if _html_email_configured(settings):
+        sent = await _send_html_email(
+            settings,
+            to_email=to_email,
+            subject=subject,
+            html=html,
+        )
+        if sent:
+            return True
+
+    if _sendgrid_usable(settings) and template_id:
+        sg = SendGridService(
+            settings.sendgrid_api_key,
+            settings.sendgrid_from_email,
+            settings.sendgrid_from_name,
+        )
+        try:
+            return await sg.send_recruiter_invite(
+                to_email=to_email,
+                invited_name=invited_name,
+                template_id=template_id,
+                candidate_name=candidate_name,
+                job_title=job_title,
+                cta_url=cta_url,
+            )
+        finally:
+            await sg.close()
+
+    if _sendgrid_usable(settings):
+        sg = SendGridService(
+            settings.sendgrid_api_key,
+            settings.sendgrid_from_email,
+            settings.sendgrid_from_name,
+        )
+        try:
+            return await sg.send_raw_html(to_email, subject, html)
+        finally:
+            await sg.close()
+
+    return False
 
 
 async def send_job_match_alert(

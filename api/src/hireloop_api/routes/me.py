@@ -918,6 +918,158 @@ async def update_my_profile(
         raise
 
 
+def _pipeline_stage(
+    *,
+    saved_at: object | None,
+    kit_id: object | None,
+    application_status: str | None,
+    intro_status: str | None,
+) -> str:
+    if intro_status == "accepted":
+        return "intro_accepted"
+    if intro_status in (
+        "pending",
+        "invited",
+        "recruiter_notified",
+        "draft_ready",
+        "sent",
+    ):
+        return "intro_in_progress"
+    if application_status:
+        return "applied"
+    if kit_id:
+        return "kit_ready"
+    if saved_at:
+        return "saved"
+    return "tracked"
+
+
+@router.get("/job-pipeline")
+async def get_job_pipeline(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Unified job tracker — saved, kits, applications, and intros."""
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        return {"items": []}
+
+    cid = candidate["id"]
+    market = await fetch_candidate_market(db, cid)
+    vis = job_visible_for_market_sql(market_param="$2")
+
+    rows = await db.fetch(
+        f"""
+        WITH my_jobs AS (
+            SELECT job_id FROM public.saved_jobs WHERE candidate_id = $1::uuid
+            UNION
+            SELECT job_id FROM public.job_application_kits WHERE candidate_id = $1::uuid
+            UNION
+            SELECT job_id FROM public.job_applications WHERE candidate_id = $1::uuid
+            UNION
+            SELECT job_id FROM public.intro_requests WHERE candidate_id = $1::uuid
+        )
+        SELECT
+            j.id AS job_id,
+            j.title,
+            co.name AS company_name,
+            j.location_city,
+            j.location_state,
+            j.is_remote,
+            j.apply_url,
+            sj.saved_at,
+            k.id AS kit_id,
+            k.updated_at AS kit_updated_at,
+            k.tailored_resume_id,
+            k.mock_interview_id,
+            ja.status AS application_status,
+            ja.applied_at,
+            ir.id AS intro_id,
+            ir.status AS intro_status,
+            ir.direction AS intro_direction,
+            GREATEST(
+                sj.saved_at,
+                k.updated_at,
+                ja.applied_at,
+                ir.updated_at
+            ) AS last_activity_at
+        FROM my_jobs mj
+        JOIN public.jobs j ON j.id = mj.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        LEFT JOIN public.saved_jobs sj
+          ON sj.job_id = j.id AND sj.candidate_id = $1::uuid
+        LEFT JOIN public.job_application_kits k
+          ON k.job_id = j.id AND k.candidate_id = $1::uuid
+        LEFT JOIN LATERAL (
+            SELECT status, applied_at
+            FROM public.job_applications
+            WHERE job_id = j.id AND candidate_id = $1::uuid
+            ORDER BY applied_at DESC
+            LIMIT 1
+        ) ja ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT id, status, direction, updated_at
+            FROM public.intro_requests
+            WHERE job_id = j.id AND candidate_id = $1::uuid
+            ORDER BY updated_at DESC
+            LIMIT 1
+        ) ir ON TRUE
+        WHERE j.deleted_at IS NULL
+          AND {vis}
+        ORDER BY last_activity_at DESC NULLS LAST
+        """,
+        cid,
+        market,
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        stage = _pipeline_stage(
+            saved_at=d.get("saved_at"),
+            kit_id=d.get("kit_id"),
+            application_status=d.get("application_status"),
+            intro_status=d.get("intro_status"),
+        )
+        items.append(
+            {
+                "job_id": str(d["job_id"]),
+                "title": d["title"],
+                "company_name": d.get("company_name"),
+                "location_city": d.get("location_city"),
+                "location_state": d.get("location_state"),
+                "is_remote": d.get("is_remote"),
+                "apply_url": d.get("apply_url"),
+                "stage": stage,
+                "saved": d.get("saved_at") is not None,
+                "saved_at": d["saved_at"].isoformat() if d.get("saved_at") else None,
+                "kit_id": str(d["kit_id"]) if d.get("kit_id") else None,
+                "kit_updated_at": d["kit_updated_at"].isoformat()
+                if d.get("kit_updated_at")
+                else None,
+                "tailored_resume_id": str(d["tailored_resume_id"])
+                if d.get("tailored_resume_id")
+                else None,
+                "mock_interview_id": str(d["mock_interview_id"])
+                if d.get("mock_interview_id")
+                else None,
+                "application_status": d.get("application_status"),
+                "applied_at": d["applied_at"].isoformat() if d.get("applied_at") else None,
+                "intro_id": str(d["intro_id"]) if d.get("intro_id") else None,
+                "intro_status": d.get("intro_status"),
+                "intro_direction": d.get("intro_direction"),
+                "last_activity_at": d["last_activity_at"].isoformat()
+                if d.get("last_activity_at")
+                else None,
+            }
+        )
+
+    return {"items": items}
+
+
 @router.get("/saved-jobs")
 async def list_saved_jobs(
     current_user: dict = Depends(get_phone_verified_user),

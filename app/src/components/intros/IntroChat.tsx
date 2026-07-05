@@ -22,9 +22,12 @@ import { cn } from "@/lib/utils";
 export function IntroChat({
   introId,
   side,
+  fillHeight = false,
 }: {
   introId: string;
   side: IntroChatSide;
+  /** Expand to fill parent flex column (inbox split view). */
+  fillHeight?: boolean;
 }) {
   const [messages, setMessages] = useState<IntroMessage[]>([]);
   const [canChat, setCanChat] = useState(true);
@@ -119,9 +122,19 @@ export function IntroChat({
   }
 
   return (
-    <div className="rounded-lg border border-ink-100 bg-paper-1 mt-3 overflow-hidden">
+    <div
+      className={cn(
+        "rounded-lg border border-ink-100 bg-paper-1 overflow-hidden flex flex-col",
+        fillHeight ? "h-full min-h-0 mt-0" : "mt-3",
+      )}
+    >
       {/* Messages */}
-      <div className="max-h-72 overflow-y-auto px-3 py-3 space-y-2 bg-paper-0">
+      <div
+        className={cn(
+          "overflow-y-auto px-3 py-3 space-y-2 bg-paper-0 flex-1 min-h-0",
+          !fillHeight && "max-h-72",
+        )}
+      >
         {loading && (
           <div className="h-12 rounded bg-ink-100 animate-skeleton" />
         )}

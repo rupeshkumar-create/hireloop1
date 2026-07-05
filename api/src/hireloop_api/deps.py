@@ -7,6 +7,7 @@ Shared across all routers:
   - get_current_user: validate Supabase JWT + return user row
 """
 
+import asyncio
 import hmac
 import uuid
 from collections.abc import AsyncGenerator
@@ -25,6 +26,8 @@ logger = structlog.get_logger()
 # ── DB connection pool ────────────────────────────────────────────────────────
 
 _pool: asyncpg.Pool | None = None
+_DB_POOL_CREATE_TIMEOUT_S = 15.0
+_DB_ACQUIRE_TIMEOUT_S = 10.0
 
 
 def reset_db_pool() -> None:
@@ -47,17 +50,46 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
         # Supabase transaction pooler (port 6543) requires statement cache off.
         if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
             pool_kwargs["statement_cache_size"] = 0
-        _pool = await asyncpg.create_pool(dsn, **pool_kwargs)
+        try:
+            _pool = await asyncio.wait_for(
+                asyncpg.create_pool(dsn, **pool_kwargs),
+                timeout=_DB_POOL_CREATE_TIMEOUT_S,
+            )
+        except TimeoutError as exc:
+            logger.error("db_pool_create_timeout", timeout_s=_DB_POOL_CREATE_TIMEOUT_S)
+            raise RuntimeError("database connection timed out") from exc
     return _pool
+
+
+async def _acquire_db_connection(pool: asyncpg.Pool) -> asyncpg.Connection:
+    """Acquire a pooled connection, failing fast when Postgres is unreachable."""
+    try:
+        return await asyncio.wait_for(pool.acquire(), timeout=_DB_ACQUIRE_TIMEOUT_S)
+    except TimeoutError as exc:
+        logger.error("db_acquire_timeout", timeout_s=_DB_ACQUIRE_TIMEOUT_S)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable. Please try again in a moment.",
+        ) from exc
 
 
 async def get_db(
     settings: Settings = Depends(get_settings),
 ) -> AsyncGenerator[asyncpg.Connection, None]:
     """Yield a DB connection from the pool."""
-    pool = await get_db_pool(settings)
-    async with pool.acquire() as conn:
+    try:
+        pool = await get_db_pool(settings)
+    except Exception as exc:
+        logger.error("db_pool_unavailable", error=str(exc)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable. Please try again in a moment.",
+        ) from exc
+    conn = await _acquire_db_connection(pool)
+    try:
         yield conn
+    finally:
+        await pool.release(conn)
 
 
 async def get_db_optional(
@@ -73,7 +105,10 @@ async def get_db_optional(
 
     conn: asyncpg.Connection | None = None
     try:
-        conn = await pool.acquire()
+        conn = await _acquire_db_connection(pool)
+    except HTTPException:
+        yield None
+        return
     except Exception as exc:
         logger.warning("db_acquire_unavailable", error=str(exc)[:200])
         yield None

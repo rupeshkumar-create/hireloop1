@@ -368,9 +368,10 @@ def _build_explanation(
     else:
         lead = f"Weak match ({pct}%) — significant gaps exist for {role}."
 
-    # Strength / gap callouts
+    # Strength / gap callouts. Only praise skills on decent overall fit —
+    # "significant gaps exist … your skills align closely" reads as nonsense.
     notes: list[str] = []
-    if skills >= 0.75:
+    if skills >= 0.75 and pct >= 60:
         notes.append("Your skills align closely with what's needed.")
     elif skills < 0.40:
         notes.append("Skills gap detected — you may need to upskill for this role.")

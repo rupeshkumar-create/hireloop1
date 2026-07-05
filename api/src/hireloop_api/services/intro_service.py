@@ -60,45 +60,30 @@ async def _send_recruiter_invite_email(
     """
     Email an unregistered recruiter a CTA to join and view the candidate.
 
-    Degrades gracefully: if SendGrid isn't configured (no key / no template),
-    we log the invite + link and return False — the recruiter_invites row still
-    holds the token, so the email can be (re)sent once email is provisioned.
+    Degrades gracefully when SendGrid/SMTP are not configured — the
+    recruiter_invites row still holds the token for manual testing.
     """
     settings = get_settings()
     cta_url = f"{_app_base_url()}/recruiter/invite?token={token}"
 
-    api_key = getattr(settings, "sendgrid_api_key", "") or ""
-    template_id = (getattr(settings, "sg_template_recruiter_invite", "") or "") or (
-        getattr(settings, "sg_template_intro_status", "") or ""
-    )
-    if not api_key or not template_id:
-        logger.info(
-            "recruiter_invite_email_skipped",
-            reason="sendgrid_unconfigured",
-            to=to_email,
+    try:
+        from hireloop_api.services.email.transactional import send_recruiter_invite_email
+
+        sent = await send_recruiter_invite_email(
+            settings,
+            to_email=to_email,
+            invited_name=invited_name,
+            candidate_name=candidate_name or "a candidate",
+            job_title=job_title or "your role",
             cta_url=cta_url,
         )
-        return False
-
-    try:
-        from hireloop_api.services.email.sendgrid_service import SendGridService
-
-        svc = SendGridService(
-            api_key,
-            settings.sendgrid_from_email,
-            settings.sendgrid_from_name,
-        )
-        try:
-            sent = await svc.send_recruiter_invite(
-                to_email=to_email,
-                invited_name=invited_name,
-                template_id=template_id,
-                candidate_name=candidate_name or "a candidate",
-                job_title=job_title or "your role",
+        if not sent:
+            logger.info(
+                "recruiter_invite_email_skipped",
+                reason="email_unconfigured",
+                to=to_email,
                 cta_url=cta_url,
             )
-        finally:
-            await svc.close()
         return bool(sent)
     except Exception as exc:  # email is best-effort, never fatal
         logger.error("recruiter_invite_email_failed", to=to_email, error=str(exc))

@@ -92,6 +92,30 @@ class SendGridService:
             logger.error("sendgrid_error", to=to_email, error=str(exc))
             return False
 
+    async def send_raw_html(self, to_email: str, subject: str, html: str) -> bool:
+        """Send a single HTML email without a dynamic template."""
+        payload = {
+            "personalizations": [{"to": [{"email": to_email}]}],
+            "from": {"email": self._from_email, "name": self._from_name},
+            "subject": subject,
+            "content": [{"type": "text/html", "value": html}],
+        }
+        try:
+            res = await self._http.post("/mail/send", json=payload)
+            if res.status_code == 202:
+                logger.info("sendgrid_raw_html_sent", to=to_email)
+                return True
+            logger.error(
+                "sendgrid_raw_html_failed",
+                to=to_email,
+                status=res.status_code,
+                body=res.text[:500],
+            )
+            return False
+        except Exception as exc:
+            logger.error("sendgrid_raw_html_error", to=to_email, error=str(exc))
+            return False
+
     # ── Transactional email methods ───────────────────────────────────────────
 
     async def send_signup_confirmation(

@@ -19,6 +19,7 @@ export type IntroDirection =
 
 export type IntroRequest = {
   id: string;
+  job_id: string;
   status: string;
   direction?: IntroDirection;
   job_title: string;

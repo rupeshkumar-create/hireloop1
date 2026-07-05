@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.services.display_name import sanitize_display_name
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/intros", tags=["intros"])
@@ -389,7 +390,7 @@ def _summary_to_dict(row: asyncpg.Record) -> dict:
         "job_id": str(row["job_id"]),
         "job_title": row["job_title"],
         "company_name": row["company_name"],
-        "hm_name": row["hm_name"],
+        "hm_name": sanitize_display_name(row["hm_name"]) or row["hm_name"],
         "hm_title": row["hm_title"],
         "direction": row["direction"],
         "status": _normalize_intro_status(row["status"]),
