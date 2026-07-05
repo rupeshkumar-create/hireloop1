@@ -11,6 +11,7 @@ export type MatchedJob = {
   job_id: string;
   title: string;
   company_name: string | null;
+  company_logo_url?: string | null;
   location_city: string | null;
   location_state: string | null;
   is_remote: boolean;

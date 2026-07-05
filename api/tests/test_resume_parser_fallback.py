@@ -80,3 +80,47 @@ def test_parse_from_text_normalizes_messy_resume_profile() -> None:
     assert "team player" not in parsed_skills
     assert parsed.parser_metadata["source"] == "regex"
     assert parsed.parser_metadata["quality_score"] >= 70
+
+
+def test_parse_from_text_skips_duration_fragment_as_company() -> None:
+    text = """
+    Rupesh Kumar
+    Go-To-Market Lead
+    LimeDock
+    (6 months)
+    Apr 2024 - Present
+
+    Skills: Sales, marketing, digital strategy
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_title == "Go-To-Market Lead"
+    assert parsed.current_company == "LimeDock"
+
+
+def test_parse_from_text_strips_duration_suffix_from_company() -> None:
+    text = """
+    Jane Doe
+    Go-To-Market Lead at Acme Corp (6 months)
+    Jan 2023 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_title == "Go-To-Market Lead"
+    assert parsed.current_company == "Acme Corp"
+
+
+def test_parse_from_text_leaves_company_blank_when_only_duration_present() -> None:
+    text = """
+    Jane Doe
+    Go-To-Market Lead
+    (6 months)
+    Jan 2023 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_title == "Go-To-Market Lead"
+    assert parsed.current_company is None

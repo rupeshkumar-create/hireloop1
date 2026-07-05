@@ -24,7 +24,7 @@ import { X } from "@/components/brand/icons";
 import { fetchMyProfile } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
-import { fetchSavedJobIds } from "@/lib/api/saved-jobs";
+import { fetchSavedJobIds, subscribeSavedJobs } from "@/lib/api/saved-jobs";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
@@ -105,19 +105,25 @@ export function DashboardClient({
 
     let cancelled = false;
 
-    fetchSavedJobIds()
-      .then((ids) => {
-        if (!cancelled) {
-          setSavedJobIds((prev) => {
-            const next = new Set(prev);
-            ids.forEach((id) => next.add(id));
-            return next;
-          });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSavedJobIds(new Set());
-      });
+    const syncSavedFromServer = () => {
+      fetchSavedJobIds()
+        .then((ids) => {
+          if (!cancelled) setSavedJobIds(ids);
+        })
+        .catch(() => {
+          if (!cancelled) setSavedJobIds(new Set());
+        });
+    };
+
+    syncSavedFromServer();
+
+    const unsubscribe = subscribeSavedJobs(() => {
+      syncSavedFromServer();
+      setSavedJobsRefreshKey((k) => k + 1);
+    });
+
+    const onFocus = () => syncSavedFromServer();
+    window.addEventListener("focus", onFocus);
 
     void fetchMyProfile().catch(() => {});
     void fetchIntros()
@@ -130,6 +136,8 @@ export function DashboardClient({
 
     return () => {
       cancelled = true;
+      unsubscribe();
+      window.removeEventListener("focus", onFocus);
     };
   }, [router]);
 
@@ -140,26 +148,7 @@ export function DashboardClient({
       else next.delete(jobId);
       return next;
     });
-    setSavedJobsRefreshKey((k) => k + 1);
   }
-
-  useEffect(() => {
-    if (savedJobsRefreshKey === 0) return;
-    let cancelled = false;
-    fetchSavedJobIds()
-      .then((ids) => {
-        if (cancelled) return;
-        setSavedJobIds((prev) => {
-          const next = new Set(prev);
-          ids.forEach((id) => next.add(id));
-          return next;
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [savedJobsRefreshKey]);
 
   function syncDashboardUrl(panel: PanelId | null, jobsTab?: JobsTab) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");

@@ -143,6 +143,10 @@ export default function RecruiterDashboardPage() {
 
   useEffect(() => {
     void load();
+
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [load]);
 
   async function runSearch(e?: React.FormEvent) {

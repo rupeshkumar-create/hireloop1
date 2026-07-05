@@ -393,11 +393,41 @@ async def get_my_profile(
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
 
-    candidate_row = await _ensure_candidate_row(
-        db,
+    candidate_row = await db.fetchrow(
+        """
+        SELECT id, market, headline, summary, current_title, current_company,
+               years_experience, location_city, location_state, skills,
+               profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
+               open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
+               current_ctc, notice_period_days,
+               display_currency, public_slug, public_profile_enabled,
+               hide_contact_public, share_with_recruiters,
+               is_active, linkedin_url, linkedin_data, career_profile, career_analysis
+        FROM public.candidates
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
         user_id,
-        headline="New candidate",
     )
+    if candidate_row is None:
+        if user_row["role"] == "recruiter":
+            user_payload = _serialize_row(user_row) or {}
+            _allow = {e.lower() for e in (getattr(settings, "super_admin_emails", []) or []) if e}
+            user_payload["is_admin"] = (
+                user_payload.get("role") == "admin"
+                or str(user_payload.get("email") or "").lower() in _allow
+            )
+            return {
+                "user": user_payload,
+                "candidate": None,
+                "experience": [],
+                "education": [],
+                "resume_filename": None,
+            }
+        candidate_row = await _ensure_candidate_row(
+            db,
+            user_id,
+            headline="New candidate",
+        )
 
     user_payload = _serialize_row(user_row) or {}
     candidate_payload = _serialize_row(candidate_row) or {}
@@ -1089,6 +1119,8 @@ async def list_saved_jobs(
             j.id AS job_id,
             j.title,
             co.name AS company_name,
+            co.logo_url AS company_logo_url,
+            co.domain AS company_domain,
             j.location_city,
             j.location_state,
             j.is_remote,
@@ -1160,12 +1192,22 @@ async def save_job_for_later(
     job_exists = await db.fetchval(
         f"""
         SELECT EXISTS(
-          SELECT 1 FROM public.jobs
-          WHERE id = $1::uuid AND deleted_at IS NULL AND {vis}
+          SELECT 1 FROM public.jobs j
+          WHERE j.id = $1::uuid
+            AND j.deleted_at IS NULL
+            AND (
+              {vis}
+              OR EXISTS (
+                SELECT 1 FROM public.match_scores ms
+                WHERE ms.job_id = j.id
+                  AND ms.candidate_id = $3::uuid
+              )
+            )
         )
         """,
         uuid.UUID(job_id),
         market,
+        candidate["id"],
     )
     if not job_exists:
         raise HTTPException(status_code=404, detail="Job not found")

@@ -41,6 +41,7 @@ interface JobCardProps {
   onDirectApply?: (job: MatchedJob) => void;
   onTailorResume?: (job: MatchedJob) => void;
   tailorStatus?: "idle" | "loading" | "ready" | "error";
+  onOpenKitPreview?: (job: MatchedJob, tab: "resume" | "cover_letter" | "interview_prep") => void;
   onLearningRoadmap?: (job: MatchedJob) => void;
   roadmapStatus?: "idle" | "loading" | "ready" | "error";
   isSaved?: boolean;
@@ -81,6 +82,7 @@ export function JobCard({
   onDirectApply,
   onTailorResume,
   tailorStatus = "idle",
+  onOpenKitPreview,
   onLearningRoadmap,
   roadmapStatus = "idle",
   isSaved = false,
@@ -130,12 +132,20 @@ export function JobCard({
   };
 
   const handleRoadmap = () => {
-    if (roadmapBuilding || roadmapReady || !onLearningRoadmap) return;
+    if (roadmapReady) {
+      onLearningRoadmap?.(job);
+      return;
+    }
+    if (roadmapBuilding || !onLearningRoadmap) return;
     onLearningRoadmap(job);
   };
 
   const handleTailor = () => {
-    if (tailoring || tailoredReady || !onTailorResume) return;
+    if (tailoredReady) {
+      onOpenKitPreview?.(job, "resume");
+      return;
+    }
+    if (tailoring || !onTailorResume) return;
     onTailorResume(job);
   };
 
@@ -199,7 +209,13 @@ export function JobCard({
           aria-label={`View full details for ${job.title} (opens in a new tab)`}
           className="flex items-center gap-3 min-w-0 flex-1 text-left rounded-md -m-1 p-1 hover:bg-ink-50 transition-colors duration-fast group"
         >
-          <Avatar name={job.company_name ?? "?"} size="md" tone="light" />
+          <Avatar
+            name={job.company_name ?? "?"}
+            src={job.company_logo_url}
+            size="md"
+            tone="light"
+            className="rounded-md"
+          />
           <div className="min-w-0">
             <p className="text-small text-ink-500 truncate">
               {job.company_name ?? "Company"}
@@ -359,7 +375,7 @@ export function JobCard({
             variant="secondary"
             size="sm"
             onClick={handleTailor}
-            disabled={tailoring || tailoredReady || !onTailorResume}
+            disabled={tailoring || (!onTailorResume && !tailoredReady)}
             leftIcon={
               tailoring ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
@@ -370,8 +386,13 @@ export function JobCard({
               )
             }
             className="flex-1"
+            title={
+              tailoredReady
+                ? "Preview resume, cover letter, and interview prep"
+                : "Generate resume, cover letter, and interview prep"
+            }
           >
-            {tailoring ? "Tailoring" : tailoredReady ? "Ready" : "Tailor"}
+            {tailoring ? "Preparing" : tailoredReady ? "Preview" : "Prepare"}
           </Button>
         )}
 
@@ -380,7 +401,7 @@ export function JobCard({
             variant="secondary"
             size="sm"
             onClick={handleRoadmap}
-            disabled={roadmapBuilding || roadmapReady}
+            disabled={roadmapBuilding}
             leftIcon={
               roadmapBuilding ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />

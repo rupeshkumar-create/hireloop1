@@ -29,6 +29,18 @@ export async function getApplicationKitForJob(
   return data.kit;
 }
 
+/** Generate full application kit (resume + cover letter + interview prep) for a job. */
+export async function prepareApplicationKit(jobId: string): Promise<ApplicationKit> {
+  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? `Kit prepare failed: ${res.status}`);
+  }
+  return res.json() as Promise<ApplicationKit>;
+}
+
 export type ApplicationKitResume = {
   resume_id: string | null;
   status: string;

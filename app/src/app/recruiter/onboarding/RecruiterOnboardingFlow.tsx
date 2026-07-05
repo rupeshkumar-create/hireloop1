@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Building2, MapPin, User } from "@/components/brand/icons";
 import { NityaFace } from "@/components/nitya/NityaFace";
 import { Button, Card, CardBody, CardHeader, Field, Input, Textarea } from "@/components/ui";
-import { fetchMyProfile } from "@/lib/api/profile";
+import { fetchAuthMe } from "@/lib/api/auth";
 import {
   createRole,
   fetchRecruiterProfile,
@@ -184,9 +184,9 @@ export function RecruiterOnboardingFlow() {
   useEffect(() => {
     if (roleCheckDone.current) return;
     roleCheckDone.current = true;
-    void fetchMyProfile()
-      .then((profile) => {
-        if (profile.user?.role === "candidate") {
+    void fetchAuthMe()
+      .then((me) => {
+        if (me.role === "candidate") {
           router.replace("/onboarding");
         }
       })

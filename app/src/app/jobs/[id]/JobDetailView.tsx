@@ -314,7 +314,13 @@ function JobDetailBody({
       {/* Company + title + score */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <Avatar name={job.company_name ?? "?"} size="lg" tone="light" />
+          <Avatar
+            name={job.company_name ?? "?"}
+            src={job.company_logo_url}
+            size="lg"
+            tone="light"
+            className="rounded-md"
+          />
           <div className="min-w-0">
             <p className="text-small text-ink-500">
               {job.company_name ?? "Company"}

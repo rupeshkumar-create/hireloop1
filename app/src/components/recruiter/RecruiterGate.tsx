@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { fetchMyProfile } from "@/lib/api/profile";
+import { fetchAuthMe } from "@/lib/api/auth";
 import { fetchRecruiterProfile } from "@/lib/api/recruiter";
 
 export function RecruiterGate({ children }: { children: React.ReactNode }) {
@@ -27,10 +27,10 @@ export function RecruiterGate({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     setReady(false);
 
-    fetchMyProfile()
-      .then((profile) => {
+    fetchAuthMe()
+      .then((me) => {
         if (cancelled) return;
-        if (profile.user?.role === "candidate") {
+        if (me.role === "candidate") {
           router.replace("/onboarding");
           return;
         }

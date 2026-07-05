@@ -4,16 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Bookmark } from "@/components/brand/icons";
 import { fetchSavedJobs } from "@/lib/api/saved-jobs";
 import type { MatchedJob } from "@/lib/api/matches";
-import {
-  openTailoredDownload,
-  pollTailoredResume,
-  requestTailoredResume,
-} from "@/lib/api/tailored";
-import {
-  openLearningRoadmap,
-  pollLearningRoadmap,
-  requestLearningRoadmap,
-} from "@/lib/api/learningRoadmap";
+import { useJobCardAssets } from "@/hooks/useJobCardAssets";
+import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Button, EmptyState } from "@/components/ui";
 import { JobCard } from "./JobCard";
 
@@ -38,59 +30,15 @@ export function SavedJobsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Per-job tailored-resume state (mirrors MatchFeed).
-  const [tailorByJob, setTailorByJob] = useState<
-    Record<string, "idle" | "loading" | "ready" | "error">
-  >({});
-
-  const handleTailorResume = useCallback(async (job: MatchedJob) => {
-    setTailorByJob((s) => ({ ...s, [job.job_id]: "loading" }));
-    try {
-      const started = await requestTailoredResume(job.job_id);
-      if (started.status === "ready" && started.download_path) {
-        const id = started.download_path.split("/").pop();
-        if (id) openTailoredDownload(id);
-        setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-        return;
-      }
-      const resumeId = started.resume_id;
-      if (!resumeId) {
-        throw new Error(started.message ?? "No resume id returned");
-      }
-      const ready = await pollTailoredResume(resumeId);
-      openTailoredDownload(ready.id);
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-    } catch {
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "error" }));
-    }
-  }, []);
-
-  // Per-job learning-roadmap state.
-  const [roadmapByJob, setRoadmapByJob] = useState<
-    Record<string, "idle" | "loading" | "ready" | "error">
-  >({});
-
-  const handleLearningRoadmap = useCallback(async (job: MatchedJob) => {
-    setRoadmapByJob((s) => ({ ...s, [job.job_id]: "loading" }));
-    try {
-      const started = await requestLearningRoadmap(job.job_id);
-      if (started.status === "ready" && started.download_path) {
-        const id = started.download_path.split("/").pop();
-        if (id) await openLearningRoadmap(id);
-        setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-        return;
-      }
-      const roadmapId = started.roadmap_id;
-      if (!roadmapId) {
-        throw new Error(started.message ?? "No roadmap id returned");
-      }
-      const ready = await pollLearningRoadmap(roadmapId);
-      await openLearningRoadmap(ready.id);
-      setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-    } catch {
-      setRoadmapByJob((s) => ({ ...s, [job.job_id]: "error" }));
-    }
-  }, []);
+  const {
+    kitByJob,
+    roadmapByJob,
+    preview,
+    openKitPreview,
+    closePreview,
+    handlePrepareKit,
+    handleLearningRoadmap,
+  } = useJobCardAssets();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,8 +97,9 @@ export function SavedJobsPanel({
               job={job}
               conversationId={conversationId}
               onRequestIntro={onRequestIntro}
-              onTailorResume={handleTailorResume}
-              tailorStatus={tailorByJob[job.job_id] ?? "idle"}
+              onTailorResume={handlePrepareKit}
+              tailorStatus={kitByJob[job.job_id] ?? "idle"}
+              onOpenKitPreview={openKitPreview}
               onLearningRoadmap={handleLearningRoadmap}
               roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
               isSaved={savedJobIds.has(job.job_id)}
@@ -159,6 +108,15 @@ export function SavedJobsPanel({
             />
           ))}
       </div>
+
+      <ResumePreviewModal
+        open={!!preview}
+        onClose={closePreview}
+        resumeId={preview?.resumeId ?? null}
+        jobId={preview?.jobId ?? null}
+        jobTitle={preview?.jobTitle}
+        initialTab={preview?.tab}
+      />
     </div>
   );
 }

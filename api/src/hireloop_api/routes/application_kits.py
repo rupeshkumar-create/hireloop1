@@ -7,7 +7,9 @@ import uuid
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
+from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.services.application_kit import prepare_application_kit
 
 router = APIRouter(prefix="/application-kits", tags=["application-kits"])
 
@@ -92,3 +94,17 @@ async def get_application_kit_for_job(
     if not row:
         raise HTTPException(status_code=404, detail="No application kit for this job yet")
     return {"kit": _serialize_kit(row)}
+
+
+@router.post("/jobs/{job_id}/prepare")
+async def prepare_application_kit_for_job(
+    job_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Generate resume, cover letter, and interview prep for one saved/matched job."""
+    result = await prepare_application_kit(db, current_user["id"], job_id, settings)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=str(result["error"]))
+    return result

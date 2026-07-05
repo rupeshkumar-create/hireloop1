@@ -234,11 +234,13 @@ export function inrToLpa(inr: number | null | undefined): number | null {
 }
 
 export async function listRoles(): Promise<RoleListItem[]> {
-  return apiFetch<RoleListItem[]>("/api/v1/recruiter/roles");
+  return apiFetch<RoleListItem[]>("/api/v1/recruiter/roles", { cache: "no-store" });
 }
 
 export async function fetchRecruiterDashboard(): Promise<RecruiterDashboardData> {
-  return apiFetch<RecruiterDashboardData>("/api/v1/recruiter/dashboard");
+  return apiFetch<RecruiterDashboardData>("/api/v1/recruiter/dashboard", {
+    cache: "no-store",
+  });
 }
 
 export async function searchRecruiterCandidates(

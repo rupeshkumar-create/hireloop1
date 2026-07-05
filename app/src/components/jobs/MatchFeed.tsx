@@ -25,11 +25,8 @@ import {
   type MatchedJob,
   type MatchFeedFilters,
 } from "@/lib/api/matches";
-import {
-  openTailoredDownload,
-  pollTailoredResume,
-  requestTailoredResume,
-} from "@/lib/api/tailored";
+import { useJobCardAssets } from "@/hooks/useJobCardAssets";
+import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Button, Card, EmptyState, Select } from "@/components/ui";
 import { Stagger, StaggerItem } from "@/components/ui/motion";
 import { JobCard } from "./JobCard";
@@ -136,32 +133,15 @@ export function MatchFeed({
   const [seniority, setSeniority] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
-  // Per-job tailored-resume state
-  const [tailorByJob, setTailorByJob] = useState<
-    Record<string, "idle" | "loading" | "ready" | "error">
-  >({});
-
-  const handleTailorResume = useCallback(async (job: MatchedJob) => {
-    setTailorByJob((s) => ({ ...s, [job.job_id]: "loading" }));
-    try {
-      const started = await requestTailoredResume(job.job_id);
-      if (started.status === "ready" && started.download_path) {
-        const id = started.download_path.split("/").pop();
-        if (id) openTailoredDownload(id);
-        setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-        return;
-      }
-      const resumeId = started.resume_id;
-      if (!resumeId) {
-        throw new Error(started.message ?? "No resume id returned");
-      }
-      const ready = await pollTailoredResume(resumeId);
-      openTailoredDownload(ready.id);
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-    } catch {
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "error" }));
-    }
-  }, []);
+  const {
+    kitByJob,
+    roadmapByJob,
+    preview,
+    openKitPreview,
+    closePreview,
+    handlePrepareKit,
+    handleLearningRoadmap,
+  } = useJobCardAssets();
 
   const load = useCallback(
     async (reset = false) => {
@@ -422,8 +402,11 @@ export function MatchFeed({
                         })
                       }
                       applyLocked={applyLocked}
-                      onTailorResume={handleTailorResume}
-                      tailorStatus={tailorByJob[job.job_id] ?? "idle"}
+                      onTailorResume={handlePrepareKit}
+                      tailorStatus={kitByJob[job.job_id] ?? "idle"}
+                      onOpenKitPreview={openKitPreview}
+                      onLearningRoadmap={handleLearningRoadmap}
+                      roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
                       isSaved={savedJobIds.has(job.job_id)}
                       onSavedChange={onSavedChange}
                     />
@@ -447,6 +430,15 @@ export function MatchFeed({
           </div>
         )}
       </div>
+
+      <ResumePreviewModal
+        open={!!preview}
+        onClose={closePreview}
+        resumeId={preview?.resumeId ?? null}
+        jobId={preview?.jobId ?? null}
+        jobTitle={preview?.jobTitle}
+        initialTab={preview?.tab}
+      />
     </div>
   );
 }

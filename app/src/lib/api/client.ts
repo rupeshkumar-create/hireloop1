@@ -9,6 +9,7 @@ export async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await apiAuthFetch(path, {
+    cache: "no-store",
     ...options,
     headers: {
       "Content-Type": "application/json",

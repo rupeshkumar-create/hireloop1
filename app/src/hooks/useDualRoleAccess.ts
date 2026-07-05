@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { canSwitchRoles, fetchAuthMe } from "@/lib/api/auth";
+import { fetchAuthMe, canSwitchRoles } from "@/lib/api/auth";
 
 type DualRoleAccess = {
   canSwitch: boolean;
@@ -19,7 +19,10 @@ export function useDualRoleAccess(): DualRoleAccess {
     fetchAuthMe()
       .then((me) => {
         if (!cancelled) {
-          setState({ canSwitch: canSwitchRoles(me), loading: false });
+          setState({
+            canSwitch: me.can_switch_roles ?? canSwitchRoles(me),
+            loading: false,
+          });
         }
       })
       .catch(() => {

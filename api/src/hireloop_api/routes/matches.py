@@ -29,6 +29,7 @@ from hireloop_api.services.job_preferences import (
     normalize_remote_preference,
     remote_filter_sql,
 )
+from hireloop_api.services.job_present import resolve_company_logo_url
 from hireloop_api.services.match_quality import DEFAULT_FEED_MIN_SCORE, should_persist_match
 from hireloop_api.services.match_rationale import generate_match_rationales
 from hireloop_api.services.matching import (
@@ -73,6 +74,7 @@ class MatchedJob(BaseModel):
     job_id: str
     title: str
     company_name: str | None
+    company_logo_url: str | None = None
     location_city: str | None
     location_state: str | None
     is_remote: bool
@@ -572,6 +574,8 @@ async def _fetch_cached_match_rows(
             ms.job_id,
             j.title,
             co.name          AS company_name,
+            co.logo_url      AS company_logo_url,
+            co.domain        AS company_domain,
             j.location_city,
             j.location_state,
             j.is_remote,
@@ -784,6 +788,8 @@ async def _fetch_fallback_match_rows(
             j.id AS job_id,
             j.title,
             co.name AS company_name,
+            co.logo_url AS company_logo_url,
+            co.domain AS company_domain,
             j.location_city,
             j.location_state,
             j.is_remote,
@@ -852,6 +858,7 @@ def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict
         "job_id": str(row_dict["job_id"]),
         "title": row_dict["title"],
         "company_name": row_dict.get("company_name"),
+        "company_logo_url": resolve_company_logo_url(row_dict),
         "location_city": row_dict.get("location_city"),
         "location_state": row_dict.get("location_state"),
         "is_remote": bool(row_dict.get("is_remote")),
@@ -903,6 +910,7 @@ async def get_single_match(
     # candidate gets the whole posting inline (no need to leave the app).
     detail_cols = """
             ms.job_id, j.title, co.name AS company_name,
+            co.logo_url AS company_logo_url, co.domain AS company_domain,
             j.location_city, j.location_state, j.is_remote,
             j.employment_type, j.seniority,
             j.ctc_min, j.ctc_max, j.salary_currency, j.skills_required, j.apply_url,
@@ -950,6 +958,7 @@ async def get_single_match(
             job_row = await db.fetchrow(
                 """
                 SELECT j.id AS job_id, j.title, co.name AS company_name,
+                       co.logo_url AS company_logo_url, co.domain AS company_domain,
                        j.location_city, j.location_state, j.is_remote,
                        j.employment_type, j.seniority, j.ctc_min, j.ctc_max, j.salary_currency,
                        j.skills_required, j.apply_url, j.description,

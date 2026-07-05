@@ -6,6 +6,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def resolve_company_logo_url(row: Any) -> str | None:
+    """Prefer stored logo_url; fall back to a favicon from the company domain."""
+    direct = row.get("company_logo_url") or row.get("logo_url")
+    if direct:
+        return str(direct)
+    domain = row.get("company_domain") or row.get("domain")
+    if domain:
+        host = str(domain).strip().lower().removeprefix("https://").removeprefix("http://")
+        host = host.split("/")[0]
+        if host:
+            return f"https://www.google.com/s2/favicons?domain={host}&sz=128"
+    return None
+
+
 def serialize_job_card(
     row: Any,
     *,
@@ -27,6 +41,7 @@ def serialize_job_card(
         "job_id": str(job_id),
         "title": row.get("title") or "Role",
         "company_name": row.get("company_name"),
+        "company_logo_url": resolve_company_logo_url(row),
         "location_city": row.get("location_city"),
         "location_state": row.get("location_state"),
         "is_remote": bool(row.get("is_remote")),

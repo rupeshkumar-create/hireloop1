@@ -47,9 +47,9 @@ export function Avatar({
         src={src}
         alt={name}
         className={cn(
-          "rounded-full object-cover border border-ink-100 shrink-0",
+          "object-cover border border-ink-100 shrink-0 bg-paper-0",
           SIZE[size],
-          className
+          className ?? "rounded-full",
         )}
       />
     );

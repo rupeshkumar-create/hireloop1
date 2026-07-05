@@ -38,11 +38,8 @@ import {
   type CareerStep,
 } from "@/lib/api/career";
 import type { MatchedJob } from "@/lib/api/matches";
-import {
-  openTailoredDownload,
-  pollTailoredResume,
-  requestTailoredResume,
-} from "@/lib/api/tailored";
+import { useJobCardAssets } from "@/hooks/useJobCardAssets";
+import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { JobCard } from "./JobCard";
 
@@ -85,10 +82,15 @@ export function CareerPathPanel({
   const [searched, setSearched] = useState(false);
   const [sourceAvailable, setSourceAvailable] = useState(true);
 
-  // Per-job tailored-resume state (mirrors MatchFeed).
-  const [tailorByJob, setTailorByJob] = useState<
-    Record<string, "idle" | "loading" | "ready" | "error">
-  >({});
+  const {
+    kitByJob,
+    roadmapByJob,
+    preview,
+    openKitPreview,
+    closePreview,
+    handlePrepareKit,
+    handleLearningRoadmap,
+  } = useJobCardAssets();
 
   // ── Load the latest path on mount ────────────────────────────────────────────
   useEffect(() => {
@@ -242,26 +244,6 @@ export function CareerPathPanel({
     }, 15_000);
     return () => window.clearInterval(id);
   }, [refreshing]);
-
-  const handleTailorResume = useCallback(async (job: MatchedJob) => {
-    setTailorByJob((s) => ({ ...s, [job.job_id]: "loading" }));
-    try {
-      const started = await requestTailoredResume(job.job_id);
-      if (started.status === "ready" && started.download_path) {
-        const id = started.download_path.split("/").pop();
-        if (id) openTailoredDownload(id);
-        setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-        return;
-      }
-      const resumeId = started.resume_id;
-      if (!resumeId) throw new Error(started.message ?? "No resume id returned");
-      const ready = await pollTailoredResume(resumeId);
-      openTailoredDownload(ready.id);
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-    } catch {
-      setTailorByJob((s) => ({ ...s, [job.job_id]: "error" }));
-    }
-  }, []);
 
   // ── First-load skeleton ───────────────────────────────────────────────────────
   if (loadingPath) {
@@ -465,8 +447,11 @@ export function CareerPathPanel({
                   if (j.apply_url)
                     window.open(j.apply_url, "_blank", "noopener,noreferrer");
                 }}
-                onTailorResume={handleTailorResume}
-                tailorStatus={tailorByJob[job.job_id] ?? "idle"}
+                onTailorResume={handlePrepareKit}
+                tailorStatus={kitByJob[job.job_id] ?? "idle"}
+                onOpenKitPreview={openKitPreview}
+                onLearningRoadmap={handleLearningRoadmap}
+                roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
                 isSaved={savedJobIds.has(job.job_id)}
                 onSavedChange={onSavedChange}
               />
@@ -474,6 +459,15 @@ export function CareerPathPanel({
           </div>
         )}
       </div>
+
+      <ResumePreviewModal
+        open={!!preview}
+        onClose={closePreview}
+        resumeId={preview?.resumeId ?? null}
+        jobId={preview?.jobId ?? null}
+        jobTitle={preview?.jobTitle}
+        initialTab={preview?.tab}
+      />
     </div>
   );
 }

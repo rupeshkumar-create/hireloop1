@@ -351,6 +351,9 @@ _DATE_RANGE = re.compile(
     r"|\d{1,2}/\d{4}|\d{4}|present|current|now|till date|ongoing)",
     re.IGNORECASE,
 )
+# Hyphen only splits title/company when surrounded by spaces — not inside
+# hyphenated titles like "Go-To-Market Lead".
+_TITLE_COMPANY_SEP = r"\s*(?:at|@|\s[-–—]\s|,|\||·)\s*"
 
 
 class WorkExperience(BaseModel):
@@ -944,7 +947,17 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
         "raw_text",
     ]
     for field in scalar_fields:
-        if not getattr(primary, field):
+        primary_val = getattr(primary, field)
+        if field == "current_company":
+            primary_val = _sanitize_company_name(primary_val)
+            secondary_val = _sanitize_company_name(getattr(secondary, field))
+            merged_company = primary_val or secondary_val
+            if merged_company:
+                setattr(primary, field, merged_company)
+            else:
+                setattr(primary, field, None)
+            continue
+        if not primary_val:
             val = getattr(secondary, field)
             if val:
                 setattr(primary, field, val)
@@ -1687,6 +1700,14 @@ def _normalise_parsed_resume(parsed: ParsedResume, *, source: str) -> ParsedResu
     if parsed.years_experience is not None:
         parsed.years_experience = max(0, min(60, int(parsed.years_experience)))
 
+    # Tenure fragments like "(6 months)" are not employers — scrub them everywhere
+    # and backfill current_company from structured work history when possible.
+    parsed.current_company = _sanitize_company_name(parsed.current_company)
+    for exp in parsed.work_experience or []:
+        exp.company = _sanitize_company_name(exp.company)
+    if not parsed.current_company:
+        parsed.current_company = _first_work_company(parsed.work_experience)
+
     parsed.parser_metadata = {
         **(parsed.parser_metadata or {}),
         "source": parsed.parser_metadata.get("source") or source,
@@ -2021,6 +2042,61 @@ def _looks_like_tagline(title: str | None) -> bool:
     return False
 
 
+_DURATION_ONLY_RE = re.compile(
+    r"^\(?\s*\d+\s*(?:year|yr|years|month|mo|months)",
+    re.I,
+)
+_DURATION_SUFFIX_RE = re.compile(
+    r"\s*\([^)]*\d+\s*(?:month|months|year|years|yr|yrs|mo|mos)[^)]*\)\s*$",
+    re.I,
+)
+
+
+def _looks_like_duration_fragment(text: str | None) -> bool:
+    """True when text is a tenure/duration token, not an employer name."""
+    if not text:
+        return False
+    v = text.strip()
+    if not v:
+        return False
+    if _DURATION_ONLY_RE.match(v):
+        return True
+    if re.fullmatch(
+        r"\(\s*\d+\s*(?:month|months|year|years|yr|yrs|mo|mos)\s*\)",
+        v,
+        re.I,
+    ):
+        return True
+    return False
+
+
+def _sanitize_company_name(company: str | None) -> str | None:
+    """Strip tenure suffixes and reject duration-only parse artifacts."""
+    if not company:
+        return None
+    v = company.strip().strip(" -–—|,·")
+    if not v or _looks_like_duration_fragment(v):
+        return None
+    v = _DURATION_SUFFIX_RE.sub("", v).strip(" -–—|,·")
+    if not v or _looks_like_duration_fragment(v):
+        return None
+    return v
+
+
+def _first_work_company(work: list[WorkExperience]) -> str | None:
+    """First non-empty employer, preferring the current role."""
+    if not work:
+        return None
+    ordered = [w for w in work if getattr(w, "is_current", False)] + [
+        w for w in work if not getattr(w, "is_current", False)
+    ]
+    for w in ordered:
+        company = _sanitize_company_name(_clean_str(getattr(w, "company", None)))
+        if company:
+            return company
+    return None
+
+
 def _first_work_title(work: list[WorkExperience]) -> str | None:
     """First non-empty job title, preferring the current role.
 
@@ -2042,18 +2118,17 @@ def _first_work_title(work: list[WorkExperience]) -> str | None:
 
 
 def _infer_current_role(lines: list[str]) -> tuple[str | None, str | None]:
-    sep = r"\s*(?:at|@|[-–—|,·])\s*"
     for line in lines[:25]:
         if _looks_like_contact_line(line):
             continue
         m = re.search(
-            rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{{2,80}}){sep}"
+            rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{{2,80}}){_TITLE_COMPANY_SEP}"
             rf"(?P<company>[A-Za-z][A-Za-z0-9 &.+'-]{{1,80}})",
             line,
         )
         if m:
             title = m.group("title").strip(" -–—|,·")
-            company = m.group("company").strip(" -–—|,·")
+            company = _sanitize_company_name(m.group("company").strip(" -–—|,·"))
             if _looks_like_role_title(title):
                 return title, company
     role_keywords = (
@@ -2316,16 +2391,28 @@ def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
             re.search(r"present|current|now|till date|ongoing", end_raw, re.IGNORECASE)
         )
 
-        # Text on the date line minus the dates, plus the line above, are candidates
-        # for "Title at Company" / "Title, Company".
+        # Text on the date line minus the dates, plus lines above (skipping tenure
+        # fragments like "(6 months)"), are candidates for title/company.
+        candidates: list[str] = []
         same_line = _DATE_RANGE.sub("", line).strip(" -–—|,·")
-        above = lines[i - 1].strip() if i > 0 else ""
+        if same_line and not _looks_like_duration_fragment(same_line):
+            candidates.append(same_line)
+        for j in range(i - 1, max(-1, i - 5), -1):
+            prev = lines[j].strip()
+            if not prev or _looks_like_contact_line(prev):
+                continue
+            if _looks_like_duration_fragment(prev):
+                continue
+            header = prev.lower().strip(" :")
+            if header in _SECTION_HEADERS:
+                break
+            candidates.append(prev)
+
         title, company = None, None
-        for candidate in (same_line, above):
-            if candidate and not _looks_like_contact_line(candidate):
-                t, c = _split_title_company(candidate)
-                title = title or t
-                company = company or c
+        for candidate in candidates:
+            t, c = _split_title_company(candidate)
+            title = title or t
+            company = company or c
             if title and company:
                 break
 
@@ -2344,17 +2431,41 @@ def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
     return entries
 
 
+def _looks_like_person_name(text: str) -> bool:
+    """Two capitalized tokens with no company suffix — likely a résumé header name."""
+    v = text.strip()
+    parts = [p for p in re.split(r"\s+", v) if p]
+    if len(parts) != 2:
+        return False
+    if not all(p[0].isupper() for p in parts):
+        return False
+    if re.search(
+        r"\b(pvt|ltd|llc|inc|corp|gmbh|technologies|labs|solutions|group|company)\b",
+        v,
+        re.I,
+    ):
+        return False
+    return True
+
+
 def _split_title_company(text: str) -> tuple[str | None, str | None]:
+    if _looks_like_duration_fragment(text):
+        return None, None
     m = re.search(
-        r"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{2,80})\s*(?:at|@|[-–—|,·])\s*"
+        rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{{2,80}}){_TITLE_COMPANY_SEP}"
         r"(?P<company>[A-Za-z][A-Za-z0-9 &.+'-]{1,80})",
         text,
     )
     if m:
-        return m.group("title").strip(" -–—|,·"), m.group("company").strip(" -–—|,·")
+        title = m.group("title").strip(" -–—|,·")
+        company = _sanitize_company_name(m.group("company").strip(" -–—|,·"))
+        return title, company
     if _looks_like_role_title(text):
         return text.strip(" -–—|,·"), None
-    return None, text.strip(" -–—|,·") or None
+    company = _sanitize_company_name(text.strip(" -–—|,·") or None)
+    if company and not _looks_like_role_title(company) and not _looks_like_person_name(company):
+        return None, company
+    return None, None
 
 
 def _norm_date(raw: str) -> str | None:

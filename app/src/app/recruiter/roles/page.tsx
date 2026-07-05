@@ -66,6 +66,10 @@ export default function RecruiterRolesPage() {
     const m = getCachedProfile()?.user?.market;
     if (m) setMarket(marketByCode(m).code);
     void load();
+
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [load]);
 
   async function setStatus(roleId: string, status: string) {
