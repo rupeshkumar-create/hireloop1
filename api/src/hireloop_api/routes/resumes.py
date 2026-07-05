@@ -14,9 +14,10 @@ POST /api/v1/resumes/{resume_id}/apply-to-profile
   - Copies parsed data into the candidate's profile row
 """
 
+import asyncio
 import json
 import uuid
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import asyncpg
 import structlog
@@ -25,7 +26,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
 from hireloop_api.services.candidate_display_name import sync_preferred_name_from_resume
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
@@ -47,6 +48,14 @@ class ResumeUploadResponse(BaseModel):
     file_path: str
     parsed: ParsedResume
     message: str
+    parse_status: Literal["pending", "ready", "failed"] = "ready"
+
+
+class ResumeStatusResponse(BaseModel):
+    resume_id: str
+    parse_status: Literal["pending", "ready", "failed"]
+    parsed: ParsedResume | None = None
+    message: str | None = None
 
 
 class ApplyToProfileResponse(BaseModel):
@@ -101,6 +110,129 @@ async def _ensure_candidate_for_resume_upload(
             detail="Could not create candidate profile. Please try again.",
         )
     return candidate
+
+
+_parse_tasks: set[asyncio.Task[None]] = set()
+
+
+def _parse_status_from_row(
+    parsed_data: Any,
+) -> tuple[Literal["pending", "ready", "failed"], str | None]:
+    if isinstance(parsed_data, str):
+        try:
+            parsed_data = json.loads(parsed_data)
+        except json.JSONDecodeError:
+            return "ready", None
+    if not isinstance(parsed_data, dict):
+        return "ready", None
+    marker = parsed_data.get("_parse_status")
+    if marker == "pending":
+        return "pending", None
+    if marker == "failed":
+        return "failed", parsed_data.get("_parse_error") or "Couldn't parse that CV."
+    return "ready", None
+
+
+def _parsed_resume_from_row(parsed_data: Any) -> ParsedResume | None:
+    status, _ = _parse_status_from_row(parsed_data)
+    if status != "ready":
+        return None
+    if isinstance(parsed_data, str):
+        payload = json.loads(parsed_data)
+    else:
+        payload = dict(parsed_data)
+    payload.pop("_parse_status", None)
+    payload.pop("_parse_error", None)
+    return ParsedResume.model_validate(payload)
+
+
+def _schedule_resume_parse(
+    *,
+    user_id: str,
+    candidate_id: str,
+    resume_id: str,
+    file_bytes: bytes,
+    filename: str,
+    mime_type: str | None,
+    settings: Settings,
+) -> None:
+    """Run LLM parsing off the upload request so proxies don't time out."""
+
+    async def _run() -> None:
+        parsed = await ResumeParserService.parse_best(
+            file_bytes=file_bytes,
+            filename=filename,
+            mime_type=mime_type,
+            settings=settings,
+        )
+        try:
+            pool = await get_db_pool(settings)
+            async with pool.acquire() as bg_db:
+                await bg_db.execute(
+                    """
+                    UPDATE public.resumes
+                    SET parsed_data = $2::jsonb,
+                        raw_text = $3
+                    WHERE id = $1::uuid
+                    """,
+                    uuid.UUID(resume_id),
+                    parsed.model_dump_json(),
+                    parsed.raw_text,
+                )
+                await _sync_user_display_name_from_resume(
+                    bg_db,
+                    user_id=user_id,
+                    candidate_id=candidate_id,
+                    resume_full_name=parsed.full_name,
+                )
+                try:
+                    await bg_db.execute(
+                        """
+                        INSERT INTO public.consent_log (user_id, purpose, granted)
+                        VALUES ($1::uuid, 'resume_upload', TRUE)
+                        """,
+                        uuid.UUID(user_id),
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "consent_log_insert_failed",
+                        user_id=user_id,
+                        error=str(exc),
+                    )
+        except Exception as exc:
+            logger.error(
+                "resume_background_parse_failed",
+                resume_id=resume_id,
+                candidate_id=candidate_id,
+                error=str(exc)[:300],
+            )
+            try:
+                pool = await get_db_pool(settings)
+                async with pool.acquire() as bg_db:
+                    await bg_db.execute(
+                        """
+                        UPDATE public.resumes
+                        SET parsed_data = $2::jsonb
+                        WHERE id = $1::uuid
+                        """,
+                        uuid.UUID(resume_id),
+                        json.dumps(
+                            {
+                                "_parse_status": "failed",
+                                "_parse_error": "Couldn't parse that CV. Try another file.",
+                            }
+                        ),
+                    )
+            except Exception as mark_exc:
+                logger.error(
+                    "resume_parse_failed_marker_write",
+                    resume_id=resume_id,
+                    error=str(mark_exc)[:200],
+                )
+
+    task = asyncio.create_task(_run())
+    _parse_tasks.add(task)
+    task.add_done_callback(_parse_tasks.discard)
 
 
 async def _prepare_candidate_resume_storage(
@@ -261,24 +393,13 @@ async def upload_resume(
 
     logger.info("resume_uploaded", candidate_id=candidate_id, path=storage_path)
 
-    # Advanced multi-tier parse: Affinda (if keyed) → LLM/OpenRouter → regex.
-    # parse_best() never raises and field-merges the richest result so onboarding
-    # always fills profile fields from the CV, even with zero external keys.
-    parsed: ParsedResume = await ResumeParserService.parse_best(
-        file_bytes=file_bytes,
-        filename=file.filename or f"resume.{file_ext}",
-        mime_type=file.content_type,
-        settings=settings,
-    )
-
     await _prepare_candidate_resume_storage(
         db,
         candidate_id=candidate_id,
         storage_path=storage_path,
     )
 
-    # Store resume record in DB. Previous resumes were demoted above, so this
-    # row is the current CV used by profile display and matching.
+    pending_payload = json.dumps({"_parse_status": "pending"})
     await db.execute(
         """
         INSERT INTO public.resumes
@@ -293,44 +414,59 @@ async def upload_resume(
         file.filename or f"resume.{file_ext}",
         len(file_bytes),
         file.content_type,
-        parsed.model_dump_json(),
-        parsed.raw_text,
+        pending_payload,
+        None,
     )
 
-    logger.info("resume_parsed", candidate_id=candidate_id, skills_count=len(parsed.skills))
-
-    await _sync_user_display_name_from_resume(
-        db,
+    _schedule_resume_parse(
         user_id=user_id,
         candidate_id=candidate_id,
-        resume_full_name=parsed.full_name,
+        resume_id=resume_id,
+        file_bytes=file_bytes,
+        filename=file.filename or f"resume.{file_ext}",
+        mime_type=file.content_type,
+        settings=settings,
     )
 
-    # DPDP audit: record consent for resume upload/parsing (non-fatal if it fails)
-    try:
-        await db.execute(
-            """
-            INSERT INTO public.consent_log (user_id, purpose, granted)
-            VALUES ($1, 'resume_upload', TRUE)
-            """,
-            uuid.UUID(user_id),
-        )
-    except Exception as exc:
-        logger.error("consent_log_insert_failed", user_id=str(user_id), error=str(exc))
-
-    was_parsed = bool(parsed.skills or parsed.current_title or parsed.full_name)
     return ResumeUploadResponse(
         resume_id=resume_id,
         file_path=storage_path,
+        parsed=ParsedResume(),
+        parse_status="pending",
+        message="Resume uploaded. Aarya is reading your CV now.",
+    )
+
+
+@router.get("/{resume_id}", response_model=ResumeStatusResponse)
+async def get_resume_status(
+    resume_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> ResumeStatusResponse:
+    """Poll parse progress after upload — onboarding waits here for parsed fields."""
+    resume = await db.fetchrow(
+        """
+        SELECT r.id, r.parsed_data
+        FROM public.resumes r
+        JOIN public.candidates c ON c.id = r.candidate_id
+        WHERE r.id = $1::uuid AND c.user_id = $2::uuid AND c.deleted_at IS NULL
+        """,
+        uuid.UUID(resume_id),
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not resume:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or access denied.",
+        )
+
+    parse_status, failure_message = _parse_status_from_row(resume["parsed_data"])
+    parsed = _parsed_resume_from_row(resume["parsed_data"])
+    return ResumeStatusResponse(
+        resume_id=str(resume["id"]),
+        parse_status=parse_status,
         parsed=parsed,
-        message=(
-            "Resume uploaded and parsed. Review the data and apply to your profile."
-            if was_parsed
-            else (
-                "Resume uploaded. Auto-parsing is not configured - "
-                "you can fill your profile manually."
-            )
-        ),
+        message=failure_message,
     )
 
 
@@ -365,7 +501,18 @@ async def apply_to_profile(
             detail="Resume not found or access denied.",
         )
 
-    parsed = ParsedResume.model_validate(json.loads(resume["parsed_data"]))
+    parsed = _parsed_resume_from_row(resume["parsed_data"])
+    if parsed is None:
+        parse_status, message = _parse_status_from_row(resume["parsed_data"])
+        if parse_status == "pending":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Resume is still being parsed. Try again in a moment.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message or "Resume could not be parsed.",
+        )
     candidate_id = str(resume["candidate_id"])
 
     # Build update dict — only set fields that are non-null in parsed and empty in profile

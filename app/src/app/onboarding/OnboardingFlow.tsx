@@ -31,7 +31,7 @@ import {
   Check,
   Upload,
 } from "@/components/brand/icons";
-import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import { apiAuthFetch, ApiUnreachableError } from "@/lib/api/auth-fetch";
 import {
   uploadResumeAndApply,
   type ParsedResumeSummary,
@@ -48,6 +48,16 @@ import type { SignupMethod } from "@/lib/auth/signup-method";
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
 
 const ONBOARDING_STORAGE_KEY = "hireloop_onboarding_v2";
+
+function formatOnboardingError(error: unknown): string {
+  if (error instanceof ApiUnreachableError) {
+    return (
+      "Can't reach the Hireloop API. Check your connection and that the API is " +
+      "running, then try again."
+    );
+  }
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
 
 function clearOnboardingProgress() {
   try {
@@ -219,11 +229,7 @@ function ActivationStep({
       const summary = await uploadResumeAndApply(resumeFile);
       setParsed(summary);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Couldn't read that file. Try another CV.",
-      );
+      setError(formatOnboardingError(err));
     } finally {
       setSaving(false);
     }
@@ -264,7 +270,7 @@ function ActivationStep({
       markDashboardWelcomePending();
       router.push("/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(formatOnboardingError(err));
     } finally {
       setSaving(false);
     }
@@ -425,7 +431,7 @@ function ActivationStep({
               ) : undefined
             }
           >
-            {saving ? "Reading your CV…" : "Review my CV"}
+            {saving ? "Reading your CV — up to a minute…" : "Review my CV"}
           </Button>
         </div>
         ) : (

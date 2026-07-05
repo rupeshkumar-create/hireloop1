@@ -7,6 +7,12 @@
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 
 const LINKEDIN_IN_RE = /linkedin\.com\/in\/[^/?#\s]+/i;
+const RESUME_PARSE_POLL_MS = 2000;
+const RESUME_PARSE_TIMEOUT_MS = 120_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 export function isValidLinkedInUrl(url: string): boolean {
   return LINKEDIN_IN_RE.test(url.trim());
@@ -35,6 +41,43 @@ export type ParsedResumeSummary = {
   skills?: string[];
 };
 
+type ResumeUploadPayload = {
+  resume_id: string;
+  parsed?: ParsedResumeSummary;
+  parse_status?: "pending" | "ready" | "failed";
+  message?: string;
+};
+
+type ResumeStatusPayload = {
+  parse_status: "pending" | "ready" | "failed";
+  parsed?: ParsedResumeSummary;
+  message?: string | null;
+};
+
+async function waitForResumeParse(resumeId: string): Promise<ParsedResumeSummary> {
+  const deadline = Date.now() + RESUME_PARSE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const res = await apiAuthFetch(`/api/v1/resumes/${resumeId}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        (err as { detail?: string }).detail ?? "Couldn't check CV parsing status",
+      );
+    }
+    const data = (await res.json()) as ResumeStatusPayload;
+    if (data.parse_status === "ready") {
+      return data.parsed ?? {};
+    }
+    if (data.parse_status === "failed") {
+      throw new Error(data.message ?? "Couldn't read that file. Try another CV.");
+    }
+    await sleep(RESUME_PARSE_POLL_MS);
+  }
+  throw new Error(
+    "CV parsing is taking longer than expected. Please try uploading again.",
+  );
+}
+
 /** Upload a CV, apply the parsed fields to the profile, and return the parse
  *  summary so onboarding can show "here's what I found" for confirmation. */
 export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSummary> {
@@ -48,10 +91,12 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Resume upload failed");
   }
-  const data = (await res.json()) as {
-    resume_id: string;
-    parsed?: ParsedResumeSummary;
-  };
+  const data = (await res.json()) as ResumeUploadPayload;
+  const parsed =
+    data.parse_status === "pending"
+      ? await waitForResumeParse(data.resume_id)
+      : (data.parsed ?? {});
+
   // Apply parsed fields to the profile (best-effort — don't fail activation).
   try {
     await apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile`, {
@@ -60,5 +105,5 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
   } catch {
     /* non-fatal */
   }
-  return data.parsed ?? {};
+  return parsed;
 }
