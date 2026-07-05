@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from typing import Any
 
@@ -44,6 +45,58 @@ from hireloop_api.services.match_quality import should_persist_match
 from hireloop_api.services.matching import _assemble_score
 
 logger = structlog.get_logger()
+
+# Generic words that shouldn't drive a keyword search on their own — they match
+# thousands of unrelated postings. Kept small on purpose; role nouns like
+# "manager", "engineer", "analyst" are deliberately NOT here.
+_SEARCH_STOPWORDS = frozenset(
+    {
+        "and",
+        "the",
+        "for",
+        "of",
+        "in",
+        "with",
+        "to",
+        "at",
+        "on",
+        "a",
+        "an",
+        "jobs",
+        "job",
+        "role",
+        "roles",
+        "position",
+        "positions",
+        "opening",
+        "openings",
+        "vacancy",
+        "vacancies",
+        "hiring",
+        "career",
+        "careers",
+    }
+)
+
+
+def _search_tokens(query_text: str | None) -> list[str]:
+    """Break a decorated role title into significant search tokens.
+
+    Career-path titles arrive decorated, e.g. "Category Manager - Fashion &
+    Apparel". A single full-string ILIKE almost never matches a real posting,
+    so we tokenise and match/rank on the individual words instead. Stopwords
+    and <3-char fragments are dropped; order is preserved (deduped).
+    """
+    if not query_text:
+        return []
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for raw in re.split(r"[^0-9a-zA-Z]+", query_text.lower()):
+        if len(raw) < 3 or raw in _SEARCH_STOPWORDS or raw in seen:
+            continue
+        seen.add(raw)
+        tokens.append(raw)
+    return tokens
 
 
 def _candidate_quality_row(candidate: dict[str, Any], target_titles: list[str]) -> dict[str, Any]:
@@ -653,6 +706,55 @@ async def job_search(
             rows,
             candidate=candidate_profile,
             target_titles=target_titles,
+        )
+
+    # Step 2b: the exact phrase missed. Relax to token-level matching so a
+    # decorated title ("Category Manager - Fashion & Apparel") degrades to the
+    # closest live roles instead of a dead end. Rank by how many query tokens
+    # appear in the title, then recency. Quality filter still gates fit.
+    tokens = _search_tokens(query_text)
+    if not rows and tokens:
+        vis_tok = job_visible_for_market_sql(market_param="$6")
+        tok_rows = await db.fetch(
+            f"""
+            SELECT j.id, j.title, j.location_city, j.location_state,
+                   j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+                   j.employment_type, j.seniority, j.apply_url, j.description,
+                   co.name AS company_name, co.logo_url,
+                   NULL::real AS overall_score
+            FROM public.jobs j
+            LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.is_active = TRUE
+              AND {vis_tok}
+              AND j.deleted_at IS NULL
+              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              {remote_clause}
+              AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
+              AND ($3::text IS NULL OR j.location_city ILIKE '%' || $3::text || '%')
+              AND ($4::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $4::integer)
+              AND EXISTS (
+                SELECT 1 FROM unnest($1::text[]) AS t
+                WHERE j.title ILIKE '%' || t || '%'
+              )
+            ORDER BY (
+                SELECT count(*) FROM unnest($1::text[]) AS t
+                WHERE j.title ILIKE '%' || t || '%'
+              ) DESC,
+              j.scraped_at DESC
+            LIMIT $5::integer
+            """,
+            tokens,
+            skills_filter,
+            location_city,
+            ctc_min,
+            limit,
+            market,
+        )
+        rows = _quality_filter_job_rows(
+            tok_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+            lenient=True,
         )
 
     from hireloop_api.services.job_present import serialize_job_card

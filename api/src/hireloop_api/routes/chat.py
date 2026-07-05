@@ -43,7 +43,6 @@ from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import (
     career_path_options,
-    default_prioritize_title,
     extract_find_role_and_city,
     resolve_job_search_query,
     try_apply_career_path_selection,
@@ -591,9 +590,7 @@ async def send_message(
         )
 
         career_path_row = await CareerPathService.get_latest(db, candidate_id)
-        career_path_prioritized = (
-            (career_path_row or {}).get("prioritized_title") or None
-        )
+        career_path_prioritized = (career_path_row or {}).get("prioritized_title") or None
         cand_prefs = await db.fetchrow(
             """
             SELECT current_title, looking_for
@@ -617,9 +614,7 @@ async def send_message(
             """,
             coerce_uuid(conversation_id),
         )
-        recent_assistant = (
-            last_assistant_row["content"] if last_assistant_row else None
-        )
+        recent_assistant = last_assistant_row["content"] if last_assistant_row else None
 
         career_path_just_prioritized = await try_apply_career_path_selection(
             db,
@@ -778,12 +773,22 @@ async def send_message(
                 "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
             )
         else:
-            deterministic_job_reply = (
-                f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
-                "but I couldn’t find live matches yet. "
-                "I’m pulling fresh openings in the background — try again in a minute, "
-                "or widen the role title or location."
-            )
+            # Only promise a background pull when auto-ingest will actually run
+            # (flag on + Apify token present) — otherwise the copy overpromises.
+            will_auto_ingest = bool(settings.auto_ingest_on_empty_search and settings.apify_token)
+            if will_auto_ingest:
+                deterministic_job_reply = (
+                    f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
+                    "but I couldn’t find live matches yet. "
+                    "I’m pulling fresh openings in the background — try again in a minute, "
+                    "or widen the role title or location."
+                )
+            else:
+                deterministic_job_reply = (
+                    f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
+                    "but I couldn’t find live matches yet. "
+                    "Try widening the role title or location and I’ll search again."
+                )
 
     logger.info(
         "aarya_turn_start",
