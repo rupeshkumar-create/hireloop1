@@ -54,11 +54,12 @@ async def test_enqueue_claim_and_complete(db_conn: asyncpg.Connection) -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_jobs_enqueues_career_ingest(
+async def test_find_jobs_enqueues_pool_ingest_for_senior_path(
     api_client: AsyncClient,
     db_conn: asyncpg.Connection,
     candidate_user: dict[str, str],
 ) -> None:
+    """Senior paths with a canonical pool definition enqueue pool_ingest, not per-candidate Apify."""
     path_id = uuid.uuid4()
     await db_conn.execute(
         """
@@ -66,15 +67,15 @@ async def test_find_jobs_enqueues_career_ingest(
           (id, candidate_id, "current_role", summary, steps, target_titles,
            target_locations, model, prioritized_title)
         VALUES (
-          $1, $2::uuid, 'Engineer', 'Growing', '[]'::jsonb,
+          $1, $2::uuid, 'Growth Lead', 'Growing', '[]'::jsonb,
           $3::text[], $4::text[], 'test', $5
         )
         """,
         path_id,
         uuid.UUID(candidate_user["candidate_id"]),
-        ["Senior Engineer"],
+        ["Head of Growth"],
         ["Bengaluru"],
-        "Senior Engineer",
+        "Head of Growth",
     )
 
     res = await api_client.post("/api/v1/career/path/find-jobs")
@@ -89,5 +90,5 @@ async def test_find_jobs_enqueues_career_ingest(
         candidate_user["candidate_id"],
     )
     assert row is not None
-    assert row["kind"] == "career_path_ingest"
+    assert row["kind"] == "pool_ingest"
     assert row["status"] in ("pending", "running", "completed")
