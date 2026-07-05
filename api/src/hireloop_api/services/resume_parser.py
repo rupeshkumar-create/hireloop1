@@ -352,8 +352,13 @@ _DATE_RANGE = re.compile(
     re.IGNORECASE,
 )
 # Hyphen only splits title/company when surrounded by spaces — not inside
-# hyphenated titles like "Go-To-Market Lead".
-_TITLE_COMPANY_SEP = r"\s*(?:at|@|\s[-–—]\s|,|\||·)\s*"
+# hyphenated titles like "Go-To-Market Lead". Dash is NOT used here because
+# subtitles like "Lead – AI Resume Builder" must stay intact.
+_TITLE_COMPANY_SEP = r"\s*(?:at|@|\||·)\s*"
+_EMPLOYMENT_TYPE_RE = re.compile(
+    r"^(full[- ]?time|part[- ]?time|contract|freelance|remote|hybrid|onsite|on[- ]?site|self[- ]?employed)\b",
+    re.I,
+)
 
 
 class WorkExperience(BaseModel):
@@ -603,8 +608,9 @@ class ResumeParserService:
                     or _first_work_title(work)
                 ),
                 current_company=(
-                    _clean_str(data.get("current_company"))
-                    or (current.company if current else None)
+                    _sanitize_company_name(_clean_str(data.get("current_company")))
+                    or _sanitize_company_name(current.company if current else None)
+                    or _first_work_company(work)
                 ),
                 years_experience=min(60, years_int) if years_int is not None else None,
                 current_ctc=_clean_int(data.get("current_ctc")),
@@ -951,7 +957,11 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
         if field == "current_company":
             primary_val = _sanitize_company_name(primary_val)
             secondary_val = _sanitize_company_name(getattr(secondary, field))
-            merged_company = primary_val or secondary_val
+            work_company = _first_work_company(secondary.work_experience or [])
+            title = getattr(primary, "current_title") or getattr(secondary, "current_title")
+            if primary_val and _company_looks_like_title_fragment(primary_val, title):
+                primary_val = None
+            merged_company = primary_val or secondary_val or work_company
             if merged_company:
                 setattr(primary, field, merged_company)
             else:
@@ -1703,6 +1713,8 @@ def _normalise_parsed_resume(parsed: ParsedResume, *, source: str) -> ParsedResu
     # Tenure fragments like "(6 months)" are not employers — scrub them everywhere
     # and backfill current_company from structured work history when possible.
     parsed.current_company = _sanitize_company_name(parsed.current_company)
+    if _company_looks_like_title_fragment(parsed.current_company, parsed.current_title):
+        parsed.current_company = None
     for exp in parsed.work_experience or []:
         exp.company = _sanitize_company_name(exp.company)
     if not parsed.current_company:
@@ -2067,6 +2079,37 @@ def _looks_like_duration_fragment(text: str | None) -> bool:
         re.I,
     ):
         return True
+    if _EMPLOYMENT_TYPE_RE.match(v):
+        return True
+    if re.fullmatch(r"\d+\s*(?:mos|mo|yr|yrs)\b", v, re.I):
+        return True
+    if len(v) <= 32 and re.search(
+        r"\b\d+\s*(?:mos|mo|yr|yrs|month|months|year|years)\b",
+        v,
+        re.I,
+    ):
+        return True
+    return False
+
+
+def _company_looks_like_title_fragment(
+    company: str | None,
+    title: str | None,
+) -> bool:
+    """Reject company values that are really part of the job title."""
+    if not company:
+        return False
+    c = company.strip()
+    if not c:
+        return False
+    if title and c.lower() in title.lower():
+        return True
+    if _looks_like_role_title(c) and not re.search(
+        r"\b(pvt|ltd|llc|inc|corp|gmbh|technologies|labs|solutions|group|company)\b",
+        c,
+        re.I,
+    ):
+        return True
     return False
 
 
@@ -2075,8 +2118,10 @@ def _sanitize_company_name(company: str | None) -> str | None:
     if not company:
         return None
     v = company.strip().strip(" -–—|,·")
-    if not v or _looks_like_duration_fragment(v):
+    if not v:
         return None
+    # Strip "(6 months)"-style suffixes before duration checks so
+    # "Acme Corp (6 months)" is not mistaken for a duration-only token.
     v = _DURATION_SUFFIX_RE.sub("", v).strip(" -–—|,·")
     if not v or _looks_like_duration_fragment(v):
         return None
@@ -2121,16 +2166,9 @@ def _infer_current_role(lines: list[str]) -> tuple[str | None, str | None]:
     for line in lines[:25]:
         if _looks_like_contact_line(line):
             continue
-        m = re.search(
-            rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{{2,80}}){_TITLE_COMPANY_SEP}"
-            rf"(?P<company>[A-Za-z][A-Za-z0-9 &.+'-]{{1,80}})",
-            line,
-        )
-        if m:
-            title = m.group("title").strip(" -–—|,·")
-            company = _sanitize_company_name(m.group("company").strip(" -–—|,·"))
-            if _looks_like_role_title(title):
-                return title, company
+        title, company = _split_title_company(line)
+        if title and _looks_like_role_title(title):
+            return title, company
     role_keywords = (
         "engineer",
         "developer",
@@ -2408,13 +2446,7 @@ def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
                 break
             candidates.append(prev)
 
-        title, company = None, None
-        for candidate in candidates:
-            t, c = _split_title_company(candidate)
-            title = title or t
-            company = company or c
-            if title and company:
-                break
+        title, company = _extract_title_company_from_candidates(candidates)
 
         if title or company:
             entries.append(
@@ -2448,21 +2480,72 @@ def _looks_like_person_name(text: str) -> bool:
     return True
 
 
+def _extract_title_company_from_candidates(
+    candidates: list[str],
+) -> tuple[str | None, str | None]:
+    """Merge stacked lines like title on one line and company on the next."""
+    titles: list[str] = []
+    companies: list[str] = []
+    for candidate in candidates:
+        title, company = _split_title_company(candidate)
+        if title and company:
+            return title, company
+        if title:
+            titles.append(title)
+        if company:
+            companies.append(company)
+    return (titles[0] if titles else None, companies[0] if companies else None)
+
+
 def _split_title_company(text: str) -> tuple[str | None, str | None]:
     if _looks_like_duration_fragment(text):
         return None, None
+    stripped = text.strip(" -–—|,·")
+    if not stripped:
+        return None, None
+
+    # Prefer the last " at " separator so titles may contain en-dashes.
+    at_parts = re.split(r"\s+at\s+", stripped, maxsplit=1, flags=re.I)
+    if len(at_parts) == 2:
+        title = at_parts[0].strip(" -–—|,·")
+        company = _sanitize_company_name(at_parts[1].strip(" -–—|,·"))
+        if title and company and _looks_like_role_title(title):
+            return title, company
+
     m = re.search(
-        rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+-]{{2,80}}){_TITLE_COMPANY_SEP}"
-        r"(?P<company>[A-Za-z][A-Za-z0-9 &.+'-]{1,80})",
-        text,
+        rf"(?P<title>[A-Za-z][A-Za-z0-9 /&.+'()–—-]{{2,120}}){_TITLE_COMPANY_SEP}"
+        r"(?P<company>.+)",
+        stripped,
     )
     if m:
         title = m.group("title").strip(" -–—|,·")
         company = _sanitize_company_name(m.group("company").strip(" -–—|,·"))
-        return title, company
-    if _looks_like_role_title(text):
-        return text.strip(" -–—|,·"), None
-    company = _sanitize_company_name(text.strip(" -–—|,·") or None)
+        if title and company and _looks_like_role_title(title):
+            return title, company
+
+    if "," in stripped and stripped.count(",") == 1:
+        left, right = (p.strip() for p in stripped.split(",", 1))
+        company = _sanitize_company_name(right)
+        if left and company and _looks_like_role_title(left) and not _looks_like_role_title(right):
+            return left, company
+
+    if re.search(r"\s[·•]\s", stripped):
+        parts = [p.strip() for p in re.split(r"\s*[·•]\s*", stripped) if p.strip()]
+        if len(parts) >= 2:
+            head, *tail = parts
+            if _looks_like_role_title(head):
+                for piece in tail:
+                    company = _sanitize_company_name(piece)
+                    if company:
+                        return head, company
+            else:
+                company = _sanitize_company_name(head)
+                if company:
+                    return None, company
+
+    if _looks_like_role_title(stripped):
+        return stripped, None
+    company = _sanitize_company_name(stripped)
     if company and not _looks_like_role_title(company) and not _looks_like_person_name(company):
         return None, company
     return None, None

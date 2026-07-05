@@ -124,3 +124,57 @@ def test_parse_from_text_leaves_company_blank_when_only_duration_present() -> No
 
     assert parsed.current_title == "Go-To-Market Lead"
     assert parsed.current_company is None
+
+
+def test_parse_from_text_keeps_en_dash_title_and_company_on_next_line() -> None:
+    text = """
+    Rupesh Kumar
+    Go-To-Market Lead – AI Resume Builder
+    Candidately
+    (6 months)
+    Apr 2024 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_title == "Go-To-Market Lead – AI Resume Builder"
+    assert parsed.current_company == "Candidately"
+
+
+def test_parse_from_text_title_at_company_on_one_line() -> None:
+    text = """
+    Rupesh Kumar
+    Go-To-Market Lead – AI Resume Builder at Candidately
+    Apr 2024 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert "Go-To-Market Lead" in (parsed.current_title or "")
+    assert parsed.current_company == "Candidately"
+
+
+def test_parse_from_text_founder_comma_company() -> None:
+    text = """
+    Jane Doe
+    Founder, LimeDock
+    Jan 2022 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_title == "Founder"
+    assert parsed.current_company == "LimeDock"
+
+
+def test_parse_from_text_skips_full_time_as_company() -> None:
+    text = """
+    Jane Doe
+    Go-To-Market Lead – AI Resume Builder
+    Candidately · Full-time
+    Apr 2024 - Present
+    """
+
+    parsed = ResumeParserService.parse_from_text(text)
+
+    assert parsed.current_company == "Candidately"
