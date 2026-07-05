@@ -16,6 +16,7 @@ find-jobs strategy ("search existing + background top-up"):
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import asyncpg
 import httpx
@@ -98,10 +99,9 @@ async def _resolve_candidate_id(db: asyncpg.Connection, user_id: str) -> str:
     return str(row["id"])
 
 
-# A job with no title relevance to the path must at least be a genuinely good
-# overall match to appear in path results. Below this it's noise ("Founding
-# Designer" search returning a 35% sales role).
-_PATH_JOBS_OFF_TITLE_MIN_SCORE = 0.6
+# Prefilter SQL pool before Python title-fit gate (wider net, stricter final filter).
+_PATH_JOBS_SQL_PREFILTER_SCORE = 0.45
+_PATH_JOBS_SQL_FETCH_MULTIPLIER = 8
 
 
 async def _fetch_path_jobs(
@@ -112,24 +112,27 @@ async def _fetch_path_jobs(
     *,
     remote_preference: str = "any",
     market: str = "IN",
+    prioritized_title: str | None = None,
 ) -> list[asyncpg.Record]:
-    """Scored jobs for this candidate, relevant to the path.
-
-    A job qualifies when its title matches a target title (full phrase or any
-    significant token) OR its overall match score is strong. Returning nothing
-    is fine — the callers show an honest "pulling fresh openings" state, which
-    beats padding the list with unrelated roles.
-    """
-    from hireloop_api.agents.aarya.tools import _search_tokens
+    """Scored jobs for this candidate that fit the career path titles."""
+    from hireloop_api.services.career_path_jobs import (
+        normalize_path_search_titles,
+        rank_path_job_rows,
+    )
     from hireloop_api.services.job_preferences import remote_filter_sql
 
-    patterns = [f"%{t}%" for t in target_titles] or ["%"]
-    token_patterns = [f"%{tok}%" for title in target_titles for tok in _search_tokens(title)] or [
-        "%"
-    ]
+    path_titles = normalize_path_search_titles(
+        target_titles,
+        prioritized_title=prioritized_title,
+    )
+    if not path_titles:
+        return []
+
+    patterns = [f"%{t}%" for t in path_titles]
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$4")
-    return await db.fetch(
+    fetch_limit = min(max(limit * _PATH_JOBS_SQL_FETCH_MULTIPLIER, limit + 10), 120)
+    raw = await db.fetch(
         f"""
         SELECT ms.job_id, j.title, co.name AS company_name,
                j.location_city, j.location_state, j.is_remote,
@@ -148,23 +151,19 @@ async def _fetch_path_jobs(
           {remote_clause}
           AND (
             j.title ILIKE ANY($2::text[])
-            OR j.title ILIKE ANY($5::text[])
-            OR ms.overall_score >= $6
+            OR ms.overall_score >= $5
           )
-        ORDER BY
-          (CASE WHEN j.title ILIKE ANY($2::text[]) THEN 0
-                WHEN j.title ILIKE ANY($5::text[]) THEN 1
-                ELSE 2 END),
-          ms.overall_score DESC
+        ORDER BY ms.overall_score DESC
         LIMIT $3
         """,
         uuid.UUID(candidate_id),
         patterns,
-        limit,
+        fetch_limit,
         market,
-        token_patterns,
-        _PATH_JOBS_OFF_TITLE_MIN_SCORE,
+        _PATH_JOBS_SQL_PREFILTER_SCORE,
     )
+    ranked = rank_path_job_rows([dict(r) for r in raw], path_titles, limit=limit)
+    return ranked
 
 
 async def _apify_reachable(settings: Settings) -> bool:
@@ -345,6 +344,10 @@ async def find_jobs_for_path(
     prioritized = path.get("prioritized_title") or ""
 
     from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, POOL_INGEST, enqueue_job
+    from hireloop_api.services.career_path_jobs import (
+        normalize_path_search_titles,
+        rank_path_job_rows,
+    )
     from hireloop_api.services.career_path_pool import (
         fetch_scored_pool_jobs,
         pool_job_count,
@@ -352,31 +355,45 @@ async def find_jobs_for_path(
         score_pool_for_candidate,
     )
 
+    path_search_titles = normalize_path_search_titles(
+        target_titles,
+        prioritized_title=prioritized,
+    )
     definition = await resolve_definition_for_title(db, prioritized, market=market)
-    rows: list[asyncpg.Record] = []
+    rows: list[dict[str, Any]] = []
 
     # 1) Shared pool first (senior paths scraped once for all similar candidates).
     if definition is not None:
-        rows = await fetch_scored_pool_jobs(
+        pool_rows = await fetch_scored_pool_jobs(
             db,
             candidate_id,
             definition["id"],
-            limit=20,
+            limit=40,
             remote_preference=remote_pref,
             market=market,
+        )
+        rows = rank_path_job_rows(
+            [dict(r) for r in pool_rows],
+            path_search_titles,
+            limit=20,
         )
         if not rows:
             try:
                 await score_pool_for_candidate(db, candidate_id, definition["id"])
             except Exception as exc:
                 logger.warning("pool_initial_score_failed", error=str(exc)[:200])
-            rows = await fetch_scored_pool_jobs(
+            pool_rows = await fetch_scored_pool_jobs(
                 db,
                 candidate_id,
                 definition["id"],
-                limit=20,
+                limit=40,
                 remote_preference=remote_pref,
                 market=market,
+            )
+            rows = rank_path_job_rows(
+                [dict(r) for r in pool_rows],
+                path_search_titles,
+                limit=20,
             )
 
     # 2) Supplement with per-candidate path matches when the pool is thin.
@@ -388,12 +405,13 @@ async def find_jobs_for_path(
             limit=20 - len(rows),
             remote_preference=remote_pref,
             market=market,
+            prioritized_title=prioritized,
         )
         seen = {str(r["job_id"]) for r in rows}
         for r in extra:
             jid = str(r["job_id"])
             if jid not in seen:
-                rows.append(r)
+                rows.append(dict(r))
                 seen.add(jid)
 
     # No cached scores yet → score now so the first click isn't empty.
@@ -407,6 +425,7 @@ async def find_jobs_for_path(
             limit=20,
             remote_preference=remote_pref,
             market=market,
+            prioritized_title=prioritized,
         )
 
     # If we have nothing to show yet, confirm the upstream source is even
@@ -438,7 +457,7 @@ async def find_jobs_for_path(
             kind=CAREER_PATH_INGEST,
             payload={
                 "candidate_id": candidate_id,
-                "queries": target_titles,
+                "queries": path_search_titles or target_titles,
                 "locations": target_locations,
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
