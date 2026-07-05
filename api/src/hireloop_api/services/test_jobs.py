@@ -47,6 +47,26 @@ def _test_job_sql_predicate(*, company_alias: str = "co", user_alias: str = "u")
     )"""
 
 
+_UPSERT_TEST_SCORE_SQL = """
+        INSERT INTO public.match_scores
+            (id, candidate_id, job_id,
+             overall_score, skills_score, experience_score, location_score, ctc_score,
+             explanation, bias_audit, computed_at)
+        VALUES
+            ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+        ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+            overall_score = GREATEST(match_scores.overall_score, EXCLUDED.overall_score),
+            explanation = EXCLUDED.explanation,
+            computed_at = NOW()
+        """
+
+
+async def _upsert_test_score_records(db: asyncpg.Connection, records: list[tuple]) -> None:
+    if not hasattr(db, "executemany"):
+        return
+    await db.executemany(_UPSERT_TEST_SCORE_SQL, records)
+
+
 async def fetch_test_jobs(
     db: asyncpg.Connection,
     *,
@@ -57,7 +77,7 @@ async def fetch_test_jobs(
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$1")
     predicate = _test_job_sql_predicate()
-    return await db.fetch(
+    rows = await db.fetch(
         f"""
         SELECT j.id AS job_id, j.title, co.name AS company_name, co.domain AS company_domain,
                j.location_city, j.location_state, j.is_remote,
@@ -78,6 +98,7 @@ async def fetch_test_jobs(
         """,
         normalize_market(market),
     )
+    return [r for r in rows if is_test_job(dict(r))]
 
 
 async def ensure_test_match_scores(
@@ -88,6 +109,8 @@ async def ensure_test_match_scores(
     remote_preference: str = "any",
 ) -> None:
     """Upsert match_scores so test jobs appear in feed/search for every candidate."""
+    if not hasattr(db, "executemany"):
+        return
     rows = await fetch_test_jobs(db, market=market, remote_preference=remote_preference)
     if not rows:
         return
@@ -108,21 +131,7 @@ async def ensure_test_match_scores(
         )
         for row in rows
     ]
-    await db.executemany(
-        """
-        INSERT INTO public.match_scores
-            (id, candidate_id, job_id,
-             overall_score, skills_score, experience_score, location_score, ctc_score,
-             explanation, bias_audit, computed_at)
-        VALUES
-            ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
-        ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-            overall_score = GREATEST(match_scores.overall_score, EXCLUDED.overall_score),
-            explanation = EXCLUDED.explanation,
-            computed_at = NOW()
-        """,
-        records,
-    )
+    await _upsert_test_score_records(db, records)
 
 
 def serialize_test_job_for_feed(row: Mapping[str, Any]) -> dict[str, Any]:
