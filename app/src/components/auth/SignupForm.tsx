@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { SIGNUP_ROLE_COOKIE, SIGNUP_ROLE_QUERY } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 import { ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl } from "@/lib/api/base-url";
 import { decodeAuthError } from "@/lib/auth/auth-errors";
 import { verifyEmailCode } from "@/lib/auth/email-otp";
+import {
+  clearSignupRole,
+  oauthCallbackUrl,
+  persistSignupRole,
+} from "@/lib/auth/signup-role-storage";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
@@ -46,6 +50,11 @@ export function SignupForm() {
   const [email, setEmail] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
+
+  useEffect(() => {
+    setRole(defaultRole);
+    persistSignupRole(defaultRole);
+  }, [defaultRole]);
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -109,14 +118,13 @@ export function SignupForm() {
     setLoadingAction("linkedin");
     setErrorMessage("");
     setInfoMessage("");
-    document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
+    persistSignupRole(role);
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "linkedin_oidc",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?${SIGNUP_ROLE_QUERY}=${role}`,
-          // LinkedIn OIDC requires these scopes for Supabase to read profile + email.
+          redirectTo: oauthCallbackUrl(),
           scopes: "openid profile email",
         },
       });
@@ -137,8 +145,7 @@ export function SignupForm() {
     setLoadingAction("email-send");
     setErrorMessage("");
     setInfoMessage("");
-    // Same role cookie as LinkedIn so /auth/bootstrap provisions the right side.
-    document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
+    persistSignupRole(role);
     try {
       const redirectTo = `${window.location.origin}/auth/confirm`;
       const { error } = await supabase.auth.signInWithOtp({
@@ -190,7 +197,7 @@ export function SignupForm() {
         return;
       }
       const destination = await finishAuthSession(session.access_token, role);
-      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+      clearSignupRole();
       router.replace(destination);
     } catch (error) {
       if (error instanceof ApiUnreachableError && typeof window !== "undefined") {
@@ -234,7 +241,7 @@ export function SignupForm() {
         setErrorMessage("Sign-in succeeded but no session was created.");
         return;
       }
-      document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=600; SameSite=Lax`;
+      persistSignupRole(role);
       const bootstrapRes = await fetch(`${getApiBaseUrl()}/api/v1/auth/bootstrap`, {
         method: "POST",
         headers: {
@@ -269,7 +276,10 @@ export function SignupForm() {
             <button
               key={r}
               type="button"
-              onClick={() => setRole(r)}
+              onClick={() => {
+                setRole(r);
+                persistSignupRole(r);
+              }}
               className={cn(
                 "border rounded-lg p-3 text-sm font-medium transition-all",
                 role === r

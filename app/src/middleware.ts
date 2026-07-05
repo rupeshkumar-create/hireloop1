@@ -26,6 +26,7 @@ export async function middleware(request: NextRequest) {
   ) {
     const url = request.nextUrl.clone();
     url.pathname = searchParams.has("token_hash") ? "/auth/confirm" : "/auth/callback";
+    // Preserve code / error params; signup_role comes from cookie/sessionStorage.
     return NextResponse.redirect(url);
   }
 

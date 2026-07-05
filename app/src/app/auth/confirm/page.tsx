@@ -23,10 +23,7 @@ export default async function EmailConfirmPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const code = params.code?.trim();
   if (code) {
-    const qs = new URLSearchParams({ code });
-    const signupRole = params.type;
-    if (signupRole) qs.set("signup_role", signupRole);
-    redirect(`/auth/callback?${qs.toString()}`);
+    redirect(`/auth/callback?code=${encodeURIComponent(code)}`);
   }
 
   const tokenHash = params.token_hash?.trim() ?? "";

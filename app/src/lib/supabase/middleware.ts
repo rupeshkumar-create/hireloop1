@@ -6,6 +6,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { getSupabasePublicEnv } from "@/lib/supabase/env";
+import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -64,13 +65,14 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Redirect authenticated users away from auth pages
+  // Redirect authenticated users away from auth pages (unless showing an error).
   const authPaths = ["/signup", "/login"];
   const isAuthPage = authPaths.some((p) => pathname.startsWith(p));
 
-  if (isAuthPage && user) {
+  if (isAuthPage && user && !request.nextUrl.searchParams.has("error")) {
+    const roleCookie = request.cookies.get(SIGNUP_ROLE_COOKIE)?.value;
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = roleCookie === "recruiter" ? "/recruiter/inbox" : "/dashboard";
     return NextResponse.redirect(url);
   }
 

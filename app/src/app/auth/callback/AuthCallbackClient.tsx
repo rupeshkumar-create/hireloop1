@@ -3,26 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import {
-  SIGNUP_ROLE_COOKIE,
-  SIGNUP_ROLE_QUERY,
-  parseSignupRole,
-  type SignupRole,
-} from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { exchangeOAuthCodeOnce } from "@/lib/auth/oauth-exchange";
 import { decodeAuthError } from "@/lib/auth/auth-errors";
+import {
+  clearSignupRole,
+  readSignupRole,
+  signupUrl,
+} from "@/lib/auth/signup-role-storage";
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
-
-function readSignupRole(searchParams: URLSearchParams): SignupRole {
-  const fromQuery = searchParams.get(SIGNUP_ROLE_QUERY);
-  if (fromQuery) return parseSignupRole(fromQuery);
-  const fromCookie = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${SIGNUP_ROLE_COOKIE}=`))
-    ?.split("=")[1];
-  return parseSignupRole(fromCookie);
-}
 
 /**
  * LinkedIn OAuth callback — exchange the auth code in the browser so the PKCE
@@ -35,10 +24,13 @@ export function AuthCallbackClient() {
   const supabase = createClient();
   const started = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorRole, setErrorRole] = useState<"candidate" | "recruiter">("candidate");
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+
+    const role = readSignupRole(searchParams);
 
     const oauthError = searchParams.get("error");
     const oauthErrorDescription = searchParams.get("error_description");
@@ -47,15 +39,14 @@ export function AuthCallbackClient() {
         ? decodeURIComponent(oauthErrorDescription.replace(/\+/g, " "))
         : null;
       router.replace(
-        `/signup?error=${encodeURIComponent(oauthError)}&message=${encodeURIComponent(
-          decodeAuthError(oauthError, message, "oauth"),
-        )}`,
+        signupUrl(role, {
+          error: oauthError,
+          message: decodeAuthError(oauthError, message, "oauth"),
+        }),
       );
       return;
     }
 
-    // Misconfigured email templates may still point here — forward to the confirm
-    // interstitial (user click required; scanners must not burn the token).
     const tokenHash = searchParams.get("token_hash");
     if (tokenHash) {
       const confirm = new URL("/auth/confirm", window.location.origin);
@@ -69,14 +60,15 @@ export function AuthCallbackClient() {
     const code = searchParams.get("code");
     if (!code) {
       router.replace(
-        `/signup?error=auth_failed&message=${encodeURIComponent(
-          "LinkedIn sign-in link is incomplete or expired. Tap Continue with LinkedIn again.",
-        )}`,
+        signupUrl(role, {
+          error: "auth_failed",
+          message:
+            "LinkedIn sign-in link is incomplete or expired. Tap Continue with LinkedIn again.",
+        }),
       );
       return;
     }
 
-    const role = readSignupRole(searchParams);
     const explicitNext = searchParams.get("next");
 
     void (async () => {
@@ -86,6 +78,7 @@ export function AuthCallbackClient() {
           data: { session: recovered },
         } = await supabase.auth.getSession();
         if (!recovered?.access_token) {
+          setErrorRole(role);
           setErrorMessage(decodeAuthError("auth_failed", exchangeError.message, "oauth"));
           return;
         }
@@ -96,11 +89,12 @@ export function AuthCallbackClient() {
       } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
+        setErrorRole(role);
         setErrorMessage("LinkedIn sign-in completed but no session was created. Please try again.");
         return;
       }
 
-      let destination = role === "recruiter" ? "/recruiter" : "/dashboard";
+      let destination = role === "recruiter" ? "/recruiter/onboarding" : "/onboarding";
       try {
         destination = await finishAuthSession(session.access_token, role);
       } catch (err) {
@@ -111,12 +105,12 @@ export function AuthCallbackClient() {
               ? err.message
               : "Account setup failed. Please try signing in again.";
         router.replace(
-          `/signup?error=bootstrap_failed&message=${encodeURIComponent(message)}`,
+          signupUrl(role, { error: "bootstrap_failed", message }),
         );
         return;
       }
 
-      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+      clearSignupRole();
 
       const isRealDeepLink =
         !!explicitNext && explicitNext.startsWith("/") && explicitNext !== "/onboarding";
@@ -131,7 +125,7 @@ export function AuthCallbackClient() {
           <h1 className="text-h2 text-ink-900">LinkedIn sign-in failed</h1>
           <p className="text-small text-ink-600">{errorMessage}</p>
           <a
-            href="/signup"
+            href={signupUrl(errorRole)}
             className="inline-block text-small font-medium text-accent hover:underline"
           >
             Back to sign up

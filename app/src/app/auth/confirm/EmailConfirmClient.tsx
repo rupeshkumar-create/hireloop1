@@ -4,9 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { SIGNUP_ROLE_COOKIE } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
+import {
+  clearSignupRole,
+  readSignupRole,
+  signupUrl,
+} from "@/lib/auth/signup-role-storage";
 import { Button } from "@/components/ui";
 
 type EmailConfirmClientProps = {
@@ -62,15 +66,11 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
       return;
     }
 
-    const roleCookie = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith(`${SIGNUP_ROLE_COOKIE}=`))
-      ?.split("=")[1];
-    const role = roleCookie === "recruiter" ? "recruiter" : "candidate";
+    const role = readSignupRole();
 
     try {
       const destination = await finishAuthSession(session.access_token, role);
-      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+      clearSignupRole();
       router.replace(destination);
     } catch (err) {
       setErrorMessage(
@@ -115,7 +115,10 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
 
         <p className="text-xs text-ink-500 leading-relaxed">
           Prefer a code? Go to{" "}
-          <a href="/signup" className="font-medium text-ink-800 hover:underline">
+          <a
+            href={signupUrl(readSignupRole())}
+            className="font-medium text-ink-800 hover:underline"
+          >
             sign up
           </a>{" "}
           and enter the 6-digit code from the same email.
