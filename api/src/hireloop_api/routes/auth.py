@@ -38,9 +38,11 @@ from hireloop_api.deps import (
 )
 from hireloop_api.markets import normalize_market, validate_e164_phone
 from hireloop_api.services import otp_store
+from hireloop_api.services.bootstrap_roles import resolve_bootstrap_role
 from hireloop_api.services.consent import log_consent
 from hireloop_api.services.email.transactional import maybe_send_signup_confirmation
 from hireloop_api.services.linkedin_oauth import (
+    extract_linkedin_display_name,
     extract_linkedin_headline,
     extract_linkedin_profile_url,
     heal_candidate_headline_from_linkedin,
@@ -314,12 +316,7 @@ async def bootstrap_user(
         """,
         user_id,
     )
-    if body.role == "recruiter":
-        effective_role = "recruiter"
-    elif has_recruiter:
-        effective_role = "recruiter"
-    else:
-        effective_role = "candidate"
+    effective_role = resolve_bootstrap_role(body.role, has_recruiter=bool(has_recruiter))
 
     await db.execute(
         """
@@ -413,6 +410,26 @@ async def bootstrap_user(
             )
         except Exception as exc:
             logger.error("linkedin_data_persist_failed", user_id=str(user_id), error=str(exc))
+
+        linkedin_name = extract_linkedin_display_name(linkedin_data)
+        if linkedin_name:
+            try:
+                await db.execute(
+                    """
+                    UPDATE public.users
+                    SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), $2),
+                        updated_at = NOW()
+                    WHERE id = $1::uuid AND deleted_at IS NULL
+                    """,
+                    user_id,
+                    linkedin_name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "linkedin_name_persist_failed",
+                    user_id=str(user_id),
+                    error=str(exc)[:200],
+                )
 
         try:
             await heal_candidate_headline_from_linkedin(

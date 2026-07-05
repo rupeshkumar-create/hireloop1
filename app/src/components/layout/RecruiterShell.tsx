@@ -32,6 +32,11 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [switching, setSwitching] = useState(false);
+
+  if (pathname?.startsWith("/recruiter/onboarding")) {
+    return <>{children}</>;
+  }
+
   const fullBleed = Boolean(
     pathname?.match(/\/recruiter\/roles\/[^/]+\/(intake|pipeline)/)
   );

@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SIGNUP_ROLE_COOKIE, SIGNUP_ROLE_QUERY } from "@/lib/auth/constants";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
+import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 import { ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl } from "@/lib/api/base-url";
+import { decodeAuthError } from "@/lib/auth/auth-errors";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 
@@ -68,8 +70,9 @@ export function SignupForm() {
         setErrorMessage(
           decodeAuthError(
             hashError ?? "auth_failed",
-            hashDesc ? decodeURIComponent(hashDesc.replace(/\+/g, " ")) : null
-          )
+            hashDesc ? decodeURIComponent(hashDesc.replace(/\+/g, " ")) : null,
+            "oauth",
+          ),
         );
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
@@ -90,9 +93,7 @@ export function SignupForm() {
       router.push(
         safeRedirect?.startsWith("/recruiter")
           ? safeRedirect
-          : isNewUser
-            ? "/recruiter/onboarding"
-            : "/recruiter/inbox",
+          : resolvePostAuthDestination("recruiter", Boolean(isNewUser)),
       );
       return;
     }
@@ -100,7 +101,7 @@ export function SignupForm() {
       router.push(safeRedirect);
       return;
     }
-    router.push(isNewUser ? "/onboarding" : "/dashboard");
+    router.push(resolvePostAuthDestination("candidate", Boolean(isNewUser)));
   }
 
   async function handleLinkedInSignIn() {
@@ -445,48 +446,4 @@ export function SignupForm() {
       )}
     </div>
   );
-}
-
-function decodeAuthError(errorCode: string, message: string | null): string {
-  if (
-    message?.toLowerCase().includes("code challenge") ||
-    message?.toLowerCase().includes("code verifier")
-  ) {
-    return (
-      "Sign-in session expired or was interrupted. Close other Hireloop tabs, " +
-      "clear cookies for this site, then try LinkedIn again in the same browser window."
-    );
-  }
-  if (
-    message?.toLowerCase().includes("external provider") ||
-    message?.toLowerCase().includes("user profile")
-  ) {
-    return (
-      "LinkedIn sign-in failed at Supabase Auth. Check: (1) Supabase → Authentication → " +
-      "Providers → LinkedIn (OIDC) is enabled with valid Client ID/Secret, " +
-      "(2) LinkedIn app has “Sign In with LinkedIn using OpenID Connect” product, " +
-      "(3) LinkedIn redirect URL is https://blwudfxurykzyutkqkoi.supabase.co/auth/v1/callback, " +
-      "(4) Supabase redirect URLs include https://hireloop1-app.vercel.app/auth/callback " +
-      "and http://localhost:3001/auth/callback. " +
-      "If config looks correct, upgrade GoTrue in Supabase → Settings → Infrastructure (≥ v2.149)."
-    );
-  }
-  if (message) return message;
-  switch (errorCode) {
-    case "email_not_confirmed":
-      return "Please confirm your email first, then sign in.";
-    case "verification_failed":
-      return "Email verification link failed or expired. Request a new one.";
-    case "auth_failed":
-      return "Authentication callback failed. Please try signing in again.";
-    case "bootstrap_failed":
-      return (
-        message ??
-        "Account setup failed. Check that the API is running and NEXT_PUBLIC_API_URL is set, then try again."
-      );
-    case "no_code":
-      return "Missing auth code in callback. Please try again.";
-    default:
-      return "Authentication failed. Please try again.";
-  }
 }

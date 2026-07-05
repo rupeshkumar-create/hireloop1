@@ -24,25 +24,11 @@ export function getApiBaseUrl(): string {
 
 /**
  * Base URL for browser multipart uploads (CV, etc.).
- *
- * On Vercel, proxying large FormData through `/hireloop-api` can fail (body
- * limits / timeouts). Deployed apps upload straight to the public API host;
- * local dev keeps the same-origin proxy to avoid CORS quirks.
+ * Same as getApiBaseUrl() — always proxy through /hireloop-api so production
+ * never needs cross-origin CORS to Railway. Vercel rewrites stream to the API.
  */
 export function getUploadApiBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return DIRECT_API_URL;
-  }
-  const isLocalApp =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
-  const isLoopbackApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(
-    DIRECT_API_URL,
-  );
-  if (!isLocalApp && !isLoopbackApi) {
-    return DIRECT_API_URL;
-  }
-  return API_PROXY_PREFIX;
+  return getApiBaseUrl();
 }
 
 /**

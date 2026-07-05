@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { fetchMyProfile } from "@/lib/api/profile";
 import { fetchRecruiterProfile } from "@/lib/api/recruiter";
 
 export function RecruiterGate({ children }: { children: React.ReactNode }) {
@@ -26,9 +27,17 @@ export function RecruiterGate({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     setReady(false);
 
-    fetchRecruiterProfile()
-      .then((p) => {
+    fetchMyProfile()
+      .then((profile) => {
         if (cancelled) return;
+        if (profile.user?.role === "candidate") {
+          router.replace("/onboarding");
+          return;
+        }
+        return fetchRecruiterProfile();
+      })
+      .then((p) => {
+        if (cancelled || !p) return;
         if (!p.onboarding_complete) {
           router.replace("/recruiter/onboarding");
           return;

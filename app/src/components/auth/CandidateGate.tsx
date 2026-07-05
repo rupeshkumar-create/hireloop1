@@ -32,6 +32,10 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
             router.replace("/recruiter/onboarding");
             return;
           }
+          if (!pathname?.startsWith("/recruiter")) {
+            router.replace("/recruiter/inbox");
+            return;
+          }
           setReady(true);
           return;
         }

@@ -1,0 +1,14 @@
+"""Resolve effective account role during OAuth/email bootstrap."""
+
+
+def resolve_bootstrap_role(requested_role: str, *, has_recruiter: bool) -> str:
+    """
+    Pick the role written to public.users during bootstrap.
+
+    Never downgrade an existing recruiter when the signup tab was Job Seeker.
+    """
+    if requested_role == "recruiter":
+        return "recruiter"
+    if has_recruiter:
+        return "recruiter"
+    return "candidate"

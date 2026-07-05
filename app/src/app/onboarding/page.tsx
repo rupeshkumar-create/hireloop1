@@ -1,17 +1,13 @@
 /**
- * Onboarding entry — shown after candidate sign-up (LinkedIn or email).
- *
- * Steps (client-side in OnboardingFlow v2):
- *   0  Welcome
- *   1  Activate (CV + market + DPDP consent)
- *
- * Phone verification is optional (Settings) — not a signup gate.
+ * Onboarding entry — candidate sign-up only (Aarya CV wizard).
+ * Recruiters are redirected to /recruiter/onboarding (Nitya workspace setup).
  */
 
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolveSignupMethod } from "@/lib/auth/signup-method";
+import { displayNameFromSupabaseUser } from "@/lib/auth/display-name";
 import { createClient } from "@/lib/supabase/server";
 import { OnboardingFlow } from "./OnboardingFlow";
 
@@ -51,8 +47,8 @@ export default async function OnboardingPage() {
     }
   }
 
-  // Prefer résumé-derived name from the API over email-local-part on users.full_name.
-  let candidateName: string | undefined;
+  // Prefer résumé/API name, then DB row, then LinkedIn OAuth metadata on the JWT.
+  let candidateName: string | undefined = displayNameFromSupabaseUser(user);
   if (token) {
     try {
       const profileRes = await fetch(`${apiBase}/api/v1/me/profile`, {
@@ -63,7 +59,7 @@ export default async function OnboardingPage() {
         const profileData = (await profileRes.json()) as {
           user?: { full_name?: string | null };
         };
-        candidateName = profileData.user?.full_name ?? undefined;
+        candidateName = profileData.user?.full_name?.trim() || candidateName;
       }
     } catch {
       /* non-fatal */
@@ -80,7 +76,7 @@ export default async function OnboardingPage() {
           .select("full_name")
           .eq("id", user.id)
           .single() as { data: { full_name: string | null } | null };
-        candidateName = data?.full_name ?? undefined;
+        candidateName = data?.full_name?.trim() || candidateName;
       }
     } catch {
       // Swallow — not blocking

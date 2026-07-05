@@ -31,7 +31,8 @@ import {
   Check,
   Upload,
 } from "@/components/brand/icons";
-import { apiAuthFetch, ApiUnreachableError } from "@/lib/api/auth-fetch";
+import { apiAuthFetch, ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
+import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
@@ -44,17 +45,32 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { SUPPORTED_MARKETS, type MarketCode } from "@/lib/markets";
 import type { SignupMethod } from "@/lib/auth/signup-method";
+import { firstNameFromDisplayName } from "@/lib/auth/display-name";
 
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
 
 const ONBOARDING_STORAGE_KEY = "hireloop_onboarding_v2";
 
-function formatOnboardingError(error: unknown): string {
+async function formatOnboardingError(error: unknown): Promise<string> {
   if (error instanceof ApiUnreachableError) {
+    const health = await probeApiHealth();
+    if (health.ok) {
+      return "Request failed after reaching the API. Please try again.";
+    }
+    const isLocal =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1");
+    if (isLocal) {
+      return (
+        "Can't reach the Hireloop API. Start the API on port 8000 " +
+        `(NEXT_PUBLIC_API_URL is ${DIRECT_API_URL}), then try again.`
+      );
+    }
     return (
-      "Can't reach the Hireloop API. Check your connection and that the API is " +
-      "running, then try again."
+      "Can't reach the Hireloop API. On Vercel, set NEXT_PUBLIC_API_URL to your " +
+      "Railway API URL, redeploy the app, and confirm Railway is running."
     );
   }
   return error instanceof Error ? error.message : "Something went wrong.";
@@ -150,7 +166,7 @@ function WelcomeStep({
   candidateName?: string;
   signupMethod: SignupMethod;
 }) {
-  const firstName = candidateName?.split(" ")[0];
+  const firstName = firstNameFromDisplayName(candidateName);
   const greeting = firstName ? `Hey ${firstName}!` : "Hey!";
   const introMessage =
     signupMethod === "linkedin"
@@ -196,7 +212,7 @@ function ActivationStep({
   signupMethod: SignupMethod;
 }) {
   const router = useRouter();
-  const firstName = candidateName?.split(" ")[0] ?? "there";
+  const firstName = firstNameFromDisplayName(candidateName) ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [parsed, setParsed] = useState<ParsedResumeSummary | null>(null);
@@ -241,7 +257,7 @@ function ActivationStep({
       }
       setParsed(summary);
     } catch (err) {
-      setError(formatOnboardingError(err));
+      setError(await formatOnboardingError(err));
     } finally {
       setSaving(false);
     }
@@ -270,7 +286,7 @@ function ActivationStep({
       markDashboardWelcomePending();
       router.push("/dashboard");
     } catch (err) {
-      setError(formatOnboardingError(err));
+      setError(await formatOnboardingError(err));
     } finally {
       setSaving(false);
     }
@@ -534,7 +550,7 @@ function ActivationStep({
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
 export function OnboardingFlow({
-  candidateName,
+  candidateName: initialCandidateName,
   signupMethod = "email",
 }: {
   candidateName?: string;
@@ -543,7 +559,13 @@ export function OnboardingFlow({
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [hydrated, setHydrated] = useState(false);
+  const [candidateName, setCandidateName] = useState(initialCandidateName?.trim());
   const recruiterCheckDone = useRef(false);
+
+  useEffect(() => {
+    const next = initialCandidateName?.trim();
+    if (next) setCandidateName(next);
+  }, [initialCandidateName]);
 
   useEffect(() => {
     if (recruiterCheckDone.current) return;
@@ -552,7 +574,10 @@ export function OnboardingFlow({
       .then((profile) => {
         if (profile.user?.role === "recruiter") {
           router.replace("/recruiter/onboarding");
+          return;
         }
+        const name = profile.user?.full_name?.trim();
+        if (name) setCandidateName(name);
       })
       .catch(() => {
         /* non-fatal — server page may still redirect */

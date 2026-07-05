@@ -3,6 +3,7 @@
  */
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl, getServerApiBaseUrl } from "@/lib/api/base-url";
+import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 
 export async function finishAuthSession(
   accessToken: string,
@@ -45,8 +46,5 @@ export async function finishAuthSession(
   }
 
   const resolvedRole = data.role ?? role;
-  if (resolvedRole === "recruiter") {
-    return data.is_new_user ? "/recruiter/onboarding" : "/recruiter/inbox";
-  }
-  return data.is_new_user ? "/onboarding" : "/dashboard";
+  return resolvePostAuthDestination(resolvedRole, Boolean(data.is_new_user));
 }

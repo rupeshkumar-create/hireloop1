@@ -1,0 +1,146 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import {
+  SIGNUP_ROLE_COOKIE,
+  SIGNUP_ROLE_QUERY,
+  parseSignupRole,
+  type SignupRole,
+} from "@/lib/auth/constants";
+import { finishAuthSession } from "@/lib/auth/finish-auth-session";
+import { decodeAuthError } from "@/lib/auth/auth-errors";
+import { ApiUnreachableError } from "@/lib/api/auth-fetch";
+
+function readSignupRole(searchParams: URLSearchParams): SignupRole {
+  const fromQuery = searchParams.get(SIGNUP_ROLE_QUERY);
+  if (fromQuery) return parseSignupRole(fromQuery);
+  const fromCookie = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${SIGNUP_ROLE_COOKIE}=`))
+    ?.split("=")[1];
+  return parseSignupRole(fromCookie);
+}
+
+/**
+ * LinkedIn OAuth callback — exchange the auth code in the browser so the PKCE
+ * code_verifier cookie (set when the user clicked “Continue with LinkedIn”) is
+ * available. Email magic links use /auth/confirm instead; they never land here.
+ */
+export function AuthCallbackClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const supabase = createClient();
+  const started = useRef(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+
+    const oauthError = searchParams.get("error");
+    const oauthErrorDescription = searchParams.get("error_description");
+    if (oauthError) {
+      const message = oauthErrorDescription
+        ? decodeURIComponent(oauthErrorDescription.replace(/\+/g, " "))
+        : null;
+      router.replace(
+        `/signup?error=${encodeURIComponent(oauthError)}&message=${encodeURIComponent(
+          decodeAuthError(oauthError, message, "oauth"),
+        )}`,
+      );
+      return;
+    }
+
+    // Misconfigured email templates may still point here — forward to the confirm
+    // interstitial (user click required; scanners must not burn the token).
+    const tokenHash = searchParams.get("token_hash");
+    if (tokenHash) {
+      const confirm = new URL("/auth/confirm", window.location.origin);
+      confirm.searchParams.set("token_hash", tokenHash);
+      const tokenType = searchParams.get("type");
+      if (tokenType) confirm.searchParams.set("type", tokenType);
+      router.replace(`${confirm.pathname}${confirm.search}`);
+      return;
+    }
+
+    const code = searchParams.get("code");
+    if (!code) {
+      router.replace(
+        `/signup?error=auth_failed&message=${encodeURIComponent(
+          "LinkedIn sign-in link is incomplete or expired. Tap Continue with LinkedIn again.",
+        )}`,
+      );
+      return;
+    }
+
+    const role = readSignupRole(searchParams);
+    const explicitNext = searchParams.get("next");
+
+    void (async () => {
+      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      if (exchangeError) {
+        setErrorMessage(decodeAuthError("auth_failed", exchangeError.message, "oauth"));
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        setErrorMessage("LinkedIn sign-in completed but no session was created. Please try again.");
+        return;
+      }
+
+      let destination = role === "recruiter" ? "/recruiter" : "/dashboard";
+      try {
+        destination = await finishAuthSession(session.access_token, role);
+      } catch (err) {
+        const message =
+          err instanceof ApiUnreachableError
+            ? "LinkedIn sign-in succeeded, but we couldn't reach the Hireloop API to finish setup. Try again in a moment."
+            : err instanceof Error
+              ? err.message
+              : "Account setup failed. Please try signing in again.";
+        router.replace(
+          `/signup?error=bootstrap_failed&message=${encodeURIComponent(message)}`,
+        );
+        return;
+      }
+
+      document.cookie = `${SIGNUP_ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+
+      const isRealDeepLink =
+        !!explicitNext && explicitNext.startsWith("/") && explicitNext !== "/onboarding";
+      router.replace(isRealDeepLink ? explicitNext : destination);
+    })();
+  }, [router, searchParams]);
+
+  if (errorMessage) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-paper-0 px-6">
+        <div className="w-full max-w-md space-y-4 rounded-xl border border-ink-100 bg-paper-1 p-8 text-center shadow-1">
+          <h1 className="text-h2 text-ink-900">LinkedIn sign-in failed</h1>
+          <p className="text-small text-ink-600">{errorMessage}</p>
+          <a
+            href="/signup"
+            className="inline-block text-small font-medium text-accent hover:underline"
+          >
+            Back to sign up
+          </a>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-paper-0 px-6">
+      <div className="text-center space-y-2">
+        <p className="text-body text-ink-900">Finishing LinkedIn sign-in…</p>
+        <p className="text-small text-ink-500">This only takes a moment.</p>
+      </div>
+    </main>
+  );
+}
