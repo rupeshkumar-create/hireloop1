@@ -4,7 +4,7 @@ FROM python:3.12-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
-ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=0
 
 # Deps first (cached on the lockfile), then the project itself.
 COPY pyproject.toml uv.lock ./
