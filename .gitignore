@@ -73,3 +73,6 @@ infra/*.tfvars
 .env.bak*
 *.env.bak*
 .vercel
+
+# Railway importer scratch dirs (use api/railway.ts instead)
+api/.railway-config-pull-*/
