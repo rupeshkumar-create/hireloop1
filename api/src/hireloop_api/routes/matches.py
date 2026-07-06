@@ -294,9 +294,7 @@ async def get_match_feed(
         _first_score_locks.pop(str(candidate["id"]), None)
 
     result = _market_feed_items(
-        _serialize_current_quality_cached_rows(
-            rows, candidate=dict(candidate), min_score=min_score
-        )
+        _serialize_current_quality_cached_rows(rows, candidate=dict(candidate), min_score=min_score)
     )
     if not result:
         result = await _supplement_market_feed(
@@ -938,11 +936,7 @@ async def _fetch_fallback_match_rows(
     # Order by the computed score (career-path + skill aware), not just the SQL
     # ordering, so aspirational target-title matches surface.
     ranked.sort(key=lambda r: r["overall_score"], reverse=True)
-    filtered = [
-        row
-        for row in ranked
-        if row["overall_score"] >= min_score and not is_test_job(row)
-    ]
+    filtered = [row for row in ranked if row["overall_score"] >= min_score and not is_test_job(row)]
     return filtered[offset : offset + limit]
 
 
