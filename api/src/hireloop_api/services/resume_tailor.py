@@ -64,7 +64,7 @@ async def generate_path_resume_html(
 ) -> str:
     """LLM generates an ATS-oriented career-path resume HTML fragment."""
     prompt = f"""Target career direction: {path_title}
-{f'Path context: {path_summary}' if path_summary else ''}
+{f"Path context: {path_summary}" if path_summary else ""}
 
 Candidate profile (source of truth — do not invent beyond this):
 {json_dumps_safe(candidate_profile)}

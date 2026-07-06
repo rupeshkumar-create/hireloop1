@@ -170,7 +170,9 @@ async def _import_lever(
             body = _clean_html(items) if isinstance(items, str) else ""
             if heading or body:
                 extra.append("\n".join(p for p in (heading, body) if p))
-    jd_text = "\n\n".join(p for p in ([title, description, *extra] if title else [description, *extra]) if p)
+    jd_text = "\n\n".join(
+        p for p in ([title, description, *extra] if title else [description, *extra]) if p
+    )
     jd_text = jd_text.strip()
     if len(jd_text) < 40:
         raise RoleImportError(
@@ -258,7 +260,9 @@ async def fetch_role_from_url(
         gh = _parse_greenhouse_url(source_url)
         if gh:
             try:
-                return await _import_greenhouse(client, board=gh[0], job_id=gh[1], source_url=source_url)
+                return await _import_greenhouse(
+                    client, board=gh[0], job_id=gh[1], source_url=source_url
+                )
             except httpx.HTTPError as exc:
                 logger.warning("greenhouse_import_failed", error=str(exc)[:200])
                 raise RoleImportError(
@@ -288,7 +292,9 @@ async def fetch_role_from_url(
             if exc.response.status_code in (401, 403, 429):
                 raise RoleImportError(
                     "This site blocked automated access.",
-                    warnings=["Paste the job description manually, or use a public Greenhouse/Lever link."],
+                    warnings=[
+                        "Paste the job description manually, or use a public Greenhouse/Lever link."
+                    ],
                 ) from exc
             raise RoleImportError(
                 f"Could not fetch URL (HTTP {exc.response.status_code}).",
@@ -303,13 +309,13 @@ async def fetch_role_from_url(
 def merge_import_warnings(base: dict[str, Any], extraction: dict[str, Any] | None) -> list[str]:
     warnings = list(base.get("warnings") or [])
     if not extraction:
-        warnings.append("We imported the page text but couldn't structure all fields — Nitya can help fill gaps.")
+        warnings.append(
+            "We imported the page text but couldn't structure all fields — Nitya can help fill gaps."
+        )
         return warnings
     missing = list(extraction.get("missing_fields") or [])
     if missing:
-        warnings.append(
-            f"Still unclear: {', '.join(missing)} — Nitya will ask if needed."
-        )
+        warnings.append(f"Still unclear: {', '.join(missing)} — Nitya will ask if needed.")
     assumptions = extraction.get("assumptions") or []
     if isinstance(assumptions, list):
         for item in assumptions[:2]:

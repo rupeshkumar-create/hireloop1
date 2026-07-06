@@ -40,7 +40,9 @@ async def _load_candidate_profile(
         return None
     data = dict(row)
     data["skills"] = list(data.get("skills") or [])
-    career_profile = data.get("career_profile") if isinstance(data.get("career_profile"), dict) else None
+    career_profile = (
+        data.get("career_profile") if isinstance(data.get("career_profile"), dict) else None
+    )
     experience = build_merged_experience(
         resume_experience=[],
         linkedin_data=data.get("linkedin_data"),
