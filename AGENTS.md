@@ -1,11 +1,11 @@
-# AGENTS.md — Hireloop AI Coding Agent Instructions
+# AGENTS.md — Hireschema AI Coding Agent Instructions
 
 This file is read by Codex (and other AI agents) at the start of every session.
 Follow these instructions in addition to `.cursorrules`.
 
 ## Project identity
 
-**Hireloop** — AI recruiting platform for India, the US, and the UK.
+**Hireschema** — AI recruiting platform for India, the US, and the UK.
 - **Aarya** = candidate-facing AI agent
 - **Nitya** = recruiter/HM-facing AI agent
 - Shared Postgres candidate graph via Supabase
@@ -14,8 +14,8 @@ Follow these instructions in addition to `.cursorrules`.
 
 | Path | Stack | Purpose |
 |---|---|---|
-| `web/` | Next.js 15 + TS + Tailwind | Marketing site → hireloop.in |
-| `app/` | Next.js 15 + TS + Tailwind | Candidate + Recruiter SPA → app.hireloop.in |
+| `web/` | Next.js 15 + TS + Tailwind | Marketing site → hireschema.com |
+| `app/` | Next.js 15 + TS + Tailwind | Candidate + Recruiter SPA → hireschema.com |
 | `api/` | FastAPI + Python 3.12 | REST API + LangGraph agent loops |
 
 ## Before writing any code

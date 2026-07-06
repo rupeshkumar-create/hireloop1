@@ -57,7 +57,7 @@ function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
                 </Badge>
               ) : (
                 <Badge tone="accent" className="shrink-0">
-                  {hit.source === "pipeline" ? "In pipeline" : "Live on Hireloop"}
+                  {hit.source === "pipeline" ? "In pipeline" : "Live on Hireschema"}
                 </Badge>
               )}
               {hit.match_score != null && hit.match_score > 0 ? (
@@ -189,7 +189,7 @@ export default function RecruiterCandidatesPage() {
         <div>
           <h1 className="text-h2 font-semibold text-ink-900">Talent</h1>
           <p className="text-small text-ink-500 mt-1">
-            All live candidates on Hireloop — plus anyone already in your role pipelines.
+            All live candidates on Hireschema — plus anyone already in your role pipelines.
           </p>
         </div>
         <Button
@@ -258,7 +258,7 @@ export default function RecruiterCandidatesPage() {
           description={
             query.trim()
               ? "Try a different search term or clear filters."
-              : "No live candidate profiles yet. They appear here once someone completes onboarding on Hireloop."
+              : "No live candidate profiles yet. They appear here once someone completes onboarding on Hireschema."
           }
         />
       ) : (

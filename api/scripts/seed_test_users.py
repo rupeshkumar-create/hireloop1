@@ -7,8 +7,8 @@ Re-seed full marketplace (6 candidates, 5 recruiters, jobs, matches):
     .venv/bin/python scripts/seed_marketplace_demo.py
 
 Login (enable NEXT_PUBLIC_DEV_EMAIL_LOGIN=true in app/.env.local):
-    Candidate: priya.candidate@hireloop.in / DemoCandidate26!
-    Recruiter: arun.recruiter@hireloop.in / DemoRecruiter26!
+    Candidate: priya.candidate@hireschema.com / DemoCandidate26!
+    Recruiter: arun.recruiter@hireschema.com / DemoRecruiter26!
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ from hireloop_api.services.demo_candidate_fixtures import (
 PASSWORD = "DemoCandidate26!"
 RECRUITER_PASSWORD = "DemoRecruiter26!"
 
-CANDIDATE_EMAIL = "priya.candidate@hireloop.in"
-RECRUITER_EMAIL = "arun.recruiter@hireloop.in"
+CANDIDATE_EMAIL = "priya.candidate@hireschema.com"
+RECRUITER_EMAIL = "arun.recruiter@hireschema.com"
 
 CANDIDATE_USER_ID = "c1111111-1111-1111-1111-111111111111"
 RECRUITER_USER_ID = "b1111111-1111-1111-1111-111111111111"

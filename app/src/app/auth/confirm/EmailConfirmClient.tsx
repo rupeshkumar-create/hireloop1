@@ -80,7 +80,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
     } catch (err) {
       setErrorMessage(
         err instanceof ApiUnreachableError
-          ? "Email verified, but we couldn't reach the Hireloop API to finish setup. Try again in a moment."
+          ? "Email verified, but we couldn't reach the Hireschema API to finish setup. Try again in a moment."
           : err instanceof Error
             ? err.message
             : "Account setup failed. Please try again.",
@@ -95,7 +95,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
         <div className="space-y-2">
           <h1 className="text-h2 text-ink-900">Confirm your email</h1>
           <p className="text-small text-ink-600 leading-relaxed">
-            Tap continue to finish signing in to Hireloop. We wait for your click so automated
+            Tap continue to finish signing in to Hireschema. We wait for your click so automated
             email scanners don&apos;t burn your link before you open it.
           </p>
         </div>
@@ -109,7 +109,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
           onClick={() => void handleConfirm()}
           className="rounded-lg font-semibold"
         >
-          {loading ? "Signing in…" : "Continue to Hireloop"}
+          {loading ? "Signing in…" : "Continue to Hireschema"}
         </Button>
 
         {errorMessage && (

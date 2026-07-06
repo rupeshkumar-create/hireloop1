@@ -1,6 +1,6 @@
-# Hireloop — Progress update (week of Jun 8–15)
+# Hireschema — Progress update (week of Jun 8–15)
 
-**In one line:** Hireloop is now a working end-to-end AI recruiter for India — a
+**In one line:** Hireschema is now a working end-to-end AI recruiter for India — a
 candidate signs up, Aarya builds their profile from LinkedIn + CV, finds jobs
 that genuinely fit, and sets up warm introductions to hiring managers.
 

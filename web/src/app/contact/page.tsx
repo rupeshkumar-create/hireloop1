@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Contact",
-  description: "Get in touch with the Hireloop team. We're based in India and respond within 24 hours.",
+  description: "Get in touch with the Hireschema team. We're based in India and respond within 24 hours.",
 };
 
 const CONTACTS = [
-  { label: "General enquiries", email: "hello@hireloop.in", icon: "✉️" },
-  { label: "Data Privacy (DPO)", email: "privacy@hireloop.in", icon: "🔒" },
-  { label: "Partnerships", email: "partnerships@hireloop.in", icon: "🤝" },
-  { label: "Press & media", email: "press@hireloop.in", icon: "📰" },
+  { label: "General enquiries", email: "hello@hireschema.com", icon: "✉️" },
+  { label: "Data Privacy (DPO)", email: "privacy@hireschema.com", icon: "🔒" },
+  { label: "Partnerships", email: "partnerships@hireschema.com", icon: "🤝" },
+  { label: "Press & media", email: "press@hireschema.com", icon: "📰" },
 ];
 
 export default function ContactPage() {
@@ -46,7 +46,7 @@ export default function ContactPage() {
           <div className="bg-ink-50 rounded-2xl p-6 border border-ink-100">
             <h3 className="font-bold text-ink-900 mb-2">Based in India</h3>
             <p className="text-accent text-sm">
-              Hireloop Technology Pvt. Ltd.<br />
+              Hireschema<br />
               India 🇮🇳
             </p>
             <p className="mt-3 text-xs text-ink-900">

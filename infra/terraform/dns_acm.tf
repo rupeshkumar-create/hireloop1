@@ -1,12 +1,12 @@
 ###############################################################################
-# Hireloop — Route53 + ACM + Cloudflare DNS
-# Domains: hireloop.in (web) + api.hireloop.in (API) + app.hireloop.in (app)
+# Hireschema — Route53 + ACM + Cloudflare DNS
+# Domains: hireschema.com (web) + api.hireschema.com (API) + hireschema.com (app)
 ###############################################################################
 
 # ACM certificate for API subdomain (ALB termination)
 resource "aws_acm_certificate" "api" {
-  domain_name               = "api.hireloop.in"
-  subject_alternative_names = ["*.hireloop.in"]
+  domain_name               = "api.hireschema.com"
+  subject_alternative_names = ["*.hireschema.com"]
   validation_method         = "DNS"
 
   lifecycle {
@@ -37,7 +37,7 @@ resource "aws_acm_certificate_validation" "api" {
   validation_record_fqdns = [for record in cloudflare_record.acm_validation : record.hostname]
 }
 
-# Cloudflare DNS — api.hireloop.in → ALB (proxied for WAF protection)
+# Cloudflare DNS — api.hireschema.com → ALB (proxied for WAF protection)
 resource "cloudflare_record" "api" {
   zone_id = var.cloudflare_zone_id
   name    = "api"
@@ -47,7 +47,7 @@ resource "cloudflare_record" "api" {
   ttl     = 1     # Auto when proxied
 }
 
-# Cloudflare DNS — app.hireloop.in → Vercel (proxied)
+# Cloudflare DNS — hireschema.com → Vercel (proxied)
 resource "cloudflare_record" "app" {
   zone_id = var.cloudflare_zone_id
   name    = "app"
@@ -57,7 +57,7 @@ resource "cloudflare_record" "app" {
   ttl     = 1
 }
 
-# Cloudflare DNS — hireloop.in → Vercel (marketing site, proxied)
+# Cloudflare DNS — hireschema.com → Vercel (marketing site, proxied)
 resource "cloudflare_record" "root" {
   zone_id = var.cloudflare_zone_id
   name    = "@"

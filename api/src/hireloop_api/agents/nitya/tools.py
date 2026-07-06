@@ -183,7 +183,7 @@ async def draft_intro_email(
     skills_str = ", ".join(skills[:8]) if skills else "various technologies"
 
     system = SystemMessage(
-        content="""You are Nitya, Hireloop's recruiter AI.
+        content="""You are Nitya, Hireschema's recruiter AI.
 Draft a warm, personalised cold intro email from the candidate to the hiring manager.
 The email must:
 - Be 3-4 short paragraphs max

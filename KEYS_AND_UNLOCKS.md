@@ -33,7 +33,7 @@ SUPABASE_URL=...
 SUPABASE_SERVICE_KEY=...
 SECRET_KEY=<strong-random>         # prod BOOT FAILS if left "change-me"
 SERVICE_SECRET=<strong-random>     # gates service webhooks + admin cron; prod must set
-SUPER_ADMIN_EMAILS=you@hireloop.in # bootstraps the first admin (P23)
+SUPER_ADMIN_EMAILS=you@hireschema.com # bootstraps the first admin (P23)
 ```
 The production guard (`_enforce_production_secrets`) refuses to start if `SECRET_KEY`/`SERVICE_SECRET`
 are empty or `change-me`.
@@ -70,8 +70,8 @@ without this; scraped roles and HM intros do not.
 GOOGLE_CLIENT_ID=...              # Gmail OAuth — intros sent FROM the candidate's Gmail (R9)
 GOOGLE_CLIENT_SECRET=...
 SENDGRID_API_KEY=SG....           # transactional only (signup, alerts, invites)
-SENDGRID_FROM_EMAIL=noreply@hireloop.in
-SENDGRID_FROM_NAME=Hireloop
+SENDGRID_FROM_EMAIL=noreply@hireschema.com
+SENDGRID_FROM_NAME=Hireschema
 SG_TEMPLATE_SIGNUP_CONFIRMATION=d-...
 SG_TEMPLATE_JOB_MATCH_ALERT=d-...
 SG_TEMPLATE_INTERVIEW_REMINDER=d-...

@@ -14,7 +14,7 @@ export type ConsumeSSEResult = {
   sawDone: boolean;
 };
 
-/** Parse a Hireloop text/event-stream response body (Aarya, Nitya, public portfolio). */
+/** Parse a Hireschema text/event-stream response body (Aarya, Nitya, public portfolio). */
 export async function consumeSSEStream(
   body: ReadableStream<Uint8Array>,
   options: ConsumeSSEOptions = {},

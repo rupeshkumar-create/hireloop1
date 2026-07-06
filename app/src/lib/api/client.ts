@@ -1,5 +1,5 @@
 /**
- * Authenticated API client for app.hireloop.in → api.hireloop.in
+ * Authenticated API client for hireschema.com → api.hireschema.com
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";

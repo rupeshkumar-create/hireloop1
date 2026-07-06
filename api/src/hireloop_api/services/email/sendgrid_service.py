@@ -131,7 +131,7 @@ class SendGridService:
             template_id=template_id,
             dynamic_data={
                 "full_name": full_name,
-                "cta_url": "https://app.hireloop.in/onboarding",
+                "cta_url": "https://hireschema.com/onboarding",
             },
         )
 
@@ -156,7 +156,7 @@ class SendGridService:
                 "top_job_title": top_job_title,
                 "top_company": top_company,
                 "top_score_pct": top_score_pct,
-                "cta_url": "https://app.hireloop.in/dashboard",
+                "cta_url": "https://hireschema.com/dashboard",
             },
         )
 
@@ -209,7 +209,7 @@ class SendGridService:
                 "job_title": job_title,
                 "status": status,
                 "status_message": status_messages.get(status, f"Intro status: {status}"),
-                "cta_url": "https://app.hireloop.in/dashboard",
+                "cta_url": "https://hireschema.com/dashboard",
             },
         )
 

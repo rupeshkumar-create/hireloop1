@@ -183,7 +183,7 @@ async def _ensure_company_and_recruiter(conn: asyncpg.Connection) -> tuple[uuid.
         """
         INSERT INTO public.companies
           (id, name, domain, industry, size_bucket, hq_city, hq_state, country_code)
-        VALUES ($1, 'Hireloop Test Co', 'hireloop-test.in', 'Hiring Tech', '11-50',
+        VALUES ($1, 'Hireschema Test Co', 'hireschema-test.com', 'Hiring Tech', '11-50',
                 'Bengaluru', 'Karnataka', 'IN')
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
         """,

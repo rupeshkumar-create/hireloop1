@@ -20,7 +20,7 @@ COMMENT ON COLUMN public.candidates.public_profile_enabled IS
 COMMENT ON COLUMN public.candidates.hide_contact_public IS
   'When true, email/phone are omitted from the public profile page.';
 COMMENT ON COLUMN public.candidates.share_with_recruiters IS
-  'When true, registered Hireloop recruiters may see this profile in search.';
+  'When true, registered Hireschema recruiters may see this profile in search.';
 
 CREATE TABLE IF NOT EXISTS public.career_path_resumes (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

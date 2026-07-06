@@ -49,7 +49,7 @@ def _kit_llm(settings: Settings, *, max_tokens: int, title: str) -> ChatOpenAI:
         temperature=0.35,
         max_tokens=max_tokens,
         default_headers={
-            "HTTP-Referer": "https://app.hireloop.in",
+            "HTTP-Referer": "https://hireschema.com",
             "X-Title": title,
         },
     )
@@ -106,7 +106,7 @@ async def _generate_text_assets(
     llm = _kit_llm(
         settings,
         max_tokens=_KIT_LLM_MAX_TOKENS_TEXT,
-        title="Hireloop - Application Kit",
+        title="Hireschema - Application Kit",
     )
     prompt = (
         f"Candidate:\n{json.dumps(profile, default=str)[:6000]}\n\n"
@@ -162,7 +162,7 @@ async def _generate_tailored_html_only(
     llm = _kit_llm(
         settings,
         max_tokens=_KIT_LLM_MAX_TOKENS_RESUME,
-        title="Hireloop - Resume Tailor",
+        title="Hireschema - Resume Tailor",
     )
     return await generate_tailored_html(
         llm=llm,

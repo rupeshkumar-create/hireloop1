@@ -17,7 +17,7 @@ import { LandingCta } from "@/components/landing/LandingCta";
 import { LandingNav } from "@/components/landing/LandingNav";
 
 /**
- * App landing page (app.hireloop.in) — static shell, lazy hero demo, no auth gate.
+ * App landing page (hireschema.com) — static shell, lazy hero demo, no auth gate.
  */
 export const dynamic = "force-static";
 
@@ -278,7 +278,7 @@ export default function RootPage() {
       {/* ── Footer ───────────────────────────────────────────────────────── */}
       <footer className="border-t border-ink-100">
         <div className="mx-auto flex max-w-page flex-col items-center justify-between gap-3 px-6 py-8 text-micro text-ink-400 sm:flex-row">
-          <span>© {new Date().getFullYear()} Hireloop</span>
+          <span>© {new Date().getFullYear()} Hireschema</span>
           <div className="flex items-center gap-4">
             <a href="#how" className="transition-colors hover:text-ink-700">
               How it works

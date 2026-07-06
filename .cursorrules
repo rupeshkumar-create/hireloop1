@@ -1,4 +1,4 @@
-# Hireloop MVP Rules — v1.1
+# Hireschema MVP Rules — v1.1
 # Synced from /Users/rupesh/Claude/hireloop/MVP_RULES.md
 # Upload this file as .cursorrules at repo root so all AI coding agents respect it.
 
@@ -99,7 +99,7 @@ consent_log table: every data collection event logged with purpose + ts.
 Data export endpoint: GET /api/v1/me/export (returns zip, async job).
 Data delete endpoint: DELETE /api/v1/me (soft-delete, 30-day purge job).
 Bias audit: every match_score row gets a bias_audit JSONB field.
-DPO contact: privacy@hireloop.in shown in footer and in consent flows.
+DPO contact: privacy@hireschema.com shown in footer and in consent flows.
 
 ## R15 — No mock data in production
 Seed scripts allowed in dev/staging only.

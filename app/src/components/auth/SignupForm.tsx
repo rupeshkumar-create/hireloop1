@@ -25,7 +25,7 @@ const DEV_EMAIL_LOGIN = process.env.NEXT_PUBLIC_DEV_EMAIL_LOGIN === "true";
 function formatAuthSetupError(error: unknown): string {
   if (error instanceof ApiUnreachableError) {
     return (
-      "Your code was accepted, but we couldn't reach the Hireloop API to finish setup. " +
+      "Your code was accepted, but we couldn't reach the Hireschema API to finish setup. " +
       "Check that the API is running and NEXT_PUBLIC_API_URL is set correctly, then try again."
     );
   }
@@ -399,7 +399,7 @@ export function SignupForm() {
             type="email"
             value={devEmail}
             onChange={(e) => setDevEmail(e.target.value)}
-            placeholder="priya.candidate@hireloop.in"
+            placeholder="priya.candidate@hireschema.com"
             autoComplete="email"
             required
           />
@@ -424,9 +424,9 @@ export function SignupForm() {
             Recruiter password: <span className="font-mono">DemoRecruiter26!</span>
           </p>
           <p className="text-[11px] text-ink-500 leading-snug">
-            e.g. <span className="font-mono">priya.candidate@hireloop.in</span>
+            e.g. <span className="font-mono">priya.candidate@hireschema.com</span>
             {" · "}
-            <span className="font-mono">arun.recruiter@hireloop.in</span>
+            <span className="font-mono">arun.recruiter@hireschema.com</span>
           </p>
         </form>
       )}

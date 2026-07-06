@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { allJobSlugs, jobFaqs, parseJobSlug, titleCase } from "@/lib/programmatic";
 
-const BASE_URL = "https://hireloop.in";
+const BASE_URL = "https://hireschema.com";
 
 type PageProps = { params: Promise<{ slug: string }> };
 
@@ -14,10 +14,10 @@ export async function generateStaticParams() {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const parsed = parseJobSlug(slug);
-  if (!parsed) return { title: "Jobs in India | Hireloop" };
+  if (!parsed) return { title: "Jobs in India | Hireschema" };
   const roleLabel = titleCase(parsed.role);
   const cityLabel = titleCase(parsed.city);
-  const title = `${roleLabel} Jobs in ${cityLabel} | Hireloop`;
+  const title = `${roleLabel} Jobs in ${cityLabel} | Hireschema`;
   const description = `Find ${roleLabel} roles in ${cityLabel}, India. AI-matched jobs in INR, warm intros to hiring managers, and a résumé tailored to each JD.`;
   const canonical = `${BASE_URL}/jobs/${slug}`;
   return {
@@ -42,7 +42,7 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
 
   const roleLabel = titleCase(parsed.role);
   const cityLabel = titleCase(parsed.city);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
   const canonical = `${BASE_URL}/jobs/${slug}`;
   const faqs = jobFaqs(roleLabel, cityLabel);
 
@@ -55,8 +55,8 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
         "@id": canonical,
         url: canonical,
         name: `${roleLabel} Jobs in ${cityLabel}`,
-        description: `AI-matched ${roleLabel} roles in ${cityLabel}, India on Hireloop.`,
-        isPartOf: { "@type": "WebSite", name: "Hireloop", url: BASE_URL },
+        description: `AI-matched ${roleLabel} roles in ${cityLabel}, India on Hireschema.`,
+        isPartOf: { "@type": "WebSite", name: "Hireschema", url: BASE_URL },
       },
       {
         "@type": "BreadcrumbList",
@@ -104,12 +104,12 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
         {roleLabel} jobs in {cityLabel}
       </h1>
       <p className="mt-4 text-ink-700">
-        Hireloop surfaces {roleLabel} openings in {cityLabel} with AI match scores,
+        Hireschema surfaces {roleLabel} openings in {cityLabel} with AI match scores,
         direct apply links, and warm intros to hiring managers — local currency salaries, no spam.
       </p>
 
       <section className="mt-8 rounded-2xl border bg-ink-50 p-6">
-        <h2 className="font-semibold">Why candidates use Hireloop</h2>
+        <h2 className="font-semibold">Why candidates use Hireschema</h2>
         <ul className="mt-3 list-disc list-inside text-sm text-ink-700 space-y-1">
           <li>Daily ranked matches in your market (IN / US / GB)</li>
           <li>Request Intro — email from your Gmail, not spam</li>

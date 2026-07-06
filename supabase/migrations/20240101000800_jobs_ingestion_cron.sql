@@ -13,7 +13,7 @@
 -- Store the API base URL as a database parameter so the cron job doesn't
 -- have a hardcoded URL. Set this once after applying the migration:
 --
---   ALTER DATABASE postgres SET "app.api_base_url" = 'https://api.hireloop.in';
+--   ALTER DATABASE postgres SET "app.api_base_url" = 'https://api.hireschema.com';
 --   ALTER DATABASE postgres SET "app.service_secret" = '<your-secret>';
 --
 -- (These are instance-level GUCs, not sensitive in the migration itself.)

@@ -18,7 +18,7 @@ from hireloop_api.config import Settings
 
 logger = structlog.get_logger()
 
-# Providers that prove email ownership via the IdP (no Hireloop verification mail).
+# Providers that prove email ownership via the IdP (no Hireschema verification mail).
 _OAUTH_PROVIDERS = frozenset(
     {
         "linkedin",

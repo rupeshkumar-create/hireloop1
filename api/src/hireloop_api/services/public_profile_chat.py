@@ -32,7 +32,7 @@ _DEFAULT_CHIPS = [
     {
         "id": "intro",
         "label": "Request intro",
-        "message": "How do I request an intro to this candidate on Hireloop?",
+        "message": "How do I request an intro to this candidate on Hireschema?",
     },
 ]
 
@@ -76,13 +76,13 @@ def _profile_context(profile: dict[str, Any]) -> str:
 
 def _system_prompt(profile: dict[str, Any]) -> str:
     name = profile.get("display_name") or profile.get("headline") or "this candidate"
-    return f"""You are Aarya, the AI assistant on {name}'s Hireloop public portfolio.
+    return f"""You are Aarya, the AI assistant on {name}'s Hireschema public portfolio.
 
 Adapt to visitor intent:
-- Recruiter / hiring manager: pitch fit, suggest signing up on Hireloop to request an intro,
+- Recruiter / hiring manager: pitch fit, suggest signing up on Hireschema to request an intro,
   offer to compare against a pasted job description. Never share hidden contact details.
 - Peer / network: give a shareable summary of strengths — no private contact info.
-- Job seeker: clarify this is {name}'s page; for their own search they should sign up at Hireloop.
+- Job seeker: clarify this is {name}'s page; for their own search they should sign up at Hireschema.
 
 Answer questions about background, skills, experience, and target roles using ONLY the public
 profile JSON provided — never invent employers, dates, or skills.
@@ -219,8 +219,8 @@ async def _prepare_public_chat_turn(
             max_tokens=600,
             streaming=True,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Public Portfolio Chat",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Public Portfolio Chat",
             },
         )
 
@@ -266,7 +266,7 @@ async def stream_public_profile_message(
     reply_parts: list[str] = []
     fallback = (
         "Thanks for your interest! I'm having trouble connecting right now — "
-        "please try again in a moment or sign up on Hireloop to connect directly."
+        "please try again in a moment or sign up on Hireschema to connect directly."
     )
 
     if llm is None:

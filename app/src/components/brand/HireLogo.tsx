@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Hireloop brand logo — from the custom asset library.
+ * Hireschema brand logo — from the custom asset library.
  *
  * The mark is a lemniscate (∞) loop — the continuous candidate ↔ recruiter
  * cycle — cradling two agent nodes (Aarya + Nitya), each a lime "live node".
@@ -40,7 +40,7 @@ export function HireLogoMark({
       fill="none"
       className={className}
       role="img"
-      aria-label="Hireloop"
+      aria-label="Hireschema"
     >
       {variant === "app" && <rect width="48" height="48" fill="#B9F84C" />}
       <path
@@ -58,7 +58,7 @@ export function HireLogoMark({
   );
 }
 
-/** Full lockup: mark + "Hireloop" wordmark (with the lime "loop"). */
+/** Full lockup: mark + "Hireschema" wordmark (with the lime "schema"). */
 export function HireLogo({
   size = 32,
   wordmark = true,
@@ -75,7 +75,7 @@ export function HireLogo({
       <HireLogoMark size={size} variant={variant} />
       {wordmark && (
         <span className="text-h3 font-semibold tracking-tight text-ink-900">
-          Hire<span className="text-accent">loop</span>
+          Hire<span className="text-accent">schema</span>
         </span>
       )}
     </span>

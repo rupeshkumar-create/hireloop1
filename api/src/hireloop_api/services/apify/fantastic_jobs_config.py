@@ -1,7 +1,7 @@
 """
 Fantastic.jobs Career Site Job Listing API — actor input builder.
 
-Maps Hireloop settings + per-run overrides to the Apify actor JSON schema:
+Maps Hireschema settings + per-run overrides to the Apify actor JSON schema:
 https://apify.com/fantastic-jobs/career-site-job-listing-api/input-schema
 """
 

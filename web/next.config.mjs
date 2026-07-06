@@ -3,7 +3,7 @@ const nextConfig = {
   // Strict mode for catching subtle React bugs during development
   reactStrictMode: true,
 
-  // Hireloop image domains
+  // Hireschema image domains
   images: {
     remotePatterns: [
       {

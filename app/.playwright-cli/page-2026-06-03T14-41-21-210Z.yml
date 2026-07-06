@@ -2,7 +2,7 @@
   - generic [ref=e3]:
     - generic [ref=e4]:
       - generic [ref=e6]: H
-      - generic [ref=e7]: Hireloop
+      - generic [ref=e7]: Hireschema
     - generic [ref=e8]:
       - heading "Get started" [level=1] [ref=e9]
       - paragraph [ref=e10]: India's AI recruiting platform — for candidates & recruiters.
@@ -17,5 +17,5 @@
       - paragraph [ref=e22]: LinkedIn gives us your identity basics. We'll collect experience via resume upload and onboarding.
     - paragraph [ref=e23]:
       - text: India only (+91) · DPDP Act 2023 ·
-      - link "privacy@hireloop.in" [ref=e24] [cursor=pointer]:
-        - /url: mailto:privacy@hireloop.in
+      - link "privacy@hireschema.com" [ref=e24] [cursor=pointer]:
+        - /url: mailto:privacy@hireschema.com

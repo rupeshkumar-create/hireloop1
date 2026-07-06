@@ -72,8 +72,8 @@ async def _run_roadmap_task(
             temperature=0.4,
             max_tokens=4096,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Learning Roadmap",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Learning Roadmap",
             },
         )
         profile = dict(cand)

@@ -376,7 +376,7 @@ export function ProfilePanel({
                       className={inputClass}
                       value={currentCompany}
                       onChange={(e) => setCurrentCompany(e.target.value)}
-                      placeholder="e.g. Hireloop"
+                      placeholder="e.g. Hireschema"
                     />
                   </Field>
                 </div>

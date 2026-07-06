@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     "Step-by-step: how Aarya and Nitya work together to match candidates to jobs and make warm introductions to hiring managers.",
 };
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 const CANDIDATE_STEPS = [
   { n: 1, title: "Sign in with LinkedIn", detail: "One click. Aarya reads your profile, work history, skills and education. No manual form filling." },
@@ -44,7 +44,7 @@ export default function HowItWorksPage() {
           <Badge variant="brand" className="mb-4 bg-ink-700/60 text-paper-0 border-ink-700">
             Under the hood
           </Badge>
-          <h1 className="text-5xl font-bold text-paper-0 mb-4">How Hireloop works</h1>
+          <h1 className="text-5xl font-bold text-paper-0 mb-4">How Hireschema works</h1>
           <p className="text-ink-300 text-lg">
             Two AI agents. One shared candidate graph. End-to-end — from profile to offer.
           </p>

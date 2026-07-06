@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     # the first admin. Everything else is granted via users.role == 'admin', set
     # server-side through the audited super-admin endpoint. Admin is NEVER
     # derived from a user-editable field (see deps.get_admin_user).
-    # Example: SUPER_ADMIN_EMAILS=founder@hireloop.in
+    # Example: SUPER_ADMIN_EMAILS=founder@hireschema.com
     super_admin_emails: list[str] = []
 
     # ── Apify ─────────────────────────────────────────────────────────────────
@@ -186,13 +186,13 @@ class Settings(BaseSettings):
 
     # ── SendGrid ──────────────────────────────────────────────────────────────
     sendgrid_api_key: str = ""
-    sendgrid_from_email: str = "noreply@hireloop.in"
-    sendgrid_from_name: str = "Hireloop"
+    sendgrid_from_email: str = "noreply@hireschema.com"
+    sendgrid_from_name: str = "Hireschema"
     # Resend — preferred transactional provider (welcome + job-match emails).
     # Also used as Supabase's custom SMTP for magic-link deliverability.
     resend_api_key: str = ""
-    resend_from_email: str = "noreply@hireloop.in"
-    resend_from_name: str = "Hireloop"
+    resend_from_email: str = "noreply@hireschema.com"
+    resend_from_name: str = "Hireschema"
     # Generic SMTP — free path to email ANY recipient without a verified domain.
     # For a free Gmail account: smtp_host=smtp.gmail.com, smtp_port=587,
     # smtp_user=<the gmail>, smtp_password=<a Google App Password>. Preferred

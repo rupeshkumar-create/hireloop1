@@ -126,14 +126,14 @@ export function IntroDraftPanel({
         <p className="text-small text-ink-500 mt-1">
           Review Nitya&apos;s email to{" "}
           <span className="text-ink-800 font-medium">{detail?.hm_name}</span>. It sends from your
-          Gmail when you approve — never from Hireloop.
+          Gmail when you approve — never from Hireschema.
         </p>
       </div>
 
       {!detail?.gmail_connected && (
         <div className="space-y-2">
           <p className="text-micro text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Connect Google to send this intro. Hireloop only uses send-only access — we never read
+            Connect Google to send this intro. Hireschema only uses send-only access — we never read
             your inbox.
           </p>
           <GoogleConnectCard />

@@ -2,7 +2,7 @@
 -- Bootstrap the first super-admin
 -- ============================================================
 --
--- Admin access in Hireloop is granted ONLY by:
+-- Admin access in Hireschema is granted ONLY by:
 --   (a) public.users.role = 'admin', or
 --   (b) the operator-managed SUPER_ADMIN_EMAILS allow-list (api/.env).
 --
@@ -22,10 +22,10 @@
 UPDATE public.users
 SET role = 'admin',
     updated_at = NOW()
-WHERE email = 'CHANGE_ME@hireloop.in'
+WHERE email = 'CHANGE_ME@hireschema.com'
   AND deleted_at IS NULL;
 
 -- Verify:
 SELECT id, email, role, india_verified
 FROM public.users
-WHERE email = 'CHANGE_ME@hireloop.in';
+WHERE email = 'CHANGE_ME@hireschema.com';

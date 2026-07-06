@@ -245,7 +245,7 @@ async def main() -> None:
                         "add to api/.env:\n"
                         "  RESEND_API_KEY=<copy from Supabase → Authentication → SMTP → Password>\n"
                         "  RESEND_FROM_EMAIL=rupesh.kumar@candidate.ly\n"
-                        "  RESEND_FROM_NAME=Hireloop"
+                        "  RESEND_FROM_NAME=Hireschema"
                     )
                 print(f"Invite link:\n  {cta}")
         elif args.send_intro:

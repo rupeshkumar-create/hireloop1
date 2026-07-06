@@ -34,7 +34,7 @@ def _app_base_url() -> str:
     for origin in origins:
         if origin.startswith("http") and "localhost" not in origin:
             return origin.rstrip("/")
-    return "https://app.hireloop.in"
+    return "https://hireschema.com"
 
 
 async def _candidate_by_user(db: asyncpg.Connection, user_id: str) -> asyncpg.Record | None:

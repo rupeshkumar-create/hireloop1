@@ -34,10 +34,10 @@ export default function GlobalError({
       >
         <div style={{ textAlign: "center", maxWidth: "28rem" }}>
           <h1 style={{ fontSize: "1.25rem", fontWeight: 600, margin: 0 }}>
-            Hireloop hit an unexpected error
+            Hireschema hit an unexpected error
           </h1>
           <p style={{ marginTop: "0.5rem", color: "#A3A3A3", fontSize: "0.9rem" }}>
-            Please refresh the page. If it keeps happening, contact support@hireloop.in.
+            Please refresh the page. If it keeps happening, contact support@hireschema.com.
           </p>
           <button
             type="button"

@@ -106,7 +106,7 @@ export function SettingsPanel({
       await apiFetch("/api/v1/me", { method: "DELETE" });
       toast.success("Account deletion scheduled. Data purged after 30 days.");
     } catch {
-      toast.error("Couldn't schedule deletion. Contact support@hireloop.in");
+      toast.error("Couldn't schedule deletion. Contact support@hireschema.com");
     }
   }
 

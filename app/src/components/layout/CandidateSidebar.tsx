@@ -81,7 +81,7 @@ export function CandidateSidebar({
 
   return (
     <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
-      <Link href="/dashboard" aria-label="Hireloop home" title="Hireloop" className="mb-4">
+      <Link href="/dashboard" aria-label="Hireschema home" title="Hireschema" className="mb-4">
         <HireLogoMark size={36} />
       </Link>
 
@@ -161,7 +161,7 @@ export function CandidateSidebar({
           </button>
         )}
         <a
-          href="https://hireloop.in/help"
+          href="https://hireschema.com/help"
           target="_blank"
           rel="noopener noreferrer"
           title="Help"

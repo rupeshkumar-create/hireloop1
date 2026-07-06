@@ -45,7 +45,7 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
       <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
         <Link
           href="/recruiter"
-          aria-label="Hireloop recruiter"
+          aria-label="Hireschema recruiter"
           className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900"
         >
           <span className="text-small font-semibold text-paper-0">N</span>

@@ -304,8 +304,8 @@ class CareerPathService:
             temperature=0.4,
             max_tokens=1200,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Aarya Career Path",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Aarya Career Path",
             },
         )
         messages = [

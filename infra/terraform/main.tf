@@ -1,5 +1,5 @@
 ###############################################################################
-# Hireloop — Terraform root module
+# Hireschema — Terraform root module
 # Region: ap-south-1 (Mumbai) — India geo-lock requirement
 ###############################################################################
 

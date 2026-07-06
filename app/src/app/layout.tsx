@@ -12,8 +12,8 @@ const APP_ORIGIN =
 export const metadata: Metadata = {
   metadataBase: new URL(APP_ORIGIN),
   title: {
-    default: "Hireloop",
-    template: "%s | Hireloop",
+    default: "Hireschema",
+    template: "%s | Hireschema",
   },
   description: "Your AI career partner — Aarya is ready to help.",
   robots: {

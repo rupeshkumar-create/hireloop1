@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Post-deploy smoke checks for the Hireloop API.
+Post-deploy smoke checks for the Hireschema API.
 
 Usage:
   python scripts/e2e_smoke.py --base-url http://127.0.0.1:8000
@@ -26,7 +26,7 @@ def _check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Hireloop API smoke tests")
+    parser = argparse.ArgumentParser(description="Hireschema API smoke tests")
     parser.add_argument(
         "--base-url",
         default="http://127.0.0.1:8000",

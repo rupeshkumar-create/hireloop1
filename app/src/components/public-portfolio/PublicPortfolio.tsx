@@ -14,6 +14,7 @@ import {
   Sparkles,
 } from "@/components/brand/icons";
 import { PublicProfileChat } from "@/components/public-portfolio/PublicProfileChat";
+import { HireLogo } from "@/components/brand/HireLogo";
 import { cn } from "@/lib/utils";
 import type { PublicProfile } from "@/lib/api/publicProfile";
 
@@ -67,8 +68,8 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
     <div className="min-h-screen bg-paper-0 text-ink-900">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <div className="flex items-center justify-between mb-6 sm:mb-8">
-          <Link href="/" className="text-small font-semibold text-ink-900 hover:text-accent transition-colors">
-            Hireloop
+          <Link href="/" className="hover:opacity-90 transition-opacity">
+            <HireLogo size={28} />
           </Link>
           <span className="text-micro uppercase tracking-widest text-ink-500">
             Portfolio
@@ -189,7 +190,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
                 )}
                 <p className="flex items-center gap-2 text-micro text-ink-500">
                   <Sparkles className="h-3.5 w-3.5 text-accent" strokeWidth={1.5} />
-                  Powered by Hireloop
+                  Powered by Hireschema
                 </p>
               </div>
             </div>
@@ -230,7 +231,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
                     </p>
                   ) : (
                     <p className="text-small text-ink-500">
-                      {displayName} keeps their public summary on Hireloop — use the chat
+                      {displayName} keeps their public summary on Hireschema — use the chat
                       below to ask Aarya about their background.
                     </p>
                   )}
@@ -348,7 +349,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
                   <div className="border border-ink-100 bg-paper-1 p-6 space-y-3">
                     <p className="text-body text-ink-600">
                       This candidate keeps contact details private on their public portfolio.
-                      Chat with Aarya below to learn about their fit, or join Hireloop as a
+                      Chat with Aarya below to learn about their fit, or join Hireschema as a
                       recruiter to request a warm intro.
                     </p>
                     <Link

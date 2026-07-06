@@ -123,8 +123,8 @@ def _build_openrouter_llm(settings: Settings) -> LLMComplete:
             max_tokens=900,
             timeout=12,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Match Rationale",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Match Rationale",
             },
         )
         resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])

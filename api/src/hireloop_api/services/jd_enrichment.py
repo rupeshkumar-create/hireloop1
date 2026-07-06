@@ -103,8 +103,8 @@ async def enrich_job_description(
         max_tokens=500,
         timeout=20,
         default_headers={
-            "HTTP-Referer": "https://app.hireloop.in",
-            "X-Title": "Hireloop - JD Enrichment",
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - JD Enrichment",
         },
     )
     user = f"TITLE: {title}\n\nDESCRIPTION:\n{description[:6000]}"

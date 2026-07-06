@@ -758,7 +758,7 @@ async def verify_otp(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This phone number is already linked to another Hireloop "
+                "This phone number is already linked to another Hireschema "
                 "account. Sign in with that account, or use a different number."
             ),
         ) from exc
@@ -910,7 +910,7 @@ async def save_phone(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "This phone number is already linked to another Hireloop "
+                    "This phone number is already linked to another Hireschema "
                     "account. Use a different number."
                 ),
             ) from exc
@@ -944,7 +944,7 @@ async def save_phone(
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "This phone number is already linked to another Hireloop "
+                        "This phone number is already linked to another Hireschema "
                         "account. Use a different number."
                     ),
                 ) from exc

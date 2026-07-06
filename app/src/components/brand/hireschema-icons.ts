@@ -1,8 +1,8 @@
-// Auto-generated from the Hireloop brand asset library (hireloop-assets.js).
+// Auto-generated from the Hireschema brand asset library (hireschema-assets.js).
 // Each icon: `l` = line paths (currentColor), `n` = optional lime "live node".
 // Geometric line system on a 24 grid, 1.75 stroke, square caps/joins.
 
-export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
+export const HIRESCHEMA_ICONS: Record<string, { l: string; n?: string }> = {
   "loop": {
     "l": "<path d=\"M9 15.5a3.6 3.6 0 1 1 3.4-2.4\"/><path d=\"M15 8.5a3.6 3.6 0 1 1-3.4 2.4\"/>",
     "n": "<circle cx=\"12\" cy=\"12\" r=\"1.6\"/>"
@@ -227,7 +227,7 @@ export const HIRELOOP_ICONS: Record<string, { l: string; n?: string }> = {
   }
 };
 
-export const HIRELOOP_ARROWS: Record<string, string> = {
+export const HIRESCHEMA_ARROWS: Record<string, string> = {
   "arrow-left": "<path d=\"M20 12H4M10 6 4 12l6 6\"/>",
   "arrow-right": "<path d=\"M4 12h16M14 6l6 6-6 6\"/>",
   "arrow-up": "<path d=\"M12 20V4M6 10l6-6 6 6\"/>",
@@ -242,4 +242,9 @@ export const HIRELOOP_ARROWS: Record<string, string> = {
   "corner": "<path d=\"M7 17V8.5A2 2 0 0 1 9 6.5h8\"/><path d=\"M13.5 3l3.5 3.5L13.5 10\"/>"
 };
 
-export type HireIconName = keyof typeof HIRELOOP_ICONS;
+export type HireIconName = keyof typeof HIRESCHEMA_ICONS;
+
+/** @deprecated Use HIRESCHEMA_ICONS */
+export const HIRELOOP_ICONS = HIRESCHEMA_ICONS;
+/** @deprecated Use HIRESCHEMA_ARROWS */
+export const HIRELOOP_ARROWS = HIRESCHEMA_ARROWS;

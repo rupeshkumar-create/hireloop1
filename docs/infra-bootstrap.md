@@ -1,4 +1,4 @@
-# Hireloop — Infrastructure Bootstrap Guide
+# Hireschema — Infrastructure Bootstrap Guide
 
 Run these steps **once** before `terraform apply` works. Do them in order.
 
@@ -91,14 +91,14 @@ npm install -g pnpm@9.12.2
 
 ## Step 4 — Cloudflare setup
 
-1. Add `hireloop.in` domain to Cloudflare (free plan is fine for start)
+1. Add `hireschema.com` domain to Cloudflare (free plan is fine for start)
 2. Update nameservers at your domain registrar to Cloudflare's NS
 3. Create API token:
    - Go to https://dash.cloudflare.com → Profile → API Tokens
    - Create token with permissions:
-     - Zone: `hireloop.in` → Zone Settings: Edit
-     - Zone: `hireloop.in` → DNS: Edit
-     - Zone: `hireloop.in` → Firewall Services: Edit
+     - Zone: `hireschema.com` → Zone Settings: Edit
+     - Zone: `hireschema.com` → DNS: Edit
+     - Zone: `hireschema.com` → Firewall Services: Edit
    - Save token
 4. Note Zone ID (Overview page, right sidebar)
 
@@ -129,13 +129,13 @@ terraform apply -var-file=envs/staging/terraform.tfvars
    - Root Directory: `web`
    - Framework: Next.js
    - Environment Variables (copy from `web/.env.example`)
-   - Custom Domain: `hireloop.in` + `www.hireloop.in`
+   - Custom Domain: `hireschema.com` + `www.hireschema.com`
 
    **Project 2 — app (SPA)**
    - Root Directory: `app`
    - Framework: Next.js
    - Environment Variables (copy from `app/.env.example`)
-   - Custom Domain: `app.hireloop.in`
+   - Custom Domain: `hireschema.com`
 
 3. Both projects will get Cloudflare CNAME records from Terraform (Step 5)
 
@@ -183,7 +183,7 @@ put_secret "secret-key"          "$(openssl rand -hex 32)"
 ## Verification checklist
 
 - [ ] `git push` triggers CI green on all 3 workflows (web/app/api)
-- [ ] `https://hireloop.in` shows Coming Soon page
-- [ ] `https://app.hireloop.in` shows Signup placeholder
-- [ ] `https://api.hireloop.in/api/v1/health` returns `{"status":"ok",...}`
+- [ ] `https://hireschema.com` shows Coming Soon page
+- [ ] `https://hireschema.com` shows Signup placeholder
+- [ ] `https://api.hireschema.com/api/v1/health` returns `{"status":"ok",...}`
 - [ ] Supabase project accessible from API health check (P03 adds DB check)

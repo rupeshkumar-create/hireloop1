@@ -136,7 +136,7 @@ function SetupChecklist({
     {
       id: "google",
       label: "Connect Google",
-      hint: "Send intro emails to hiring managers who aren't on Hireloop yet.",
+      hint: "Send intro emails to hiring managers who aren't on Hireschema yet.",
       done: googleConnected,
       cta: "Connect",
       panel: "profile" as PanelId,

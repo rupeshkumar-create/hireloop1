@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "About Hireloop",
+  title: "About Hireschema",
   description:
-    "Hireloop is an AI recruiting platform — inspired by Jack & Jill (London) but built for India, the US, and the UK with local compliance and market-aware matching.",
+    "Hireschema is an AI recruiting platform — inspired by Jack & Jill (London) but built for India, the US, and the UK with local compliance and market-aware matching.",
 };
 
 const VALUES = [
@@ -62,7 +62,7 @@ export default function AboutPage() {
             is expensive and cold. Placement agencies charge 8–12% with zero transparency.
           </p>
           <p className="text-ink-700 leading-relaxed">
-            Hireloop is the Indian version — built with the same three-engine architecture
+            Hireschema is the Indian version — built with the same three-engine architecture
             (conversational → knowledge → matching), adapted for Indian compliance (DPDP Act 2023),
             Indian infrastructure (ap-south-1), and Indian cost structures (₹9–13/enriched contact,
             not $40 Apollo credits).
@@ -95,10 +95,10 @@ export default function AboutPage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <a
-              href="mailto:hello@hireloop.in"
+              href="mailto:hello@hireschema.com"
               className="inline-flex items-center justify-center bg-accent hover:bg-accent-hover text-paper-0 font-semibold px-6 py-3 rounded-xl text-sm transition-colors"
             >
-              hello@hireloop.in
+              hello@hireschema.com
             </a>
             <Link
               href="/contact"

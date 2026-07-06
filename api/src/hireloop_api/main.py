@@ -1,5 +1,5 @@
 """
-Hireloop API — FastAPI application entry point.
+Hireschema API — FastAPI application entry point.
 
 Architecture:
   - FastAPI with async handlers throughout (asyncpg, httpx)
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Hireloop API",
+    title="Hireschema API",
     description="AI recruiting platform for India — Aarya (candidate) + Nitya (recruiter)",
     version="0.1.0",
     lifespan=lifespan,

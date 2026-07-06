@@ -12,7 +12,7 @@ from hireloop_api.services.career_intelligence.engine import _completeness, _see
 
 # Prior roles per demo candidate (current role comes from seed dict).
 _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
-    "priya.candidate@hireloop.in": [
+    "priya.candidate@hireschema.com": [
         {
             "title": "Backend Engineer",
             "company": "Freshworks",
@@ -23,7 +23,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
             "highlights": ["API platform", "PostgreSQL performance tuning"],
         },
     ],
-    "rahul.candidate@hireloop.in": [
+    "rahul.candidate@hireschema.com": [
         {
             "title": "Frontend Engineer",
             "company": "CRED",
@@ -34,7 +34,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
             "highlights": ["React performance", "Design systems"],
         },
     ],
-    "ananya.candidate@hireloop.in": [
+    "ananya.candidate@hireschema.com": [
         {
             "title": "Data Scientist",
             "company": "Ola",
@@ -45,7 +45,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
             "highlights": ["Time-series models", "A/B testing"],
         },
     ],
-    "vikram.candidate@hireloop.in": [
+    "vikram.candidate@hireschema.com": [
         {
             "title": "Product Manager",
             "company": "Paytm",
@@ -56,7 +56,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
             "highlights": ["0-to-1 launches", "Growth analytics"],
         },
     ],
-    "meera.candidate@hireloop.in": [
+    "meera.candidate@hireschema.com": [
         {
             "title": "Marketing Specialist",
             "company": "Urban Company",
@@ -67,7 +67,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
             "highlights": ["Meta ads", "Retention campaigns"],
         },
     ],
-    "karan.candidate@hireloop.in": [
+    "karan.candidate@hireschema.com": [
         {
             "title": "DevOps Engineer",
             "company": "Myntra",
@@ -81,7 +81,7 @@ _DEMO_PRIOR_ROLES: dict[str, list[dict[str, Any]]] = {
 }
 
 _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
-    "priya.candidate@hireloop.in": [
+    "priya.candidate@hireschema.com": [
         {
             "degree": "B.Tech Computer Science",
             "institution": "NIT Trichy",
@@ -89,7 +89,7 @@ _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
             "end_date": "2018",
         },
     ],
-    "rahul.candidate@hireloop.in": [
+    "rahul.candidate@hireschema.com": [
         {
             "degree": "B.E. Information Technology",
             "institution": "BITS Pilani",
@@ -97,7 +97,7 @@ _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
             "end_date": "2018",
         },
     ],
-    "ananya.candidate@hireloop.in": [
+    "ananya.candidate@hireschema.com": [
         {
             "degree": "M.Tech AI",
             "institution": "IIT Madras",
@@ -105,7 +105,7 @@ _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
             "end_date": "2019",
         },
     ],
-    "vikram.candidate@hireloop.in": [
+    "vikram.candidate@hireschema.com": [
         {
             "degree": "B.Tech",
             "institution": "Delhi College of Engineering",
@@ -113,7 +113,7 @@ _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
             "end_date": "2016",
         },
     ],
-    "meera.candidate@hireloop.in": [
+    "meera.candidate@hireschema.com": [
         {
             "degree": "MBA Marketing",
             "institution": "NMIMS Mumbai",
@@ -121,7 +121,7 @@ _DEMO_EDUCATION: dict[str, list[dict[str, Any]]] = {
             "end_date": "2018",
         },
     ],
-    "karan.candidate@hireloop.in": [
+    "karan.candidate@hireschema.com": [
         {
             "degree": "B.Tech",
             "institution": "IIIT Hyderabad",

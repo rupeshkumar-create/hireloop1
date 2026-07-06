@@ -1,6 +1,6 @@
 # Demo Runbook — showing the working loop
 
-How to bring Hireloop up and walk the **candidate → match → intro → recruiter** loop.
+How to bring Hireschema up and walk the **candidate → match → intro → recruiter** loop.
 Two tracks: a **zero-key demo** (works today) and the **full-key demo** (live jobs,
 embeddings, voice, email). Companion: `KEYS_AND_UNLOCKS.md`.
 

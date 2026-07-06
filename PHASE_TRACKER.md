@@ -1,4 +1,4 @@
-# Hireloop — Build Phases (User Journey Order)
+# Hireschema — Build Phases (User Journey Order)
 
 Phases follow the **exact order a real user experiences the product**, not technical concerns.
 Build → test → ship each phase before moving to the next.
@@ -501,7 +501,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 
 ## S19 — Admin Panel + DPDP Compliance  ✅ 🧪
 
-> Internal dashboard for Hireloop team.
+> Internal dashboard for Hireschema team.
 > DPDP Act: candidates can export or delete their data.
 
 **What's built:**
@@ -528,7 +528,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 **To enable:**
 ```
 1. sendgrid.com → Create account → Settings → API Keys → Full Access key
-2. Verify sender domain: noreply@hireloop.in
+2. Verify sender domain: noreply@hireschema.com
 3. Add to api/.env:
    SENDGRID_API_KEY=SG.your-real-key
 4. Create templates and add IDs to api/.env:
@@ -565,7 +565,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 
 **Steps:**
 ```
-1. Cloudflare → add hireloop.in domain → rate limits + security headers
+1. Cloudflare → add hireschema.com domain → rate limits + security headers
 2. AWS ap-south-1:
    - ECS Fargate: hireloop-api (FastAPI, 2 vCPU / 4 GB)
    - ECS Fargate: hireloop-app (Next.js, 1 vCPU / 2 GB)
@@ -573,11 +573,11 @@ Never use SendGrid for cold/unsolicited intro emails.
 3. GitHub Actions CI/CD:
    - Push to main → build Docker image → push ECR → ECS rolling deploy
 4. DNS:
-   - app.hireloop.in → ECS app service
-   - api.hireloop.in → ECS API service
+   - hireschema.com → ECS app service
+   - api.hireschema.com → ECS API service
 5. Update .env:
-   NEXT_PUBLIC_API_URL=https://api.hireloop.in
-   ALLOWED_ORIGINS=https://app.hireloop.in
+   NEXT_PUBLIC_API_URL=https://api.hireschema.com
+   ALLOWED_ORIGINS=https://hireschema.com
 ```
 
 ---
@@ -657,6 +657,6 @@ cd web && pnpm dev   # → http://localhost:3000
 
 | Email | Password | Role |
 |-------|----------|------|
-| candidate@test.hireloop.in | hireloop-dev-2026 | candidate |
-| recruiter@test.hireloop.in | hireloop-dev-2026 | recruiter |
-| admin@test.hireloop.in | hireloop-dev-2026 | admin |
+| candidate@test.hireschema.com | hireloop-dev-2026 | candidate |
+| recruiter@test.hireschema.com | hireloop-dev-2026 | recruiter |
+| admin@test.hireschema.com | hireloop-dev-2026 | admin |

@@ -6,7 +6,7 @@ POST   /api/v1/voice-sessions/book           → create booking + voice_session 
 GET    /api/v1/voice-sessions                → candidate's session history
 DELETE /api/v1/voice-sessions/{id}/cancel    → cancel a booking
 
-Booking is owned by Hireloop. If the candidate has connected Google with the
+Booking is owned by Hireschema. If the candidate has connected Google with the
 calendar.events scope (same OAuth app as P13), we also create a Calendar event
 with a Meet link; otherwise the in-app slot row is the booking.
 """
@@ -117,7 +117,7 @@ async def book_session(
         candidate_id=str(candidate["id"]),
         start_iso=start_dt.isoformat(),
         end_iso=end_dt.isoformat(),
-        summary=f"Hireloop · {label} with Aarya",
+        summary=f"Hireschema · {label} with Aarya",
         description="Your 20-minute AI career call. Join at the scheduled time.",
         attendee_email=current_user["email"],
     )

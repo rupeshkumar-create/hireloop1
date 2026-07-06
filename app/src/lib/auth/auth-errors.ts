@@ -31,7 +31,7 @@ export function formatPkceError(context: AuthErrorContext): string {
   if (context === "oauth") {
     return (
       "LinkedIn sign-in was interrupted or your session expired. " +
-      "Close other Hireloop tabs, then tap Continue with LinkedIn again in this browser."
+      "Close other Hireschema tabs, then tap Continue with LinkedIn again in this browser."
     );
   }
   if (context === "email") {

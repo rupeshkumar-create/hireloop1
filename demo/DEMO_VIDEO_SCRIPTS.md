@@ -1,4 +1,4 @@
-# Hireloop — Demo Video Scripts (Jun 2026)
+# Hireschema — Demo Video Scripts (Jun 2026)
 
 Two videos. Video 1 uses `demo/commercial.html` (open in Chrome → click for
 fullscreen → Cmd+Shift+5 → record one 85s loop). Video 2 is you screen-recording
@@ -20,7 +20,7 @@ build at 0:12 and 0:55.
 | 0:38–0:53 | Chat demo | "Tell her what you want — 'product management, remote, twenty-five LPA' — and she searches live roles, explains exactly why you fit, and asks one question: want an intro?" |
 | 0:53–1:05 | Features | "Career-path planning. Tailored resume PDFs. Voice calls. Mock interviews with scorecards. Everything a career needs, in one loop." |
 | 1:05–1:15 | Nitya | "And for recruiters, Nitya works the other side — briefs, ranked pipelines, and intros both sides already said yes to." |
-| 1:15–1:25 | Logo | "Hireloop. Your career, on autopilot." |
+| 1:15–1:25 | Logo | "Hireschema. Your career, on autopilot." |
 
 ---
 
@@ -32,7 +32,7 @@ Desktop. Record at 1280×800+, hide bookmarks bar, Do-Not-Disturb on.
 
 ### Click path + talking track
 
-1. **Marketing site (20s)** — open hireloop.in landing. *"This is Hireloop —
+1. **Marketing site (20s)** — open hireschema.com landing. *"This is Hireschema —
    an AI recruiting platform for India. Two agents: Aarya for candidates,
    Nitya for recruiters, on one shared brain."*
 2. **Sign up (40s)** — app → Sign up → LinkedIn OAuth. *"One click. Aarya
@@ -62,7 +62,7 @@ Desktop. Record at 1280×800+, hide bookmarks bar, Do-Not-Disturb on.
     ranked pipeline → the intro you requested in step 6 arriving. *"Same brain,
     other side. The loop closes."*
 11. **Close (15s)** — back to dashboard. *"Built in weeks, security-hardened,
-    250+ automated tests. This is Hireloop."*
+    250+ automated tests. This is Hireschema."*
 
 ### Recording tips
 - Rehearse once with the exact account; fresh DB = predictable demo.

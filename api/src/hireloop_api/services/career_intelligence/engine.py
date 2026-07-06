@@ -391,8 +391,8 @@ class CareerIntelligenceService:
             # (empty Risk factors / Hidden signals). Give it room to finish.
             max_tokens=12000,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Career Intelligence",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Career Intelligence",
             },
         )
         messages = [

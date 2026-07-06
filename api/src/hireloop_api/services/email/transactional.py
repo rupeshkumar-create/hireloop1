@@ -76,7 +76,7 @@ def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> 
   <p style="margin:24px 0">
     <a href="{cta_url}" style="background:#111;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">{cta_label}</a>
   </p>
-  <p style="font-size:12px;color:#888;margin-top:24px">Hireloop — AI recruiting for India, the US &amp; the UK</p>
+  <p style="font-size:12px;color:#888;margin-top:24px">Hireschema — AI recruiting for India, the US &amp; the UK</p>
 </div>"""
 
 
@@ -145,13 +145,13 @@ async def maybe_send_signup_confirmation(
         sent = await _send_html_email(
             settings,
             to_email=email,
-            subject="Welcome to Hireloop",
+            subject="Welcome to Hireschema",
             html=_email_shell(
                 f"Welcome, {display_name} 👋",
                 "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
                 "looking for and she'll surface live roles in your market that fit your profile.</p>",
                 f"{settings.public_app_url.rstrip('/')}/dashboard",
-                "Open Hireloop",
+                "Open Hireschema",
             ),
         )
     else:
@@ -198,8 +198,8 @@ async def send_recruiter_invite_email(
     subject = f"{candidate_name} wants an intro — {job_title}"
     body_html = (
         f"<p style='font-size:14px;line-height:1.6'><strong>{candidate_name}</strong> "
-        f"requested an intro for <strong>{job_title}</strong> on Hireloop.</p>"
-        "<p style='font-size:14px;line-height:1.6'>You're not on Hireloop yet — "
+        f"requested an intro for <strong>{job_title}</strong> on Hireschema.</p>"
+        "<p style='font-size:14px;line-height:1.6'>You're not on Hireschema yet — "
         "accept the invite to view their profile and start a conversation.</p>"
     )
     html = _email_shell(
@@ -331,7 +331,7 @@ async def send_job_match_alert(
     sent = await _send_html_email(
         settings,
         to_email=row["email"],
-        subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireloop",
+        subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireschema",
         html=html,
     )
 
@@ -345,7 +345,7 @@ async def send_job_match_alert(
                 """,
                 user_id,
                 f"{len(jobs)} new job matches",
-                "We found roles that fit your profile — open Hireloop to view them.",
+                "We found roles that fit your profile — open Hireschema to view them.",
             )
         except Exception as exc:
             logger.error("job_match_notification_log_failed", error=str(exc)[:200])

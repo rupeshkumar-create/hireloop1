@@ -1,4 +1,4 @@
-# Hireloop — Local testing by phase
+# Hireschema — Local testing by phase
 
 Use this doc to test **one phase at a time**. Each section lists what to run, what keys you need, and how to know it passed.
 
@@ -46,9 +46,9 @@ pnpm dev
 
 | Email | Password | Use for |
 |-------|----------|---------|
-| candidate@test.hireloop.in | hireloop-dev-2026 | P04–P15, P19–P21 |
-| recruiter@test.hireloop.in | hireloop-dev-2026 | P16–P18 |
-| admin@test.hireloop.in | hireloop-dev-2026 | P23 |
+| candidate@test.hireschema.com | hireloop-dev-2026 | P04–P15, P19–P21 |
+| recruiter@test.hireschema.com | hireloop-dev-2026 | P16–P18 |
+| admin@test.hireschema.com | hireloop-dev-2026 | P23 |
 
 Sign in via Supabase **email/password** (not LinkedIn) if you used `seed_dev.sql`.
 
@@ -215,7 +215,7 @@ psql ... -f scripts/seed_dev.sql
 
 **Test:**
 
-1. `http://localhost:3001/signup` — LinkedIn **or** email `candidate@test.hireloop.in` / `hireloop-dev-2026`
+1. `http://localhost:3001/signup` — LinkedIn **or** email `candidate@test.hireschema.com` / `hireloop-dev-2026`
 2. Complete onboarding → land on `/dashboard`
 3. Optional phone verify: `POST /api/v1/auth/phone/send-otp` then `verify-otp` (read OTP from API log in dev)
 4. `GET /api/v1/auth/me` with Bearer token
@@ -364,7 +364,7 @@ Or use **seed** `match_scores` for candidate `ca000000-...`.
 **Keys:** **OpenRouter**  
 **Test:**
 
-1. Login `recruiter@test.hireloop.in`
+1. Login `recruiter@test.hireschema.com`
 2. `http://localhost:3001/recruiter/roles/new` → create role
 3. `…/intake` — chat until Nitya outputs brief
 4. Check `roles.hiring_brief`, `evaluation_criteria` in DB
@@ -448,7 +448,7 @@ Or use **seed** `match_scores` for candidate `ca000000-...`.
 **Keys:** none  
 **Test:**
 
-1. Login `admin@test.hireloop.in`
+1. Login `admin@test.hireschema.com`
 2. `http://localhost:3001/admin`
 3. `GET /api/v1/admin/dashboard`, `/bias-audit`, `/placements`
 4. Settings → export: `GET /api/v1/me/dpdp/export`

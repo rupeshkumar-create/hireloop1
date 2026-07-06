@@ -270,7 +270,7 @@ async def _provision_user_row(
     user_id = coerce_uuid(supabase_user["id"])
     email = str(supabase_user.get("email") or "").strip()
     if not email:
-        email = f"{user_id}@signup.hireloop.internal"
+        email = f"{user_id}@signup.hireschema.comternal"
     meta = supabase_user.get("user_metadata") or {}
 
     # SECURITY: `user_metadata` (raw_user_meta_data) is attacker-controlled at
@@ -308,7 +308,7 @@ async def _provision_user_row(
         )
     except asyncpg.UniqueViolationError:
         # Another auth identity already owns this email — keep FK row with a stable placeholder.
-        email = f"{user_id}@signup.hireloop.internal"
+        email = f"{user_id}@signup.hireschema.comternal"
         row = await db.fetchrow(
             """
             INSERT INTO public.users (id, email, full_name, avatar_url, role, phone_verified, market)

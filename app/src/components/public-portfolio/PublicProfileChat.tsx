@@ -26,7 +26,7 @@ const PORTFOLIO_CHIPS: ChatChip[] = [
   {
     id: "intro",
     label: "Request intro",
-    message: "How do I request an intro to this candidate on Hireloop?",
+    message: "How do I request an intro to this candidate on Hireschema?",
   },
 ];
 

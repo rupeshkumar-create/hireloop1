@@ -1,5 +1,5 @@
 /* ============================================================
-   HIRELOOP — Custom Asset Library (canonical source)
+   HIRESCHEMA — Custom Asset Library (canonical source)
    Charcoal + electric-lime. Geometric line system on a 24 grid,
    1.75 stroke, round caps/joins. Signature: every glyph carries a
    single lime "live node" — the loop-signal that unifies the set.

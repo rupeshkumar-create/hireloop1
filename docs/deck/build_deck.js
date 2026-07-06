@@ -1,4 +1,4 @@
-/* Hireloop — build overview deck. Generated with pptxgenjs. */
+/* Hireschema — build overview deck. Generated with pptxgenjs. */
 const pptxgen = require("pptxgenjs");
 const React = require("react");
 const ReactDOMServer = require("react-dom/server");
@@ -22,8 +22,8 @@ const W = 13.333, H = 7.5;
 const pres = new pptxgen();
 pres.defineLayout({ name: "WIDE", width: W, height: H });
 pres.layout = "WIDE";
-pres.author = "Hireloop";
-pres.title = "Hireloop — Build Overview";
+pres.author = "Hireschema";
+pres.title = "Hireschema — Build Overview";
 
 const shadow = () => ({ type: "outer", color: "0B1120", blur: 9, offset: 3, angle: 135, opacity: 0.16 });
 
@@ -46,7 +46,7 @@ function footer(slide, n, dark = false) {
   const col = dark ? C.faint : C.muted;
   slide.addText(
     [
-      { text: "Hireloop", options: { bold: true, color: dark ? C.teal : C.tealDk } },
+      { text: "Hireschema", options: { bold: true, color: dark ? C.teal : C.tealDk } },
       { text: "   ·   India-first AI recruiting   ·   Confidential", options: { color: col } },
     ],
     { x: 0.55, y: H - 0.46, w: 9, h: 0.3, fontFace: FB, fontSize: 9, align: "left", margin: 0 }
@@ -116,7 +116,7 @@ async function build() {
     title(s, "At a glance", "What we're building");
 
     s.addText(
-      "Hireloop is a two-sided, AI-run recruiting platform for India. Candidates are guided " +
+      "Hireschema is a two-sided, AI-run recruiting platform for India. Candidates are guided " +
       "end-to-end by Aarya — an AI career partner that ingests their LinkedIn, CV and a short " +
       "voice call, then surfaces real, scored job matches. Recruiters are served by Nitya, which " +
       "drafts warm intros and runs their pipeline. A shared Postgres candidate graph connects both sides.",
@@ -287,9 +287,9 @@ async function build() {
     arrow(3.05, 2.37, 0.5);
     box(3.55, 1.75, 2.5, 1.25, "Vercel Edge", "CDN · India-only\ngeo middleware", C.amber);
     arrow(6.05, 2.37, 0.5);
-    box(6.55, 1.75, 2.9, 1.25, "Next.js (Vercel)", "app.hireloop.in\nweb.hireloop.in", C.indigo);
+    box(6.55, 1.75, 2.9, 1.25, "Next.js (Vercel)", "hireschema.com\nweb.hireschema.com", C.indigo);
     arrow(9.45, 2.37, 0.5);
-    box(9.95, 1.75, 2.85, 1.25, "FastAPI", "api.hireloop.in\nPython 3.12 · async", C.teal);
+    box(9.95, 1.75, 2.85, 1.25, "FastAPI", "api.hireschema.com\nPython 3.12 · async", C.teal);
 
     // down arrow
     s.addShape(pres.shapes.LINE, { x: 11.37, y: 3.0, w: 0, h: 0.55, line: { color: C.teal, width: 2.5, endArrowType: "triangle" } });
@@ -415,7 +415,7 @@ async function build() {
     s.addText("Recruiters are pulled in on demand", { x: 0.8, y: 4.85, w: 8, h: 0.35, fontFace: FH, fontSize: 14, bold: true, color: C.ink, margin: 0 });
     s.addText(
       "When a candidate requests an intro, the platform looks the recruiter up in our database. " +
-      "Already on Hireloop? They get an in-app intro request. New to us? They get a one-click email " +
+      "Already on Hireschema? They get an in-app intro request. New to us? They get a one-click email " +
       "invite to sign up, see the candidate, and start the chat. The database — never agent-to-agent " +
       "calls — keeps both sides in sync. No cold email, ever.",
       { x: 0.8, y: 5.22, w: 11.8, h: 0.95, fontFace: FB, fontSize: 12, color: C.ink, lineSpacingMultiple: 1.08, margin: 0 }
@@ -639,7 +639,7 @@ async function build() {
       ["NeverBounce", "Email verification (planned)", "—", "—", "Not bought yet"],
       ["Gmail OAuth", "Recruiter intro sending", "Free", "Free", "—"],
       ["SendGrid", "Transactional email", "—", "—", "Not bought yet"],
-      ["Domain (hireloop.in)", "Registrar / DNS", "—", "—", "Not bought yet"],
+      ["Domain (hireschema.com)", "Registrar / DNS", "—", "—", "Not bought yet"],
       ["Claude (Anthropic)", "Dev / build assistant", "Pro", "$20 / mo", "Monthly"],
       ["Cursor", "AI code editor — dev tool", "Pro", "$55 / yr", "Yearly"],
     ];
@@ -733,7 +733,7 @@ async function build() {
     s.addText("Confidential — for internal review", { x: 0, y: 6.7, w: W, h: 0.3, fontFace: FM, fontSize: 10, color: C.faint, align: "center", margin: 0 });
   }
 
-  await pres.writeFile({ fileName: "/Users/rupesh/Claude/hireloop-app/Hireloop_Overview.pptx" });
+  await pres.writeFile({ fileName: "/Users/rupesh/Claude/hireloop-app/Hireschema_Overview.pptx" });
   console.log("DECK WRITTEN");
 }
 

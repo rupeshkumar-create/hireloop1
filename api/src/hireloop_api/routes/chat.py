@@ -945,7 +945,7 @@ async def send_message(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            "X-Hireloop-Stream": "aarya-v1",
+            "X-Hireschema-Stream": "aarya-v1",
         },
         # After the reply is fully streamed, remember this exchange: extract
         # profile facts (newer-wins) + refresh the rolling cross-conversation

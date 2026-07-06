@@ -7,7 +7,7 @@ app_name    = "hireloop"
 
 # Cloudflare — get from Cloudflare dashboard
 cloudflare_api_token  = "your-cloudflare-api-token"
-cloudflare_zone_id    = "your-zone-id-for-hireloop.in"
+cloudflare_zone_id    = "your-zone-id-for-hireschema.com"
 cloudflare_account_id = "your-cloudflare-account-id"
 
 # Supabase

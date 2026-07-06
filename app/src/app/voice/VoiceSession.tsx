@@ -285,7 +285,7 @@ export function VoiceSession({
     // A real senior recruiter picking up the phone — warm, in control, and it
     // ends on an open question so the candidate knows it's their turn.
     const greeting =
-      `Hi ${firstName}, this is Aarya — I'm a senior recruiter here at Hireloop. ` +
+      `Hi ${firstName}, this is Aarya — I'm a senior recruiter here at Hireschema. ` +
       `Thanks for hopping on. I've got about fifteen minutes blocked to really understand ` +
       `your background and what you want next, and then I'll line up the roles that genuinely fit. ` +
       `So, to kick us off — tell me a bit about what you're doing right now, and where you'd love to go from here.`;

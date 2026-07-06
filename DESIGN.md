@@ -1,4 +1,4 @@
-# Hireloop — Design System (v2 · Charcoal + Lime)
+# Hireschema — Design System (v2 · Charcoal + Lime)
 
 > The only design doc. Read this before building any UI, on the marketing site
 > (`web/`) or the app (`app/`). If you can't justify a deviation in one

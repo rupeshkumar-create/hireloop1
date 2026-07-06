@@ -6,7 +6,7 @@ DECLARE
   purged INTEGER := 0;
 BEGIN
   UPDATE public.users u
-  SET email = 'purged-' || u.id::text || '@deleted.hireloop.in',
+  SET email = 'purged-' || u.id::text || '@deleted.hireschema.com',
       phone = NULL,
       full_name = 'Deleted User',
       avatar_url = NULL

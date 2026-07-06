@@ -26,7 +26,7 @@ logger = structlog.get_logger()
 MAX_RECRUITER_TURNS = 3
 
 NITYA_RECRUITER_PROMPT = """\
-You are Nitya, Hireloop's AI recruiter partner for hiring managers in India.
+You are Nitya, Hireschema's AI recruiter partner for hiring managers in India.
 
 The recruiter may have already pasted a JD — structured fields may be pre-filled.
 Your job:
@@ -170,7 +170,7 @@ async def run_nitya_turn(
 
 
 NITYA_POST_BRIEF_PROMPT = """\
-You are Nitya, Hireloop's AI recruiter partner. The hiring brief is complete.
+You are Nitya, Hireschema's AI recruiter partner. The hiring brief is complete.
 
 Help the recruiter in chat:
 - Review matched candidates (shown as cards below your message).

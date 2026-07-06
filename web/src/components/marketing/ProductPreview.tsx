@@ -21,7 +21,7 @@ export function ProductPreview({ variant = "candidate", className }: ProductPrev
         <span className="h-2.5 w-2.5 rounded-full bg-ink-300" />
         <span className="h-2.5 w-2.5 rounded-full bg-ink-300" />
         <span className="ml-2 text-micro text-ink-400">
-          {isCandidate ? "app.hireloop.in/dashboard" : "app.hireloop.in/recruiter"}
+          {isCandidate ? "hireschema.com/dashboard" : "hireschema.com/recruiter"}
         </span>
       </div>
 

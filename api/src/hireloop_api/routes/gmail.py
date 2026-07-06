@@ -10,7 +10,7 @@ Scopes requested (least-privilege, no read access to mail/calendar):
   - https://www.googleapis.com/auth/gmail.send       → P13 cold outreach (send only)
   - https://www.googleapis.com/auth/calendar.events  → P07 voice-session booking
 
-Hireloop NEVER reads or indexes the candidate's email or calendar. gmail.send is
+Hireschema NEVER reads or indexes the candidate's email or calendar. gmail.send is
 send-only and calendar.events only creates/cancels the events we book. This
 commitment is documented in /terms and /privacy on the web app.
 """
@@ -54,7 +54,7 @@ _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
 # The callback is unauthenticated (Google redirects the browser there), so the
-# `state` parameter is the ONLY binding between the OAuth result and a Hireloop
+# `state` parameter is the ONLY binding between the OAuth result and a Hireschema
 # user. A raw user-id state is forgeable: anyone who learns a victim's user-id
 # could complete the flow with their own Google account and attach THEIR mailbox
 # to the victim's profile (intercepting intro conversations). So state is
@@ -164,7 +164,7 @@ async def gmail_callback(
     Redirects to /dashboard on success.
     """
     # Verify the state BEFORE any token exchange — a forged or expired state must
-    # never bind Google tokens to a Hireloop account.
+    # never bind Google tokens to a Hireschema account.
     user_id = verify_oauth_state(settings.secret_key, state)
     if not user_id:
         logger.warning("gmail_callback_bad_state")

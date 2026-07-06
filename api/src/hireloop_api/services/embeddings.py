@@ -62,8 +62,8 @@ class EmbeddingService:
             base_url=_OPENROUTER_BASE,
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "HTTP-Referer": "https://hireloop.in",
-                "X-Title": "Hireloop Embeddings",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema Embeddings",
             },
             timeout=60.0,
         )

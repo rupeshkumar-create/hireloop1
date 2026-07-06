@@ -1,5 +1,5 @@
 /**
- * Hireloop App Tailwind config — follows DESIGN.md (repo root).
+ * Hireschema App Tailwind config — follows DESIGN.md (repo root).
  *
  * Three colours, one shade each (plus the ink scale for type hierarchy).
  * No brand-*, no gray-*, no chat-*. Everything is ink / paper / accent.

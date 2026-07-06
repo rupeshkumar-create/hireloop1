@@ -1,4 +1,4 @@
-# Hireloop API — FastAPI (uvicorn). Container host: Railway / any PaaS.
+# Hireschema API — FastAPI (uvicorn). Container host: Railway / any PaaS.
 # ── Build stage ────────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 

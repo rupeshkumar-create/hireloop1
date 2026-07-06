@@ -29,7 +29,9 @@ export function Footer() {
               <div className="w-8 h-8 rounded-lg ">
                 <span className="text-paper-0 font-bold text-sm">H</span>
               </div>
-              <span className="font-bold text-xl text-paper-0">Hireloop</span>
+              <span className="font-bold text-xl text-paper-0">
+                Hire<span className="text-accent">schema</span>
+              </span>
             </div>
             <p className="text-sm text-ink-500 leading-relaxed max-w-xs">
               India&apos;s first AI recruiting platform. Aarya finds you the right job.
@@ -64,21 +66,21 @@ export function Footer() {
 
         <div className="mt-12 pt-8 border-t border-ink-700 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-ink-700">
-            &copy; {new Date().getFullYear()} Hireloop Technology Pvt. Ltd. All rights reserved.
+            &copy; {new Date().getFullYear()} Hireschema All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-xs text-ink-700">
             <a
-              href="mailto:privacy@hireloop.in"
+              href="mailto:privacy@hireschema.com"
               className="hover:text-ink-500 transition-colors"
             >
-              DPO: privacy@hireloop.in
+              DPO: privacy@hireschema.com
             </a>
             <span>·</span>
             <a
-              href="mailto:hello@hireloop.in"
+              href="mailto:hello@hireschema.com"
               className="hover:text-ink-500 transition-colors"
             >
-              hello@hireloop.in
+              hello@hireschema.com
             </a>
           </div>
         </div>

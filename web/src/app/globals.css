@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Hireloop marketing globals — DESIGN.md compliant. Mirrors app/globals.css. */
+/* Hireschema marketing globals — DESIGN.md compliant. Mirrors app/globals.css. */
 
 @layer utilities {
   .bg-paper-0   { background-color: #FAFAF7; }

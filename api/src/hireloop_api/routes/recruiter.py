@@ -1014,8 +1014,8 @@ async def nitya_chat_message(
             temperature=0.4,
             max_tokens=2048,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Nitya Recruiter Chat",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Nitya Recruiter Chat",
             },
         )
         reply, brief, chips = await run_nitya_turn(
@@ -1061,8 +1061,8 @@ async def nitya_chat_message(
             temperature=0.4,
             max_tokens=2048,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Nitya Recruiter Chat",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Nitya Recruiter Chat",
             },
         )
 
@@ -1595,7 +1595,7 @@ async def recruiter_respond_intro(
                 "job_title": intro["job_title"] or "the role",
                 "status": event,
                 "status_message": f"Your intro was {event}.",
-                "cta_url": f"{settings.allowed_origins[0] if settings.allowed_origins else 'https://app.hireloop.in'}/intros",
+                "cta_url": f"{settings.allowed_origins[0] if settings.allowed_origins else 'https://hireschema.com'}/intros",
             },
         )
 

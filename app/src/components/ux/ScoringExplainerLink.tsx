@@ -22,7 +22,7 @@ export function ScoringExplainerLink() {
           aria-modal
         >
           <div className="max-w-md rounded-lg border border-ink-100 bg-paper-0 p-5 shadow-2 space-y-3">
-            <h3 className="text-h3 text-ink-900">How Hireloop scores matches</h3>
+            <h3 className="text-h3 text-ink-900">How Hireschema scores matches</h3>
             <ul className="text-small text-ink-600 space-y-2 list-disc pl-4">
               <li>Market-scoped roles — jobs match your home market (IN, US, or GB).</li>
               <li>Skills, experience, location, and salary fit — no demographic fields.</li>

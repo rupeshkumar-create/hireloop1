@@ -1,5 +1,5 @@
 /**
- * Hireloop Marketing Site Tailwind config — follows DESIGN.md (repo root).
+ * Hireschema Marketing Site Tailwind config — follows DESIGN.md (repo root).
  * Identical token set to app/. Marketing pages use the same primitives.
  */
 import type { Config } from "tailwindcss";

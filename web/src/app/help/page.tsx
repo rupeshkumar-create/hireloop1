@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 export const metadata: Metadata = {
   title: "Help & support",
-  description: "Get help with Hireloop — candidates, recruiters, privacy, and account issues.",
+  description: "Get help with Hireschema — candidates, recruiters, privacy, and account issues.",
 };
 
 const FAQ = [
@@ -27,7 +27,7 @@ const FAQ = [
   },
   {
     q: "How do I delete my data?",
-    a: "In the app, go to Settings → Privacy → request export or deletion. You can also email privacy@hireloop.in.",
+    a: "In the app, go to Settings → Privacy → request export or deletion. You can also email privacy@hireschema.com.",
   },
 ];
 
@@ -37,7 +37,7 @@ export default function HelpPage() {
       <div className="max-w-2xl mx-auto px-4 sm:px-6">
         <h1 className="text-h1 font-semibold text-ink-900">Help & support</h1>
         <p className="mt-2 text-body text-ink-600">
-          Quick answers for candidates and recruiters using Hireloop in India.
+          Quick answers for candidates and recruiters using Hireschema in India.
         </p>
 
         <div className="mt-10 space-y-6">
@@ -53,12 +53,12 @@ export default function HelpPage() {
           <p className="text-body font-medium text-ink-900">Still stuck?</p>
           <p className="text-small text-ink-600">
             Email{" "}
-            <a href="mailto:privacy@hireloop.in" className="underline text-ink-900">
-              privacy@hireloop.in
+            <a href="mailto:privacy@hireschema.com" className="underline text-ink-900">
+              privacy@hireschema.com
             </a>{" "}
             for privacy or account issues, or{" "}
-            <a href="mailto:hello@hireloop.in" className="underline text-ink-900">
-              hello@hireloop.in
+            <a href="mailto:hello@hireschema.com" className="underline text-ink-900">
+              hello@hireschema.com
             </a>{" "}
             for general support.
           </p>

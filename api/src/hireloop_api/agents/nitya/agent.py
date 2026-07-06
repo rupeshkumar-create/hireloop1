@@ -41,7 +41,7 @@ logger = structlog.get_logger()
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-NITYA_SYSTEM_PROMPT = """You are Nitya, Hireloop's AI that helps candidates get warm \
+NITYA_SYSTEM_PROMPT = """You are Nitya, Hireschema's AI that helps candidates get warm \
 intros to hiring managers.
 
 Your sole job when activated is to:
@@ -83,8 +83,8 @@ class NityaIntroHandler:
             temperature=0.5,
             max_tokens=2048,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Nitya Recruiter AI",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Nitya Recruiter AI",
             },
         )
 

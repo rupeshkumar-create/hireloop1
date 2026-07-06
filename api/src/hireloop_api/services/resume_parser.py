@@ -593,8 +593,8 @@ class ResumeParserService:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://app.hireloop.in",
-            "X-Title": "Hireloop - Resume Parser",
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Resume Parser",
         }
         async with httpx.AsyncClient(timeout=75.0) as client:
             resp = await client.post(cls.OPENROUTER_URL, headers=headers, json=payload)
@@ -739,8 +739,8 @@ class ResumeParserService:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://app.hireloop.in",
-            "X-Title": "Hireloop - Resume Parser (vision)",
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Resume Parser (vision)",
         }
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:

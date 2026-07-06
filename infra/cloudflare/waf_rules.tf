@@ -1,5 +1,5 @@
 ###############################################################################
-# Hireloop — Cloudflare WAF rules
+# Hireschema — Cloudflare WAF rules
 # Rate limits + security headers (no geo-blocking — global access)
 ###############################################################################
 
@@ -24,7 +24,7 @@ provider "cloudflare" {
 
 resource "cloudflare_ruleset" "rate_limits" {
   zone_id     = var.cloudflare_zone_id
-  name        = "Hireloop Rate Limits"
+  name        = "Hireschema Rate Limits"
   description = "Rate limiting rules for API endpoints"
   kind        = "zone"
   phase       = "http_ratelimit"
@@ -64,7 +64,7 @@ resource "cloudflare_ruleset" "rate_limits" {
 
 resource "cloudflare_ruleset" "security_headers" {
   zone_id     = var.cloudflare_zone_id
-  name        = "Hireloop Security Headers"
+  name        = "Hireschema Security Headers"
   description = "Add security headers to all responses"
   kind        = "zone"
   phase       = "http_response_headers_transform"

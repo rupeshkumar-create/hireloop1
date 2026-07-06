@@ -49,17 +49,17 @@ LIVE_JOB_QUERIES = [
 LIVE_JOB_LOCATIONS = ["Bengaluru", "Mumbai", "Hyderabad", "India"]
 
 DEMO_EMAILS = [
-    "priya.candidate@hireloop.in",
-    "rahul.candidate@hireloop.in",
-    "ananya.candidate@hireloop.in",
-    "vikram.candidate@hireloop.in",
-    "meera.candidate@hireloop.in",
-    "karan.candidate@hireloop.in",
-    "arun.recruiter@hireloop.in",
-    "neha.recruiter@hireloop.in",
-    "sanjay.recruiter@hireloop.in",
-    "divya.recruiter@hireloop.in",
-    "ravi.recruiter@hireloop.in",
+    "priya.candidate@hireschema.com",
+    "rahul.candidate@hireschema.com",
+    "ananya.candidate@hireschema.com",
+    "vikram.candidate@hireschema.com",
+    "meera.candidate@hireschema.com",
+    "karan.candidate@hireschema.com",
+    "arun.recruiter@hireschema.com",
+    "neha.recruiter@hireschema.com",
+    "sanjay.recruiter@hireschema.com",
+    "divya.recruiter@hireschema.com",
+    "ravi.recruiter@hireschema.com",
 ]
 
 COMPANIES = [
@@ -114,7 +114,7 @@ CANDIDATES = [
     {
         "user_id": "c1111111-1111-1111-1111-111111111111",
         "candidate_id": "ca111111-1111-1111-1111-111111111111",
-        "email": "priya.candidate@hireloop.in",
+        "email": "priya.candidate@hireschema.com",
         "phone": "+919876543210",
         "full_name": "Priya Sharma",
         "headline": "Senior backend engineer · payments · Python · Bengaluru",
@@ -136,7 +136,7 @@ CANDIDATES = [
     {
         "user_id": "c2111111-1111-1111-1111-111111111111",
         "candidate_id": "ca211111-1111-1111-1111-111111111111",
-        "email": "rahul.candidate@hireloop.in",
+        "email": "rahul.candidate@hireschema.com",
         "phone": "+919876543211",
         "full_name": "Rahul Verma",
         "headline": "Frontend engineer · React · TypeScript · design systems",
@@ -158,7 +158,7 @@ CANDIDATES = [
     {
         "user_id": "c3111111-1111-1111-1111-111111111111",
         "candidate_id": "ca311111-1111-1111-1111-111111111111",
-        "email": "ananya.candidate@hireloop.in",
+        "email": "ananya.candidate@hireschema.com",
         "phone": "+919876543212",
         "full_name": "Ananya Iyer",
         "headline": "ML engineer · PyTorch · LLMs · MLOps",
@@ -180,7 +180,7 @@ CANDIDATES = [
     {
         "user_id": "c4111111-1111-1111-1111-111111111111",
         "candidate_id": "ca411111-1111-1111-1111-111111111111",
-        "email": "vikram.candidate@hireloop.in",
+        "email": "vikram.candidate@hireschema.com",
         "phone": "+919876543213",
         "full_name": "Vikram Patel",
         "headline": "Product manager · consumer apps · growth & analytics",
@@ -208,7 +208,7 @@ CANDIDATES = [
     {
         "user_id": "c5111111-1111-1111-1111-111111111111",
         "candidate_id": "ca511111-1111-1111-1111-111111111111",
-        "email": "meera.candidate@hireloop.in",
+        "email": "meera.candidate@hireschema.com",
         "phone": "+919876543214",
         "full_name": "Meera Nair",
         "headline": "Growth marketing · paid social · SEO · content",
@@ -241,7 +241,7 @@ CANDIDATES = [
     {
         "user_id": "c6111111-1111-1111-1111-111111111111",
         "candidate_id": "ca611111-1111-1111-1111-111111111111",
-        "email": "karan.candidate@hireloop.in",
+        "email": "karan.candidate@hireschema.com",
         "phone": "+919876543215",
         "full_name": "Karan Singh",
         "headline": "DevOps / SRE · Kubernetes · AWS · Terraform",
@@ -266,7 +266,7 @@ RECRUITERS = [
     {
         "user_id": "b1111111-1111-1111-1111-111111111111",
         "recruiter_id": "b2222222-1111-1111-1111-111111111111",
-        "email": "arun.recruiter@hireloop.in",
+        "email": "arun.recruiter@hireschema.com",
         "phone": "+919876543220",
         "full_name": "Arun Mehta",
         "company_id": "11111111-1111-1111-1111-111111111111",
@@ -298,7 +298,7 @@ Compensation: ₹35-50 LPA. Bengaluru hybrid (3 days office).
     {
         "user_id": "b3111111-1111-1111-1111-111111111111",
         "recruiter_id": "b3222222-1111-1111-1111-111111111111",
-        "email": "neha.recruiter@hireloop.in",
+        "email": "neha.recruiter@hireschema.com",
         "phone": "+919876543221",
         "full_name": "Neha Kapoor",
         "company_id": "d1111111-1111-1111-1111-111111111111",
@@ -330,7 +330,7 @@ Compensation: ₹28-45 LPA. Bengaluru onsite.
     {
         "user_id": "b4111111-1111-1111-1111-111111111111",
         "recruiter_id": "b4222222-1111-1111-1111-111111111111",
-        "email": "sanjay.recruiter@hireloop.in",
+        "email": "sanjay.recruiter@hireschema.com",
         "phone": "+919876543222",
         "full_name": "Sanjay Reddy",
         "company_id": "d2222222-1111-1111-1111-111111111111",
@@ -362,7 +362,7 @@ Compensation: ₹35-55 LPA. Bengaluru hybrid.
     {
         "user_id": "b5111111-1111-1111-1111-111111111111",
         "recruiter_id": "b5222222-1111-1111-1111-111111111111",
-        "email": "divya.recruiter@hireloop.in",
+        "email": "divya.recruiter@hireschema.com",
         "phone": "+919876543223",
         "full_name": "Divya Menon",
         "company_id": "d3333333-1111-1111-1111-111111111111",
@@ -394,7 +394,7 @@ Compensation: ₹22-35 LPA. Bengaluru hybrid.
     {
         "user_id": "b6111111-1111-1111-1111-111111111111",
         "recruiter_id": "b6222222-1111-1111-1111-111111111111",
-        "email": "ravi.recruiter@hireloop.in",
+        "email": "ravi.recruiter@hireschema.com",
         "phone": "+919876543224",
         "full_name": "Ravi Krishnan",
         "company_id": "d4444444-1111-1111-1111-111111111111",

@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import { RecruiterOnboardingFlow } from "./RecruiterOnboardingFlow";
 
 export const metadata: Metadata = {
-  title: "Set up recruiter workspace — Hireloop",
+  title: "Set up recruiter workspace — Hireschema",
 };
 
 export default async function RecruiterOnboardingPage() {

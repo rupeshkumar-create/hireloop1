@@ -1737,7 +1737,7 @@ async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[st
         "consent_log": [dict(c) for c in consents],
         "messages_sample": [dict(m) for m in messages],
         "intro_requests": [dict(i) for i in intros],
-        "dpdp_contact": "privacy@hireloop.in",
+        "dpdp_contact": "privacy@hireschema.com",
     }
 
 

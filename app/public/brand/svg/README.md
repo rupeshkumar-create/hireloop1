@@ -1,4 +1,4 @@
-# Hireloop — Custom Asset Pack
+# Hireschema — Custom Asset Pack
 
 Charcoal + electric-lime · Geist · drawn on a 24 grid, 1.75 stroke, round caps/joins.
 Signature: every glyph carries one lime "live-node" (#B9F84C).

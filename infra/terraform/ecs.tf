@@ -1,5 +1,5 @@
 ###############################################################################
-# Hireloop — ECS Fargate cluster + API service
+# Hireschema — ECS Fargate cluster + API service
 ###############################################################################
 
 # ECS Cluster

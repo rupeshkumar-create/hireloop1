@@ -1,7 +1,7 @@
 [project]
 name = "hireloop-api"
 version = "0.1.0"
-description = "Hireloop backend API — FastAPI + LangGraph agent loops"
+description = "Hireschema backend API — FastAPI + LangGraph agent loops"
 requires-python = ">=3.12"
 dependencies = [
     # Web framework

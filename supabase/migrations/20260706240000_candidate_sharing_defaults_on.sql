@@ -20,4 +20,4 @@ WHERE deleted_at IS NULL
 COMMENT ON COLUMN public.candidates.public_profile_enabled IS
   'When true, /p/{slug} is world-readable (subject to hide_contact_public). Defaults on for new candidates.';
 COMMENT ON COLUMN public.candidates.share_with_recruiters IS
-  'When true, registered Hireloop recruiters may see this profile in search. Defaults on for new candidates.';
+  'When true, registered Hireschema recruiters may see this profile in search. Defaults on for new candidates.';

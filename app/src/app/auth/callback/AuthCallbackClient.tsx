@@ -100,7 +100,7 @@ export function AuthCallbackClient() {
       } catch (err) {
         const message =
           err instanceof ApiUnreachableError
-            ? "LinkedIn sign-in succeeded, but we couldn't reach the Hireloop API to finish setup. Try again in a moment."
+            ? "LinkedIn sign-in succeeded, but we couldn't reach the Hireschema API to finish setup. Try again in a moment."
             : err instanceof Error
               ? err.message
               : "Account setup failed. Please try signing in again.";

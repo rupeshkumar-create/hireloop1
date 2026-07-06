@@ -1,5 +1,5 @@
 /**
- * Hireloop marketing landing — DESIGN.md compliant.
+ * Hireschema marketing landing — DESIGN.md compliant.
  *
  * North star: Stripe Docs + Linear. Type-led, quiet, confident.
  * No dark hero. No gradient orbs. No floating UI mockups.
@@ -18,10 +18,10 @@ import {
 } from "lucide-react";
 import { Reveal } from "@/components/ui/Reveal";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 export const metadata = {
-  title: "Hireloop — Your AI career partner",
+  title: "Hireschema — Your AI career partner",
   description:
     "Aarya finds you the right roles in India, the US, and the UK — scores your fit and makes the warm intro to the hiring manager. Free for candidates. Private beta.",
 };
@@ -351,7 +351,7 @@ function CtaStrip() {
               <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
             </Link>
             <Link
-              href="mailto:hello@hireloop.in"
+              href="mailto:hello@hireschema.com"
               className="
                 inline-flex items-center justify-center gap-2
                 bg-ink-700 hover:bg-ink-700/80 text-paper-0

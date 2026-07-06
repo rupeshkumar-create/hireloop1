@@ -303,7 +303,7 @@ export async function streamAaryaMessage(
     {
       method: "POST",
       headers: {
-        "X-Hireloop-Channel": contentType,
+        "X-Hireschema-Channel": contentType,
       },
       body: JSON.stringify({ content, content_type: contentType }),
       signal,

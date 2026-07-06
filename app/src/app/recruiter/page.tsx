@@ -93,7 +93,7 @@ function CandidateHitCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
       <div className="min-w-0 flex-1">
         <p className="text-small font-medium text-ink-900 truncate">{hit.display_name}</p>
         <p className="text-micro text-ink-500 truncate">
-          {subtitle || hit.headline || "Profile on Hireloop"}
+          {subtitle || hit.headline || "Profile on Hireschema"}
         </p>
       </div>
       {hit.role_title ? (

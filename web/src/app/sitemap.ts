@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 import { allJobSlugs } from "@/lib/programmatic";
 
-const BASE_URL = "https://hireloop.in";
+const BASE_URL = "https://hireschema.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const pages = [

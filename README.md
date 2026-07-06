@@ -1,6 +1,6 @@
-# Hireloop
+# Hireschema
 
-**Hireloop** — AI recruiting platform for India, the US, and the UK. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
+**Hireschema** — AI recruiting platform for India, the US, and the UK. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
 
 > Replicating the Jack & Jill model (Tinker Tailor Talent, London) for the Indian market — INR, +91-only, ap-south-1, DPDP-compliant.
 
@@ -10,8 +10,8 @@
 
 ```
 hireloop-app/
-├── web/          # Marketing site (Next.js 15) → hireloop.in
-├── app/          # Candidate + Recruiter app (Next.js 15) → app.hireloop.in
+├── web/          # Marketing site (Next.js 15) → hireschema.com
+├── app/          # Candidate + Recruiter app (Next.js 15) → hireschema.com
 ├── api/          # Backend API + Agent loops (FastAPI, Python 3.12)
 ├── infra/        # Terraform (AWS ap-south-1 + Cloudflare)
 ├── docs/         # ADRs, runbooks, data-flow diagrams
@@ -109,4 +109,4 @@ Candidates and jobs are scoped by `market`:
 
 ## License
 
-Proprietary — All rights reserved. Hireloop Technology Pvt. Ltd.
+Proprietary — All rights reserved. Hireschema

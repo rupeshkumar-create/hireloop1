@@ -100,5 +100,5 @@ async def test_whatsapp_send(
         template_name=body.template_name,
         purpose="job_match",
         body_params=body.body_params
-        or ["Test", "Role", "Company", "85", "https://app.hireloop.in"],
+        or ["Test", "Role", "Company", "85", "https://hireschema.com"],
     )

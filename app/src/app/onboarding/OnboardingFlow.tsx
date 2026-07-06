@@ -64,12 +64,12 @@ async function formatOnboardingError(error: unknown): Promise<string> {
         window.location.hostname === "127.0.0.1");
     if (isLocal) {
       return (
-        "Can't reach the Hireloop API. Start the API on port 8000 " +
+        "Can't reach the Hireschema API. Start the API on port 8000 " +
         `(NEXT_PUBLIC_API_URL is ${DIRECT_API_URL}), then try again.`
       );
     }
     return (
-      "Can't reach the Hireloop API. On Vercel, set NEXT_PUBLIC_API_URL to your " +
+      "Can't reach the Hireschema API. On Vercel, set NEXT_PUBLIC_API_URL to your " +
       "Railway API URL, redeploy the app, and confirm Railway is running."
     );
   }

@@ -7,5 +7,5 @@ export const NOTIFICATION_CATEGORIES: NotifCat[] = [
   { id: "aarya_digest", label: "Weekly digest", desc: "Your career progress summary from Aarya" },
   { id: "profile_views", label: "Profile viewed", desc: "When recruiters view your profile" },
   { id: "application_updates", label: "Application updates", desc: "Status changes on your applications" },
-  { id: "platform_updates", label: "Platform updates", desc: "New Hireloop features and improvements" },
+  { id: "platform_updates", label: "Platform updates", desc: "New Hireschema features and improvements" },
 ];

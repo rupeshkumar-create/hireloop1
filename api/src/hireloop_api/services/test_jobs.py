@@ -19,11 +19,11 @@ from hireloop_api.markets import job_visible_for_market_sql, normalize_market
 from hireloop_api.services.job_preferences import remote_filter_sql
 
 TEST_RECRUITER_EMAIL = "rupesh.kumar@candidate.ly"
-TEST_COMPANY_DOMAIN = "hireloop-test.in"
-TEST_COMPANY_NAME = "Hireloop Test Co"
+TEST_COMPANY_DOMAIN = "hireschema-test.com"
+TEST_COMPANY_NAME = "Hireschema Test Co"
 TEST_MATCH_SCORE = 0.75
 TEST_MATCH_EXPLANATION = (
-    "Hireloop test role — use this to try job discovery, chat, and intro requests."
+    "Hireschema test role — use this to try job discovery, chat, and intro requests."
 )
 
 

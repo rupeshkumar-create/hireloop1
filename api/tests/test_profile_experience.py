@@ -56,10 +56,10 @@ def test_best_linkedin_headline_prefers_apify() -> None:
     headline = best_linkedin_headline(
         {
             "user_metadata": {"headline": "Wrong Name"},
-            "apify_profile": {"headline": "Head of Growth at Hireloop"},
+            "apify_profile": {"headline": "Head of Growth at Hireschema"},
         }
     )
-    assert headline == "Head of Growth at Hireloop"
+    assert headline == "Head of Growth at Hireschema"
 
 
 def test_build_merged_experience_linkedin_with_aarya_bullets() -> None:

@@ -63,7 +63,7 @@ export default function PublicRolePage() {
       <div className="min-h-screen bg-paper-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-body text-ink-700">{error ?? "Role unavailable"}</p>
         <Link href="/" className="text-small text-accent hover:underline">
-          Go to Hireloop
+          Go to Hireschema
         </Link>
       </div>
     );
@@ -78,7 +78,7 @@ export default function PublicRolePage() {
       <header className="border-b border-ink-100 bg-paper-1">
         <div className="max-w-2xl mx-auto px-5 py-4 flex items-center justify-between">
           <Link href="/" className="text-small font-semibold text-ink-900">
-            Hireloop
+            Hireschema
           </Link>
           <span className="text-micro text-ink-500">Open role</span>
         </div>
@@ -154,17 +154,17 @@ export default function PublicRolePage() {
 
         <div className="rounded-xl border border-accent/30 bg-accent/5 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <p className="text-small text-ink-800">
-            Interested in this role? Join Hireloop to request a warm intro.
+            Interested in this role? Join Hireschema to request a warm intro.
           </p>
           <Link href="/signup?role=candidate">
             <Button variant="primary" size="sm">
-              Apply via Hireloop
+              Apply via Hireschema
             </Button>
           </Link>
         </div>
 
         <p className="text-micro text-ink-500 text-center pt-2">
-          This is a live listing from a Hireloop recruiter.
+          This is a live listing from a Hireschema recruiter.
         </p>
       </main>
     </div>

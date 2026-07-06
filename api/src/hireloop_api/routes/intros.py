@@ -385,7 +385,7 @@ async def respond_to_intro(
             "job_title": (intro["job_title"] if intro else None) or "the role",
             "status": new_status,
             "status_message": f"Intro {new_status}.",
-            "cta_url": f"{settings.allowed_origins[0] if settings.allowed_origins else 'https://app.hireloop.in'}/intros",
+            "cta_url": f"{settings.allowed_origins[0] if settings.allowed_origins else 'https://hireschema.com'}/intros",
         },
     )
     return {"intro_id": intro_id, "status": new_status}

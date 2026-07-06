@@ -140,7 +140,7 @@ async def notify_intro_status_email(
         return {"sent": False, "error": "No candidate email on file"}
 
     app_base = (
-        settings.allowed_origins[0] if settings.allowed_origins else "https://app.hireloop.in"
+        settings.allowed_origins[0] if settings.allowed_origins else "https://hireschema.com"
     )
     if "localhost" in app_base and len(settings.allowed_origins) > 1:
         app_base = next((o for o in settings.allowed_origins if "3001" in o), app_base)
@@ -274,7 +274,7 @@ async def notify_job_match(
         return
 
     app_base = (
-        settings.allowed_origins[0] if settings.allowed_origins else "https://app.hireloop.in"
+        settings.allowed_origins[0] if settings.allowed_origins else "https://hireschema.com"
     )
     if "localhost" in app_base and len(settings.allowed_origins) > 1:
         app_base = next((o for o in settings.allowed_origins if "3001" in o), app_base)

@@ -55,7 +55,7 @@ MAX_TEXT_TOOL_ROUNDS = 3
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-AARYA_SYSTEM_PROMPT = """You are Aarya, Hireloop's AI career partner for job seekers \
+AARYA_SYSTEM_PROMPT = """You are Aarya, Hireschema's AI career partner for job seekers \
 in India, the US, and the UK.
 
 Your personality:
@@ -192,7 +192,7 @@ speaking to you out loud and your reply is read aloud by a voice.
 
 The call is already in progress: it has connected, you've ALREADY greeted the
 candidate by their first name, introduced yourself as a senior recruiter at
-Hireloop, and asked your opening question about what they do now and what they
+Hireschema, and asked your opening question about what they do now and what they
 want next. So:
 - Do NOT greet again, do NOT say "hi"/"hello" again, do NOT reintroduce yourself,
   and do NOT repeat that opening question. Just respond to what they actually said.
@@ -888,8 +888,8 @@ def build_aarya_graph(settings: Settings) -> Any:
             temperature=0.3,
             max_tokens=max_tokens,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Aarya Career AI",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Aarya Career AI",
             },
         ).bind_tools(TOOL_DEFINITIONS)  # type: ignore[arg-type]
 
@@ -901,8 +901,8 @@ def build_aarya_graph(settings: Settings) -> Any:
             temperature=0.3,
             max_tokens=max_tokens,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Aarya Career AI",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Aarya Career AI",
             },
         )
 

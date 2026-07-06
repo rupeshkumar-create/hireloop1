@@ -251,7 +251,7 @@ async def fetch_role_from_url(
     """
     source_url = _validate_public_url(url)
     headers = {
-        "User-Agent": "HireloopRoleImport/1.0 (+https://hireloop.in)",
+        "User-Agent": "HireschemaRoleImport/1.0 (+https://hireschema.com)",
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
     }
     timeout = httpx.Timeout(timeout_seconds)

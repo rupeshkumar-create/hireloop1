@@ -3,7 +3,7 @@
 /**
  * /recruiter/invite?token=… — a recruiter claims an intro invite.
  *
- * A candidate requested an intro for a job whose recruiter wasn't on Hireloop
+ * A candidate requested an intro for a job whose recruiter wasn't on Hireschema
  * yet, so we emailed a CTA. This page previews who's asking and lets the
  * (signed-in) recruiter accept — which activates the candidate's intro request
  * into their inbox.
@@ -106,7 +106,7 @@ function InviteInner() {
     <div className="min-h-screen bg-paper-0 flex flex-col">
       <header className="flex h-14 shrink-0 items-center border-b border-ink-100 bg-paper-1 px-6">
         <Link href="/recruiter" className="text-h3 font-semibold text-ink-900">
-          Hireloop <span className="text-ink-400 font-normal">for recruiters</span>
+          Hireschema <span className="text-ink-400 font-normal">for recruiters</span>
         </Link>
       </header>
       <main className="flex flex-1 items-center justify-center p-6">

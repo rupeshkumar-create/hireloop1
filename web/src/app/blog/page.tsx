@@ -6,7 +6,7 @@ import { BLOG_POSTS } from "@/lib/blog-posts";
 export const metadata: Metadata = {
   title: "Blog — AI Recruiting Insights for India",
   description:
-    "Hiring trends, career advice, and product updates from the Hireloop team. Built for the Indian job market.",
+    "Hiring trends, career advice, and product updates from the Hireschema team. Built for the Indian job market.",
 };
 
 const TAG_COLORS: Record<string, "brand" | "accent" | "muted" | "success"> = {

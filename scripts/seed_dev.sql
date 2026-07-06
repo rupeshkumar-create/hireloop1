@@ -89,7 +89,7 @@ VALUES
     '00000000-0000-0000-0000-000000000000',
     'c0000000-0000-0000-0000-000000000001',
     'authenticated', 'authenticated',
-    'candidate@test.hireloop.in',
+    'candidate@test.hireschema.com',
     crypt('hireloop-dev-2026', gen_salt('bf')),
     NOW(), NOW(), NOW(),
     '{"provider":"email","providers":["email"]}', '{"full_name":"Dev Candidate"}',
@@ -100,7 +100,7 @@ VALUES
     '00000000-0000-0000-0000-000000000000',
     'r0000000-0000-0000-0000-000000000002',
     'authenticated', 'authenticated',
-    'recruiter@test.hireloop.in',
+    'recruiter@test.hireschema.com',
     crypt('hireloop-dev-2026', gen_salt('bf')),
     NOW(), NOW(), NOW(),
     '{"provider":"email","providers":["email"]}', '{"full_name":"Dev Recruiter"}',
@@ -111,7 +111,7 @@ VALUES
     '00000000-0000-0000-0000-000000000000',
     'a0000000-0000-0000-0000-000000000003',
     'authenticated', 'authenticated',
-    'admin@test.hireloop.in',
+    'admin@test.hireschema.com',
     crypt('hireloop-dev-2026', gen_salt('bf')),
     NOW(), NOW(), NOW(),
     '{"provider":"email","providers":["email"]}', '{"full_name":"Dev Admin"}',
@@ -127,28 +127,28 @@ VALUES
   (
     'c0000000-0000-0000-0000-000000000001',
     'c0000000-0000-0000-0000-000000000001',
-    '{"sub":"c0000000-0000-0000-0000-000000000001","email":"candidate@test.hireloop.in"}',
+    '{"sub":"c0000000-0000-0000-0000-000000000001","email":"candidate@test.hireschema.com"}',
     'email', 'c0000000-0000-0000-0000-000000000001', NOW(), NOW(), NOW()
   ),
   (
     'r0000000-0000-0000-0000-000000000002',
     'r0000000-0000-0000-0000-000000000002',
-    '{"sub":"r0000000-0000-0000-0000-000000000002","email":"recruiter@test.hireloop.in"}',
+    '{"sub":"r0000000-0000-0000-0000-000000000002","email":"recruiter@test.hireschema.com"}',
     'email', 'r0000000-0000-0000-0000-000000000002', NOW(), NOW(), NOW()
   ),
   (
     'a0000000-0000-0000-0000-000000000003',
     'a0000000-0000-0000-0000-000000000003',
-    '{"sub":"a0000000-0000-0000-0000-000000000003","email":"admin@test.hireloop.in"}',
+    '{"sub":"a0000000-0000-0000-0000-000000000003","email":"admin@test.hireschema.com"}',
     'email', 'a0000000-0000-0000-0000-000000000003', NOW(), NOW(), NOW()
   )
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.users (id, email, phone, full_name, role, india_verified)
 VALUES
-  ('c0000000-0000-0000-0000-000000000001', 'candidate@test.hireloop.in', '+919876543210', 'Dev Candidate', 'candidate', TRUE),
-  ('r0000000-0000-0000-0000-000000000002', 'recruiter@test.hireloop.in', '+919876543211', 'Dev Recruiter', 'recruiter', TRUE),
-  ('a0000000-0000-0000-0000-000000000003', 'admin@test.hireloop.in', '+919876543212', 'Dev Admin', 'admin', TRUE)
+  ('c0000000-0000-0000-0000-000000000001', 'candidate@test.hireschema.com', '+919876543210', 'Dev Candidate', 'candidate', TRUE),
+  ('r0000000-0000-0000-0000-000000000002', 'recruiter@test.hireschema.com', '+919876543211', 'Dev Recruiter', 'recruiter', TRUE),
+  ('a0000000-0000-0000-0000-000000000003', 'admin@test.hireschema.com', '+919876543212', 'Dev Admin', 'admin', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.candidates (

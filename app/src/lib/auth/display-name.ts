@@ -51,7 +51,7 @@ export function displayNameFromSupabaseUser(
   }
 
   const email = user.email?.trim();
-  if (email && !email.endsWith("@signup.hireloop.internal")) {
+  if (email && !email.endsWith("@signup.hireschema.comternal")) {
     const local = email.split("@")[0]?.trim();
     if (local) return local;
   }

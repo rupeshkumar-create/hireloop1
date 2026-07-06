@@ -3,7 +3,7 @@ Gmail OAuth service — candidate-authorised cold outreach to hiring managers.
 
 REQUIRED for all HM outreach (R9):
   "Request Intro" emails MUST be sent from the candidate's own Gmail account
-  via their OAuth token. Hireloop NEVER sends cold email via SendGrid.
+  via their OAuth token. Hireschema NEVER sends cold email via SendGrid.
 
 Flow:
   1. Candidate connects Gmail in onboarding (OAuth 2.0, scope: gmail.send)

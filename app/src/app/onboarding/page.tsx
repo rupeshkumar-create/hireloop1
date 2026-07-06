@@ -16,7 +16,7 @@ import { OnboardingFlow } from "./OnboardingFlow";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Get started — Hireloop",
+  title: "Get started — Hireschema",
 };
 
 export default async function OnboardingPage() {

@@ -24,12 +24,12 @@ from hireloop_api.services.demo_candidate_fixtures import (
 )
 
 DEMO_EMAILS = [
-    "priya.candidate@hireloop.in",
-    "rahul.candidate@hireloop.in",
-    "ananya.candidate@hireloop.in",
-    "vikram.candidate@hireloop.in",
-    "meera.candidate@hireloop.in",
-    "karan.candidate@hireloop.in",
+    "priya.candidate@hireschema.com",
+    "rahul.candidate@hireschema.com",
+    "ananya.candidate@hireschema.com",
+    "vikram.candidate@hireschema.com",
+    "meera.candidate@hireschema.com",
+    "karan.candidate@hireschema.com",
 ]
 
 

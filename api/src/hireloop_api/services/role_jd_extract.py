@@ -310,8 +310,8 @@ async def extract_role_from_jd(
             temperature=0.2,
             max_tokens=2048,
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Role JD Extract",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Role JD Extract",
             },
         )
         try:

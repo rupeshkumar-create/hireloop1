@@ -82,7 +82,7 @@ export function GoogleConnectCard() {
     <Card>
       <CardHeader
         title="Connect Google"
-        description="Optional. Lets Aarya send intros from your own Gmail and add a Google Meet link when you book a call. Send-only — Hireloop never reads your mail or calendar."
+        description="Optional. Lets Aarya send intros from your own Gmail and add a Google Meet link when you book a call. Send-only — Hireschema never reads your mail or calendar."
       />
       <CardBody className="!pt-0 space-y-3">
         {loading ? (

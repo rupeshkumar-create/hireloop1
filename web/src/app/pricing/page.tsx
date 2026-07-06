@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/Badge";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Hireloop is free for job seekers. Recruiters pay per successful outcome. No subscriptions during beta.",
+    "Hireschema is free for job seekers. Recruiters pay per successful outcome. No subscriptions during beta.",
 };
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 type Plan = {
   name: string;
@@ -153,8 +153,8 @@ export default function PricingPage() {
           <div className="mt-12 bg-ink-50 rounded-xl p-6">
             <p className="text-small text-ink-700">
               India, US &amp; UK · Local currency pricing · DPDP Act 2023 compliant ·{" "}
-              <a href="mailto:hello@hireloop.in" className="text-accent underline">
-                Questions? hello@hireloop.in
+              <a href="mailto:hello@hireschema.com" className="text-accent underline">
+                Questions? hello@hireschema.com
               </a>
             </p>
           </div>

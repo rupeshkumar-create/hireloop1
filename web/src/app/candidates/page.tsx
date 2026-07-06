@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     "Aarya is your personal AI career partner. She matches you to the right Indian jobs, prepares you for interviews, and makes the warm intro to the hiring manager.",
 };
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 const FEATURES = [
   {

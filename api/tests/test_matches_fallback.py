@@ -179,7 +179,7 @@ class CachedAccorOnlyDb(CachedAccorDb):
 
 
 class MatchFeedTestJobsOnlyDb:
-    """Cached scores contain only Hireloop test roles — market feed must still load."""
+    """Cached scores contain only Hireschema test roles — market feed must still load."""
 
     def __init__(self) -> None:
         self.candidate_id = uuid.uuid4()
@@ -215,8 +215,8 @@ class MatchFeedTestJobsOnlyDb:
                 {
                     "job_id": uuid.uuid4(),
                     "title": "Go-To-Market Lead — AI Resume Builder (Staffing SaaS)",
-                    "company_name": "Hireloop Test Co",
-                    "company_domain": "hireloop-test.in",
+                    "company_name": "Hireschema Test Co",
+                    "company_domain": "hireschema-test.com",
                     "location_city": "Bengaluru",
                     "location_state": "Karnataka",
                     "is_remote": True,
@@ -233,7 +233,7 @@ class MatchFeedTestJobsOnlyDb:
                     "experience_score": 0.75,
                     "location_score": 0.75,
                     "ctc_score": 0.75,
-                    "explanation": "Hireloop test role",
+                    "explanation": "Hireschema test role",
                     "llm_rationale": None,
                     "llm_rationale_at": None,
                     "computed_at": datetime.now(UTC),

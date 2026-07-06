@@ -13,7 +13,7 @@ const NAV_LINKS = [
   { href: "/blog", label: "Blog" },
 ];
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 export function Navbar() {
   const pathname = usePathname();
@@ -28,7 +28,9 @@ export function Navbar() {
             <div className="w-8 h-8 rounded-md bg-ink-900 flex items-center justify-center">
               <span className="text-paper-0 text-h3 font-semibold">H</span>
             </div>
-            <span className="text-h2 text-ink-900">Hireloop</span>
+            <span className="text-h2 text-ink-900">
+              Hire<span className="text-accent">schema</span>
+            </span>
           </Link>
 
           {/* Desktop nav */}

@@ -1,7 +1,7 @@
-import { HIRELOOP_ARROWS, HIRELOOP_ICONS } from "./hireloop-icons";
+import { HIRESCHEMA_ARROWS, HIRESCHEMA_ICONS } from "./hireschema-icons";
 
 /**
- * HireIcon — the custom Hireloop line-icon set (from the brand asset library).
+ * HireIcon — the custom Hireschema line-icon set (from the brand asset library).
  *
  * Geometric line system on a 24 grid, 1.75 stroke, square caps/joins. Lines use
  * `currentColor`; the signature lime "live node" (`n`) is always the accent.
@@ -16,13 +16,13 @@ export function HireIcon({
   className,
   title,
 }: {
-  name: keyof typeof HIRELOOP_ICONS;
+  name: keyof typeof HIRESCHEMA_ICONS;
   size?: number;
   strokeWidth?: number;
   className?: string;
   title?: string;
 }) {
-  const icon = HIRELOOP_ICONS[name];
+  const icon = HIRESCHEMA_ICONS[name];
   if (!icon) return null;
   return (
     <svg
@@ -57,12 +57,12 @@ export function HireArrow({
   strokeWidth = 1.75,
   className,
 }: {
-  name: keyof typeof HIRELOOP_ARROWS;
+  name: keyof typeof HIRESCHEMA_ARROWS;
   size?: number;
   strokeWidth?: number;
   className?: string;
 }) {
-  const paths = HIRELOOP_ARROWS[name];
+  const paths = HIRESCHEMA_ARROWS[name];
   if (!paths) return null;
   return (
     <svg

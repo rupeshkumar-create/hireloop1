@@ -1,9 +1,14 @@
 import { forwardRef } from "react";
 import type { LucideIcon, LucideProps } from "lucide-react";
-import { HIRELOOP_ARROWS, HIRELOOP_ICONS } from "./hireloop-icons";
+import { HIRESCHEMA_ARROWS, HIRESCHEMA_ICONS } from "./hireschema-icons";
+
+/** @deprecated Use HIRESCHEMA_ICONS */
+export const HIRELOOP_ICONS = HIRESCHEMA_ICONS;
+/** @deprecated Use HIRESCHEMA_ARROWS */
+export const HIRELOOP_ARROWS = HIRESCHEMA_ARROWS;
 
 /**
- * Drop-in icon adapter — the custom Hireloop icon set exported under the exact
+ * Drop-in icon adapter — the custom Hireschema icon set exported under the exact
  * lucide names the app already uses. Swap `from "lucide-react"` →
  * `from "@/components/brand/icons"` and every mapped icon becomes the branded
  * line-icon (with its lime "live node"). Icons the custom set doesn't cover
@@ -44,9 +49,9 @@ function makeIcon(html: string): LucideIcon {
   return Icon as unknown as LucideIcon;
 }
 
-const ico = (name: keyof typeof HIRELOOP_ICONS) =>
-  makeIcon(svgHtml(HIRELOOP_ICONS[name].l, HIRELOOP_ICONS[name].n));
-const arr = (name: keyof typeof HIRELOOP_ARROWS) => makeIcon(HIRELOOP_ARROWS[name]);
+const ico = (name: keyof typeof HIRESCHEMA_ICONS) =>
+  makeIcon(svgHtml(HIRESCHEMA_ICONS[name].l, HIRESCHEMA_ICONS[name].n));
+const arr = (name: keyof typeof HIRESCHEMA_ARROWS) => makeIcon(HIRESCHEMA_ARROWS[name]);
 
 // ── Mapped to the custom icon set ──────────────────────────────────────────────
 export const Activity = ico("pulse");

@@ -104,10 +104,10 @@ async def test_get_admin_allows_role_admin() -> None:
 
 
 async def test_get_admin_allows_configured_email_allowlist() -> None:
-    user = {"id": str(uuid.uuid4()), "role": "candidate", "email": "Founder@Hireloop.in"}
+    user = {"id": str(uuid.uuid4()), "role": "candidate", "email": "Founder@hireschema.com"}
     out = await get_admin_user(
         current_user=user,
-        settings=_dev_settings(super_admin_emails=["founder@hireloop.in"]),
+        settings=_dev_settings(super_admin_emails=["founder@hireschema.com"]),
     )
     assert out is user
 

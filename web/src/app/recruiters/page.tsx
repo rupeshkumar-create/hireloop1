@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     "Nitya is your AI recruiting partner. Semantic candidate search, contact-enriched shortlists, and warm intros via candidates' own Gmail. All in India.",
 };
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.hireloop.in";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 const FEATURES = [
   {
@@ -30,7 +30,7 @@ const FEATURES = [
     Icon: Search,
     title: "Semantic candidate search",
     description:
-      "Nitya scores candidates in the Hireloop graph against your role — not keyword filters. Ranked shortlists with match scores and skill fit.",
+      "Nitya scores candidates in the Hireschema graph against your role — not keyword filters. Ranked shortlists with match scores and skill fit.",
   },
   {
     Icon: Users,
@@ -42,13 +42,13 @@ const FEATURES = [
     Icon: Megaphone,
     title: "Publish roles to the candidate feed",
     description:
-      "When your brief is ready, publish to Hireloop's India-only job feed. Candidates discover roles through Aarya and request intros to you.",
+      "When your brief is ready, publish to Hireschema's India-only job feed. Candidates discover roles through Aarya and request intros to you.",
   },
   {
     Icon: Inbox,
     title: "In-app intro inbox",
     description:
-      "Candidate intro requests land in your recruiter inbox. Accept or decline in one click, then chat directly — no cold email blasts from Hireloop.",
+      "Candidate intro requests land in your recruiter inbox. Accept or decline in one click, then chat directly — no cold email blasts from Hireschema.",
   },
   {
     Icon: Kanban,

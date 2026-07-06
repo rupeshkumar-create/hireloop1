@@ -1,7 +1,7 @@
 """
 In-house voice-session booking — Google Calendar (P07).
 
-Replaces the former Cal.com integration. Booking is owned by Hireloop:
+Replaces the former Cal.com integration. Booking is owned by Hireschema:
 
   1. GET  /slots  → availability windows generated from business hours (IST),
                     minus slots already taken in `voice_sessions`. No external call.

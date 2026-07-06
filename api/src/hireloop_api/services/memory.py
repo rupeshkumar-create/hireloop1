@@ -290,8 +290,8 @@ class CandidateMemoryService:
             temperature=0.1,
             max_tokens=max(256, int(settings.openrouter_low_credit_max_tokens or 256)),
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Aarya Memory",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Aarya Memory",
             },
         )
         brief = _build_brief(profile, prior_summary, messages)

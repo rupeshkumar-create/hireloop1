@@ -25,7 +25,7 @@ export function LandingNav() {
   return (
     <header className="sticky top-0 z-30 border-b border-ink-100 bg-paper-0/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-page items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2" aria-label="Hireloop home">
+        <Link href="/" className="flex items-center gap-2" aria-label="Hireschema home">
           <HireLogo size={30} />
         </Link>
 

@@ -67,8 +67,8 @@ async def _run_tailor_task(
             temperature=0.3,
             max_tokens=4096,  # resumes can be long
             default_headers={
-                "HTTP-Referer": "https://app.hireloop.in",
-                "X-Title": "Hireloop - Resume Tailor",
+                "HTTP-Referer": "https://hireschema.com",
+                "X-Title": "Hireschema - Resume Tailor",
             },
         )
         profile = dict(cand)

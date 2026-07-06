@@ -1,5 +1,5 @@
 ###############################################################################
-# Hireloop — Root variable definitions
+# Hireschema — Root variable definitions
 ###############################################################################
 
 variable "aws_region" {
@@ -9,7 +9,7 @@ variable "aws_region" {
 
   validation {
     condition     = var.aws_region == "ap-south-1"
-    error_message = "Hireloop must deploy to ap-south-1 (Mumbai) per India geo-lock requirement."
+    error_message = "Hireschema must deploy to ap-south-1 (Mumbai) per India geo-lock requirement."
   }
 }
 
@@ -36,7 +36,7 @@ variable "cloudflare_api_token" {
 }
 
 variable "cloudflare_zone_id" {
-  description = "Cloudflare Zone ID for hireloop.in"
+  description = "Cloudflare Zone ID for hireschema.com"
   type        = string
 }
 

@@ -70,19 +70,19 @@ export function jobFaqs(roleLabel: string, cityLabel: string): { q: string; a: s
   return [
     {
       q: `How do I find ${roleLabel} jobs in ${cityLabel}?`,
-      a: `Sign up on Hireloop, upload your résumé, and Aarya surfaces India-only ${roleLabel} roles in ${cityLabel} ranked by an AI match score — with direct apply links and warm intros to hiring managers.`,
+      a: `Sign up on Hireschema, upload your résumé, and Aarya surfaces India-only ${roleLabel} roles in ${cityLabel} ranked by an AI match score — with direct apply links and warm intros to hiring managers.`,
     },
     {
       q: `Are ${roleLabel} roles in ${cityLabel} remote or on-site?`,
-      a: `Both. Set your work mode (remote, on-site, or any) and location scope (city, state, country, or global) and Hireloop ranks ${cityLabel} and matching roles accordingly.`,
+      a: `Both. Set your work mode (remote, on-site, or any) and location scope (city, state, country, or global) and Hireschema ranks ${cityLabel} and matching roles accordingly.`,
     },
     {
       q: `What salary can a ${roleLabel} expect in ${cityLabel}?`,
-      a: `Hireloop shows CTC in INR/LPA for every role and factors your expected range into the match score, so you only see ${roleLabel} roles that fit your compensation.`,
+      a: `Hireschema shows CTC in INR/LPA for every role and factors your expected range into the match score, so you only see ${roleLabel} roles that fit your compensation.`,
     },
     {
-      q: `How is Hireloop different for ${roleLabel} job seekers?`,
-      a: `Instead of cold applications, Hireloop requests a warm intro to the hiring manager from your own Gmail, and tailors your résumé to each ${roleLabel} JD in seconds.`,
+      q: `How is Hireschema different for ${roleLabel} job seekers?`,
+      a: `Instead of cold applications, Hireschema requests a warm intro to the hiring manager from your own Gmail, and tailors your résumé to each ${roleLabel} JD in seconds.`,
     },
   ];
 }

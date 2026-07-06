@@ -60,7 +60,7 @@ async def main() -> None:
         sem = asyncio.Semaphore(CONCURRENCY)
         async with httpx.AsyncClient(
             timeout=TIMEOUT,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; HireloopLinkCheck/1.0)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; HireschemaLinkCheck/1.0)"},
         ) as client:
             results = await asyncio.gather(*(check_one(client, sem, j) for j in jobs))
 

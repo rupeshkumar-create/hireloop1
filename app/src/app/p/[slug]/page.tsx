@@ -35,7 +35,7 @@ export default function PublicProfilePage() {
       <div className="min-h-screen bg-paper-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-body text-ink-700">{error ?? "Profile unavailable"}</p>
         <Link href="/" className="text-small text-accent hover:underline">
-          Go to Hireloop
+          Go to Hireschema
         </Link>
       </div>
     );

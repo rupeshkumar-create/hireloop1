@@ -244,8 +244,8 @@ export function CandidateSharingSettings() {
             onChange={setHideContact}
           />
           <ToggleRow
-            label="Share with Hireloop recruiters"
-            description="Registered recruiters on Hireloop can discover your profile in search. Off = hidden from recruiter inbox."
+            label="Share with Hireschema recruiters"
+            description="Registered recruiters on Hireschema can discover your profile in search. Off = hidden from recruiter inbox."
             checked={shareRecruiters}
             onChange={setShareRecruiters}
           />

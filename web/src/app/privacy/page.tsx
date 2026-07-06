@@ -3,16 +3,16 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "Hireloop Privacy Policy — DPDP Act 2023 compliant. How we collect, use, and protect your personal data.",
+    "Hireschema Privacy Policy — DPDP Act 2023 compliant. How we collect, use, and protect your personal data.",
 };
 
 const SECTIONS = [
   {
     id: "overview",
     title: "1. Overview",
-    content: `Hireloop Technology Pvt. Ltd. ("Hireloop", "we", "us") operates an AI-powered recruiting platform for candidates in India, the United States, and the United Kingdom (phone-verified). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
+    content: `Hireschema ("Hireschema", "we", "us") operates an AI-powered recruiting platform for candidates in India, the United States, and the United Kingdom (phone-verified). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
 
-By using Hireloop, you consent to the practices described in this policy. If you do not agree, please do not use the platform.`,
+By using Hireschema, you consent to the practices described in this policy. If you do not agree, please do not use the platform.`,
   },
   {
     id: "data-collected",
@@ -71,7 +71,7 @@ Soft delete: When you delete your account, your data is marked deleted_at and pu
 
 Conversation history: Chat and voice transcripts are deleted after 90 days.
 
-Right to deletion: You can request immediate deletion by emailing privacy@hireloop.in or using the in-app "Delete my account" button.`,
+Right to deletion: You can request immediate deletion by emailing privacy@hireschema.com or using the in-app "Delete my account" button.`,
   },
   {
     id: "rights",
@@ -84,7 +84,7 @@ Right to deletion: You can request immediate deletion by emailing privacy@hirelo
 • Nomination: Nominate a person to exercise your rights on your behalf.
 • Grievance redressal: Lodge a complaint with our DPO (below).
 
-To exercise these rights: Email privacy@hireloop.in or use the in-app "Data & Privacy" settings. We respond within 72 hours.`,
+To exercise these rights: Email privacy@hireschema.com or use the in-app "Data & Privacy" settings. We respond within 72 hours.`,
   },
   {
     id: "cookies",
@@ -94,14 +94,14 @@ To exercise these rights: Email privacy@hireloop.in or use the in-app "Data & Pr
   {
     id: "children",
     title: "9. Children's data",
-    content: `Hireloop is not available to persons under 18. We do not knowingly collect data from minors. If you believe a minor has created an account, contact privacy@hireloop.in immediately.`,
+    content: `Hireschema is not available to persons under 18. We do not knowingly collect data from minors. If you believe a minor has created an account, contact privacy@hireschema.com immediately.`,
   },
   {
     id: "dpo",
     title: "10. Data Protection Officer (DPO)",
-    content: `Hireloop has designated a Data Protection Officer as required under DPDP Act 2023.
+    content: `Hireschema has designated a Data Protection Officer as required under DPDP Act 2023.
 
-DPO Contact: privacy@hireloop.in
+DPO Contact: privacy@hireschema.com
 Response time: 72 hours for privacy-related requests, 30 days for formal DPDP Act requests.`,
   },
   {
@@ -157,8 +157,8 @@ export default function PrivacyPage() {
           <p className="text-accent font-medium mb-1">Questions about your data?</p>
           <p className="text-accent text-sm">
             Email our DPO:{" "}
-            <a href="mailto:privacy@hireloop.in" className="underline font-semibold">
-              privacy@hireloop.in
+            <a href="mailto:privacy@hireschema.com" className="underline font-semibold">
+              privacy@hireschema.com
             </a>
             {" "}· We respond within 72 hours.
           </p>

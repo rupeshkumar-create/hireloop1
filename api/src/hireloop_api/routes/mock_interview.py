@@ -219,8 +219,8 @@ async def mock_message(
         temperature=0.6,
         max_tokens=1024,
         default_headers={
-            "HTTP-Referer": "https://app.hireloop.in",
-            "X-Title": "Hireloop - Mock Interview",
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Mock Interview",
         },
     )
     context_line = f"\nTarget role: {row['role_target']}"
