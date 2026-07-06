@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
@@ -13,6 +14,7 @@ from hireloop_api.services.public_profile import fetch_public_profile
 from hireloop_api.services.public_profile_chat import (
     list_public_profile_messages,
     send_public_profile_message,
+    stream_public_profile_message,
 )
 from hireloop_api.services.public_role import fetch_public_role
 
@@ -66,6 +68,36 @@ async def post_public_profile_chat(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/profiles/{slug}/chat/stream")
+async def stream_public_profile_chat(
+    slug: str,
+    body: PublicProfileChatRequest,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db),
+) -> StreamingResponse:
+    """SSE stream for anonymous portfolio chat."""
+
+    async def event_generator():
+        async for frame in stream_public_profile_message(
+            db,
+            settings,
+            slug=slug,
+            visitor_session_id=body.visitor_session_id,
+            message=body.message,
+        ):
+            yield frame
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/roles/{slug}")

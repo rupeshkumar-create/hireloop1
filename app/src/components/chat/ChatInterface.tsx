@@ -42,7 +42,7 @@
  *   - Phone button: opens 15-min deep-dive modal (same thread, same pipeline)
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Route,
   BookOpen,
@@ -106,7 +106,7 @@ import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
-import { invalidateMatchFeedCache } from "@/lib/api/matches";
+import { fetchMatchFeedCount, invalidateMatchFeedCache } from "@/lib/api/matches";
 import {
   fetchMyProfile,
   invalidateProfileCache,
@@ -117,6 +117,7 @@ import { AgentThinkingIndicator } from "./AgentThinkingIndicator";
 import { ActivityTimeline, type AgentAction } from "./ActivityTimeline";
 import { ProfileCompletionFlow } from "./ProfileCompletionFlow";
 import { ChatJobCards } from "./ChatJobCards";
+import { ChatShell } from "@/components/chat/shell/ChatShell";
 import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
 import { VoiceDeepDiveModal } from "./VoiceDeepDiveModal";
 import {
@@ -268,6 +269,7 @@ export function ChatInterface({
   const [hinglishHint, setHinglishHint] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [matchNudge, setMatchNudge] = useState<string | null>(null);
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
   const holdActiveRef = useRef(false);
@@ -409,6 +411,28 @@ export function ChatInterface({
     };
   }, [authUserId, sessionId]);
 
+  // Proactive nudge when background scoring surfaces strong matches.
+  useEffect(() => {
+    if (messages.length > 0 || historyLoading) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const count = await fetchMatchFeedCount({ min_score: 0.7 });
+        if (!cancelled && count >= 3) {
+          setMatchNudge(`${count} new matches above 70% — want to see them?`);
+        }
+      } catch {
+        /* scoring may still be running */
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [messages.length, historyLoading]);
+
   useEffect(() => {
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
   }, [initialVoiceDeepDive]);
@@ -449,10 +473,6 @@ export function ChatInterface({
     interruptSpeech();
     if (isRecording) void cancelRecording();
   }, [cancelRecording, interruptSpeech, isRecording]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent, pendingVoiceTranscript]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -928,6 +948,16 @@ export function ChatInterface({
     [sendMessage]
   );
 
+  const handleWhyFit = useCallback(
+    (job: MatchedJob) => {
+      const company = job.company_name ?? "this company";
+      void sendMessage(
+        `Why is ${job.title} at ${company} a fit for me? Use job id ${job.job_id}.`
+      );
+    },
+    [sendMessage]
+  );
+
   // ── Voice ───────────────────────────────────────────────────────────────
 
   const finishVoiceCapture = useCallback(
@@ -1140,428 +1170,452 @@ export function ChatInterface({
   const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
   const showKickoff = kickoffActive && isEmpty;
 
-  return (
-    <div className={cn("flex flex-col h-full bg-paper-0", className)}>
+  const scrollDeps = useMemo(
+    () => [
+      messages.length,
+      streamingContent,
+      pendingVoiceTranscript,
+      actionCount,
+      isStreaming,
+      isUploading,
+      streamRecovery,
+      showProfileFlow,
+    ],
+    [
+      messages.length,
+      streamingContent,
+      pendingVoiceTranscript,
+      actionCount,
+      isStreaming,
+      isUploading,
+      streamRecovery,
+      showProfileFlow,
+    ],
+  );
 
-      {/* ── Messages ──────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className={cn(CHAT_COLUMN_CLASS, "py-8 space-y-6")}>
-          {showKickoff ? (
-            <CareerKickoffFlow
-              onComplete={handleKickoffComplete}
-              onSkip={() => setKickoffActive(false)}
-            />
-          ) : isEmpty ? (
-            <EmptyState
-              onPick={(p) => void sendMessage(p)}
-              onUploadResume={() => fileInputRef.current?.click()}
-            />
-          ) : (
-            <>
-              {messages.map((msg, i) => {
-                const prevUser =
-                  msg.role === "assistant"
-                    ? [...messages]
-                        .slice(0, i)
-                        .reverse()
-                        .find((m) => m.role === "user")
-                    : null;
-                const jobFilters = prevUser
-                  ? parseJobFiltersFromText(prevUser.content)
-                  : {};
-                const msgJobs = msg.role === "assistant" ? (msg.jobs ?? []) : [];
-                const msgKits =
-                  msg.role === "assistant" ? (msg.applicationKits ?? []) : [];
+  const messagesSlot = (
+    <div className={cn(CHAT_COLUMN_CLASS, "py-8 space-y-6")}>
+      {showKickoff ? (
+        <CareerKickoffFlow
+          onComplete={handleKickoffComplete}
+          onSkip={() => setKickoffActive(false)}
+        />
+      ) : isEmpty ? (
+        <EmptyState
+          onPick={(p) => void sendMessage(p)}
+          onUploadResume={() => fileInputRef.current?.click()}
+          matchNudge={matchNudge}
+          onMatchNudge={() =>
+            void sendMessage(
+              "Show me my top matches above 70% fit, ranked best first.",
+            )
+          }
+        />
+      ) : (
+        <>
+          {messages.map((msg, i) => {
+            const prevUser =
+              msg.role === "assistant"
+                ? [...messages]
+                    .slice(0, i)
+                    .reverse()
+                    .find((m) => m.role === "user")
+                : null;
+            const jobFilters = prevUser
+              ? parseJobFiltersFromText(prevUser.content)
+              : {};
+            const msgJobs = msg.role === "assistant" ? (msg.jobs ?? []) : [];
+            const msgKits =
+              msg.role === "assistant" ? (msg.applicationKits ?? []) : [];
 
-                return (
-                  <MessageBubble
-                    key={msg.id}
-                    message={msg}
-                    onOptionSelect={(opt) => void sendMessage(opt)}
-                    actionCount={
-                      msg.role === "assistant" &&
-                      i === messages.length - 1 &&
-                      actionCount > 0
-                        ? actionCount
-                        : 0
-                    }
-                    actions={
-                      msg.role === "assistant" && i === messages.length - 1
-                        ? actions
-                        : []
-                    }
-                    jobs={msgJobs}
-                    applicationKits={msgKits}
-                    jobFilters={jobFilters}
-                    conversationId={sessionId ?? undefined}
-                    savedJobIds={savedJobIds}
-                    onSavedChange={(jobId, saved) =>
-                      handleJobSaved(jobId, saved, msgJobs)
-                    }
-                    onRequestIntro={handleRequestIntroWithConfirm}
-                    onApply={handleJobApply}
-                  />
-                );
-              })}
+            return (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                onOptionSelect={(opt) => void sendMessage(opt)}
+                actionCount={
+                  msg.role === "assistant" &&
+                  i === messages.length - 1 &&
+                  actionCount > 0
+                    ? actionCount
+                    : 0
+                }
+                actions={
+                  msg.role === "assistant" && i === messages.length - 1
+                    ? actions
+                    : []
+                }
+                jobs={msgJobs}
+                applicationKits={msgKits}
+                jobFilters={jobFilters}
+                conversationId={sessionId ?? undefined}
+                savedJobIds={savedJobIds}
+                onSavedChange={(jobId, saved) =>
+                  handleJobSaved(jobId, saved, msgJobs)
+                }
+                onRequestIntro={handleRequestIntroWithConfirm}
+                onApply={handleJobApply}
+                onWhyFit={handleWhyFit}
+              />
+            );
+          })}
 
-              {/* Streaming partial */}
-              {streamingContent && (
-                <MessageBubble
-                  message={{
-                    id: "streaming",
-                    role: "assistant",
-                    content: streamingContent,
-                    content_type: "text",
-                    created_at: new Date().toISOString(),
-                  }}
-                  onOptionSelect={() => undefined}
-                  isStreaming
-                  actionCount={0}
-                  actions={[]}
-                  jobs={[]}
-                  conversationId={sessionId ?? undefined}
-                  savedJobIds={savedJobIds}
-                  onSavedChange={(jobId, saved) => handleJobSaved(jobId, saved, [])}
-                  onRequestIntro={handleRequestIntroWithConfirm}
-                  onApply={handleJobApply}
-                />
-              )}
-
-              {streamRecovery && !isStreaming && (
-                <div className="rounded-xl border border-ink-200 bg-paper-1 px-4 py-3 space-y-2 w-full">
-                  <p className="text-small text-ink-600">
-                    Connection dropped — your partial reply is saved above.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void sendMessage(streamRecovery.continuePrompt)
-                    }
-                    className="text-small font-medium text-ink-900 underline underline-offset-2 hover:text-accent"
-                  >
-                    Continue
-                  </button>
-                </div>
-              )}
-
-              {isUploading && (
-                <AgentThinkingIndicator variant="processing" />
-              )}
-
-              {isStreaming && !streamingContent && !isUploading && (
-                <AgentThinkingIndicator
-                  actions={actions}
-                  actionBaseline={turnActionBaseline}
-                  actionCount={actionCount}
-                  label={thinkingStatus ?? undefined}
-                />
-              )}
-
-              {isStreaming && streamingApplicationKits.length > 0 && (
-                <ApplicationKitCards kits={streamingApplicationKits} />
-              )}
-
-              <div ref={messagesEndRef} />
-            </>
-          )}
-
-          {showProfileFlow && (
-            <ProfileCompletionFlow
-              profile={warmup?.profile ?? null}
-              completeness={warmup?.profileCompleteness ?? null}
-              onClose={() => setShowProfileFlow(false)}
-              onSaved={() => {
-                void warmupChatContext({ force: true })
-                  .then(setWarmup)
-                  .catch(() => {});
+          {streamingContent && (
+            <MessageBubble
+              message={{
+                id: "streaming",
+                role: "assistant",
+                content: streamingContent,
+                content_type: "text",
+                created_at: new Date().toISOString(),
               }}
+              onOptionSelect={() => undefined}
+              isStreaming
+              actionCount={0}
+              actions={[]}
+              jobs={[]}
+              conversationId={sessionId ?? undefined}
+              savedJobIds={savedJobIds}
+              onSavedChange={(jobId, saved) => handleJobSaved(jobId, saved, [])}
+              onRequestIntro={handleRequestIntroWithConfirm}
+              onApply={handleJobApply}
             />
           )}
-        </div>
-      </div>
 
-      {/* ── Composer ──────────────────────────────────────────────────── */}
-      <div className="shrink-0 bg-paper-0 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-        <div className={cn(CHAT_COLUMN_CLASS, "space-y-2")}>
-          {showCoachMark && (
-            <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
-              <p className="text-micro text-ink-700 leading-relaxed">
-                Type or hold the mic to talk with Aarya. Your job matches are
-                always in <span className="font-medium">Matches</span> on the
-                left; chat never blocks them.
+          {streamRecovery && !isStreaming && (
+            <div className="rounded-xl border border-ink-200 bg-paper-1 px-4 py-3 space-y-2 w-full">
+              <p className="text-small text-ink-600">
+                Connection dropped — your partial reply is saved above.
               </p>
               <button
                 type="button"
-                onClick={() => {
-                  storeChatCoachSeen();
-                  setShowCoachMark(false);
-                }}
-                className="shrink-0 text-micro font-medium text-ink-600 hover:text-ink-900"
+                onClick={() => void sendMessage(streamRecovery.continuePrompt)}
+                className="text-small font-medium text-ink-900 underline underline-offset-2 hover:text-accent"
               >
-                Got it
+                Continue
               </button>
             </div>
           )}
 
-          {(isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <p className="text-micro font-medium text-ink-800">
-                  {isRecording
-                    ? "Listening — release mic to send, or tap below to type"
-                    : voiceProcessing
-                      ? "Processing voice…"
-                      : isPlaying
-                        ? "Speaking…"
-                        : "Review your message"}
-                </p>
-                {isRecording && interimTranscript && (
-                  <p className="text-micro text-ink-600 truncate mt-0.5">
-                    {interimTranscript}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {isPlaying && (
-                  <button
-                    type="button"
-                    onClick={interruptSpeech}
-                    className="text-micro text-ink-600 underline underline-offset-2"
-                  >
-                    Stop
-                  </button>
-                )}
-                {isRecording && (
-                  <button
-                    type="button"
-                    onClick={() => void handleMicToggle()}
-                    className="text-micro text-ink-700 underline underline-offset-2"
-                  >
-                    Cancel
-                  </button>
-                )}
-                {replyMode === "voice" && (isPlaying || isRecording) && (
-                  <button
-                    type="button"
-                    onClick={() => setReplyModeAndPersist("text")}
-                    className="text-micro text-ink-600 underline underline-offset-2"
-                  >
-                    Text replies
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          {isUploading && <AgentThinkingIndicator variant="processing" />}
 
-          {pendingVoiceTranscript && (
-            <VoiceTranscriptReview
-              transcript={pendingVoiceTranscript}
-              onChange={setPendingVoiceTranscript}
-              onSend={sendVoiceTranscript}
-              onDiscard={() => setPendingVoiceTranscript(null)}
+          {isStreaming && !streamingContent && !isUploading && (
+            <AgentThinkingIndicator
+              actions={actions}
+              actionBaseline={turnActionBaseline}
+              actionCount={actionCount}
+              label={thinkingStatus ?? undefined}
             />
           )}
 
-          <div
-            className={cn(
-              "bg-paper-1 rounded-lg border border-ink-200 shadow-1",
-              "transition-shadow duration-fast",
-              "focus-within:shadow-2 focus-within:border-ink-300"
-            )}
-          >
-            {/* Text area */}
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                if (isPlaying) interruptSpeech();
-                if (isRecording) void cancelRecording();
-                setInput(e.target.value);
+          {isStreaming && streamingApplicationKits.length > 0 && (
+            <ApplicationKitCards kits={streamingApplicationKits} />
+          )}
+        </>
+      )}
+
+      {showProfileFlow && (
+        <ProfileCompletionFlow
+          profile={warmup?.profile ?? null}
+          completeness={warmup?.profileCompleteness ?? null}
+          onClose={() => setShowProfileFlow(false)}
+          onSaved={() => {
+            void warmupChatContext({ force: true })
+              .then(setWarmup)
+              .catch(() => {});
+          }}
+        />
+      )}
+    </div>
+  );
+
+  const composerSlot = (
+    <div className="bg-paper-0 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+      <div className={cn(CHAT_COLUMN_CLASS, "space-y-2")}>
+        {showCoachMark && (
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
+            <p className="text-micro text-ink-700 leading-relaxed">
+              Type or hold the mic to talk with Aarya. Your job matches are
+              always in <span className="font-medium">Matches</span> on the
+              left; chat never blocks them.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                storeChatCoachSeen();
+                setShowCoachMark(false);
               }}
-              onFocus={handleComposerFocus}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                isRecording
-                  ? "Tap here to type instead…"
-                  : pendingVoiceTranscript
-                    ? "Edit your voice message above, then send."
-                    : "Ask Aarya anything…"
-              }
-              rows={1}
-              disabled={isStreaming || voiceProcessing || Boolean(pendingVoiceTranscript)}
-              className={cn(
-                "w-full bg-transparent resize-none text-body text-ink-900",
-                "placeholder:text-ink-400 focus:outline-none leading-relaxed",
-                "px-4 pt-2 pb-1 max-h-[80px] disabled:opacity-60"
+              className="shrink-0 text-micro font-medium text-ink-600 hover:text-ink-900"
+            >
+              Got it
+            </button>
+          </div>
+        )}
+
+        {(isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-micro font-medium text-ink-800">
+                {isRecording
+                  ? "Listening — release mic to send, or tap below to type"
+                  : voiceProcessing
+                    ? "Processing voice…"
+                    : isPlaying
+                      ? "Speaking…"
+                      : "Review your message"}
+              </p>
+              {isRecording && interimTranscript && (
+                <p className="text-micro text-ink-600 truncate mt-0.5">
+                  {interimTranscript}
+                </p>
               )}
-            />
-
-            {/* Bottom toolbar */}
-            <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
-              {/* Left: resume upload */}
-              <button
-                type="button"
-                title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
-                disabled={isUploading || isStreaming}
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
-                  isUploading || isStreaming
-                    ? "text-ink-300 cursor-not-allowed"
-                    : "text-ink-400 hover:text-ink-900 hover:bg-ink-50"
-                )}
-              >
-                {isUploading
-                  ? <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
-                  : <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
-                }
-              </button>
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void handleResumeUpload(file);
-                }}
-              />
-
-              {/* Right: pen (type) + mic (hold to talk) — nothing else.
-                  Spoken replies happen automatically after voice messages;
-                  the old reply-mode toggle and deep-dive phone button were
-                  clutter (the deep-dive stays reachable via ?voice=deep). */}
-              <div className="flex items-center gap-2">
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {isPlaying && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setReplyModeAndPersist("text");
-                    textareaRef.current?.focus();
-                  }}
-                  aria-label="Type a message"
-                  title="Type a message"
-                  className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
+                  onClick={interruptSpeech}
+                  className="text-micro text-ink-600 underline underline-offset-2"
                 >
-                  <PenLine className="h-4 w-4" strokeWidth={1.5} />
+                  Stop
                 </button>
+              )}
+              {isRecording && (
+                <button
+                  type="button"
+                  onClick={() => void handleMicToggle()}
+                  className="text-micro text-ink-700 underline underline-offset-2"
+                >
+                  Cancel
+                </button>
+              )}
+              {replyMode === "voice" && (isPlaying || isRecording) && (
+                <button
+                  type="button"
+                  onClick={() => setReplyModeAndPersist("text")}
+                  className="text-micro text-ink-600 underline underline-offset-2"
+                >
+                  Text replies
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
-                {input.trim() && (
+        {pendingVoiceTranscript && (
+          <VoiceTranscriptReview
+            transcript={pendingVoiceTranscript}
+            onChange={setPendingVoiceTranscript}
+            onSend={sendVoiceTranscript}
+            onDiscard={() => setPendingVoiceTranscript(null)}
+          />
+        )}
+
+        <div
+          className={cn(
+            "bg-paper-1 rounded-lg border border-ink-200 shadow-1",
+            "transition-shadow duration-fast",
+            "focus-within:shadow-2 focus-within:border-ink-300",
+          )}
+        >
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => {
+              if (isPlaying) interruptSpeech();
+              if (isRecording) void cancelRecording();
+              setInput(e.target.value);
+            }}
+            onFocus={handleComposerFocus}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              isRecording
+                ? "Tap here to type instead…"
+                : pendingVoiceTranscript
+                  ? "Edit your voice message above, then send."
+                  : "Ask Aarya anything…"
+            }
+            rows={1}
+            disabled={
+              isStreaming || voiceProcessing || Boolean(pendingVoiceTranscript)
+            }
+            className={cn(
+              "w-full bg-transparent resize-none text-body text-ink-900",
+              "placeholder:text-ink-400 focus:outline-none leading-relaxed",
+              "px-4 pt-2 pb-1 max-h-[80px] disabled:opacity-60",
+            )}
+          />
+
+          <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
+            <button
+              type="button"
+              title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
+              disabled={isUploading || isStreaming}
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                isUploading || isStreaming
+                  ? "text-ink-300 cursor-not-allowed"
+                  : "text-ink-400 hover:text-ink-900 hover:bg-ink-50",
+              )}
+            >
+              {isUploading ? (
+                <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
+              ) : (
+                <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
+              )}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleResumeUpload(file);
+              }}
+            />
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReplyModeAndPersist("text");
+                  textareaRef.current?.focus();
+                }}
+                aria-label="Type a message"
+                title="Type a message"
+                className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
+              >
+                <PenLine className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+
+              {input.trim() && (
+                <button
+                  type="button"
+                  onClick={() => void sendMessage(input)}
+                  disabled={isStreaming}
+                  aria-label="Send message"
+                  className={cn(
+                    "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
+                    !isStreaming
+                      ? "bg-accent text-on-accent hover:bg-accent-hover"
+                      : "bg-ink-100 text-ink-300 cursor-not-allowed",
+                  )}
+                >
+                  {isStreaming ? (
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+                  ) : (
+                    <Send className="h-4 w-4" strokeWidth={1.5} />
+                  )}
+                </button>
+              )}
+
+              {VOICE_FEATURE_ENABLED ? (
+                <button
+                  type="button"
+                  onPointerEnter={() => void preconnectVoicePipeline()}
+                  onFocus={() => void preconnectVoicePipeline()}
+                  onPointerDown={(e) => {
+                    if (e.pointerType === "mouse" && e.button !== 0) return;
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    setReplyModeAndPersist("voice");
+                    void handleMicHoldStart();
+                  }}
+                  onPointerUp={(e) => {
+                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                      e.currentTarget.releasePointerCapture(e.pointerId);
+                    }
+                    void handleMicHoldEnd();
+                  }}
+                  onPointerCancel={(e) => {
+                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                      e.currentTarget.releasePointerCapture(e.pointerId);
+                    }
+                    void cancelRecording();
+                  }}
+                  disabled={
+                    isStreaming ||
+                    voiceProcessing ||
+                    Boolean(pendingVoiceTranscript)
+                  }
+                  aria-pressed={isRecording}
+                  aria-label="Hold to talk"
+                  title="Hold to talk, release to send"
+                  className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-fast",
+                    isRecording
+                      ? "bg-destructive text-paper-0 animate-pulse"
+                      : "bg-ink-50 text-ink-900 border border-ink-100 hover:bg-ink-100 hover:border-ink-200",
+                    (isStreaming || voiceProcessing) &&
+                      "opacity-40 cursor-not-allowed",
+                  )}
+                >
+                  {isRecording ? (
+                    <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
+                  ) : (
+                    <Mic className="h-[17px] w-[17px]" strokeWidth={2} />
+                  )}
+                </button>
+              ) : (
+                !input.trim() && (
                   <button
                     type="button"
                     onClick={() => void sendMessage(input)}
                     disabled={isStreaming}
-                    aria-label="Send message"
-                    className={cn(
-                      "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
-                      !isStreaming
-                        ? "bg-accent text-on-accent hover:bg-accent-hover"
-                        : "bg-ink-100 text-ink-300 cursor-not-allowed",
-                    )}
+                    aria-label="Send"
+                    className="w-10 h-10 rounded-full bg-ink-100 text-ink-300 flex items-center justify-center"
                   >
-                    {isStreaming ? (
-                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
-                    ) : (
-                      <Send className="h-4 w-4" strokeWidth={1.5} />
-                    )}
+                    <Send className="h-4 w-4" strokeWidth={1.5} />
                   </button>
-                )}
-
-                {VOICE_FEATURE_ENABLED ? (
-                  <button
-                    type="button"
-                    onPointerEnter={() => void preconnectVoicePipeline()}
-                    onFocus={() => void preconnectVoicePipeline()}
-                    onPointerDown={(e) => {
-                      if (e.pointerType === "mouse" && e.button !== 0) return;
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      // Using the mic implies wanting spoken replies back.
-                      setReplyModeAndPersist("voice");
-                      void handleMicHoldStart();
-                    }}
-                    onPointerUp={(e) => {
-                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                        e.currentTarget.releasePointerCapture(e.pointerId);
-                      }
-                      void handleMicHoldEnd();
-                    }}
-                    onPointerCancel={(e) => {
-                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                        e.currentTarget.releasePointerCapture(e.pointerId);
-                      }
-                      void cancelRecording();
-                    }}
-                    disabled={
-                      isStreaming ||
-                      voiceProcessing ||
-                      Boolean(pendingVoiceTranscript)
-                    }
-                    aria-pressed={isRecording}
-                    aria-label="Hold to talk"
-                    title="Hold to talk, release to send"
-                    className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-fast",
-                      isRecording
-                        ? "bg-destructive text-paper-0 animate-pulse"
-                        : "bg-ink-50 text-ink-900 border border-ink-100 hover:bg-ink-100 hover:border-ink-200",
-                      (isStreaming || voiceProcessing) &&
-                        "opacity-40 cursor-not-allowed",
-                    )}
-                  >
-                    {isRecording ? (
-                      <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
-                    ) : (
-                      <Mic className="h-[17px] w-[17px]" strokeWidth={2} />
-                    )}
-                  </button>
-                ) : (
-                  !input.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => void sendMessage(input)}
-                      disabled={isStreaming}
-                      aria-label="Send"
-                      className="w-10 h-10 rounded-full bg-ink-100 text-ink-300 flex items-center justify-center"
-                    >
-                      <Send className="h-4 w-4" strokeWidth={1.5} />
-                    </button>
-                  )
-                )}
-              </div>
+                )
+              )}
             </div>
           </div>
-
-          {hinglishHint && (
-            <p className="text-micro text-ink-500 text-center px-2">
-              Hindi/English mix detected —{" "}
-              <button
-                type="button"
-                className="underline underline-offset-2 hover:text-ink-800"
-                onClick={() => setReplyModeAndPersist("text")}
-              >
-                use text replies
-              </button>{" "}
-              if voice is unclear.
-            </p>
-          )}
-
-          {voiceError && (
-            <div className="text-center space-y-1">
-              <p className="text-small text-ink-700">{voiceError}</p>
-              <p className="text-micro text-ink-500">
-                You can keep typing. Allow microphone access and reload to use voice.
-              </p>
-            </div>
-          )}
         </div>
+
+        {hinglishHint && (
+          <p className="text-micro text-ink-500 text-center px-2">
+            Hindi/English mix detected —{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-ink-800"
+              onClick={() => setReplyModeAndPersist("text")}
+            >
+              use text replies
+            </button>{" "}
+            if voice is unclear.
+          </p>
+        )}
+
+        {voiceError && (
+          <div className="text-center space-y-1">
+            <p className="text-small text-ink-700">{voiceError}</p>
+            <p className="text-micro text-ink-500">
+              You can keep typing. Allow microphone access and reload to use voice.
+            </p>
+          </div>
+        )}
       </div>
+    </div>
+  );
+
+  return (
+    <>
+      <ChatShell
+        className={className}
+        messagesSlot={messagesSlot}
+        composerSlot={composerSlot}
+        messagesEndRef={messagesEndRef}
+        scrollDeps={scrollDeps}
+      />
 
       <VoiceDeepDiveModal
         open={voiceDeepDiveOpen}
         onClose={() => setVoiceDeepDiveOpen(false)}
         candidateName={candidateName}
       />
-    </div>
+    </>
   );
 }
 
@@ -1672,9 +1726,13 @@ function buildSmartStarterCards(
 function EmptyState({
   onPick,
   onUploadResume,
+  matchNudge,
+  onMatchNudge,
 }: {
   onPick: (text: string) => void;
   onUploadResume: () => void;
+  matchNudge?: string | null;
+  onMatchNudge?: () => void;
 }) {
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [showPathPicker, setShowPathPicker] = useState(false);
@@ -1692,13 +1750,24 @@ function EmptyState({
     };
   }, []);
 
+  const firstName = firstNameFromDisplayName(profile?.user?.full_name ?? undefined) ?? "there";
+  const c = profile?.candidate;
+  const lookingFor = c?.looking_for?.trim();
+  const city = c?.location_city?.trim();
+  const intentGreeting =
+    lookingFor && city
+      ? `You're looking for ${lookingFor} in ${city}. Want me to pull your top matches?`
+      : lookingFor
+        ? `You're looking for ${lookingFor}. Want me to pull your top matches?`
+        : null;
+  const greeting =
+    intentGreeting ??
+    `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
+
   const findJobsMessage = buildFindJobsMessage(profile);
 
   // Meaningful pre-selection: at low profile completeness the highest-value next
   // step is closing profile gaps (better matches downstream), not browsing yet.
-  // Once the profile is solid, default to job matches. We never pre-check more
-  // than one — this is a "recommended starting point", not a multi-select.
-  const c = profile?.candidate;
   const profileSparse =
     !c ||
     c.profile_complete === false ||
@@ -1706,9 +1775,14 @@ function EmptyState({
     (c.skills ?? []).filter((s) => s.trim()).length < 3;
 
   const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage, !profileSparse);
-
-  const firstName = firstNameFromDisplayName(profile?.user?.full_name ?? undefined) ?? "there";
-  const greeting = `Hi ${firstName}, I'm Aarya — your AI recruiter. What brings you here today?`;
+  if (intentGreeting && cards[0]?.kind === "message") {
+    cards[0] = {
+      ...cards[0],
+      title: "Show my top matches",
+      description: "Ranked by fit to your profile",
+      primary: true,
+    };
+  }
 
   const handlePathSelect = (opt: CareerPathOption) => {
     onPick(
@@ -1729,6 +1803,15 @@ function EmptyState({
 
       <div className="space-y-1">
         <p className="text-body text-ink-800 leading-relaxed">{greeting}</p>
+        {matchNudge && onMatchNudge && (
+          <button
+            type="button"
+            onClick={onMatchNudge}
+            className="mt-2 rounded-full border border-accent bg-accent/5 px-4 py-2 text-small text-ink-900 hover:bg-accent/10 transition-colors"
+          >
+            {matchNudge}
+          </button>
+        )}
         <p className="text-small text-ink-400 leading-relaxed">
           Tap a suggestion, or just tell me what you&apos;re looking for.
         </p>
@@ -1872,6 +1955,7 @@ function MessageBubble({
   onSavedChange,
   onRequestIntro,
   onApply,
+  onWhyFit,
 }: {
   message: Message;
   isStreaming?: boolean;
@@ -1886,6 +1970,7 @@ function MessageBubble({
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
   onApply?: (job: MatchedJob) => void;
+  onWhyFit?: (job: MatchedJob) => void;
 }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -1950,6 +2035,7 @@ function MessageBubble({
           onSavedChange={onSavedChange ?? (() => undefined)}
           onRequestIntro={onRequestIntro}
           onApply={onApply}
+          onWhyFit={onWhyFit}
         />
       )}
 

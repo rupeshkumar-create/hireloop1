@@ -17,6 +17,7 @@ type ChatJobCardsProps = {
   onSavedChange: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
   onApply?: (job: MatchedJob) => void;
+  onWhyFit?: (job: MatchedJob) => void;
 };
 
 export function ChatJobCards({
@@ -27,6 +28,7 @@ export function ChatJobCards({
   onSavedChange,
   onRequestIntro,
   onApply,
+  onWhyFit,
 }: ChatJobCardsProps) {
   const filtered = applyJobCardFilters(dedupeJobs(jobs), filters);
   if (!filtered.length) {
@@ -63,6 +65,7 @@ export function ChatJobCards({
                 }
               })
             }
+            onWhyFit={onWhyFit}
             isSaved={savedJobIds.has(job.job_id)}
             onSavedChange={onSavedChange}
             variant="chat"

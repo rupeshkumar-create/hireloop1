@@ -40,6 +40,7 @@ interface JobCardProps {
   onRequestIntro?: (job: MatchedJob) => void;
   onDirectApply?: (job: MatchedJob) => void;
   onTailorResume?: (job: MatchedJob) => void;
+  onWhyFit?: (job: MatchedJob) => void;
   tailorStatus?: "idle" | "loading" | "ready" | "error";
   onOpenKitPreview?: (job: MatchedJob, tab: "resume" | "cover_letter" | "interview_prep") => void;
   onLearningRoadmap?: (job: MatchedJob) => void;
@@ -81,6 +82,7 @@ export function JobCard({
   onRequestIntro,
   onDirectApply,
   onTailorResume,
+  onWhyFit,
   tailorStatus = "idle",
   onOpenKitPreview,
   onLearningRoadmap,
@@ -346,6 +348,16 @@ export function JobCard({
         <p className="text-small text-ink-500 leading-relaxed mb-4 line-clamp-2">
           {job.explanation}
         </p>
+      )}
+
+      {isChat && onWhyFit && (
+        <button
+          type="button"
+          onClick={() => onWhyFit(job)}
+          className="text-micro text-accent hover:underline mb-3 -mt-2"
+        >
+          Why is this a fit?
+        </button>
       )}
 
       {/* ── Actions ────────────────────────────────────────────────────── */}

@@ -1,18 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Send, X } from "@/components/brand/icons";
+import { MessageCircle } from "@/components/brand/icons";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
-import { ChatBubble } from "@/components/ux/ChatBubble";
-import { Button } from "@/components/ui";
-import { cn } from "@/lib/utils";
+import { ChatShellDrawer } from "@/components/chat/shell/ChatShellDrawer";
+import type { ChatChip, ChatMessage } from "@/lib/chat/types";
 import {
   fetchPublicProfileChat,
   getOrCreateVisitorSessionId,
-  sendPublicProfileChat,
-  type PublicChatMessage,
+  streamPublicProfileChat,
 } from "@/lib/api/publicProfile";
+
+const PORTFOLIO_CHIPS: ChatChip[] = [
+  {
+    id: "roles",
+    label: "What roles are they open to?",
+    message: "What roles are they open to?",
+  },
+  {
+    id: "summary",
+    label: "Summarize for my hiring manager",
+    message: "Summarize this candidate in 3 bullets for a hiring manager.",
+  },
+  {
+    id: "intro",
+    label: "Request intro",
+    message: "How do I request an intro to this candidate on Hireloop?",
+  },
+];
 
 type PublicProfileChatProps = {
   slug: string;
@@ -21,22 +37,33 @@ type PublicProfileChatProps = {
 
 export function PublicProfileChat({ slug, candidateLabel }: PublicProfileChatProps) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<PublicChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [chips, setChips] = useState<ChatChip[]>(PORTFOLIO_CHIPS);
   const [error, setError] = useState<string | null>(null);
   const [visitorId, setVisitorId] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setVisitorId(getOrCreateVisitorSessionId(slug));
   }, [slug]);
 
+  const shellMessages = useMemo(() => messages, [messages]);
+
   const loadHistory = useCallback(async () => {
     if (!visitorId) return;
     const rows = await fetchPublicProfileChat(slug, visitorId);
-    setMessages(rows);
+    setMessages(
+      rows.map((m, i) => ({
+        id: `hist-${i}`,
+        role: m.role,
+        content: m.content,
+        created_at: m.created_at ?? undefined,
+      })),
+    );
   }, [slug, visitorId]);
 
   useEffect(() => {
@@ -44,151 +71,97 @@ export function PublicProfileChat({ slug, candidateLabel }: PublicProfileChatPro
     void loadHistory();
   }, [open, visitorId, loadHistory]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open]);
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!visitorId || !text.trim() || sending) return;
+      const trimmed = text.trim();
+      setSending(true);
+      setError(null);
+      setStreamingText("");
+      setStatus(null);
+      setLastFailedMessage(null);
+      setInput("");
+      setMessages((prev) => [
+        ...prev,
+        { id: `user-${Date.now()}`, role: "user", content: trimmed },
+      ]);
+      try {
+        const reply = await streamPublicProfileChat(slug, visitorId, trimmed, {
+          onStatus: (s) => setStatus(s),
+          onText: (_chunk, accumulated) => setStreamingText(accumulated),
+          onChips: (next) => setChips(next),
+        });
+        setMessages((prev) => [
+          ...prev,
+          { id: `assistant-${Date.now()}`, role: "assistant", content: reply },
+        ]);
+        setStreamingText("");
+        setStatus(null);
+      } catch (err) {
+        setError((err as Error).message);
+        setLastFailedMessage(trimmed);
+        setMessages((prev) => prev.slice(0, -1));
+        setInput(trimmed);
+        setStreamingText("");
+      } finally {
+        setSending(false);
+      }
+    },
+    [sending, slug, visitorId],
+  );
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || !visitorId || sending) return;
-    setSending(true);
-    setError(null);
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    try {
-      const result = await sendPublicProfileChat(slug, visitorId, text);
-      setMessages(result.messages);
-    } catch (err) {
-      setError((err as Error).message);
-      setMessages((prev) => prev.slice(0, -1));
-      setInput(text);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  const greeting =
-    messages.length === 0
-      ? `Hi! I'm Aarya. Ask me anything about ${candidateLabel}'s background, skills, or what they're looking for next.`
-      : null;
+  const emptyState = (
+    <p className="text-small text-ink-600 text-left">
+      Hi! I&apos;m Aarya. Ask me about {candidateLabel}&apos;s background, skills, or
+      what they&apos;re looking for next.
+    </p>
+  );
 
   return (
-    <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className={cn(
-            "fixed z-40 bottom-6 right-6 flex items-center gap-2",
-            "rounded-full bg-accent text-on-accent px-5 py-3 shadow-1",
-            "hover:bg-accent-hover transition-colors",
-            "text-small font-semibold",
-          )}
-          aria-label="Open chat with Aarya"
-        >
-          <MessageCircle className="h-5 w-5" strokeWidth={1.75} />
-          <span className="hidden sm:inline">Chat with Aarya</span>
-        </button>
-      )}
-
-      {open && (
-        <div
-          className={cn(
-            "fixed z-50 inset-x-0 bottom-0 sm:inset-auto sm:bottom-6 sm:right-6",
-            "sm:w-[min(100vw-2rem,24rem)] sm:max-h-[32rem]",
-            "flex flex-col bg-paper-1 border border-ink-100 shadow-1",
-            "rounded-t-lg sm:rounded-lg overflow-hidden",
-            "h-[min(85vh,32rem)] sm:h-[min(70vh,32rem)]",
-          )}
-          role="dialog"
-          aria-label={`Chat about ${candidateLabel}`}
-        >
-          <header className="flex items-center gap-3 border-b border-ink-100 px-4 py-3 bg-paper-0 shrink-0">
-            <AaryaFace size="sm" />
-            <div className="min-w-0 flex-1">
-              <p className="text-small font-semibold text-ink-900 truncate">Aarya</p>
-              <p className="text-micro text-ink-500 truncate">
-                About {candidateLabel}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="p-1.5 text-ink-500 hover:text-ink-900 transition-colors"
-              aria-label="Close chat"
-            >
-              <X className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-          </header>
-
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-paper-0">
-            {greeting && (
-              <ChatBubble role="assistant">
-                <p className="text-small whitespace-pre-wrap">{greeting}</p>
-              </ChatBubble>
-            )}
-            {messages.map((m, i) => (
-              <ChatBubble key={`${m.role}-${i}`} role={m.role === "user" ? "user" : "assistant"}>
-                <p className="text-small whitespace-pre-wrap">{m.content}</p>
-              </ChatBubble>
-            ))}
-            {sending && (
-              <p className="text-micro text-ink-500 animate-pulse">Aarya is typing…</p>
-            )}
-            <div ref={bottomRef} />
-          </div>
-
-          <div className="border-t border-ink-100 bg-paper-1 p-3 space-y-2 shrink-0">
-            {error && (
-              <p className="text-micro text-destructive">{error}</p>
-            )}
-            <div className="flex gap-2 items-end">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-                rows={2}
-                placeholder="Ask about their experience…"
-                className={cn(
-                  "flex-1 resize-none rounded-md border border-ink-100 bg-paper-0",
-                  "px-3 py-2 text-small text-ink-900 placeholder:text-ink-400",
-                  "outline-none focus:ring-2 focus:ring-accent-ring",
-                )}
-                disabled={sending}
-              />
-              <Button
-                variant="primary"
-                size="sm"
-                loading={sending}
-                disabled={!input.trim() || sending}
-                onClick={() => void handleSend()}
-                aria-label="Send message"
-              >
-                <Send className="h-4 w-4" strokeWidth={1.75} />
-              </Button>
-            </div>
-            <p className="text-micro text-ink-500 text-center">
-              Hiring?{" "}
-              <Link
-                href={`/signup?role=recruiter&from=${encodeURIComponent(`/p/${slug}`)}`}
-                className="text-accent hover:underline"
-              >
-                Join as a recruiter
-              </Link>
-            </p>
+    <ChatShellDrawer
+      open={open}
+      onOpen={() => setOpen(true)}
+      onClose={() => setOpen(false)}
+      fabLabel="Chat with Aarya"
+      fabIcon={<MessageCircle className="h-5 w-5" strokeWidth={1.75} />}
+      ariaLabel={`Chat about ${candidateLabel}`}
+      header={
+        <div className="flex items-center gap-3 px-4 py-3 min-w-0">
+          <AaryaFace size="sm" />
+          <div className="min-w-0">
+            <p className="text-small font-semibold text-ink-900 truncate">Aarya</p>
+            <p className="text-micro text-ink-500 truncate">About {candidateLabel}</p>
           </div>
         </div>
-      )}
-    </>
+      }
+      messages={shellMessages}
+      streamingText={streamingText}
+      status={status}
+      chips={chips}
+      onChipClick={(chip) => void sendMessage(chip.message)}
+      error={error}
+      onRetry={
+        lastFailedMessage
+          ? () => void sendMessage(lastFailedMessage)
+          : undefined
+      }
+      input={input}
+      onInputChange={setInput}
+      onSend={() => void sendMessage(input)}
+      sending={sending}
+      placeholder="Ask about their experience…"
+      emptyState={emptyState}
+      footer={
+        <p className="text-micro text-ink-500 text-center">
+          Hiring?{" "}
+          <Link
+            href={`/signup?role=recruiter&from=${encodeURIComponent(`/p/${slug}`)}`}
+            className="text-accent hover:underline"
+          >
+            Join as a recruiter
+          </Link>
+        </p>
+      }
+    />
   );
 }

@@ -40,5 +40,9 @@ def sse_jobs(jobs: list[dict[str, Any]]) -> str:
     return sse_event({"jobs": jobs})
 
 
+def sse_chips(chips: list[dict[str, Any]]) -> str:
+    return sse_event({"chips": chips})
+
+
 def sse_error(message: str) -> str:
     return sse_event({"error": message[:500]})

@@ -1,11 +1,14 @@
 /** Client-side grace period after POST /complete-onboarding while profile revalidates. */
 export const ONBOARDING_COMPLETE_AT_KEY = "hireloop_onboarding_complete_at";
+export const ONBOARDING_COMPLETE_PERSISTENT_KEY = "hireloop_onboarding_complete_v1";
 
-const DEFAULT_GRACE_MS = 120_000;
+const DEFAULT_GRACE_MS = 300_000;
 
 export function markClientOnboardingComplete(): void {
   try {
-    sessionStorage.setItem(ONBOARDING_COMPLETE_AT_KEY, String(Date.now()));
+    const now = String(Date.now());
+    sessionStorage.setItem(ONBOARDING_COMPLETE_AT_KEY, now);
+    localStorage.setItem(ONBOARDING_COMPLETE_PERSISTENT_KEY, "1");
   } catch {
     /* ignore */
   }
@@ -14,8 +17,17 @@ export function markClientOnboardingComplete(): void {
 export function clearClientOnboardingComplete(): void {
   try {
     sessionStorage.removeItem(ONBOARDING_COMPLETE_AT_KEY);
+    localStorage.removeItem(ONBOARDING_COMPLETE_PERSISTENT_KEY);
   } catch {
     /* ignore */
+  }
+}
+
+export function hasPersistentOnboardingComplete(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDING_COMPLETE_PERSISTENT_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -31,6 +43,10 @@ export function isClientOnboardingCompleteRecent(
   } catch {
     return false;
   }
+}
+
+export function isClientOnboardingTrusted(): boolean {
+  return hasPersistentOnboardingComplete() || isClientOnboardingCompleteRecent();
 }
 
 export function sleep(ms: number): Promise<void> {

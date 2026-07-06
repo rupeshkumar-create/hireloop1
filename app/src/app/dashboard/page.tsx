@@ -101,7 +101,9 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: candidateRaw } = await (supabase as any)
     .from("candidates")
-    .select("id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url")
+    .select(
+      "id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url, onboarding_complete",
+    )
     .eq("user_id", user.id)
     .is("deleted_at", null)
     .maybeSingle() as {
@@ -111,10 +113,15 @@ export default async function DashboardPage({
       expected_ctc_min: number | null;
       expected_ctc_max: number | null;
       linkedin_url: string | null;
+      onboarding_complete: boolean | null;
     } | null;
   };
 
   if (!candidateRaw) {
+    redirect("/onboarding");
+  }
+
+  if (candidateRaw.onboarding_complete !== true) {
     redirect("/onboarding");
   }
 

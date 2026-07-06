@@ -1,3 +1,5 @@
+import { consumeSSEStream } from "@/lib/chat/sse";
+import type { ChatChip, ChatStreamCallbacks } from "@/lib/chat/types";
 import { getApiBaseUrl } from "@/lib/api/base-url";
 
 export type PublicProfile = {
@@ -88,6 +90,34 @@ export async function sendPublicProfileChat(
     throw new Error(body.detail ?? "Could not send message");
   }
   return res.json() as Promise<{ reply: string; messages: PublicChatMessage[] }>;
+}
+
+export async function streamPublicProfileChat(
+  slug: string,
+  visitorSessionId: string,
+  message: string,
+  callbacks: ChatStreamCallbacks = {},
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await fetch(
+    `${base()}/api/v1/public/profiles/${encodeURIComponent(slug)}/chat/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        visitor_session_id: visitorSessionId,
+      }),
+      signal,
+    },
+  );
+  if (!res.ok || !res.body) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail ?? "Could not send message");
+  }
+  const result = await consumeSSEStream(res.body, { callbacks, signal });
+  if (result.error) throw new Error(result.error);
+  return result.text;
 }
 
 export function getOrCreateVisitorSessionId(slug: string): string {
