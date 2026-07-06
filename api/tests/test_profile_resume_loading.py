@@ -17,6 +17,11 @@ class FakeProfileDb:
     async def execute(self, query: str, *args: object) -> str:
         return "UPDATE 0"
 
+    async def fetchval(self, query: str, *args: object) -> object:
+        # onboarding_grandfather checks resume existence; the fake candidate
+        # has one resume, so report it present.
+        return 1
+
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         if "FROM public.users" in query:
             return {
