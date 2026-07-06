@@ -26,6 +26,18 @@ const nextConfig = {
     ];
   },
 
+  // Apex → www (must live in next.config for Vercel + Next.js 15; not vercel.json)
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "hireschema.com" }],
+        destination: "https://www.hireschema.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
+
   images: {
     remotePatterns: [
       {

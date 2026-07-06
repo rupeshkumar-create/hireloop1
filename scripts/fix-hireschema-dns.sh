@@ -14,12 +14,12 @@ echo "==> DNS records for ${DOMAIN}"
 vercel dns ls "$DOMAIN" || { echo "Run: vercel login"; exit 1; }
 
 echo ""
-echo "==> Remove stale AAAA / non-Vercel A records (Google / stray hosts)"
+echo "==> Remove stale AAAA records and apex A records pointing at Google (216.239.x.x)"
 while read -r id _rest; do
   [[ -z "${id:-}" ]] && continue
   echo "    removing record id=${id}"
   vercel dns remove "$id" -y || true
-done < <(vercel dns ls "$DOMAIN" 2>/dev/null | awk '/AAAA|2\.57\.91\.91/{print $1}')
+done < <(vercel dns ls "$DOMAIN" 2>/dev/null | awk '/AAAA|216\.239\.|2\.57\.91\.91/{print $1}')
 
 echo ""
 echo "==> Ensure apex A -> ${APEX_A}"

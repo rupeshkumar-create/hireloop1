@@ -1,13 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --no-frozen-lockfile",
-  "buildCommand": "pnpm --filter app build",
-  "redirects": [
-    {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "hireschema.com" }],
-      "destination": "https://www.hireschema.com/:path*",
-      "permanent": true
-    }
-  ]
+  "buildCommand": "pnpm --filter app build"
 }
