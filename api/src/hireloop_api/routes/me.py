@@ -1409,6 +1409,8 @@ async def complete_onboarding(
     if body.market and market not in SUPPORTED_MARKETS:
         raise HTTPException(status_code=400, detail="Unsupported market")
 
+    await _ensure_candidate_row(db, user_id)
+
     await db.execute(
         """
         UPDATE public.users
@@ -1427,6 +1429,20 @@ async def complete_onboarding(
         user_id,
         market,
     )
+    onboarding_done = await db.fetchval(
+        """
+        SELECT onboarding_complete
+        FROM public.candidates
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if not onboarding_done:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not mark onboarding complete. Please try again.",
+        )
+
     purpose = "onboarding_complete_voice_skip" if body.skipped_voice else "onboarding_complete"
     await log_consent(db, user_id=user_id, purpose=purpose, granted=True, request=request)
     if body.skipped_resume:

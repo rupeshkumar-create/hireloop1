@@ -2,8 +2,36 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import {
+  clearClientOnboardingComplete,
+  isClientOnboardingCompleteRecent,
+  sleep,
+} from "@/lib/auth/onboarding-complete";
 import { fetchMyProfile } from "@/lib/api/profile";
 import { isPublicPath } from "@/lib/public-routes";
+
+async function isOnboardingComplete(): Promise<boolean> {
+  const profile = await fetchMyProfile({ force: true });
+  return profile.candidate?.onboarding_complete === true;
+}
+
+async function resolveOnboardingComplete(
+  optimistic: boolean,
+): Promise<boolean> {
+  if (await isOnboardingComplete()) {
+    return true;
+  }
+  if (!optimistic) {
+    return false;
+  }
+  for (const delayMs of [800, 1500, 2500]) {
+    await sleep(delayMs);
+    if (await isOnboardingComplete()) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function CandidateGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -22,15 +50,14 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false;
-    setReady(false);
+    const optimistic = isClientOnboardingCompleteRecent();
+    setReady(optimistic);
 
-    const timeout = window.setTimeout(() => {
-      if (!cancelled) setReady(true);
-    }, 12_000);
-
-    fetchMyProfile()
-      .then((profile) => {
+    void (async () => {
+      try {
+        const profile = await fetchMyProfile({ force: true });
         if (cancelled) return;
+
         if (profile.user?.role === "recruiter") {
           if (pathname?.startsWith("/onboarding")) {
             router.replace("/recruiter/onboarding");
@@ -43,23 +70,35 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
           setReady(true);
           return;
         }
-        const done = profile.candidate?.onboarding_complete === true;
+
+        let done = profile.candidate?.onboarding_complete === true;
         if (!done) {
-          router.replace("/onboarding");
+          done = await resolveOnboardingComplete(optimistic);
+        }
+        if (cancelled) return;
+
+        if (done) {
+          clearClientOnboardingComplete();
+          setReady(true);
           return;
         }
-        setReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setReady(true);
-      })
-      .finally(() => {
-        window.clearTimeout(timeout);
-      });
+
+        if (optimistic) {
+          // User just finished onboarding — don't loop them back while API catches up.
+          setReady(true);
+          return;
+        }
+
+        router.replace("/onboarding");
+      } catch {
+        if (!cancelled) {
+          setReady(true);
+        }
+      }
+    })();
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
     };
   }, [pathname, router]);
 

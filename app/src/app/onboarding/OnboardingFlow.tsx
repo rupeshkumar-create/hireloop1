@@ -37,6 +37,8 @@ import {
   uploadResumeAndApply,
   type ParsedResumeSummary,
 } from "@/lib/api/onboardingProfile";
+import { invalidateProfileCache } from "@/lib/api/profile";
+import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
@@ -288,8 +290,10 @@ function ActivationStep({
         throw new Error(data.detail ?? "Couldn't finish activation.");
       }
 
+      invalidateProfileCache();
+      markClientOnboardingComplete();
       clearOnboardingProgress();
-      router.push("/dashboard");
+      router.replace("/dashboard");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {
@@ -645,10 +649,14 @@ export function OnboardingFlow({
   useEffect(() => {
     if (recruiterCheckDone.current) return;
     recruiterCheckDone.current = true;
-    void fetchMyProfile()
+    void fetchMyProfile({ force: true })
       .then((profile) => {
         if (profile.user?.role === "recruiter") {
           router.replace("/recruiter/onboarding");
+          return;
+        }
+        if (profile.candidate?.onboarding_complete === true) {
+          router.replace("/dashboard");
           return;
         }
         const name = profile.user?.full_name?.trim();

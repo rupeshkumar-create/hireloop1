@@ -209,7 +209,12 @@ export function invalidateProfileCache(): void {
 export async function fetchMyProfile(
   opts: { force?: boolean } = {}
 ): Promise<MyProfileData> {
-  if (!opts.force && _profileInFlight) return _profileInFlight;
+  if (opts.force) {
+    _profileCache = null;
+    _profileInFlight = null;
+  } else if (_profileInFlight) {
+    return _profileInFlight;
+  }
 
   const req = apiFetch<MyProfileData>("/api/v1/me/profile")
     .then((data) => {

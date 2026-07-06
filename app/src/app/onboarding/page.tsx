@@ -58,7 +58,11 @@ export default async function OnboardingPage() {
       if (profileRes.ok) {
         const profileData = (await profileRes.json()) as {
           user?: { full_name?: string | null };
+          candidate?: { onboarding_complete?: boolean };
         };
+        if (profileData.candidate?.onboarding_complete === true) {
+          redirect("/dashboard");
+        }
         candidateName = profileData.user?.full_name?.trim() || candidateName;
       }
     } catch {
