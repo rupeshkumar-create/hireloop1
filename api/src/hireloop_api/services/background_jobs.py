@@ -376,8 +376,9 @@ async def _handle_match_embed_candidate(settings: Settings, payload: dict[str, A
     async with pool.acquire() as conn:
         svc = EmbeddingService(api_key=settings.openrouter_api_key, db=conn)
         try:
+            embedded, _failed = await svc.embed_all_pending_jobs()
             ok = await svc.embed_candidate(candidate_id)
-            if ok:
+            if ok or embedded:
                 engine = MatchingEngine(conn)
                 await engine.score_candidate(candidate_id)
         finally:

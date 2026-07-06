@@ -25,7 +25,9 @@ from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 MIN_PERSIST_SCORE = 0.35
 
 # Default relevance floor for candidate feed (API + app).
-DEFAULT_FEED_MIN_SCORE = 0.45
+# Kept near MIN_PERSIST_SCORE so career-path-aligned roles (e.g. Growth Manager
+# for Head of Growth) surface once embeddings are computed — not only test jobs.
+DEFAULT_FEED_MIN_SCORE = 0.38
 
 # Persona pool: minimum title affinity to enter the scoring batch.
 MIN_TITLE_AFFINITY_POOL = 0.10
@@ -35,10 +37,14 @@ MIN_DOMAIN_MULTIPLIER_POOL = 0.25
 
 
 def candidate_role_titles(cand_row: Mapping[str, Any]) -> list[str]:
-    """Current role + career-path targets used for persona pooling."""
+    """Current role + prioritized search + career-path targets for persona pooling."""
     titles: list[str] = []
     if cand_row.get("current_title"):
         titles.append(str(cand_row["current_title"]))
+    if cand_row.get("looking_for"):
+        titles.append(str(cand_row["looking_for"]))
+    if cand_row.get("prioritized_title"):
+        titles.append(str(cand_row["prioritized_title"]))
     for raw in cand_row.get("target_titles") or []:
         if raw:
             titles.append(str(raw))

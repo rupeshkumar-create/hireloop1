@@ -520,7 +520,14 @@ def _assemble_score(
     # Career-path aware: a job aligned with the candidate's current role OR any of
     # their career-path target titles boosts the profile dimension.
     candidate_titles = [
-        t for t in [cand_row["current_title"], *(cand_row["target_titles"] or [])] if t
+        t
+        for t in [
+            cand_row.get("current_title"),
+            cand_row.get("looking_for"),
+            cand_row.get("prioritized_title"),
+            *(cand_row.get("target_titles") or []),
+        ]
+        if t
     ]
     title_aff = _best_title_affinity(job_row["title"], candidate_titles)
 
@@ -642,6 +649,7 @@ class MatchingEngine:
                 u.full_name,
                 c.current_title,
                 c.current_company,
+                c.looking_for,
                 c.headline,
                 c.summary,
                 c.years_experience,
@@ -663,7 +671,14 @@ class MatchingEngine:
                     WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
                     ORDER BY cp.created_at DESC
                     LIMIT 1
-                ) AS target_titles
+                ) AS target_titles,
+                (
+                    SELECT cp.prioritized_title
+                    FROM public.career_paths cp
+                    WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                    ORDER BY cp.created_at DESC
+                    LIMIT 1
+                ) AS prioritized_title
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
             LEFT JOIN public.candidate_embeddings ce ON ce.candidate_id = c.id

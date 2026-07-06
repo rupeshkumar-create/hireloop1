@@ -358,6 +358,33 @@ class EmbeddingService:
         return success, failed
 
 
+async def embed_pending_and_score_candidate(
+    db: asyncpg.Connection,
+    settings: Any,
+    candidate_id: str,
+    *,
+    limit: int = 500,
+) -> tuple[int, int]:
+    """
+    Embed active jobs missing vectors, then score the candidate against them.
+
+    Ingested Apify/Fantastic jobs are unusable for ranking until embedded — this
+    is the bridge between scrape and a populated match feed.
+    Returns (jobs_embedded, pairs_scored).
+    """
+    from hireloop_api.services.matching import MatchingEngine
+
+    svc = EmbeddingService(api_key=settings.openrouter_api_key, db=db)
+    try:
+        embedded, _failed = await svc.embed_all_pending_jobs()
+    finally:
+        await svc.close()
+
+    engine = MatchingEngine(db)
+    scored = await engine.score_candidate(candidate_id, limit=limit)
+    return embedded, scored
+
+
 async def run_job_embedding(settings: Any, job_id: str) -> None:
     """
     Fire-and-forget (re)embedding of a single job on its own pooled connection.

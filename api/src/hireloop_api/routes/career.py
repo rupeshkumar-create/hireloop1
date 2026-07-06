@@ -244,9 +244,17 @@ async def _ingest_and_rescore(
             logger.info("career_find_jobs_ingest_skipped", reason="no_apify_token")
 
         try:
-            engine = MatchingEngine(conn)
-            scored = await engine.score_candidate(candidate_id, limit=150)
-            logger.info("career_find_jobs_rescored", candidate_id=candidate_id, scored=scored)
+            from hireloop_api.services.embeddings import embed_pending_and_score_candidate
+
+            embedded, scored = await embed_pending_and_score_candidate(
+                conn, settings, candidate_id, limit=150
+            )
+            logger.info(
+                "career_find_jobs_rescored",
+                candidate_id=candidate_id,
+                embedded=embedded,
+                scored=scored,
+            )
         except Exception as exc:  # scoring is best-effort
             logger.error("career_find_jobs_rescore_failed", error=str(exc))
 

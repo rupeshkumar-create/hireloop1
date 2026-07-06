@@ -108,16 +108,36 @@ async def _supplement_market_feed(
     db: asyncpg.Connection,
     *,
     candidate: dict,
+    candidate_id: uuid.UUID,
     result: list[dict],
     min_score: float,
     limit: int,
     remote_preference: str,
     market: str,
 ) -> list[dict]:
-    """Fill a thin market feed from the lexical fallback pool."""
+    """Fill a thin market feed from cached scores, then lexical fallback."""
     if len(result) >= limit:
         return result
     for floor in (min_score, MIN_PERSIST_SCORE):
+        cached = await _fetch_cached_match_rows(
+            db,
+            candidate_id=candidate_id,
+            min_score=floor,
+            limit=limit,
+            offset=0,
+            remote_preference=remote_preference,
+            market=market,
+        )
+        serialized = _market_feed_items(
+            _serialize_current_quality_cached_rows(
+                cached,
+                candidate=candidate,
+                min_score=floor,
+            )
+        )
+        result = _merge_feed_results(result, serialized, limit=limit)
+        if len(result) >= limit:
+            return result
         fallback = await _fetch_fallback_match_rows(
             db,
             candidate=candidate,
@@ -217,7 +237,7 @@ async def get_match_feed(
     """
     candidate = await db.fetchrow(
         """
-        SELECT c.id, c.current_title, c.current_company, c.headline, c.summary,
+        SELECT c.id, c.current_title, c.current_company, c.looking_for, c.headline, c.summary,
                c.years_experience, c.skills,
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
                c.remote_preference, c.open_to_relocation, c.location_scope,
@@ -228,7 +248,14 @@ async def get_match_feed(
                    WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
                    ORDER BY cp.created_at DESC
                    LIMIT 1
-               ) AS target_titles
+               ) AS target_titles,
+               (
+                   SELECT cp.prioritized_title
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS prioritized_title
         FROM public.candidates c
         WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
         """,
@@ -274,6 +301,31 @@ async def get_match_feed(
                 idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
             )
 
+    if offset == 0 and settings.openrouter_api_key and hasattr(db, "fetchval"):
+        unembedded = await db.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.jobs j
+            LEFT JOIN public.job_embeddings je ON je.job_id = j.id
+            WHERE j.is_active = TRUE
+              AND j.deleted_at IS NULL
+              AND je.job_id IS NULL
+              AND j.source IN ('apify', 'fantastic_jobs', 'ats')
+            """
+        )
+        if int(unembedded or 0) > 0:
+            from hireloop_api.services.background_jobs import (
+                MATCH_EMBED_CANDIDATE,
+                enqueue_job,
+            )
+
+            await enqueue_job(
+                db,
+                kind=MATCH_EMBED_CANDIDATE,
+                payload={"candidate_id": str(candidate["id"])},
+                idempotency_key=f"match_embed_feed:{candidate['id']}",
+            )
+
     rows = await _fetch_cached_match_rows(
         db,
         candidate_id=candidate["id"],
@@ -302,13 +354,18 @@ async def get_match_feed(
                 market=market,
             )
             if not _market_match_rows(rows):
-                engine = MatchingEngine(db)
-                scored = await engine.score_candidate(
-                    str(candidate["id"]), limit=_FEED_SCORE_LIMIT
+                from hireloop_api.services.embeddings import embed_pending_and_score_candidate
+
+                embedded, scored = await embed_pending_and_score_candidate(
+                    db,
+                    settings,
+                    str(candidate["id"]),
+                    limit=_FEED_SCORE_LIMIT,
                 )
                 logger.info(
                     "match_feed_live_scored",
                     candidate_id=str(candidate["id"]),
+                    embedded=embedded,
                     scored=scored,
                 )
                 if scored:
@@ -330,6 +387,7 @@ async def get_match_feed(
         result = await _supplement_market_feed(
             db,
             candidate=dict(candidate),
+            candidate_id=candidate["id"],
             result=[],
             min_score=min_score,
             limit=limit,
@@ -340,6 +398,7 @@ async def get_match_feed(
         result = await _supplement_market_feed(
             db,
             candidate=dict(candidate),
+            candidate_id=candidate["id"],
             result=result,
             min_score=min_score,
             limit=limit,
@@ -348,8 +407,11 @@ async def get_match_feed(
         )
 
     if offset == 0 and len(result) < _MIN_MARKET_FEED_JOBS and hasattr(db, "executemany"):
-        engine = MatchingEngine(db)
-        await engine.score_candidate(str(candidate["id"]), limit=_FEED_SCORE_LIMIT)
+        from hireloop_api.services.embeddings import embed_pending_and_score_candidate
+
+        await embed_pending_and_score_candidate(
+            db, settings, str(candidate["id"]), limit=_FEED_SCORE_LIMIT
+        )
         rows = await _fetch_cached_match_rows(
             db,
             candidate_id=candidate["id"],
@@ -369,6 +431,7 @@ async def get_match_feed(
         result = await _supplement_market_feed(
             db,
             candidate=dict(candidate),
+            candidate_id=candidate["id"],
             result=refreshed,
             min_score=min_score,
             limit=max(limit, _MIN_MARKET_FEED_JOBS),
@@ -407,12 +470,14 @@ async def get_match_feed(
             screen_size=min(limit, 8),
             fuse_signals=("overall_score", "skills_score"),
         )
-        test_jobs = await fetch_test_jobs_for_feed(
-            db,
-            market=market,
-            remote_preference="any",
-        )
-        result = append_test_jobs(result, test_jobs, limit=limit)
+        market_count = len(_market_feed_items(result))
+        if market_count < 3:
+            test_jobs = await fetch_test_jobs_for_feed(
+                db,
+                market=market,
+                remote_preference="any",
+            )
+            result = append_test_jobs(result, test_jobs, limit=limit)
         # Off the serve path: snapshot the screen and generate/persist rationales
         # on a background connection so the feed returns immediately.
         _schedule_rationale_overlay(dict(candidate), [dict(i) for i in result], limit)

@@ -521,9 +521,10 @@ _BG_TASKS: set[asyncio.Task] = set()
 
 
 async def _auto_ingest_for_candidate(settings: Settings, candidate_id: str) -> None:
-    """Background: warm the job index with a career-path-scoped Apify scrape."""
+    """Background: career-path scrape → embed new jobs → score for this candidate."""
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.apify.job_ingester import JobIngester
+    from hireloop_api.services.embeddings import embed_pending_and_score_candidate
 
     try:
         pool = await get_db_pool(settings)
@@ -537,7 +538,15 @@ async def _auto_ingest_for_candidate(settings: Settings, candidate_id: str) -> N
                 enable_career_site=settings.apify_enable_career_site_ingest,
             )
             await ingester.ingest_for_candidate(candidate_id)
-        logger.info("aarya_auto_ingest_done", candidate_id=candidate_id)
+            embedded, scored = await embed_pending_and_score_candidate(
+                conn, settings, candidate_id, limit=500
+            )
+        logger.info(
+            "aarya_auto_ingest_done",
+            candidate_id=candidate_id,
+            embedded=embedded,
+            scored=scored,
+        )
     except Exception as exc:  # background best-effort; never surfaces to the user
         logger.warning("aarya_auto_ingest_failed", error=str(exc)[:200])
 
