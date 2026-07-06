@@ -170,13 +170,26 @@ export function MatchFeed({
           setHasMore(cached.length === PAGE_SIZE);
           setOffset(currentOffset + cached.length);
           setLoading(false);
+          // Refresh in the background without blocking the sidebar.
+          void fetchMatchFeed(filters, { force: true })
+            .then((rawData) => {
+              const data = applyLocalFilters(rawData, { remoteOnly, seniority });
+              setJobs(data);
+              setHasMore(rawData.length === PAGE_SIZE);
+              setOffset(rawData.length);
+              if (data.length > 0) setEmptyRefreshCount(0);
+            })
+            .catch(() => {
+              /* keep cached rows visible */
+            });
+          return;
         } else if (isFirst) {
           setLoading(true);
         } else {
           setLoadingMore(true);
         }
 
-        const rawData = await fetchMatchFeed(filters, { force: Boolean(cached) });
+        const rawData = await fetchMatchFeed(filters);
         const data = applyLocalFilters(rawData, { remoteOnly, seniority });
 
         setJobs((prev) => (isFirst ? data : [...prev, ...data]));

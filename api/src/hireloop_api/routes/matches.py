@@ -153,6 +153,26 @@ async def _supplement_market_feed(
     return result
 
 
+async def _enqueue_candidate_match_scoring(
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+) -> None:
+    """Kick off embed+score in the background — never block the feed HTTP response."""
+    if not hasattr(db, "fetchval"):
+        return
+    try:
+        from hireloop_api.services.background_jobs import MATCH_EMBED_CANDIDATE, enqueue_job
+
+        await enqueue_job(
+            db,
+            kind=MATCH_EMBED_CANDIDATE,
+            payload={"candidate_id": str(candidate_id)},
+            idempotency_key=f"match_embed_feed:{candidate_id}",
+        )
+    except Exception as exc:
+        logger.debug("match_score_enqueue_failed", candidate_id=str(candidate_id), error=str(exc)[:200])
+
+
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
 
@@ -339,11 +359,9 @@ async def get_match_feed(
     )
 
     if not _market_match_rows(rows) and offset == 0:
-        # Single-flight: right after signup the feed, count, and home panel can all
-        # request page 1 concurrently — without a lock each one runs the full
-        # candidate-vs-jobs scoring pass (N-fold DB/LLM work and latency). The lock
-        # serialises them; whoever waited re-checks the cache and skips scoring.
-        # Test-job rows alone do not count — they must not block market scoring.
+        # Single-flight: concurrent first-page requests must not each enqueue a
+        # background score job. Never block on embed+score here — that can take
+        # minutes and leaves the Matches sidebar on skeleton loaders.
         lock = _first_score_locks.setdefault(str(candidate["id"]), asyncio.Lock())
         async with lock:
             rows = await _fetch_cached_match_rows(
@@ -356,30 +374,7 @@ async def get_match_feed(
                 market=market,
             )
             if not _market_match_rows(rows):
-                from hireloop_api.services.embeddings import embed_pending_and_score_candidate
-
-                embedded, scored = await embed_pending_and_score_candidate(
-                    db,
-                    settings,
-                    str(candidate["id"]),
-                    limit=_FEED_SCORE_LIMIT,
-                )
-                logger.info(
-                    "match_feed_live_scored",
-                    candidate_id=str(candidate["id"]),
-                    embedded=embedded,
-                    scored=scored,
-                )
-                if scored:
-                    rows = await _fetch_cached_match_rows(
-                        db,
-                        candidate_id=candidate["id"],
-                        min_score=min_score,
-                        limit=limit,
-                        offset=offset,
-                        remote_preference=remote_pref,
-                        market=market,
-                    )
+                await _enqueue_candidate_match_scoring(db, candidate["id"])
         _first_score_locks.pop(str(candidate["id"]), None)
 
     result = _market_feed_items(
@@ -408,38 +403,19 @@ async def get_match_feed(
             market=market,
         )
 
-    if offset == 0 and len(result) < _MIN_MARKET_FEED_JOBS and hasattr(db, "executemany"):
-        from hireloop_api.services.embeddings import embed_pending_and_score_candidate
-
-        await embed_pending_and_score_candidate(
-            db, settings, str(candidate["id"]), limit=_FEED_SCORE_LIMIT
-        )
-        rows = await _fetch_cached_match_rows(
-            db,
-            candidate_id=candidate["id"],
-            min_score=MIN_PERSIST_SCORE,
-            limit=max(limit, _MIN_MARKET_FEED_JOBS),
-            offset=0,
-            remote_preference=remote_pref,
-            market=market,
-        )
-        refreshed = _market_feed_items(
-            _serialize_current_quality_cached_rows(
-                rows,
+    if offset == 0 and len(result) < limit:
+        await _enqueue_candidate_match_scoring(db, candidate["id"])
+        if len(result) < limit:
+            result = await _supplement_market_feed(
+                db,
                 candidate=dict(candidate),
+                candidate_id=candidate["id"],
+                result=result,
                 min_score=MIN_PERSIST_SCORE,
+                limit=limit,
+                remote_preference=remote_pref,
+                market=market,
             )
-        )
-        result = await _supplement_market_feed(
-            db,
-            candidate=dict(candidate),
-            candidate_id=candidate["id"],
-            result=refreshed,
-            min_score=min_score,
-            limit=max(limit, _MIN_MARKET_FEED_JOBS),
-            remote_preference=remote_pref,
-            market=market,
-        )
 
     # Hard constraints: drop deal-breakers on every page (so pagination is
     # consistent) — roles whose stated pay band is clearly below the candidate's
@@ -686,37 +662,7 @@ async def get_match_feed_count(
     total = len(market_items)
 
     if total == 0:
-        engine = MatchingEngine(db)
-        scored = await engine.score_candidate(str(candidate["id"]), limit=50)
-        logger.info(
-            "match_feed_count_live_scored",
-            candidate_id=str(candidate["id"]),
-            scored=scored,
-        )
-        if scored:
-            cached_rows = await _fetch_cached_match_rows(
-                db,
-                candidate_id=candidate["id"],
-                min_score=min_score,
-                limit=100,
-                offset=0,
-                remote_preference=remote_pref,
-                market=market,
-            )
-            market_items = _market_feed_items(
-                _serialize_current_quality_cached_rows(
-                    cached_rows,
-                    candidate=dict(candidate),
-                    min_score=min_score,
-                )
-            )
-            total = len(market_items)
-
-    if total == 0:
-        # No real scored matches above the floor. Fall back to the quick lexical
-        # pool, but cap it at a believable number — the old limit=500 reported the
-        # whole active-job pool as "matches", which read as fake. 50 aligns with
-        # the feed's page size so the count matches what the candidate can browse.
+        await _enqueue_candidate_match_scoring(db, candidate["id"])
         fallback = await _fetch_fallback_match_rows(
             db,
             candidate=dict(candidate),

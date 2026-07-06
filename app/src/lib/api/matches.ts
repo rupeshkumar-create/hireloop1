@@ -112,6 +112,8 @@ export const MATCH_FEED_PAGE_SIZE = 50;
 /** Quality-first relevance floor (matches API DEFAULT_FEED_MIN_SCORE). */
 export const MATCH_FEED_RELEVANCE_FLOOR = 0.38;
 
+const MATCH_FEED_FETCH_TIMEOUT_MS = 45_000;
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 export async function fetchMatchFeed(
@@ -135,22 +137,35 @@ export async function fetchMatchFeed(
   if (filters.offset !== undefined)
     params.set("offset", String(filters.offset));
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), MATCH_FEED_FETCH_TIMEOUT_MS);
+
   const req = apiAuthFetch(`/api/v1/matches?${params.toString()}`, {
     cache: "no-store",
-  }).then(async (res) => {
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail ?? `Match feed failed: ${res.status}`);
-    }
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail ?? `Match feed failed: ${res.status}`);
+      }
 
-    const data = (await res.json()) as MatchedJob[];
-    _matchFeedCache.set(cacheKey, data);
-    return data;
-  }).finally(() => {
-    if (_matchFeedInFlight.get(cacheKey) === req) {
-      _matchFeedInFlight.delete(cacheKey);
-    }
-  });
+      const data = (await res.json()) as MatchedJob[];
+      _matchFeedCache.set(cacheKey, data);
+      return data;
+    })
+    .catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("Match feed timed out. Pull to refresh or try again.");
+      }
+      throw err;
+    })
+    .finally(() => {
+      clearTimeout(timeoutId);
+      if (_matchFeedInFlight.get(cacheKey) === req) {
+        _matchFeedInFlight.delete(cacheKey);
+      }
+    });
 
   _matchFeedInFlight.set(cacheKey, req);
   return req;
