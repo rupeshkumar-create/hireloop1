@@ -13,7 +13,11 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2 } from "@/components/brand/icons";
 import { Button, Modal, ModalFooter, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { downloadTailoredResume, fetchTailoredResumeHtml } from "@/lib/api/tailored";
+import {
+  downloadTailoredResume,
+  downloadTailoredResumeDocx,
+  fetchTailoredResumeHtml,
+} from "@/lib/api/tailored";
 import { getApplicationKitForJob, type JobApplicationKit } from "@/lib/api/applicationKit";
 
 type Tab = "resume" | "cover_letter" | "interview_prep";
@@ -43,7 +47,7 @@ export function ResumePreviewModal({
   const [kit, setKit] = useState<JobApplicationKit | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<"pdf" | "docx" | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,13 +92,25 @@ export function ResumePreviewModal({
 
   const handleDownload = async () => {
     if (!resumeId || downloading) return;
-    setDownloading(true);
+    setDownloading("pdf");
     try {
       await downloadTailoredResume(resumeId);
     } catch {
       toast.error("Couldn't open the resume for download");
     } finally {
-      setDownloading(false);
+      setDownloading(null);
+    }
+  };
+
+  const handleDocx = async () => {
+    if (!resumeId || downloading) return;
+    setDownloading("docx");
+    try {
+      await downloadTailoredResumeDocx(resumeId);
+    } catch {
+      toast.error("Couldn't download the Word file");
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -190,11 +206,20 @@ export function ResumePreviewModal({
           Close
         </Button>
         <Button
+          variant="secondary"
+          onClick={() => void handleDocx()}
+          disabled={!resumeId || downloading !== null}
+          loading={downloading === "docx"}
+          leftIcon={<Download className="h-3.5 w-3.5" />}
+        >
+          Download Word
+        </Button>
+        <Button
           variant="primary"
           onClick={() => void handleDownload()}
-          disabled={!resumeId || downloading}
+          disabled={!resumeId || downloading !== null}
           leftIcon={
-            downloading ? (
+            downloading === "pdf" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <Download className="h-3.5 w-3.5" />

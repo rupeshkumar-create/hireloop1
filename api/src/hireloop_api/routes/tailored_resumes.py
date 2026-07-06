@@ -8,7 +8,7 @@ import uuid
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -223,6 +223,7 @@ async def get_tailored_resume(
 @router.get("/tailored/{resume_id}/download")
 async def download_tailored_resume(
     resume_id: uuid.UUID,
+    file_format: str = Query(default="html", alias="format", pattern="^(html|pdf|docx)$"),
     print_dialog: bool = True,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
@@ -241,16 +242,29 @@ async def download_tailored_resume(
     if not row or not row["html_content"]:
         raise HTTPException(404, "Resume not ready")
 
+    name = (row["full_name"] or "").strip()
+    title = f"{name} — Resume" if name else "Resume"
+
+    if file_format == "docx":
+        from hireloop_api.services.resume_export import html_resume_to_docx
+
+        docx_bytes = html_resume_to_docx(row["html_content"], title=title)
+        safe = (name or "resume").replace(" ", "_")
+        return Response(
+            content=docx_bytes,
+            media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            headers={"Content-Disposition": f'attachment; filename="{safe}_resume.docx"'},
+        )
+
     # Wrap the LLM body in a print-ready A4 document and auto-open the browser's
     # print dialog, so "download" yields a clean PDF via Save as PDF (no headless
     # browser dependency). document.title seeds the suggested PDF filename.
     from hireloop_api.services.resume_tailor import wrap_print_document
 
-    name = (row["full_name"] or "").strip()
-    title = f"{name} — Resume" if name else "Resume"
     # print_dialog=False is used by the in-app preview (rendered in an iframe),
     # where auto-opening the browser print dialog would be disruptive.
-    html_doc = wrap_print_document(row["html_content"], title=title, auto_print=print_dialog)
+    auto_print = file_format == "pdf" or print_dialog
+    html_doc = wrap_print_document(row["html_content"], title=title, auto_print=auto_print)
     return Response(
         content=html_doc,
         media_type="text/html",

@@ -604,7 +604,10 @@ async def generate_career_path_resumes(
 @router.get("/path-resumes/{resume_id}/download")
 async def download_career_path_resume(
     resume_id: str,
-    file_format: str = Query(default="html", pattern="^(html|pdf|docx)$"),
+    # alias="format": the frontend sends ?format=… — without the alias FastAPI
+    # expected ?file_format=…, silently defaulted to html, and the Word button
+    # downloaded an HTML file.
+    file_format: str = Query(default="html", alias="format", pattern="^(html|pdf|docx)$"),
     print_dialog: bool = Query(default=True),
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),

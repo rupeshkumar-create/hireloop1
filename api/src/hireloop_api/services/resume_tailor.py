@@ -21,13 +21,32 @@ from langchain_openai import ChatOpenAI
 logger = structlog.get_logger()
 
 TAILOR_SYSTEM = """You tailor a candidate resume for a specific job description.
+The output must be ATS-safe AND read like a polished professional document.
 Rules:
-- Never fabricate experience, employers, or degrees
-- Rewrite bullets to mirror JD vocabulary where truthful
-- Reorder experience by relevance to this JD
-- Add a 2-line tailored summary at the top
-- Output valid HTML only (no markdown fences), using a clean single-column layout
-- Use <h1> for name, <h2> for sections: Summary, Experience, Skills, Education
+- Never fabricate experience, employers, degrees, or dates
+- Rewrite bullets to mirror this JD's vocabulary where truthful; reorder
+  experience by relevance to this JD
+- Output valid HTML fragment only (no <html>/<head>/<body>, no markdown fences)
+- Single-column layout — NO tables, columns, images, icons, or text boxes
+  (ATS parsers mangle them)
+- Structure (exactly these tags/classes — the print/DOCX pipeline styles them):
+  <h1>Full Name</h1>
+  <p class="resume-contact">City, State · email · phone · LinkedIn URL (only if provided)</p>
+  <h2>Professional Summary</h2>
+  <p>2–3 lines positioning the candidate for THIS job</p>
+  <h2>Core Skills</h2>
+  <p>comma-separated keyword-rich skills (12–18 items), JD keywords first</p>
+  <h2>Professional Experience</h2>
+  For each role:
+    <h3>Job Title — Company</h3>
+    <p class="role-meta">Mon YYYY – Mon YYYY · Location</p>
+    <ul><li>Quantified achievement bullets (3–5 per recent role)</li></ul>
+  <h2>Education</h2>
+  <p>Degree — Institution · Year</p>
+- Use strong action verbs and metrics where truthful; use <strong> sparingly
+  for key metrics only
+- Spell out the exact job title and company keywords naturally where truthful
+- Keep total length to one page (~500–700 words)
 """
 
 PATH_RESUME_SYSTEM = """You write an ATS-friendly resume tailored to a career-path direction.

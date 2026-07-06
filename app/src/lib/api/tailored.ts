@@ -90,3 +90,20 @@ export async function downloadTailoredResume(resumeId: string): Promise<void> {
   // Revoke after the new tab has had time to load the document.
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Authenticated .docx download of the tailored resume (saves the file). */
+export async function downloadTailoredResumeDocx(resumeId: string): Promise<void> {
+  const res = await apiAuthFetch(
+    `/api/v1/tailored-resumes/tailored/${resumeId}/download?format=docx`
+  );
+  if (!res.ok) throw new Error(`Word download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "tailored_resume.docx";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
