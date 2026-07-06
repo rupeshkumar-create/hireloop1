@@ -8,6 +8,7 @@ pool jobs first; Apify top-up runs only when the pool is thin.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -23,6 +24,25 @@ POOL_MATCH_MIN_AFFINITY = 0.28
 DEFAULT_POOL_MIN_JOBS = 20
 
 
+def _title_variants(title: str) -> list[str]:
+    """The full title plus its slash/dash segments.
+
+    LLM path titles come decorated ("VP Growth / CMO – AI SaaS") and the
+    decoration dilutes whole-string token affinity below the match threshold —
+    which silently skips the shared pool. Each segment ("VP Growth", "CMO")
+    is a clean role phrase worth matching on its own.
+    """
+    cleaned = (title or "").strip()
+    if not cleaned:
+        return []
+    variants = [cleaned]
+    for seg in re.split(r"[/,]|\s[–—-]\s", cleaned):
+        s = seg.strip()
+        if len(s) >= 3 and s.lower() != cleaned.lower():
+            variants.append(s)
+    return variants
+
+
 async def resolve_definition_for_title(
     db: asyncpg.Connection,
     title: str,
@@ -30,8 +50,8 @@ async def resolve_definition_for_title(
     market: str = "IN",
 ) -> asyncpg.Record | None:
     """Map a free-text career path title to the best canonical definition."""
-    cleaned = (title or "").strip()
-    if not cleaned:
+    variants = _title_variants(title)
+    if not variants:
         return None
     rows = await db.fetch(
         """
@@ -46,10 +66,11 @@ async def resolve_definition_for_title(
     for row in rows:
         candidates = [row["display_title"], *list(row["search_titles"] or [])]
         for candidate in candidates:
-            aff = title_affinity(cleaned, candidate)
-            if aff is not None and aff > best_score:
-                best_score = aff
-                best = row
+            for variant in variants:
+                aff = title_affinity(variant, candidate)
+                if aff is not None and aff > best_score:
+                    best_score = aff
+                    best = row
     if best is not None and best_score >= POOL_MATCH_MIN_AFFINITY:
         return best
     return None
