@@ -113,8 +113,11 @@ async def _ensure_candidate_for_resume_upload(
 
     await db.execute(
         """
-        INSERT INTO public.candidates (user_id, headline, profile_complete)
-        VALUES ($1::uuid, $2, FALSE)
+        INSERT INTO public.candidates (
+          user_id, headline, profile_complete,
+          hide_contact_public, share_with_recruiters, public_profile_enabled
+        )
+        VALUES ($1::uuid, $2, FALSE, TRUE, TRUE, TRUE)
         """,
         user_uuid,
         headline,
@@ -139,6 +142,27 @@ async def _ensure_candidate_for_resume_upload(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create candidate profile. Please try again.",
         )
+
+    try:
+        from hireloop_api.services.public_profile import bootstrap_candidate_public_profile
+
+        user_row = await db.fetchrow(
+            "SELECT full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+            user_uuid,
+        )
+        await bootstrap_candidate_public_profile(
+            db,
+            candidate["id"],
+            user_id=user_uuid,
+            display_name=user_row.get("full_name") if user_row else None,
+        )
+    except Exception as exc:
+        logger.error(
+            "candidate_sharing_bootstrap_failed",
+            user_id=str(user_uuid),
+            error=str(exc),
+        )
+
     return candidate
 
 

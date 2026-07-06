@@ -33,8 +33,8 @@ export function CandidateSharingSettings() {
   const [currency, setCurrency] = useState<DisplayCurrency>("auto");
   const [savingCurrency, setSavingCurrency] = useState(false);
   const [hideContact, setHideContact] = useState(true);
-  const [shareRecruiters, setShareRecruiters] = useState(false);
-  const [published, setPublished] = useState(false);
+  const [shareRecruiters, setShareRecruiters] = useState(true);
+  const [published, setPublished] = useState(true);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -52,8 +52,8 @@ export function CandidateSharingSettings() {
       setProfile(p);
       setCurrency((p.candidate?.display_currency as DisplayCurrency) ?? "auto");
       setHideContact(p.candidate?.hide_contact_public ?? true);
-      setShareRecruiters(p.candidate?.share_with_recruiters ?? false);
-      setPublished(Boolean(p.candidate?.public_profile_enabled));
+      setShareRecruiters(p.candidate?.share_with_recruiters ?? true);
+      setPublished(p.candidate?.public_profile_enabled ?? true);
       const rel = p.candidate?.public_profile_url;
       setPublicUrl(rel ? `${typeof window !== "undefined" ? window.location.origin : ""}${rel}` : null);
       setPathResumes(resumes);

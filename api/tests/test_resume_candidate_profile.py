@@ -18,15 +18,29 @@ class FakeDb:
         self.fetchrow_calls = 0
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.inserted_id = uuid.uuid4()
+        self.created = False
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         self.fetchrow_calls += 1
-        if self.fetchrow_calls == 1:
-            return None
-        return {"id": self.inserted_id}
+        if "FROM public.users" in query:
+            return {"full_name": "Rupesh Kumar"}
+        if "FROM public.candidates" in query:
+            if "WHERE user_id" in query:
+                if not self.created:
+                    return None
+                return {"id": self.inserted_id}
+            return {
+                "id": self.inserted_id,
+                "public_profile_enabled": True,
+                "hide_contact_public": True,
+                "public_slug": None,
+            }
+        return None
 
     async def execute(self, query: str, *args: object) -> str:
         self.execute_calls.append((query, args))
+        if "INSERT INTO public.candidates" in query:
+            self.created = True
         return "INSERT 0 1"
 
 
@@ -42,9 +56,9 @@ async def test_resume_upload_creates_missing_candidate_profile() -> None:
     )
 
     assert candidate["id"] == db.inserted_id
-    assert db.fetchrow_calls == 2
-    assert "INSERT INTO public.candidates" in db.execute_calls[0][0]
-    assert db.execute_calls[0][1] == (user_id, "Rupesh Kumar")
+    assert db.fetchrow_calls >= 2
+    insert_call = next(c for c in db.execute_calls if "INSERT INTO public.candidates" in c[0])
+    assert insert_call[1][1] == "Rupesh Kumar"
 
 
 @pytest.mark.asyncio

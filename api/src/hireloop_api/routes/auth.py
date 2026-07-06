@@ -403,8 +403,11 @@ async def bootstrap_user(
         if not existing:
             await db.execute(
                 """
-                INSERT INTO public.candidates (user_id, headline, profile_complete)
-                VALUES ($1, $2, FALSE)
+                INSERT INTO public.candidates (
+                  user_id, headline, profile_complete,
+                  hide_contact_public, share_with_recruiters, public_profile_enabled
+                )
+                VALUES ($1, $2, FALSE, TRUE, TRUE, TRUE)
                 """,
                 user_id,
                 initial_headline,
@@ -468,6 +471,37 @@ async def bootstrap_user(
                 user_id=str(user_id),
                 error=str(exc)[:200],
             )
+
+        if is_new_user:
+            try:
+                new_cand = await db.fetchrow(
+                    """
+                    SELECT id FROM public.candidates
+                    WHERE user_id = $1::uuid AND deleted_at IS NULL
+                    """,
+                    user_id,
+                )
+                if new_cand:
+                    from hireloop_api.services.public_profile import (
+                        bootstrap_candidate_public_profile,
+                    )
+
+                    user_name = await db.fetchval(
+                        "SELECT full_name FROM public.users WHERE id = $1::uuid",
+                        user_id,
+                    )
+                    await bootstrap_candidate_public_profile(
+                        db,
+                        new_cand["id"],
+                        user_id=user_id,
+                        display_name=str(user_name) if user_name else None,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "candidate_sharing_bootstrap_failed",
+                    user_id=str(user_id),
+                    error=str(exc)[:200],
+                )
 
         # LinkedIn URL + OAuth metadata saved above. LinkDAPI enrichment runs
         # after DPDP consent (POST /me/onboarding-consent).

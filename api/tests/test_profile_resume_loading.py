@@ -34,6 +34,12 @@ class FakeProfileDb:
                 "avatar_url": None,
             }
         if "FROM public.candidates" in query:
+            if "WHERE id = $1" in query:
+                return {
+                    "public_profile_enabled": True,
+                    "hide_contact_public": True,
+                    "public_slug": "c-deadbeef",
+                }
             return {
                 "id": self.candidate_id,
                 "headline": "Software Engineer",
@@ -45,10 +51,17 @@ class FakeProfileDb:
                 "location_state": "Karnataka",
                 "skills": ["Python"],
                 "profile_complete": True,
+                "onboarding_complete": True,
                 "visibility": "open_to_matches",
                 "looking_for": None,
                 "is_active": True,
                 "linkedin_data": {},
+                "public_profile_enabled": True,
+                "hide_contact_public": True,
+                "share_with_recruiters": True,
+                "public_slug": "c-deadbeef",
+                "display_currency": "auto",
+                "market": "IN",
             }
         if "FROM public.resumes" in query:
             assert "deleted_at" not in query

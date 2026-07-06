@@ -547,12 +547,14 @@ class ResumeParserService:
     @classmethod
     async def _parse_with_llm(cls, *, text: str, api_key: str, model: str) -> ParsedResume | None:
         """Extract structured fields via OpenRouter (Claude). Returns None on failure."""
-        # Keep prompt bounded — resumes rarely need more than this much text.
-        snippet = text.strip()[:16000]
+        # Full resumes, full budget: 2000 max_tokens truncated the JSON for any
+        # dense CV (work histories with descriptions), silently degrading to the
+        # regex tier — the #1 cause of "the parser is bad".
+        snippet = text.strip()[:32000]
         payload = {
             "model": model,
             "temperature": 0,
-            "max_tokens": 2000,
+            "max_tokens": 6000,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": _LLM_SYSTEM_PROMPT},
@@ -565,7 +567,7 @@ class ResumeParserService:
             "HTTP-Referer": "https://app.hireloop.in",
             "X-Title": "Hireloop - Resume Parser",
         }
-        async with httpx.AsyncClient(timeout=45.0) as client:
+        async with httpx.AsyncClient(timeout=75.0) as client:
             resp = await client.post(cls.OPENROUTER_URL, headers=headers, json=payload)
         if resp.status_code != 200:
             logger.warning("llm_parse_http_error", status=resp.status_code, body=resp.text[:200])
@@ -1562,7 +1564,47 @@ def _loads_json_lenient(content: str) -> object:
             try:
                 return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
-                return None
+                pass
+        # Truncated output (max_tokens hit mid-structure): close whatever is
+        # open so the fields emitted so far survive instead of parsing to None.
+        repaired = _repair_truncated_json(text[start:] if start >= 0 else text)
+        if repaired is not None:
+            return repaired
+        return None
+
+
+def _repair_truncated_json(text: str) -> object:
+    """Best-effort: balance quotes/brackets on a truncated JSON document."""
+    if not text or not text.startswith("{"):
+        return None
+    stack: list[str] = []
+    in_str = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+    fixed = text
+    if in_str:
+        fixed += '"'
+    # Drop a dangling partial key/value ("," or ":") before closing.
+    fixed = re.sub(r"[,:]\s*$", "", fixed)
+    fixed += "".join(reversed(stack))
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
         return None
 
 

@@ -136,6 +136,44 @@ async def sync_public_slug_privacy(
     return str(row["public_slug"])
 
 
+async def bootstrap_candidate_public_profile(
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID,
+    display_name: str | None,
+) -> str | None:
+    """Ensure a slug exists when public sharing is enabled (default for new candidates)."""
+    row = await db.fetchrow(
+        """
+        SELECT public_profile_enabled, hide_contact_public, public_slug
+        FROM public.candidates
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        candidate_id,
+    )
+    if not row or not row.get("public_profile_enabled"):
+        return str(row["public_slug"]) if row and row["public_slug"] else None
+
+    hide_contact = bool(row["hide_contact_public"])
+    slug = str(row["public_slug"]) if row["public_slug"] else None
+    if not slug:
+        slug = await ensure_public_slug(
+            db,
+            candidate_id,
+            display_name=display_name,
+            hide_contact=hide_contact,
+        )
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'public_profile_publish', TRUE)
+            """,
+            user_id,
+        )
+    return slug
+
+
 def _redact_public_fields(
     cand: dict[str, Any],
     *,

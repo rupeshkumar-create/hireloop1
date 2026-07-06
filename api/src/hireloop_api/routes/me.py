@@ -197,10 +197,13 @@ async def _ensure_candidate_row(
     if existing:
         return existing
 
-    return await db.fetchrow(
+    row = await db.fetchrow(
         """
-        INSERT INTO public.candidates (user_id, market, headline, profile_complete)
-        VALUES ($1::uuid, 'IN', $2, FALSE)
+        INSERT INTO public.candidates (
+          user_id, market, headline, profile_complete,
+          hide_contact_public, share_with_recruiters, public_profile_enabled
+        )
+        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE)
         RETURNING id, market, headline, summary, current_title, current_company,
                   years_experience, location_city, location_state, skills,
                   profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
@@ -213,6 +216,34 @@ async def _ensure_candidate_row(
         user_id,
         headline,
     )
+    from hireloop_api.services.public_profile import bootstrap_candidate_public_profile
+
+    user_row = await db.fetchrow(
+        "SELECT full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        user_id,
+    )
+    await bootstrap_candidate_public_profile(
+        db,
+        row["id"],
+        user_id=user_id,
+        display_name=user_row["full_name"] if user_row else None,
+    )
+    refreshed = await db.fetchrow(
+        """
+        SELECT id, market, headline, summary, current_title, current_company,
+               years_experience, location_city, location_state, skills,
+               profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
+               open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
+               current_ctc, notice_period_days,
+               display_currency, public_slug, public_profile_enabled,
+               hide_contact_public, share_with_recruiters,
+               is_active, linkedin_url, linkedin_data, career_profile, career_analysis
+        FROM public.candidates
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        row["id"],
+    )
+    return refreshed or row
 
 
 @router.get("/access")
@@ -617,7 +648,16 @@ async def get_my_profile(
     from hireloop_api.services.display_currency import currency_fields_for_candidate
 
     candidate_payload.update(currency_fields_for_candidate(candidate_payload))
-    slug = candidate_payload.get("public_slug")
+    from hireloop_api.services.public_profile import bootstrap_candidate_public_profile
+
+    slug = await bootstrap_candidate_public_profile(
+        db,
+        candidate_row["id"],
+        user_id=user_id,
+        display_name=user_payload.get("full_name"),
+    )
+    if not slug:
+        slug = candidate_payload.get("public_slug")
     if candidate_payload.get("public_profile_enabled") and slug:
         candidate_payload["public_profile_url"] = f"/p/{slug}"
     else:
