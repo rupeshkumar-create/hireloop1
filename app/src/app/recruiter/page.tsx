@@ -6,18 +6,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Briefcase,
   ChevronRight,
   Inbox,
   MessageSquare,
   Plus,
-  RefreshCw,
   Search,
   User,
   Users,
 } from "@/components/brand/icons";
+import { NityaFace } from "@/components/nitya/NityaFace";
 import {
+  createRole,
   fetchRecruiterDashboard,
   fetchRecruiterProfile,
   listRoles,
@@ -108,11 +110,76 @@ function CandidateHitCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
   );
 }
 
+/** Inline first-role creator — shown when a recruiter has no roles yet. */
+function FirstRoleHero() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [title, setTitle] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  async function create() {
+    const t = title.trim();
+    if (!t) return;
+    setCreating(true);
+    try {
+      const created = await createRole({ title: t.slice(0, 120) });
+      router.push(`/recruiter/roles/${created.role_id}/intake`);
+    } catch (err) {
+      toast.error((err as Error).message);
+      setCreating(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardBody className="space-y-3">
+        <div className="flex items-start gap-3">
+          <NityaFace size="sm" />
+          <div className="min-w-0">
+            <p className="text-small font-semibold text-ink-900">
+              What role should I start on?
+            </p>
+            <p className="text-micro text-ink-500 mt-0.5">
+              Type a title and I&apos;ll open the intake chat — JD, budget, and
+              must-haves happen there.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void create();
+            }}
+            placeholder="e.g. Senior Backend Engineer"
+            className={cn(
+              "flex-1 rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5",
+              "text-small text-ink-900 placeholder:text-ink-400",
+              "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-ring",
+            )}
+          />
+          <Button
+            variant="primary"
+            size="md"
+            loading={creating}
+            disabled={!title.trim() || creating}
+            onClick={() => void create()}
+          >
+            Start hiring
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function RecruiterDashboardPage() {
   const { toast } = useToast();
   const [data, setData] = useState<RecruiterDashboardData | null>(null);
   const [roles, setRoles] = useState<RoleListItem[]>([]);
-  const [recruiterTitle, setRecruiterTitle] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,7 +200,7 @@ export default function RecruiterDashboardPage() {
       ]);
       setData(dashboard);
       setRoles(roleList);
-      setRecruiterTitle(profile.title || profile.company_name || null);
+      setCompanyName(profile.company_name || null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -179,32 +246,21 @@ export default function RecruiterDashboardPage() {
             Recruiter workspace
           </p>
           <h1 className="text-h2 font-semibold text-ink-900 mt-0.5">
-            {recruiterTitle ? `Welcome, ${recruiterTitle.split(" ")[0]}` : "Dashboard"}
+            {companyName ?? "Dashboard"}
           </h1>
           <p className="text-small text-ink-500 mt-1">
             Your roles, Nitya chats, and candidate search in one place.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <Link href="/recruiter/roles/new" className="shrink-0">
           <Button
-            variant="ghost"
+            variant="primary"
             size="sm"
-            onClick={() => void load()}
-            loading={loading}
-            leftIcon={<RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />}
+            leftIcon={<Plus className="h-3.5 w-3.5" strokeWidth={2} />}
           >
-            Refresh
+            New role
           </Button>
-          <Link href="/recruiter/roles/new">
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="h-3.5 w-3.5" strokeWidth={2} />}
-            >
-              New role
-            </Button>
-          </Link>
-        </div>
+        </Link>
       </div>
 
       {error && (
@@ -212,6 +268,8 @@ export default function RecruiterDashboardPage() {
           {error}
         </div>
       )}
+
+      {!loading && roles.length === 0 && !error && <FirstRoleHero />}
 
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatCard
