@@ -46,12 +46,21 @@ def test_suggest_chips_comp_from_role_post() -> None:
     assert "₹10 LPA" not in " ".join(chips)
 
 
-def test_suggest_chips_comp_without_numbers_uses_structure_only() -> None:
+def test_suggest_chips_comp_range_question_gets_range_answers() -> None:
+    # "What's the budget?" is a range question — structure chips ("Fixed only")
+    # against it just loop the conversation (recruiter picks one, Nitya re-asks).
     role = {"title": "Developer", "location_city": "Bengaluru", "jd_text": "Hiring in Bangalore"}
     chips = suggest_chips_for_reply("What's the comp budget in LPA?", role)
+    assert any("LPA" in c for c in chips)
+    assert "Fixed only" not in chips
+
+
+def test_suggest_chips_structure_question_gets_structure_answers() -> None:
+    chips = suggest_chips_for_reply(
+        "Is the package fixed only, or does it include variable pay or ESOPs?", {}
+    )
     assert "Fixed only" in chips
     assert "Fixed + variable" in chips
-    assert not any("₹10" in c for c in chips)
 
 
 def test_suggest_chips_comp_parsed_from_jd_text() -> None:
@@ -60,7 +69,7 @@ def test_suggest_chips_comp_parsed_from_jd_text() -> None:
         "jd_text": "Compensation: ₹20–32 LPA. Bengaluru hybrid.",
     }
     chips = suggest_chips_for_reply("Confirm the comp range?", role)
-    assert "₹20–32 LPA fixed only" in chips
+    assert "₹20–32 LPA" in chips
 
 
 def test_suggest_chips_location_from_role_post() -> None:

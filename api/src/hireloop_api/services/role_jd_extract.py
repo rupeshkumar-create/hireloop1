@@ -234,6 +234,16 @@ def _must_have_chips(role: dict[str, Any]) -> list[str]:
     return chips
 
 
+def _comp_range_chips(role: dict[str, Any]) -> list[str]:
+    """Answers to "what's the CTC range?" — actual numbers, not structure."""
+    min_lpa, max_lpa = _role_comp_lpa(role)
+    if min_lpa is not None and max_lpa is not None and min_lpa != max_lpa:
+        return [f"₹{min_lpa}–{max_lpa} LPA", f"Up to ₹{max_lpa} LPA", "Flexible for the right fit"]
+    if min_lpa is not None:
+        return [f"₹{min_lpa} LPA", f"₹{min_lpa}–{min_lpa + 10} LPA", "Flexible for the right fit"]
+    return ["10–18 LPA", "18–30 LPA", "30–50 LPA"]
+
+
 def suggest_chips_for_reply(
     assistant_text: str,
     role: dict[str, Any] | None = None,
@@ -242,26 +252,23 @@ def suggest_chips_for_reply(
     role = role or {}
     t = assistant_text.lower()
     chips: list[str] = []
-    if any(
-        w in t for w in ("lpa", "comp", "salary", "ctc", "budget", "package", "variable", "esop")
-    ):
+    # Comp questions come in two shapes: "what structure?" (fixed/variable/
+    # ESOPs) vs "what range?" (numbers). Answer the one actually asked —
+    # structure chips against a range question just loop the conversation.
+    asks_structure = any(w in t for w in ("variable", "esop", "structure", "fixed"))
+    asks_comp = any(w in t for w in ("lpa", "comp", "salary", "ctc", "budget", "package"))
+    if asks_comp and ("range" in t or "how much" in t or not asks_structure):
+        chips.extend(_comp_range_chips(role))
+    elif asks_structure or asks_comp:
         chips.extend(_comp_chips(role))
+    # A city being *mentioned* ("Backend role based in Bangalore…") is not a
+    # location question — only ask-words trigger location chips.
+    if any(w in t for w in ("location", "remote", "hybrid", "onsite", "where")):
+        chips.extend(_location_chips(role))
     if any(
         w in t
-        for w in (
-            "location",
-            "remote",
-            "hybrid",
-            "onsite",
-            "bangalore",
-            "bengaluru",
-            "city",
-            "office",
-            "where",
-        )
+        for w in ("experience", "years", "seniority", "yoe", "junior", "mid,", "senior level")
     ):
-        chips.extend(_location_chips(role))
-    if any(w in t for w in ("experience", "years", "seniority", "yoe")):
         chips.extend(_experience_chips(role))
     if any(w in t for w in ("must-have", "must have", "skill", "requirement", "qualification")):
         must_chips = _must_have_chips(role)
