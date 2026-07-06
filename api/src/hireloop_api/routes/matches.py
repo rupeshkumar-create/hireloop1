@@ -190,7 +190,9 @@ class MatchedJob(BaseModel):
     location_score: float | None
     ctc_score: float | None
     explanation: str | None
-    computed_at: str
+    # None for pool jobs not yet scored for this candidate (LEFT JOIN) — a
+    # required str here turned that into a response-validation 500.
+    computed_at: str | None = None
     # Skill detail: which required skills the candidate has vs is missing.
     skills_matched: list[str] = []
     skills_gap: list[str] = []

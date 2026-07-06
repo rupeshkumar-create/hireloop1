@@ -131,7 +131,7 @@ async def fetch_scored_pool_jobs(
     vis = job_visible_for_market_sql(market_param="$4")
     return await db.fetch(
         f"""
-        SELECT ms.job_id, j.title, co.name AS company_name,
+        SELECT j.id AS job_id, j.title, co.name AS company_name,
                j.location_city, j.location_state, j.is_remote,
                j.employment_type, j.seniority, j.ctc_min, j.ctc_max,
                j.skills_required, j.apply_url,

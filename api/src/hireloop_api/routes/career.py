@@ -402,7 +402,10 @@ async def find_jobs_for_path(
             path_search_titles,
             limit=20,
         )
-        if not rows:
+        # Unscored pool rows (LEFT JOIN — fresh candidate) can't be served:
+        # NULL score/computed_at fails response validation and renders as a
+        # broken card. Score the pool for this candidate, then refetch.
+        if not rows or any(r.get("overall_score") is None for r in rows):
             try:
                 await score_pool_for_candidate(db, candidate_id, definition["id"])
             except Exception as exc:
@@ -420,6 +423,8 @@ async def find_jobs_for_path(
                 path_search_titles,
                 limit=20,
             )
+        # Below-threshold pairs stay unscored even after the pass — drop them.
+        rows = [r for r in rows if r.get("overall_score") is not None]
 
     # 2) Supplement with per-candidate path matches when the pool is thin.
     if len(rows) < 20:
