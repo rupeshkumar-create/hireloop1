@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { FileText, Mic, Sparkles } from "@/components/brand/icons";
 import { Button, Card, CardBody } from "@/components/ui";
+import { BTN_GHOST, BTN_PRIMARY } from "@/lib/button-classes";
+import { cn } from "@/lib/utils";
 
 type MatchesUnlockGateProps = {
   hasResume?: boolean;
@@ -42,7 +44,7 @@ export function MatchesUnlockGate({
             ) : (
               <Link
                 href="/dashboard?panel=profile"
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-accent px-4 text-body font-medium text-on-accent hover:bg-accent-hover"
+                className={cn(BTN_PRIMARY, "h-10 gap-2 px-4 text-body")}
               >
                 <FileText className="h-4 w-4" />
                 Upload resume
@@ -50,7 +52,7 @@ export function MatchesUnlockGate({
             )}
             <Link
               href="/voice"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-ink-200 bg-transparent px-4 text-body font-medium text-ink-900 hover:bg-ink-50 hover:border-ink-300"
+              className={cn(BTN_GHOST, "h-10 gap-2 px-4 text-body")}
             >
               <Mic className="h-4 w-4" />
               Talk to Aarya

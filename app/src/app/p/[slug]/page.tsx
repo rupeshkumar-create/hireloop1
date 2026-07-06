@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { PublicPortfolio } from "@/components/public-portfolio/PublicPortfolio";
 import { fetchPublicProfile, type PublicProfile } from "@/lib/api/publicProfile";
 
 export default function PublicProfilePage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const slug = typeof params.slug === "string" ? params.slug : "";
+  const roleSlug = searchParams.get("role");
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -16,11 +18,11 @@ export default function PublicProfilePage() {
   useEffect(() => {
     if (!slug) return;
     setLoading(true);
-    void fetchPublicProfile(slug)
+    void fetchPublicProfile(slug, { roleSlug })
       .then(setProfile)
       .catch((err) => setError((err as Error).message))
       .finally(() => setLoading(false));
-  }, [slug]);
+  }, [slug, roleSlug]);
 
   if (loading) {
     return (

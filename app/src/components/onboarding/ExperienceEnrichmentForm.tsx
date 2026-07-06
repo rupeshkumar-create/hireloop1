@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { SkillsInput } from "@/components/profile/SkillsInput";
+import { BTN_PRIMARY } from "@/lib/button-classes";
+import { cn } from "@/lib/utils";
 
 type ProfilePayload = {
   user: { full_name: string | null } | null;
@@ -155,7 +157,7 @@ export function ExperienceEnrichmentForm() {
             type="button"
             onClick={saveProfile}
             disabled={isSaving || isLoading}
-            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:opacity-60"
+            className={cn(BTN_PRIMARY, "px-4 py-2.5 text-sm font-semibold disabled:opacity-60")}
           >
             {isSaving ? "Saving..." : "Save profile"}
           </button>

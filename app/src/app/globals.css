@@ -40,6 +40,82 @@
   .border-destructive { border-color: #F76D6D; }
 }
 
+/* ── Brutalist CTA buttons: lime ↔ black invert on hover (double black rail) ─ */
+@layer components {
+  .hs-btn-frame {
+    border: 2px solid #000000;
+    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+    transition:
+      background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+      color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .hs-btn-frame:disabled,
+  .hs-btn-frame[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .hs-btn-primary {
+    background-color: #b9f84c;
+    color: #000000;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+  }
+
+  .hs-btn-primary:hover:not(:disabled) {
+    background-color: #000000;
+    color: #b9f84c;
+    border-color: #b9f84c;
+    box-shadow: 0 0 0 2px #000000, 0 0 0 4px #b9f84c;
+  }
+
+  .hs-btn-secondary {
+    background-color: #141414;
+    color: #b9f84c;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #000000;
+  }
+
+  .hs-btn-secondary:hover:not(:disabled) {
+    background-color: #b9f84c;
+    color: #000000;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+  }
+
+  .hs-btn-ghost {
+    background-color: transparent;
+    color: #fafafa;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px transparent, 0 0 0 4px #000000;
+  }
+
+  .hs-btn-ghost:hover:not(:disabled) {
+    background-color: #000000;
+    color: #b9f84c;
+    border-color: #b9f84c;
+    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #b9f84c;
+  }
+
+  .hs-btn-destructive {
+    background-color: rgba(247, 109, 109, 0.14);
+    color: #f76d6d;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px rgba(247, 109, 109, 0.14), 0 0 0 4px #000000;
+  }
+
+  .hs-btn-destructive:hover:not(:disabled) {
+    background-color: #f76d6d;
+    color: #000000;
+    border-color: #000000;
+    box-shadow: 0 0 0 2px #f76d6d, 0 0 0 4px #000000;
+  }
+}
+
 @layer base {
   :root {
     /* System stack — no build-time Google Fonts fetch (CI/offline safe). */
@@ -93,10 +169,18 @@
     font: inherit;
   }
 
-  /* Solid lime CTAs — black label text (never inherit white body color). */
-  :where(button, a, [role="button"]).bg-accent,
-  :where(button, a, [role="button"]).bg-accent:hover,
-  :where(button, a, [role="button"]).bg-accent:active {
+  /* Solid lime CTAs — label follows variant (primary inverts on hover). */
+  :where(button, a, [role="button"]).hs-btn-primary {
+    color: #000000;
+  }
+  :where(button, a, [role="button"]).hs-btn-primary:hover:not(:disabled) {
+    color: #b9f84c;
+  }
+
+  /* Legacy accent utility — keep black text until callers migrate */
+  :where(button, a, [role="button"]).bg-accent:not(.hs-btn-primary),
+  :where(button, a, [role="button"]).bg-accent:not(.hs-btn-primary):hover,
+  :where(button, a, [role="button"]).bg-accent:not(.hs-btn-primary):active {
     color: #000000;
   }
 

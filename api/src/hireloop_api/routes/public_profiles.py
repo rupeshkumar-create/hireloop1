@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
-from hireloop_api.deps import get_db
+from hireloop_api.deps import get_current_user_optional, get_db
 from hireloop_api.services.public_profile import fetch_public_profile
 from hireloop_api.services.public_profile_chat import (
     list_public_profile_messages,
@@ -27,11 +27,39 @@ class PublicProfileChatRequest(BaseModel):
 
 
 @router.get("/profiles/{slug}")
-async def get_public_profile(slug: str, db=Depends(get_db)) -> dict:
+async def get_public_profile(
+    slug: str,
+    role: str | None = None,
+    db=Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    viewer: dict | None = Depends(get_current_user_optional),
+) -> dict:
     """World-readable profile when the candidate has published it."""
-    profile = await fetch_public_profile(db, slug)
+    profile = await fetch_public_profile(db, slug, viewer=viewer, role_slug=role)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found or not published.")
+
+    try:
+        owner = await db.fetchrow(
+            """
+            SELECT c.user_id::text AS user_id
+            FROM public.candidates c
+            WHERE c.public_slug = $1 AND c.public_profile_enabled = TRUE AND c.deleted_at IS NULL
+            """,
+            slug.strip(),
+        )
+        if owner:
+            from hireloop_api.services.notifications import notify_profile_viewed
+
+            await notify_profile_viewed(
+                db,
+                settings,
+                candidate_user_id=owner["user_id"],
+                slug=slug.strip(),
+            )
+    except Exception:
+        pass
+
     return profile
 
 

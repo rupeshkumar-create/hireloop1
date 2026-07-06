@@ -21,6 +21,7 @@ import {
   fetchMatchFeedCount,
   getCachedMatchFeed,
   getCachedMatchFeedCount,
+  MATCH_FEED_PAGE_SIZE,
   MATCH_FEED_RELEVANCE_FLOOR,
   type MatchedJob,
   type MatchFeedFilters,
@@ -57,7 +58,7 @@ const SENIORITY_OPTIONS = [
   { value: "director", label: "Director" },
 ];
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = MATCH_FEED_PAGE_SIZE;
 
 // Confidence tiers (mirrors the backend ranking thresholds). Grouping the feed
 // into these sections is what makes the first screen read as *curated* rather

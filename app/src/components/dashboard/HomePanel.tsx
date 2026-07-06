@@ -36,6 +36,7 @@ import { firstNameFromDisplayName, sanitizeDisplayName } from "@/lib/auth/displa
 import { IntelligenceHero } from "@/components/ux";
 import { FadeUp } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 import { Button, Card, CardBody, useToast } from "@/components/ui";
 
 const VISIBILITY_OPTIONS: {
@@ -201,7 +202,7 @@ function SetupChecklist({
             <button
               type="button"
               onClick={() => onOpenPanel("jobs")}
-              className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-small font-medium text-on-accent hover:bg-accent-hover transition-colors"
+              className={cn(BTN_PRIMARY, "w-full gap-1.5 px-3 py-2 text-small")}
             >
               <Search className="h-4 w-4" strokeWidth={1.5} />
               Open Jobs
@@ -414,12 +415,7 @@ export function HomePanel({
           </p>
           <Link
             href="/dashboard?voice=deep&panel=jobs"
-            className={cn(
-              "inline-flex items-center justify-center font-medium",
-              "transition-colors duration-fast ease-out-soft",
-              "bg-accent text-on-accent hover:bg-accent-hover",
-              "h-10 px-4 text-body gap-2 rounded-md",
-            )}
+            className={cn(BTN_PRIMARY, "h-10 gap-2 px-4 text-body")}
           >
             <Phone className="h-3.5 w-3.5" strokeWidth={2} />
             Start call

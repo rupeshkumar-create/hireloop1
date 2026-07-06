@@ -16,6 +16,10 @@ from hireloop_api.services.profile_experience import (
     build_merged_experience,
     reconcile_candidate_overview,
 )
+from hireloop_api.services.public_profile_intelligence import (
+    build_public_intelligence_snapshot,
+    scrub_profile_for_privacy,
+)
 
 _ANONYMOUS_SLUG_RE = re.compile(r"^c-[a-f0-9]{8}$")
 
@@ -174,17 +178,67 @@ async def bootstrap_candidate_public_profile(
     return slug
 
 
+def _contact_access(
+    *,
+    hide_contact: bool,
+    viewer: dict[str, Any] | None,
+    owner_user_id: uuid.UUID,
+) -> tuple[bool, bool]:
+    """
+    Return (may_view_contact, requires_registration).
+
+    Contact is visible only to authenticated Hireschema users (or the profile
+    owner). Anonymous visitors must sign up before email, phone, or LinkedIn.
+    """
+    if hide_contact:
+        return False, False
+    if viewer is None:
+        return False, True
+    return True, False
+
+
 def _redact_public_fields(
     cand: dict[str, Any],
     *,
     hide_contact: bool,
     display_name: str | None,
+    viewer: dict[str, Any] | None = None,
+    owner_user_id: uuid.UUID,
 ) -> dict[str, Any]:
     """Strip identifying contact fields from the world-readable payload."""
-    if not hide_contact:
+    may_view, requires_registration = _contact_access(
+        hide_contact=hide_contact,
+        viewer=viewer,
+        owner_user_id=owner_user_id,
+    )
+
+    if hide_contact:
+        return {
+            "display_name": None,
+            "avatar_url": None,
+            "headline": cand.get("headline"),
+            "summary": cand.get("summary"),
+            "current_title": cand.get("current_title"),
+            "current_company": None,
+            "years_experience": cand.get("years_experience"),
+            "location_city": None,
+            "location_state": None,
+            "looking_for": cand.get("looking_for"),
+            "linkedin_url": None,
+            "contact": {
+                "email": None,
+                "phone": None,
+                "hidden": True,
+                "requires_registration": False,
+            },
+            "privacy_mode": True,
+            "viewer_authenticated": viewer is not None,
+        }
+
+    if not may_view:
         return {
             "display_name": display_name,
-            "avatar_url": cand.get("avatar_url"),
+            "avatar_url": None,
             "headline": cand.get("headline"),
             "summary": cand.get("summary"),
             "current_title": cand.get("current_title"),
@@ -193,42 +247,88 @@ def _redact_public_fields(
             "location_city": cand.get("location_city"),
             "location_state": cand.get("location_state"),
             "looking_for": cand.get("looking_for"),
-            "linkedin_url": cand.get("linkedin_url"),
+            "linkedin_url": None,
             "contact": {
-                "email": cand.get("email"),
-                "phone": cand.get("phone"),
+                "email": None,
+                "phone": None,
                 "hidden": False,
+                "requires_registration": requires_registration,
             },
+            "privacy_mode": False,
+            "viewer_authenticated": False,
         }
 
     return {
-        "display_name": None,
-        "avatar_url": None,
+        "display_name": display_name,
+        "avatar_url": cand.get("avatar_url"),
         "headline": cand.get("headline"),
         "summary": cand.get("summary"),
         "current_title": cand.get("current_title"),
         "current_company": cand.get("current_company"),
         "years_experience": cand.get("years_experience"),
-        "location_city": None,
-        "location_state": None,
+        "location_city": cand.get("location_city"),
+        "location_state": cand.get("location_state"),
         "looking_for": cand.get("looking_for"),
-        "linkedin_url": None,
+        "linkedin_url": cand.get("linkedin_url"),
         "contact": {
-            "email": None,
-            "phone": None,
-            "hidden": True,
+            "email": cand.get("email"),
+            "phone": cand.get("phone"),
+            "hidden": False,
+            "requires_registration": False,
         },
+        "privacy_mode": False,
+        "viewer_authenticated": True,
     }
 
 
-async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, Any] | None:
+async def _fetch_role_context(
+    db: asyncpg.Connection,
+    role_slug: str,
+) -> dict[str, Any] | None:
     row = await db.fetchrow(
         """
-        SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
+        SELECT r.id, r.title, r.public_slug,
+               c.name AS company_name,
+               u.full_name AS recruiter_name
+        FROM public.roles r
+        JOIN public.companies c ON c.id = r.company_id
+        JOIN public.recruiters rec ON rec.id = r.recruiter_id AND rec.deleted_at IS NULL
+        JOIN public.users u ON u.id = rec.user_id AND u.deleted_at IS NULL
+        WHERE r.public_slug = $1
+          AND r.public_listing_enabled = TRUE
+          AND r.status = 'hiring'
+          AND r.deleted_at IS NULL
+        """,
+        role_slug.strip(),
+    )
+    if not row:
+        return None
+    from hireloop_api.services.display_name import pick_display_name
+
+    recruiter_name = pick_display_name(user_full_name=row.get("recruiter_name"))
+    return {
+        "role_id": str(row["id"]),
+        "role_slug": row["public_slug"],
+        "title": row["title"],
+        "company_name": row.get("company_name"),
+        "recruiter_name": recruiter_name,
+    }
+
+
+async def fetch_public_profile(
+    db: asyncpg.Connection,
+    slug: str,
+    *,
+    viewer: dict[str, Any] | None = None,
+    role_slug: str | None = None,
+) -> dict[str, Any] | None:
+    row = await db.fetchrow(
+        """
+        SELECT c.id, c.user_id, c.headline, c.summary, c.current_title, c.current_company,
                c.years_experience, c.location_city, c.location_state, c.skills,
                c.looking_for, c.market, c.display_currency,
                c.public_profile_enabled, c.hide_contact_public,
-               c.linkedin_url, c.career_profile, c.linkedin_data,
+               c.linkedin_url, c.career_profile, c.linkedin_data, c.career_intelligence,
                u.full_name, u.email, u.phone, u.avatar_url
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
@@ -254,7 +354,9 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
         career_profile=cand.get("career_profile")
         if isinstance(cand.get("career_profile"), dict)
         else None,
-        career_intelligence=None,
+        career_intelligence=cand.get("career_intelligence")
+        if isinstance(cand.get("career_intelligence"), dict)
+        else None,
         candidate=cand,
         skills=list(cand.get("skills") or []),
     )
@@ -273,17 +375,35 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
     )
 
     currency = currency_fields_for_candidate(cand)
+    owner_user_id = uuid.UUID(str(cand["user_id"]))
     public_fields = _redact_public_fields(
         reconciled,
         hide_contact=hide_contact,
         display_name=display_name,
+        viewer=viewer,
+        owner_user_id=owner_user_id,
     )
+    public_fields, experience = scrub_profile_for_privacy(
+        public_fields,
+        experience[:8],
+        hide_contact=hide_contact,
+    )
+    intelligence = build_public_intelligence_snapshot(cand.get("career_intelligence"))
 
-    return {
+    job_context = None
+    if role_slug:
+        job_context = await _fetch_role_context(db, role_slug)
+
+    payload: dict[str, Any] = {
         "slug": slug,
         "skills": list(cand.get("skills") or []),
-        "experience": experience[:8],
+        "experience": experience,
         "education": education[:6],
+        "intelligence": intelligence,
+        "market": cand.get("market"),
         **public_fields,
         **currency,
     }
+    if job_context:
+        payload["job_context"] = job_context
+    return payload

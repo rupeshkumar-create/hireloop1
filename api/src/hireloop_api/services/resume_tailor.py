@@ -227,9 +227,11 @@ def wrap_print_document(body_html: str, *, title: str = "Resume", auto_print: bo
         if auto_print
         else ""
     )
+    # LLM HTML may contain literal `{` / `}` (CSS, placeholders) — escape for str.format.
+    safe_body = inner.replace("{", "{{").replace("}", "}}")
     return _PRINT_DOC_TEMPLATE.format(
         title=html.escape(title or "Resume"),
-        body=inner,
+        body=safe_body,
         auto_print_script=script,
     )
 

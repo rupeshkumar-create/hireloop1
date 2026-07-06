@@ -261,18 +261,17 @@ async def send_job_match_alert(
     limit: int = 3,
     cooldown_hours: int = 20,
 ) -> dict[str, Any]:
-    """Email a candidate a digest of their strongest new matches.
+    """Email a candidate a digest of their strongest new matches (Resend + prefs)."""
+    from hireloop_api.services.notifications import send_category_email
 
-    Best-effort and self-throttling: skips if no email provider is configured,
-    the candidate has no email, there are no strong matches, or a job-match email
-    went out within `cooldown_hours` (deduped via the notifications table).
-    """
-    if not _html_email_configured(settings):
+    if not settings.resend_api_key and not (
+        settings.smtp_host and settings.smtp_user and settings.smtp_password
+    ):
         return {"sent": False, "skipped": "email_unconfigured"}
 
     row = await db.fetchrow(
         """
-        SELECT u.id AS user_id, u.email, u.full_name
+        SELECT c.user_id, u.id AS uid, u.email, u.full_name, u.notification_prefs
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id
         WHERE c.id = $1::uuid AND c.deleted_at IS NULL
@@ -281,7 +280,7 @@ async def send_job_match_alert(
     )
     if not row or not row["email"]:
         return {"sent": False, "skipped": "no_email"}
-    user_id = row["user_id"]
+    user_id = str(row["user_id"])
 
     recent = await db.fetchval(
         """
@@ -290,7 +289,7 @@ async def send_job_match_alert(
           AND created_at > NOW() - make_interval(hours => $2)
         LIMIT 1
         """,
-        user_id,
+        row["uid"],
         cooldown_hours,
     )
     if recent:
@@ -314,28 +313,32 @@ async def send_job_match_alert(
     if not jobs:
         return {"sent": False, "skipped": "no_matches"}
 
-    name = row["full_name"] or "there"
-    rows_html = "".join(
-        f"<li style='margin:6px 0;font-size:14px'><b>{j['title']}</b>"
-        f"{(' · ' + j['company']) if j['company'] else ''} "
-        f"<span style='color:#16a34a'>({round(float(j['overall_score']) * 100)}% match)</span></li>"
+    job_payload = [
+        {
+            "title": j["title"],
+            "company": j["company"],
+            "score_pct": round(float(j["overall_score"]) * 100),
+        }
         for j in jobs
-    )
-    html = _email_shell(
-        f"{len(jobs)} new role{'s' if len(jobs) != 1 else ''} that fit you, {name}",
-        f"<ul style='padding-left:18px;margin:0'>{rows_html}</ul>",
-        f"{settings.public_app_url.rstrip('/')}/dashboard?panel=jobs",
-        "View your matches",
-    )
+    ]
+    app_base = settings.public_app_url.rstrip("/") or "https://www.hireschema.com"
 
-    sent = await _send_html_email(
+    result = await send_category_email(
+        db,
         settings,
+        user_id=user_id,
+        category="job_match_alerts",
         to_email=row["email"],
-        subject=f"{len(jobs)} new job match{'es' if len(jobs) != 1 else ''} on Hireschema",
-        html=html,
+        to_name=row["full_name"],
+        template_data={
+            "full_name": row["full_name"] or "there",
+            "jobs": job_payload,
+            "cta_url": f"{app_base}/dashboard?panel=jobs",
+        },
+        template_id=settings.sg_template_job_match_alert,
     )
 
-    if sent:
+    if result.get("sent"):
         try:
             await db.execute(
                 """
@@ -343,11 +346,11 @@ async def send_job_match_alert(
                   (user_id, type, title, body, channels, sent_at)
                 VALUES ($1, 'job_match', $2, $3, ARRAY['email','in_app'], NOW())
                 """,
-                user_id,
+                row["uid"],
                 f"{len(jobs)} new job matches",
                 "We found roles that fit your profile — open Hireschema to view them.",
             )
         except Exception as exc:
             logger.error("job_match_notification_log_failed", error=str(exc)[:200])
 
-    return {"sent": bool(sent), "count": len(jobs)}
+    return {"sent": bool(result.get("sent")), "count": len(jobs)}

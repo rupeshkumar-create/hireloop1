@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { BTN_GHOST, BTN_PRIMARY } from "@/lib/button-classes";
+import { cn } from "@/lib/utils";
 
 /** Friendly 404 — primary CTA depends on auth state. */
 export default async function NotFound() {
@@ -26,13 +28,13 @@ export default async function NotFound() {
         <div className="mt-6 flex items-center justify-center gap-3">
           <Link
             href={primaryHref}
-            className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-small font-medium text-on-accent hover:bg-accent-hover transition-colors"
+            className={cn(BTN_PRIMARY, "px-4 py-2 text-small")}
           >
             {primaryLabel}
           </Link>
           <Link
             href={user ? "/dashboard" : "/"}
-            className="inline-flex items-center rounded-md border border-ink-200 px-4 py-2 text-small font-medium text-ink-700 hover:bg-ink-50 transition-colors"
+            className={cn(BTN_GHOST, "px-4 py-2 text-small")}
           >
             {user ? "Home" : "App home"}
           </Link>

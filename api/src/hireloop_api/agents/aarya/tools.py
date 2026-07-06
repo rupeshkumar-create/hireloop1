@@ -1035,6 +1035,29 @@ async def direct_apply(
             uuid.UUID(job_id),
         )
         result = {"application_id": app_id, "apply_url": apply_url}
+
+        job_row = await db.fetchrow(
+            """
+            SELECT j.title, co.name AS company_name
+            FROM public.jobs j
+            LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1::uuid
+            """,
+            uuid.UUID(job_id),
+        )
+        if job_row:
+            from hireloop_api.config import get_settings
+            from hireloop_api.services.notifications import notify_application_update
+
+            await notify_application_update(
+                db,
+                get_settings(),
+                candidate_user_id=user_id,
+                job_id=job_id,
+                job_title=job_row["title"] or "Role",
+                company_name=job_row["company_name"],
+                status="applied",
+            )
     except Exception as exc:
         result = {"error": str(exc)}
 

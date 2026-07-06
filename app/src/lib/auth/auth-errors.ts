@@ -72,7 +72,7 @@ export function decodeAuthError(
       "(2) LinkedIn app has “Sign In with LinkedIn using OpenID Connect” product, " +
       "(3) LinkedIn redirect URL is your Supabase project URL + /auth/v1/callback, " +
       "(4) Supabase redirect URLs include your app URL + /auth/callback " +
-      "(e.g. https://hireloop1-app.vercel.app/auth/callback and http://localhost:3001/auth/callback)."
+      "(e.g. https://www.hireschema.com/auth/callback and http://localhost:3001/auth/callback)."
     );
   }
 

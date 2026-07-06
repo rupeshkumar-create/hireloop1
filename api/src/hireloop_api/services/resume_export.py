@@ -5,9 +5,30 @@ from __future__ import annotations
 import io
 import re
 from html.parser import HTMLParser
+from urllib.parse import quote
 
 from docx import Document
 from docx.shared import Pt
+
+
+def ascii_download_filename(name: str, *, fallback: str = "resume", ext: str = "html") -> str:
+    """Latin-1-safe filename for Content-Disposition headers."""
+    base = (name or fallback).replace("/", "-")
+    for src, dst in (("—", "-"), ("–", "-"), ("'", ""), ('"', "")):
+        base = base.replace(src, dst)
+    slug = re.sub(r"[^\w.\- ]+", "", base, flags=re.ASCII).strip(" .-_")
+    if not slug:
+        slug = fallback
+    slug = slug[:80]
+    return f"{slug}.{ext}" if ext else slug
+
+
+def content_disposition_header(disposition: str, basename: str, *, ext: str = "html") -> str:
+    """Build a Content-Disposition value safe for HTTP headers."""
+    safe = ascii_download_filename(basename, ext=ext)
+    full = f"{basename}.{ext}"
+    encoded = quote(full)
+    return f'{disposition}; filename="{safe}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _extract_body_html(html: str) -> str:

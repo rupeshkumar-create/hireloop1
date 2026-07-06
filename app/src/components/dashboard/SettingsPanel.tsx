@@ -80,7 +80,7 @@ export function SettingsPanel({
   function setToggle(catId: string, checked: boolean) {
     setPrefs((p) => ({
       ...p,
-      [catId]: { ...(p[catId] ?? {}), whatsapp: checked },
+      [catId]: { ...(p[catId] ?? {}), email: checked },
     }));
   }
 
@@ -115,6 +115,14 @@ export function SettingsPanel({
     profile?.candidate?.headline?.trim() ||
     "Your profile";
 
+  const avatarUrl = profile?.user?.avatar_url?.trim() || null;
+  const initials = displayName
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
     <div className="p-5 space-y-4">
       <Card>
@@ -129,9 +137,22 @@ export function SettingsPanel({
           ) : (
             <>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-ink-100 flex items-center justify-center shrink-0">
-                  <User className="h-5 w-5 text-ink-500" strokeWidth={1.5} />
-                </div>
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatarUrl}
+                    alt={displayName}
+                    className="w-10 h-10 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-ink-100 flex items-center justify-center shrink-0">
+                    {initials ? (
+                      <span className="text-micro font-semibold text-ink-600">{initials}</span>
+                    ) : (
+                      <User className="h-5 w-5 text-ink-500" strokeWidth={1.5} />
+                    )}
+                  </div>
+                )}
                 <div className="min-w-0">
                   <p className="text-small font-medium text-ink-900 truncate">{displayName}</p>
                   <p className="text-micro text-ink-500 truncate">
@@ -195,7 +216,7 @@ export function SettingsPanel({
       <Card>
         <CardHeader
           title="Notifications"
-          description="Choose how Aarya reaches you when matches or intros change."
+          description="Choose which updates Aarya emails you about (via Resend)."
         />
         <CardBody className="space-y-0.5 !pt-0">
           {NOTIFICATION_CATEGORIES.map((cat) => (
@@ -205,7 +226,7 @@ export function SettingsPanel({
                 <p className="text-micro text-ink-500">{cat.desc}</p>
               </div>
               <Toggle
-                checked={prefs[cat.id]?.whatsapp ?? true}
+                checked={prefs[cat.id]?.email ?? true}
                 onChange={(v) => setToggle(cat.id, v)}
               />
             </div>

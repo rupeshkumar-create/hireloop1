@@ -102,9 +102,12 @@ export function invalidateMatchFeedCache(): void {
 /** Default filters shared by Home stat card and Jobs → Matches tab. */
 export const DEFAULT_MATCH_FEED_FILTERS: MatchFeedFilters = {
   min_score: 0.38,
-  limit: 20,
+  limit: 50,
   offset: 0,
 };
+
+/** Initial page size for the Matches sidebar feed. */
+export const MATCH_FEED_PAGE_SIZE = 50;
 
 /** Quality-first relevance floor (matches API DEFAULT_FEED_MIN_SCORE). */
 export const MATCH_FEED_RELEVANCE_FLOOR = 0.38;

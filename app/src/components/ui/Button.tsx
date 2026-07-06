@@ -1,20 +1,17 @@
 "use client";
 
 /**
- * Button — DESIGN.md §7.1
- *
- * Three variants. Three sizes. No exceptions.
- *
- *   <Button variant="primary"   size="md" onClick={...}>Continue</Button>
- *   <Button variant="secondary" size="sm" disabled>Skip</Button>
- *   <Button variant="ghost"     size="lg" loading>Cancel</Button>
- *   <Button variant="destructive" onClick={...}>Delete</Button>
- *
- * `asChild` lets a `<Link>` or anchor render with the same styling.
+ * Button — lime/black brutalist frame with hover invert (globals.css hs-btn-*).
  */
 
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "@/components/brand/icons";
+import {
+  BTN_DESTRUCTIVE,
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+} from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 type Variant = "primary" | "secondary" | "ghost" | "destructive";
@@ -30,24 +27,16 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const VARIANT: Record<Variant, string> = {
-  primary:
-    "bg-accent text-on-accent hover:bg-accent-hover hover:text-on-accent active:bg-accent-hover active:text-on-accent " +
-    "disabled:bg-ink-100 disabled:text-ink-300",
-  secondary:
-    "bg-transparent border border-ink-200 text-ink-900 hover:bg-ink-50 hover:border-ink-300 active:bg-ink-50 " +
-    "disabled:bg-transparent disabled:text-ink-300 disabled:border-ink-100",
-  ghost:
-    "bg-transparent text-ink-700 hover:bg-ink-50 active:bg-ink-100 " +
-    "disabled:text-ink-300",
-  destructive:
-    "bg-destructive-bg text-destructive hover:bg-destructive hover:text-paper-1 " +
-    "disabled:bg-ink-50 disabled:text-ink-300",
+  primary: BTN_PRIMARY,
+  secondary: BTN_SECONDARY,
+  ghost: BTN_GHOST,
+  destructive: BTN_DESTRUCTIVE,
 };
 
 const SIZE: Record<Size, string> = {
-  sm: "h-8  px-3 text-small  gap-1.5 rounded-md",
-  md: "h-10 px-4 text-body   gap-2   rounded-md",
-  lg: "h-12 px-5 text-body   gap-2   rounded-md",
+  sm: "h-8  px-3 text-small  gap-1.5",
+  md: "h-10 px-4 text-body   gap-2",
+  lg: "h-12 px-5 text-body   gap-2",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
@@ -74,7 +63,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={isDisabled}
       className={cn(
-        "inline-flex items-center justify-center font-medium",
         "transition-colors duration-fast ease-out-soft",
         "disabled:cursor-not-allowed",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper-0",

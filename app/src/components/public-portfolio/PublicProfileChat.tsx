@@ -33,9 +33,14 @@ const PORTFOLIO_CHIPS: ChatChip[] = [
 type PublicProfileChatProps = {
   slug: string;
   candidateLabel: string;
+  chatTargetName: string;
 };
 
-export function PublicProfileChat({ slug, candidateLabel }: PublicProfileChatProps) {
+export function PublicProfileChat({
+  slug,
+  candidateLabel,
+  chatTargetName,
+}: PublicProfileChatProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -122,7 +127,7 @@ export function PublicProfileChat({ slug, candidateLabel }: PublicProfileChatPro
       open={open}
       onOpen={() => setOpen(true)}
       onClose={() => setOpen(false)}
-      fabLabel="Chat with Aarya"
+      fabLabel={`Chat with ${chatTargetName}`}
       fabIcon={<MessageCircle className="h-5 w-5" strokeWidth={1.75} />}
       ariaLabel={`Chat about ${candidateLabel}`}
       header={

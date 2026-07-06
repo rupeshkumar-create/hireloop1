@@ -43,7 +43,8 @@ JOB_EMBED = "job_embed"
 JOB_SCORE = "job_score"
 JOB_INGEST = "job_ingest"
 LINKDAPI_ENRICH = "linkdapi_enrich"
-HM_ENRICH = "hm_enrich"
+INTERVIEW_REMINDER = "interview_reminder"
+AARYA_WEEKLY_DIGEST = "aarya_weekly_digest"
 
 Handler = Callable[[Settings, dict[str, Any]], Awaitable[None]]
 
@@ -442,6 +443,38 @@ async def _handle_linkdapi_enrich(settings: Settings, payload: dict[str, Any]) -
     )
 
 
+async def _handle_interview_reminder(settings: Settings, payload: dict[str, Any]) -> None:
+    from datetime import datetime
+
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.notifications import send_interview_reminder_email
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        scheduled = datetime.fromisoformat(str(payload["scheduled_at"]).replace("Z", "+00:00"))
+        await send_interview_reminder_email(
+            conn,
+            settings,
+            user_id=str(payload["user_id"]),
+            session_id=str(payload["session_id"]),
+            session_type=str(payload.get("session_type") or "career_chat"),
+            scheduled_at=scheduled,
+        )
+
+
+async def _handle_aarya_weekly_digest(settings: Settings, payload: dict[str, Any]) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.notifications import schedule_weekly_digest, send_weekly_digest
+
+    user_id = str(payload["user_id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        await send_weekly_digest(conn, settings, user_id=user_id)
+        await schedule_weekly_digest(conn, user_id=user_id, first_run_days=7)
+
+
 async def _handle_hm_enrich(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.apify.hm_enricher import HMEnricher
@@ -479,6 +512,8 @@ _HANDLERS: dict[str, Handler] = {
     JOB_INGEST: _handle_job_ingest,
     LINKDAPI_ENRICH: _handle_linkdapi_enrich,
     HM_ENRICH: _handle_hm_enrich,
+    INTERVIEW_REMINDER: _handle_interview_reminder,
+    AARYA_WEEKLY_DIGEST: _handle_aarya_weekly_digest,
 }
 
 

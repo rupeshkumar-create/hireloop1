@@ -130,6 +130,7 @@ export {
   Play,
   Square,
   Target,
+  Zap,
   Volume2,
   XCircle,
   Zap,

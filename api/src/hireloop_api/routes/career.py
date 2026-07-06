@@ -649,7 +649,11 @@ async def download_career_path_resume(
     db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     from hireloop_api.services.career_path_resume import fetch_path_resume_html
-    from hireloop_api.services.resume_export import html_resume_to_docx
+    from hireloop_api.services.resume_export import (
+        ascii_download_filename,
+        content_disposition_header,
+        html_resume_to_docx,
+    )
     from hireloop_api.services.resume_tailor import wrap_print_document
 
     candidate_id = await _resolve_candidate_id(db, current_user["id"])
@@ -659,16 +663,16 @@ async def download_career_path_resume(
     if not html_fragment:
         raise HTTPException(status_code=404, detail="Resume not found.")
 
-    safe_title = (path_title or "Career path resume").replace("/", "-")[:80]
-    doc_title = f"{safe_title} — Resume"
+    title_base = path_title or "Career path resume"
+    doc_title = f"{title_base} — Resume"
 
     if file_format == "docx":
         docx_bytes = html_resume_to_docx(html_fragment, title=doc_title)
-        filename = f"{safe_title.replace(' ', '_')}.docx"
+        filename = ascii_download_filename(title_base, ext="docx")
         return Response(
             content=docx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition_header("attachment", title_base, ext="docx")},
         )
 
     auto_print = file_format == "pdf" or (file_format == "html" and print_dialog)
@@ -680,5 +684,9 @@ async def download_career_path_resume(
     disposition = "attachment" if file_format == "pdf" else "inline"
     return HTMLResponse(
         content=html_doc,
-        headers={"Content-Disposition": f'{disposition}; filename="{safe_title}.html"'},
+        headers={
+            "Content-Disposition": content_disposition_header(
+                disposition, title_base, ext="html"
+            )
+        },
     )

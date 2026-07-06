@@ -405,6 +405,29 @@ async def get_current_user(
     return row
 
 
+async def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    settings: Settings = Depends(get_settings),
+    db: asyncpg.Connection | None = Depends(get_db_optional),
+) -> dict[str, Any] | None:
+    """Return the authenticated user row, or None when no valid token is present."""
+    if credentials is None or db is None:
+        return None
+    try:
+        supabase_user = await _fetch_supabase_user(credentials.credentials, settings)
+    except HTTPException:
+        return None
+    row = await _load_app_user(settings, db, supabase_user)
+    if not row:
+        return None
+    uid = coerce_uuid(row["id"])
+    try:
+        row["role"] = await _resolve_user_role(db, uid, str(row.get("role") or "candidate"))
+    except Exception as exc:
+        logger.warning("resolve_user_role_failed", error=str(exc)[:200])
+    return row
+
+
 async def get_current_user_with_supabase(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),

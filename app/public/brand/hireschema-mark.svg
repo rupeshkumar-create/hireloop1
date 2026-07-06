@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hireschema">
+  <rect width="48" height="48" rx="6" fill="#141414"/>
+  <g transform="translate(12 7) skewX(-14) translate(-12 -7)"><rect x="7" y="4" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(12 16.5) skewX(-12) translate(-12 -16.5)"><rect x="7" y="13.5" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(12 35) skewX(-10) translate(-12 -35)"><rect x="7" y="32" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(12 44) skewX(-8) translate(-12 -44)"><rect x="7" y="41" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(36 7) skewX(-14) translate(-36 -7)"><rect x="31" y="4" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(36 16.5) skewX(-12) translate(-36 -16.5)"><rect x="31" y="13.5" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(36 35) skewX(-10) translate(-36 -35)"><rect x="31" y="32" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(36 44) skewX(-8) translate(-36 -44)"><rect x="31" y="41" width="10" height="6" rx="3" fill="#B9F84C"/></g>
+  <g transform="translate(24 23.75) skewX(-6) translate(-24 -23.75)"><rect x="8" y="21" width="32" height="5.5" rx="2.75" fill="#B9F84C"/></g>
+  <g transform="translate(24 30.25) skewX(-4) translate(-24 -30.25)"><rect x="8" y="27.5" width="32" height="5.5" rx="2.75" fill="#B9F84C"/></g>
+</svg>

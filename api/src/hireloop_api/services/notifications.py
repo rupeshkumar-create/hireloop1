@@ -1,27 +1,98 @@
 """
-Notification orchestration — in-app + WhatsApp (MSG91) + email (SendGrid).
+Notification orchestration — in-app + WhatsApp (MSG91) + email (Resend).
 
-Triggers:
-  - New high-quality job match (P19)
-  - Intro status updates (future)
+Email templates live in ``notification_templates``; delivery respects
+``users.notification_prefs`` category toggles (Settings → Notifications).
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
+from hireloop_api.services.email.notification_templates import (
+    normalize_category,
+    render_notification_email,
+)
+from hireloop_api.services.email.resend_service import ResendService
+from hireloop_api.services.email.sendgrid_service import SendGridService
+from hireloop_api.services.email.smtp_service import SmtpService
 from hireloop_api.services.whatsapp.msg91 import Msg91Client, resolve_msg91_template_name
 
 logger = structlog.get_logger()
 
 MATCH_NOTIFY_MIN_SCORE = 0.65
 JOB_MATCH_TEMPLATE = "job_match_alert"
+
+
+def _app_base(settings: Settings) -> str:
+    base = settings.public_app_url.rstrip("/") if settings.public_app_url else ""
+    if base and "localhost" not in base:
+        return base
+    if settings.allowed_origins:
+        for origin in settings.allowed_origins:
+            if "hireschema" in origin or "3001" in origin:
+                return origin.rstrip("/")
+        return settings.allowed_origins[0].rstrip("/")
+    return "https://www.hireschema.com"
+
+
+def _email_provider_configured(settings: Settings) -> bool:
+    smtp = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+    return smtp or bool(settings.resend_api_key)
+
+
+def _sendgrid_usable(settings: Settings) -> bool:
+    key = (settings.sendgrid_api_key or "").strip()
+    if not key or len(key) < 24:
+        return False
+    if key in ("SG....", "SG...", "SG.."):
+        return False
+    return key.startswith("SG.")
+
+
+async def _send_html(settings: Settings, *, to_email: str, subject: str, html: str) -> bool:
+    if settings.smtp_host and settings.smtp_user and settings.smtp_password:
+        svc = SmtpService(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            user=settings.smtp_user,
+            password=settings.smtp_password,
+            from_email=settings.smtp_from or settings.smtp_user,
+            from_name=settings.resend_from_name,
+        )
+        return await svc.send(to_email=to_email, subject=subject, html=html)
+    if settings.resend_api_key:
+        svc = ResendService(
+            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+        )
+        try:
+            return await svc.send(to_email=to_email, subject=subject, html=html)
+        finally:
+            await svc.close()
+    return False
+
+
+def _pref_channel_allowed(prefs: dict | None, category: str, channel: str) -> bool:
+    """Default opt-in: missing prefs or missing channel → allowed."""
+    if not prefs:
+        return True
+    cat = normalize_category(category)
+    cat_prefs = prefs.get(cat) or {}
+    if not isinstance(cat_prefs, dict):
+        return True
+    # Legacy nested keys
+    if channel == "email" and cat_prefs.get("email") is False:
+        return False
+    if channel == "whatsapp" and cat_prefs.get("whatsapp") is False:
+        return False
+    return True
 
 
 async def _log_whatsapp_send(
@@ -63,6 +134,64 @@ async def _log_whatsapp_send(
         )
 
 
+async def send_category_email(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    user_id: str,
+    category: str,
+    to_email: str,
+    to_name: str | None,
+    template_data: dict[str, Any],
+    template_id: str = "",
+) -> dict[str, Any]:
+    """Send a category email via Resend when prefs + provider allow."""
+    if not to_email:
+        return {"sent": False, "skipped": "no_email"}
+
+    user = await db.fetchrow(
+        "SELECT notification_prefs FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+        uuid.UUID(user_id),
+    )
+    if not user:
+        return {"sent": False, "error": "User not found"}
+
+    cat = normalize_category(category)
+    prefs = user["notification_prefs"] or {}
+    if not _pref_channel_allowed(prefs, cat, "email"):
+        return {"sent": False, "skipped": "opted_out"}
+
+    data = {**template_data, "full_name": template_data.get("full_name") or to_name or "there"}
+    if "cta_url" not in data:
+        data["cta_url"] = f"{_app_base(settings)}/dashboard"
+
+    subject, html = render_notification_email(cat, data)
+
+    if _email_provider_configured(settings):
+        sent = await _send_html(settings, to_email=to_email, subject=subject, html=html)
+        if sent:
+            return {"sent": True, "provider": "resend_or_smtp"}
+
+    if _sendgrid_usable(settings) and template_id:
+        svc = SendGridService(
+            settings.sendgrid_api_key,
+            settings.sendgrid_from_email,
+            settings.sendgrid_from_name,
+        )
+        try:
+            sent = await svc._send(
+                to_email=to_email,
+                to_name=to_name,
+                template_id=template_id,
+                dynamic_data=data,
+            )
+            return {"sent": bool(sent), "provider": "sendgrid"}
+        finally:
+            await svc.close()
+
+    return {"sent": False, "skipped": "email_unconfigured"}
+
+
 async def send_email_if_allowed(
     db: asyncpg.Connection,
     settings: Settings,
@@ -74,40 +203,41 @@ async def send_email_if_allowed(
     template_id: str,
     dynamic_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Send a SendGrid dynamic template when user prefs + config allow."""
-    if not settings.sendgrid_api_key or not template_id:
-        return {"sent": False, "skipped": "sendgrid_unconfigured"}
+    """Backward-compatible wrapper — prefers Resend HTML templates."""
+    return await send_category_email(
+        db,
+        settings,
+        user_id=user_id,
+        category=purpose,
+        to_email=to_email,
+        to_name=to_name,
+        template_data=dynamic_data,
+        template_id=template_id,
+    )
 
-    user = await db.fetchrow(
-        "SELECT notification_prefs FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+
+async def _log_in_app(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    notif_type: str,
+    title: str,
+    body: str,
+    data: dict[str, Any],
+    channels: list[str],
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO public.notifications (user_id, type, title, body, data, channels, sent_at)
+        VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6::text[], NOW())
+        """,
         uuid.UUID(user_id),
+        notif_type,
+        title,
+        body,
+        json.dumps(data),
+        channels,
     )
-    if not user:
-        return {"sent": False, "error": "User not found"}
-
-    prefs = user["notification_prefs"] or {}
-    cat_prefs = prefs.get(purpose, {}) or prefs.get("intro_updates", {})
-    if isinstance(cat_prefs, dict) and cat_prefs.get("email") is False:
-        return {"sent": False, "skipped": "opted_out"}
-
-    from hireloop_api.services.email.sendgrid_service import SendGridService
-
-    svc = SendGridService(
-        settings.sendgrid_api_key,
-        settings.sendgrid_from_email,
-        settings.sendgrid_from_name,
-    )
-    try:
-        sent = await svc._send(
-            to_email=to_email,
-            to_name=to_name,
-            template_id=template_id,
-            dynamic_data=dynamic_data,
-        )
-    finally:
-        await svc.close()
-
-    return {"sent": sent}
 
 
 async def notify_intro_status_email(
@@ -117,7 +247,7 @@ async def notify_intro_status_email(
     intro_id: str,
     status: str,
 ) -> dict[str, Any]:
-    """Emailing candidate when their intro status changes (transactional — R9)."""
+    """Email candidate when their intro status changes."""
     if status not in ("sent", "opened", "replied"):
         return {"sent": False, "skipped": "status_not_notifiable"}
 
@@ -139,21 +269,15 @@ async def notify_intro_status_email(
     if not row or not row["email"]:
         return {"sent": False, "error": "No candidate email on file"}
 
-    app_base = (
-        settings.allowed_origins[0] if settings.allowed_origins else "https://hireschema.com"
-    )
-    if "localhost" in app_base and len(settings.allowed_origins) > 1:
-        app_base = next((o for o in settings.allowed_origins if "3001" in o), app_base)
-
-    return await send_email_if_allowed(
+    app_base = _app_base(settings)
+    return await send_category_email(
         db,
         settings,
         user_id=str(row["user_id"]),
-        purpose="intro_updates",
+        category="intro_updates",
         to_email=row["email"],
         to_name=row["full_name"],
-        template_id=settings.sg_template_intro_status,
-        dynamic_data={
+        template_data={
             "full_name": row["full_name"] or "there",
             "hm_name": row["hm_name"] or "the hiring manager",
             "company_name": row["company_name"] or "the company",
@@ -166,6 +290,7 @@ async def notify_intro_status_email(
             }.get(status, f"Intro status: {status}"),
             "cta_url": f"{app_base}/dashboard",
         },
+        template_id=settings.sg_template_intro_status,
     )
 
 
@@ -187,10 +312,8 @@ async def send_whatsapp_if_allowed(
         return {"sent": False, "error": "No phone on file"}
 
     prefs = user["notification_prefs"] or {}
-    cat_prefs = prefs.get(purpose, {})
-    if purpose.startswith("intro"):
-        cat_prefs = cat_prefs or prefs.get("intro_updates", {}) or prefs.get("intro_status", {})
-    if isinstance(cat_prefs, dict) and cat_prefs.get("whatsapp") is False:
+    cat = normalize_category(purpose)
+    if not _pref_channel_allowed(prefs, cat, "whatsapp"):
         return {"sent": False, "skipped": "opted_out"}
 
     wa = Msg91Client(
@@ -213,29 +336,34 @@ async def send_whatsapp_if_allowed(
         user_id=user_id,
         phone=user["phone"],
         template_name=template_name,
-        purpose=purpose,
+        purpose=cat,
         payload={"body_params": body_params},
         result=result,
     )
     return result
 
 
-async def _already_notified_job_match(
+async def _already_notified(
     db: asyncpg.Connection,
+    *,
     user_id: str,
-    job_id: str,
+    notif_type: str,
+    dedupe_key: str,
+    within_hours: int = 24,
 ) -> bool:
     row = await db.fetchrow(
         """
         SELECT 1 FROM public.notifications
         WHERE user_id = $1::uuid
-          AND type = 'job_match'
-          AND data->>'job_id' = $2
-          AND created_at > NOW() - INTERVAL '24 hours'
+          AND type = $2
+          AND data->>'dedupe_key' = $3
+          AND created_at > NOW() - make_interval(hours => $4)
         LIMIT 1
         """,
         uuid.UUID(user_id),
-        job_id,
+        notif_type,
+        dedupe_key,
+        within_hours,
     )
     return row is not None
 
@@ -250,16 +378,13 @@ async def notify_job_match(
     job_title: str,
     company_name: str | None,
 ) -> None:
-    """
-    Fire in-app + email (SendGrid) + WhatsApp when a strong new match is computed.
-    Deduped per user/job per 24h.
-    """
+    """In-app + email (Resend) + WhatsApp when a strong new match is computed."""
     if overall_score < MATCH_NOTIFY_MIN_SCORE:
         return
 
     row = await db.fetchrow(
         """
-        SELECT c.user_id, u.full_name, u.email, u.notification_prefs
+        SELECT c.user_id, u.full_name, u.email
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id
         WHERE c.id = $1::uuid AND c.deleted_at IS NULL
@@ -270,40 +395,37 @@ async def notify_job_match(
         return
 
     user_id = str(row["user_id"])
-    if await _already_notified_job_match(db, user_id, job_id):
+    dedupe_key = f"job:{job_id}"
+    if await _already_notified(
+        db, user_id=user_id, notif_type="job_match", dedupe_key=dedupe_key
+    ):
         return
 
-    app_base = (
-        settings.allowed_origins[0] if settings.allowed_origins else "https://hireschema.com"
-    )
-    if "localhost" in app_base and len(settings.allowed_origins) > 1:
-        app_base = next((o for o in settings.allowed_origins if "3001" in o), app_base)
+    app_base = _app_base(settings)
     deep_link = f"{app_base}/dashboard?job={job_id}"
-    pct = str(round(overall_score * 100))
+    pct = int(round(overall_score * 100))
     title = job_title
     company = company_name or "a company"
-
     notif_body = f"{title} at {company} — {pct}% match"
-    data = {"job_id": job_id, "deep_link": deep_link, "score": overall_score}
+    data = {"job_id": job_id, "deep_link": deep_link, "score": overall_score, "dedupe_key": dedupe_key}
 
     channels = ["in_app"]
     if row["email"]:
-        email_result = await send_email_if_allowed(
+        email_result = await send_category_email(
             db,
             settings,
             user_id=user_id,
-            purpose="job_match",
+            category="job_match_alerts",
             to_email=row["email"],
             to_name=row["full_name"],
-            template_id=settings.sg_template_job_match_alert,
-            dynamic_data={
+            template_data={
                 "full_name": row["full_name"] or "there",
-                "match_count": 1,
-                "top_job_title": title,
-                "top_company": company,
-                "top_score_pct": int(pct),
+                "job_title": title,
+                "company_name": company,
+                "score_pct": pct,
                 "cta_url": deep_link,
             },
+            template_id=settings.sg_template_job_match_alert,
         )
         if email_result.get("sent"):
             channels.append("email")
@@ -313,31 +435,22 @@ async def notify_job_match(
         settings,
         user_id=user_id,
         template_name=JOB_MATCH_TEMPLATE,
-        purpose="job_match",
-        body_params=[row["full_name"] or "there", title, company, pct, deep_link],
+        purpose="job_match_alerts",
+        body_params=[row["full_name"] or "there", title, company, str(pct), deep_link],
     )
     if wa_result.get("sent"):
         channels.append("whatsapp")
 
-    await db.execute(
-        """
-        INSERT INTO public.notifications (user_id, type, title, body, data, channels, sent_at)
-        VALUES ($1::uuid, 'job_match', $2, $3, $4::jsonb, $5::text[], NOW())
-        """,
-        uuid.UUID(user_id),
-        "New job match",
-        notif_body,
-        json.dumps(data),
-        channels,
-    )
-
-    logger.info(
-        "job_match_notified",
+    await _log_in_app(
+        db,
         user_id=user_id,
-        job_id=job_id,
-        score=overall_score,
+        notif_type="job_match",
+        title="New job match",
+        body=notif_body,
+        data=data,
         channels=channels,
     )
+    logger.info("job_match_notified", user_id=user_id, job_id=job_id, score=overall_score, channels=channels)
 
 
 async def notify_intro_lifecycle(
@@ -353,32 +466,23 @@ async def notify_intro_lifecycle(
 ) -> None:
     """In-app + optional email/WhatsApp when an intro changes state."""
     channels: list[str] = ["in_app"]
-    await db.execute(
-        """
-        INSERT INTO public.notifications (user_id, type, title, body, data, channels, sent_at)
-        VALUES ($1::uuid, 'intro_status', $2, $3, $4::jsonb, $5::text[], NOW())
-        """,
-        uuid.UUID(recipient_user_id),
-        title,
-        body,
-        json.dumps({"intro_id": intro_id, "event": event}),
-        channels,
-    )
+    data = {"intro_id": intro_id, "event": event, "dedupe_key": f"intro:{intro_id}:{event}"}
 
     user = await db.fetchrow(
         "SELECT email, full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
         uuid.UUID(recipient_user_id),
     )
-    if user and user["email"] and email_template_data and settings.sg_template_intro_status:
-        email_result = await send_email_if_allowed(
+    if user and user["email"] and email_template_data:
+        tpl = {**email_template_data, "full_name": email_template_data.get("full_name") or user["full_name"]}
+        email_result = await send_category_email(
             db,
             settings,
             user_id=recipient_user_id,
-            purpose="intro_updates",
+            category="intro_updates",
             to_email=user["email"],
             to_name=user["full_name"],
+            template_data=tpl,
             template_id=settings.sg_template_intro_status,
-            dynamic_data=email_template_data,
         )
         if email_result.get("sent"):
             channels.append("email")
@@ -389,8 +493,358 @@ async def notify_intro_lifecycle(
             settings,
             user_id=recipient_user_id,
             template_name="intro_status",
-            purpose="intro_status",
+            purpose="intro_updates",
             body_params=[title, body[:120]],
         )
         if wa_result.get("sent"):
             channels.append("whatsapp")
+
+    await _log_in_app(
+        db,
+        user_id=recipient_user_id,
+        notif_type="intro_status",
+        title=title,
+        body=body,
+        data=data,
+        channels=channels,
+    )
+
+
+async def notify_interview_booked(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    user_id: str,
+    session_id: str,
+    session_type: str,
+    scheduled_at: datetime,
+) -> None:
+    """Confirmation email when a voice session is booked."""
+    user = await db.fetchrow(
+        "SELECT email, full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(user_id),
+    )
+    if not user or not user["email"]:
+        return
+
+    label = session_type.replace("_", " ").title()
+    when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
+    app_base = _app_base(settings)
+    channels = ["in_app"]
+    email_result = await send_category_email(
+        db,
+        settings,
+        user_id=user_id,
+        category="interview_reminders",
+        to_email=user["email"],
+        to_name=user["full_name"],
+        template_data={
+            "full_name": user["full_name"] or "there",
+            "session_label": label,
+            "scheduled_label": when,
+            "scheduled_at": when,
+            "is_reminder": False,
+            "cta_url": f"{app_base}/dashboard",
+        },
+        template_id=settings.sg_template_interview_reminder,
+    )
+    if email_result.get("sent"):
+        channels.append("email")
+
+    await _log_in_app(
+        db,
+        user_id=user_id,
+        notif_type="interview_booked",
+        title=f"{label} booked",
+        body=f"Scheduled for {when}",
+        data={"session_id": session_id, "dedupe_key": f"booked:{session_id}"},
+        channels=channels,
+    )
+
+    # Schedule 24h-before reminder when far enough in the future.
+    reminder_at = scheduled_at - timedelta(hours=24)
+    if reminder_at > datetime.now(UTC):
+        from hireloop_api.services.background_jobs import INTERVIEW_REMINDER, enqueue_job
+
+        await enqueue_job(
+            db,
+            kind=INTERVIEW_REMINDER,
+            payload={
+                "user_id": user_id,
+                "session_id": session_id,
+                "session_type": session_type,
+                "scheduled_at": scheduled_at.isoformat(),
+            },
+            idempotency_key=f"interview_reminder:{session_id}",
+            run_after=reminder_at,
+        )
+
+
+async def send_interview_reminder_email(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    user_id: str,
+    session_id: str,
+    session_type: str,
+    scheduled_at: datetime,
+) -> dict[str, Any]:
+    """24h-before reminder (background job)."""
+    row = await db.fetchrow(
+        """
+        SELECT vs.status, u.email, u.full_name
+        FROM public.voice_sessions vs
+        JOIN public.candidates c ON c.id = vs.candidate_id
+        JOIN public.users u ON u.id = c.user_id
+        WHERE vs.id = $1::uuid AND u.id = $2::uuid
+        """,
+        uuid.UUID(session_id),
+        uuid.UUID(user_id),
+    )
+    if not row or row["status"] != "scheduled" or not row["email"]:
+        return {"sent": False, "skipped": "not_scheduled"}
+
+    dedupe_key = f"reminder:{session_id}"
+    if await _already_notified(
+        db, user_id=user_id, notif_type="interview_reminder", dedupe_key=dedupe_key, within_hours=48
+    ):
+        return {"sent": False, "skipped": "deduped"}
+
+    label = session_type.replace("_", " ").title()
+    when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
+    app_base = _app_base(settings)
+    result = await send_category_email(
+        db,
+        settings,
+        user_id=user_id,
+        category="interview_reminders",
+        to_email=row["email"],
+        to_name=row["full_name"],
+        template_data={
+            "full_name": row["full_name"] or "there",
+            "session_label": label,
+            "scheduled_label": when,
+            "is_reminder": True,
+            "cta_url": f"{app_base}/dashboard",
+        },
+        template_id=settings.sg_template_interview_reminder,
+    )
+    if result.get("sent"):
+        await _log_in_app(
+            db,
+            user_id=user_id,
+            notif_type="interview_reminder",
+            title=f"Reminder: {label} tomorrow",
+            body=f"Your session is at {when}",
+            data={"session_id": session_id, "dedupe_key": dedupe_key},
+            channels=["in_app", "email"],
+        )
+    return result
+
+
+async def notify_profile_viewed(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    candidate_user_id: str,
+    slug: str,
+) -> None:
+    """Email when a recruiter views a published public profile (max 1/day per slug)."""
+    dedupe_key = f"view:{slug}:{datetime.now(UTC).date().isoformat()}"
+    if await _already_notified(
+        db,
+        user_id=candidate_user_id,
+        notif_type="profile_view",
+        dedupe_key=dedupe_key,
+        within_hours=24,
+    ):
+        return
+
+    user = await db.fetchrow(
+        "SELECT email, full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(candidate_user_id),
+    )
+    if not user or not user["email"]:
+        return
+
+    app_base = _app_base(settings)
+    channels = ["in_app"]
+    result = await send_category_email(
+        db,
+        settings,
+        user_id=candidate_user_id,
+        category="profile_views",
+        to_email=user["email"],
+        to_name=user["full_name"],
+        template_data={
+            "full_name": user["full_name"] or "there",
+            "viewer_label": "A recruiter",
+            "cta_url": f"{app_base}/dashboard?panel=profile",
+        },
+    )
+    if result.get("sent"):
+        channels.append("email")
+
+    await _log_in_app(
+        db,
+        user_id=candidate_user_id,
+        notif_type="profile_view",
+        title="Profile viewed",
+        body="A recruiter viewed your public profile",
+        data={"slug": slug, "dedupe_key": dedupe_key},
+        channels=channels,
+    )
+
+
+async def notify_application_update(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    candidate_user_id: str,
+    job_id: str,
+    job_title: str,
+    company_name: str | None,
+    status: str,
+) -> None:
+    """Email when an application is recorded or status changes."""
+    dedupe_key = f"app:{job_id}:{status}"
+    if await _already_notified(
+        db,
+        user_id=candidate_user_id,
+        notif_type="application_update",
+        dedupe_key=dedupe_key,
+        within_hours=24,
+    ):
+        return
+
+    user = await db.fetchrow(
+        "SELECT email, full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(candidate_user_id),
+    )
+    if not user or not user["email"]:
+        return
+
+    status_label = status.replace("_", " ").title()
+    app_base = _app_base(settings)
+    channels = ["in_app"]
+    result = await send_category_email(
+        db,
+        settings,
+        user_id=candidate_user_id,
+        category="application_updates",
+        to_email=user["email"],
+        to_name=user["full_name"],
+        template_data={
+            "full_name": user["full_name"] or "there",
+            "job_title": job_title,
+            "company_name": company_name or "a company",
+            "status": status,
+            "status_label": status_label,
+            "cta_url": f"{app_base}/dashboard?panel=jobs",
+        },
+    )
+    if result.get("sent"):
+        channels.append("email")
+
+    await _log_in_app(
+        db,
+        user_id=candidate_user_id,
+        notif_type="application_update",
+        title="Application update",
+        body=f"{job_title}: {status_label}",
+        data={"job_id": job_id, "status": status, "dedupe_key": dedupe_key},
+        channels=channels,
+    )
+
+
+async def send_weekly_digest(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
+    user_id: str,
+) -> dict[str, Any]:
+    """Weekly Aarya digest email (background job)."""
+    user = await db.fetchrow(
+        "SELECT email, full_name FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(user_id),
+    )
+    if not user or not user["email"]:
+        return {"sent": False, "skipped": "no_email"}
+
+    week_key = datetime.now(UTC).strftime("%G-W%V")
+    dedupe_key = f"digest:{week_key}"
+    if await _already_notified(
+        db,
+        user_id=user_id,
+        notif_type="aarya_digest",
+        dedupe_key=dedupe_key,
+        within_hours=24 * 8,
+    ):
+        return {"sent": False, "skipped": "deduped"}
+
+    stats = await db.fetchrow(
+        """
+        SELECT
+          (SELECT count(*)::int FROM public.notifications n
+           WHERE n.user_id = $1::uuid AND n.type = 'job_match'
+             AND n.created_at > NOW() - INTERVAL '7 days') AS match_count,
+          (SELECT count(*)::int FROM public.notifications n
+           WHERE n.user_id = $1::uuid AND n.type = 'intro_status'
+             AND n.created_at > NOW() - INTERVAL '7 days') AS intro_count,
+          (SELECT count(*)::int FROM public.agent_actions aa
+           WHERE aa.user_id = $1::uuid
+             AND aa.created_at > NOW() - INTERVAL '7 days') AS actions_count
+        """,
+        uuid.UUID(user_id),
+    )
+    match_count = int(stats["match_count"] or 0) if stats else 0
+    intro_count = int(stats["intro_count"] or 0) if stats else 0
+    actions_count = int(stats["actions_count"] or 0) if stats else 0
+
+    app_base = _app_base(settings)
+    result = await send_category_email(
+        db,
+        settings,
+        user_id=user_id,
+        category="aarya_digest",
+        to_email=user["email"],
+        to_name=user["full_name"],
+        template_data={
+            "full_name": user["full_name"] or "there",
+            "match_count": match_count,
+            "intro_count": intro_count,
+            "actions_count": actions_count,
+            "cta_url": f"{app_base}/dashboard",
+        },
+    )
+    if result.get("sent"):
+        await _log_in_app(
+            db,
+            user_id=user_id,
+            notif_type="aarya_digest",
+            title="Your weekly digest",
+            body=f"{match_count} matches · {actions_count} actions",
+            data={"dedupe_key": dedupe_key, "week": week_key},
+            channels=["in_app", "email"],
+        )
+    return result
+
+
+async def schedule_weekly_digest(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    first_run_days: int = 7,
+) -> None:
+    """Enqueue the next weekly digest for a user."""
+    from hireloop_api.services.background_jobs import AARYA_WEEKLY_DIGEST, enqueue_job
+
+    run_after = datetime.now(UTC) + timedelta(days=first_run_days)
+    week_bucket = run_after.strftime("%G-W%V")
+    await enqueue_job(
+        db,
+        kind=AARYA_WEEKLY_DIGEST,
+        payload={"user_id": user_id},
+        idempotency_key=f"weekly_digest:{user_id}:{week_bucket}",
+        run_after=run_after,
+    )

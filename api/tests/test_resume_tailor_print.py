@@ -40,3 +40,23 @@ def test_title_is_html_escaped() -> None:
     doc = wrap_print_document("<h1>X</h1>", title="<script>bad</script>")
     assert "<title><script>bad</script></title>" not in doc
     assert "&lt;script&gt;" in doc
+
+
+def test_wrap_handles_curly_braces_in_body() -> None:
+    doc = wrap_print_document("<style>p { margin: 0; }</style><p>OK</p>")
+    assert "margin: 0" in doc
+    assert "<p>OK</p>" in doc
+
+
+def test_ascii_download_filename_strips_unicode_punctuation() -> None:
+    from hireloop_api.services.resume_export import (
+        ascii_download_filename,
+        content_disposition_header,
+    )
+
+    name = ascii_download_filename("VP – Marketing & Growth (AI SaaS)", ext="html")
+    assert name.isascii()
+    assert name.endswith(".html")
+    header = content_disposition_header("inline", "VP – Marketing & Growth (AI SaaS)", ext="html")
+    assert "filename=" in header
+    assert header.isascii()

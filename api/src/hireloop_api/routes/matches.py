@@ -228,7 +228,7 @@ async def get_match_feed(
         le=1.0,
         description="Minimum overall score filter (default relevance floor)",
     ),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
@@ -463,15 +463,18 @@ async def get_match_feed(
     if offset == 0:
         saved = await _fetch_saved_job_signals(db, candidate["id"])
         boost_by_saved(result, saved)
-        # Hybrid retrieval: fuse the composite (dense-leaning) and the lexical
-        # skills signal via RRF so an exceptional direct-skill match isn't buried
-        # under a marginally-higher composite. Degrades to overall_score alone
-        # when skills_score is absent.
-        result = assemble_first_screen(
-            result,
-            screen_size=min(limit, 8),
-            fuse_signals=("overall_score", "skills_score"),
-        )
+        # Short curated screens get MMR diversity; longer feeds keep SQL order
+        # (newest matches first) so the sidebar can show ~50 recent roles.
+        if limit <= 20:
+            # Hybrid retrieval: fuse the composite (dense-leaning) and the lexical
+            # skills signal via RRF so an exceptional direct-skill match isn't buried
+            # under a marginally-higher composite. Degrades to overall_score alone
+            # when skills_score is absent.
+            result = assemble_first_screen(
+                result,
+                screen_size=min(limit, 8),
+                fuse_signals=("overall_score", "skills_score"),
+            )
         market_count = len(_market_feed_items(result))
         if market_count < 3:
             test_jobs = await fetch_test_jobs_for_feed(
@@ -838,19 +841,21 @@ async def _fetch_cached_match_rows(
           AND j.deleted_at IS NULL
           AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
-        ORDER BY ms.overall_score * (
-            -- Freshness decay (#27), applied at serve time so the stored score
-            -- stays a pure "fit" signal: small boost for jobs scraped <72h ago,
-            -- gentle penalty after 14d, stronger after 30d. Recruiter-posted
-            -- jobs (scraped_at NULL) are treated as fresh.
-            CASE
-                WHEN j.scraped_at IS NULL THEN 1.0
-                WHEN j.scraped_at > NOW() - INTERVAL '72 hours' THEN 1.05
-                WHEN j.scraped_at > NOW() - INTERVAL '14 days' THEN 1.0
-                WHEN j.scraped_at > NOW() - INTERVAL '30 days' THEN 0.92
-                ELSE 0.85
-            END
-        ) DESC
+        ORDER BY
+            COALESCE(j.scraped_at, j.created_at) DESC NULLS LAST,
+            ms.overall_score * (
+                -- Freshness decay (#27), applied at serve time so the stored score
+                -- stays a pure "fit" signal: small boost for jobs scraped <72h ago,
+                -- gentle penalty after 14d, stronger after 30d. Recruiter-posted
+                -- jobs (scraped_at NULL) are treated as fresh.
+                CASE
+                    WHEN j.scraped_at IS NULL THEN 1.0
+                    WHEN j.scraped_at > NOW() - INTERVAL '72 hours' THEN 1.05
+                    WHEN j.scraped_at > NOW() - INTERVAL '14 days' THEN 1.0
+                    WHEN j.scraped_at > NOW() - INTERVAL '30 days' THEN 0.92
+                    ELSE 0.85
+                END
+            ) DESC
         LIMIT $3 OFFSET $4
         """,
         candidate_id,

@@ -10,6 +10,7 @@ import {
 } from "@/components/landing/landing-audience";
 import { FadeUp, Stagger, StaggerItem } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
+import { BTN_GHOST, BTN_PRIMARY } from "@/lib/button-classes";
 
 const CONTENT: Record<
   LandingAudience,
@@ -133,7 +134,7 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <Link
                       href={c.ctaHref}
-                      className="group inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3.5 text-body font-medium text-on-accent transition-colors hover:bg-accent-hover"
+                      className={cn(BTN_PRIMARY, "group gap-2 px-6 py-3.5 text-body")}
                     >
                       {c.ctaLabel}
                       <ArrowRight
@@ -143,7 +144,7 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
                     </Link>
                     <a
                       href="#process"
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 px-6 py-3.5 text-body font-medium text-ink-800 transition-colors hover:bg-ink-50"
+                      className={cn(BTN_GHOST, "gap-2 px-6 py-3.5 text-body")}
                     >
                       How {agent.name} works
                     </a>

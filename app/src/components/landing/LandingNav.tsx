@@ -4,8 +4,10 @@ import Link from "next/link";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useEffect, useState } from "react";
 import { ArrowRight } from "@/components/brand/icons";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 export function LandingNav() {
   const [signedIn, setSignedIn] = useState(false);
@@ -73,7 +75,7 @@ export function LandingNav() {
           <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
             <Link
               href={primaryHref}
-              className="group inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-small font-medium text-on-accent transition-colors hover:bg-accent-hover"
+              className={cn(BTN_PRIMARY, "group gap-1.5 px-4 py-2 text-small")}
             >
               {primaryLabel}
               <ArrowRight

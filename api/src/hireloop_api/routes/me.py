@@ -1364,11 +1364,17 @@ async def record_onboarding_consent(
         raise HTTPException(status_code=400, detail="Terms and privacy policy must be accepted")
 
     user_id = uuid.UUID(str(current_user["id"]))
+    default_on = {"email": True, "whatsapp": True}
     prefs = {
-        "job_match_alerts": {"email": True, "whatsapp": True},
-        "intro_updates": {"email": True, "whatsapp": True},
-        "intro_status": {"email": True, "whatsapp": True},
-        "platform_updates": {"email": body.marketing_emails},
+        "job_match_alerts": dict(default_on),
+        "intro_updates": dict(default_on),
+        "interview_reminders": dict(default_on),
+        "aarya_digest": dict(default_on),
+        "profile_views": dict(default_on),
+        "application_updates": dict(default_on),
+        "platform_updates": {"email": body.marketing_emails, "whatsapp": False},
+        # Legacy keys kept for older clients
+        "intro_status": dict(default_on),
     }
 
     async def _rest_consent() -> dict[str, Any]:
@@ -1459,6 +1465,12 @@ async def record_onboarding_consent(
                 user_id=user_id,
                 candidate_id=str(candidate["id"]),
             )
+            try:
+                from hireloop_api.services.notifications import schedule_weekly_digest
+
+                await schedule_weekly_digest(db, user_id=str(user_id), first_run_days=7)
+            except Exception as exc:
+                logger.warning("weekly_digest_schedule_failed", error=str(exc)[:200])
             if enrichment.get("linkedin_enrichment_scheduled") and enrichment.get("linkedin_url"):
                 from hireloop_api.services.linkedin_enrichment import (
                     run_linkedin_profile_enrichment,
@@ -1695,6 +1707,101 @@ async def update_notification_prefs(
         current_user["id"],
     )
     return {"ok": True, "prefs": body.prefs}
+
+
+def _serialize_notification(row: asyncpg.Record) -> dict[str, Any]:
+    data = row["data"]
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except (ValueError, TypeError):
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    created = row["created_at"]
+    return {
+        "id": str(row["id"]),
+        "type": row["type"],
+        "title": row["title"],
+        "body": row["body"],
+        "data": data,
+        "is_read": bool(row["is_read"]),
+        "created_at": created.isoformat() if created else None,
+    }
+
+
+@router.get("/notifications")
+async def list_notifications(
+    limit: int = 50,
+    unread_only: bool = False,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """In-app notification feed for the bell drawer."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    limit = max(1, min(limit, 100))
+    if unread_only:
+        rows = await db.fetch(
+            """
+            SELECT id, type, title, body, data, is_read, created_at
+            FROM public.notifications
+            WHERE user_id = $1::uuid AND is_read = FALSE
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
+        )
+    else:
+        rows = await db.fetch(
+            """
+            SELECT id, type, title, body, data, is_read, created_at
+            FROM public.notifications
+            WHERE user_id = $1::uuid
+            ORDER BY is_read ASC, created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
+        )
+    unread_count = await db.fetchval(
+        """
+        SELECT count(*)::int FROM public.notifications
+        WHERE user_id = $1::uuid AND is_read = FALSE
+        """,
+        user_id,
+    )
+    return {
+        "notifications": [_serialize_notification(r) for r in rows],
+        "unread_count": int(unread_count or 0),
+    }
+
+
+class NotificationReadUpdate(BaseModel):
+    is_read: bool = True
+
+
+@router.patch("/notifications/{notification_id}")
+async def update_notification(
+    notification_id: str,
+    body: NotificationReadUpdate,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Mark a notification read (dismiss from the drawer)."""
+    result = await db.execute(
+        """
+        UPDATE public.notifications
+        SET is_read = $3
+        WHERE id = $1::uuid AND user_id = $2::uuid
+        """,
+        uuid.UUID(notification_id),
+        uuid.UUID(str(current_user["id"])),
+        body.is_read,
+    )
+    if result.split()[-1] == "0":
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"ok": True, "is_read": body.is_read}
 
 
 async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[str, Any]:

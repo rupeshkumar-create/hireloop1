@@ -146,7 +146,10 @@ export async function fetchCareerPathResumePreview(resumeId: string): Promise<st
   const res = await apiAuthFetch(
     `/api/v1/career/path-resumes/${resumeId}/download?format=html&print_dialog=false`
   );
-  if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail ?? `Preview failed: ${res.status}`);
+  }
   return res.text();
 }
 

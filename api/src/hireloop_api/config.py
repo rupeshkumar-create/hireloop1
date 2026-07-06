@@ -168,6 +168,8 @@ class Settings(BaseSettings):
     # ── Google OAuth (Gmail send scope — R9 cold outreach) ────────────────────
     google_client_id: str = ""
     google_client_secret: str = ""
+    # Optional override — must match an Authorized redirect URI in Google Cloud Console.
+    gmail_oauth_redirect_uri_override: str = ""
     # P07 voice-session booking reuses the Google OAuth app above with the
     # calendar.events scope. Booking works in-app without it; this enriches the
     # confirmed slot with a real Calendar event + Meet link.
@@ -332,6 +334,19 @@ class Settings(BaseSettings):
 
     @property
     def gmail_oauth_redirect_uri(self) -> str:
+        """
+        Browser redirect URI registered in Google Cloud Console.
+
+        In production we always use the app-origin /hireloop-api proxy so Google
+        redirects through www.hireschema.com (not the raw Railway hostname).
+        """
+        override = self.gmail_oauth_redirect_uri_override.strip()
+        if override:
+            return override.rstrip("/")
+        if self.environment == "production":
+            app = self.public_app_url.rstrip("/")
+            if app and "localhost" not in app and "127.0.0.1" not in app:
+                return f"{app}/hireloop-api/api/v1/gmail/callback"
         return f"{self.public_api_url.rstrip('/')}/api/v1/gmail/callback"
 
 

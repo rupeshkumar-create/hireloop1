@@ -43,10 +43,15 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 
 **Authentication → URL configuration**
 
-| Setting | Local dev | Production (Vercel) |
-|---------|-----------|---------------------|
-| Site URL | `http://localhost:3001` | `https://hireloop1-app.vercel.app` |
-| Redirect URLs | `http://localhost:3001/auth/callback`, `…/auth/confirm`, `http://localhost:3001/**` | `https://hireloop1-app.vercel.app/auth/callback`, `…/auth/confirm`, `…/**` |
+| Setting | Local dev | Production (custom domain) |
+|---------|-----------|---------------------------|
+| Site URL | `http://localhost:3001` | `https://www.hireschema.com` |
+| Redirect URLs | `http://localhost:3001/auth/callback`, `…/auth/confirm`, `http://localhost:3001/**` | `https://www.hireschema.com/auth/callback`, `…/auth/confirm`, `…/**` |
+
+Also keep Vercel preview URLs if you still deploy previews:
+
+- `https://hireloop1-app.vercel.app/auth/callback`
+- `https://hireloop1-app.vercel.app/auth/confirm`
 
 **Do not use port 3000** (`web/` marketing) as Site URL. Auth runs on **`app/`** (port **3001** locally).
 If Site URL is `http://127.0.0.1:3000`, LinkedIn redirects to the marketing homepage with `/?code=…` and sign-in fails.
@@ -173,7 +178,7 @@ See also: `LOCAL_TESTING.md` (phase-by-phase tests), `PHASE_TRACKER.md`.
 
 ---
 
-## 10. Vercel deploy (hireloop1-app)
+## 10. Vercel deploy (hireschema.com)
 
 **Project settings** (Vercel dashboard → hireloop1-app → Settings → General):
 
@@ -183,18 +188,87 @@ See also: `LOCAL_TESTING.md` (phase-by-phase tests), `PHASE_TRACKER.md`.
 | Framework | Next.js |
 | Install Command | `cd .. && pnpm install --no-frozen-lockfile` |
 | Build Command | `pnpm build` |
+| Domains | `www.hireschema.com` (primary), `hireschema.com` (apex → www redirect in `next.config.mjs`) |
 
-**Environment variables** — add for **Production**, **Preview**, and **Development** (GitHub pushes use Preview unless the branch is `main`):
+**Environment variables** — add for **Production**, **Preview**, and **Development**:
 
-| Variable | Example |
-|----------|---------|
+| Variable | Production value |
+|----------|------------------|
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key from Dashboard |
-| `NEXT_PUBLIC_API_URL` | public API URL (not `localhost` for prod) |
-| `NEXT_PUBLIC_WEB_URL` | `https://hireloop1-app-orcin.vercel.app` |
+| `NEXT_PUBLIC_API_URL` | `https://hireloop1-production.up.railway.app` |
+| `NEXT_PUBLIC_APP_URL` | `https://www.hireschema.com` |
+| `NEXT_PUBLIC_WEB_URL` | `https://www.hireschema.com` |
+| `API_SERVICE_SECRET` | same as Railway `SERVICE_SECRET` |
 | `NEXT_PUBLIC_DEMO_MODE` | `false` |
-| `NEXT_PUBLIC_DEV_EMAIL_LOGIN` | `true` (staging) / `false` (prod) |
+| `NEXT_PUBLIC_DEV_EMAIL_LOGIN` | `false` |
 
 Without Supabase vars, `next build` used to fail on `/signup` prerender. The app now tolerates missing vars at build time, but **auth still requires real values at runtime**.
 
-Also add production redirect URL in Supabase Auth: `https://hireloop1-app-orcin.vercel.app/auth/callback`.
+Also add production redirect URLs in Supabase Auth (see §3): `https://www.hireschema.com/auth/callback` and `…/auth/confirm`.
+
+**Railway** (API) — update these when the custom domain goes live:
+
+| Variable | Production value |
+|----------|------------------|
+| `ALLOWED_ORIGINS` | include `https://www.hireschema.com,https://hireschema.com,https://hireloop1-app.vercel.app` |
+| `PUBLIC_APP_URL` | `https://www.hireschema.com` |
+| `PUBLIC_API_URL` | `https://www.hireschema.com/hireloop-api` |
+| `ENVIRONMENT` | `production` |
+
+Smoke test after deploy:
+
+```bash
+./api/scripts/smoke_railway.sh
+```
+
+---
+
+## 11. Google OAuth (Connect Google / Gmail intros)
+
+`Error 400: redirect_uri_mismatch` means the redirect URI your API sends does not **exactly** match one listed in Google Cloud Console.
+
+### Redirect URI (production)
+
+After deploy, the API uses:
+
+```text
+https://www.hireschema.com/hireloop-api/api/v1/gmail/callback
+```
+
+(Requires Railway `PUBLIC_APP_URL=https://www.hireschema.com` and `ENVIRONMENT=production`.)
+
+### Google Cloud Console steps
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services** → **Credentials**
+2. Open your **OAuth 2.0 Client ID** (Web application) — same `GOOGLE_CLIENT_ID` as Railway
+3. Under **Authorized redirect URIs**, add **exactly**:
+   - `https://www.hireschema.com/hireloop-api/api/v1/gmail/callback`
+   - `http://localhost:8000/api/v1/gmail/callback` (local dev)
+4. **Save** — Google can take a few minutes to propagate
+5. **OAuth consent screen**: if the app is in **Testing**, add `rupesh.kumar@candidate.ly` (and any test users) under **Test users**
+
+### Railway env (must match)
+
+| Variable | Value |
+|----------|--------|
+| `GOOGLE_CLIENT_ID` | from Google Console |
+| `GOOGLE_CLIENT_SECRET` | from Google Console |
+| `PUBLIC_APP_URL` | `https://www.hireschema.com` |
+| `ENVIRONMENT` | `production` |
+
+Optional override (only if you need a custom URI):
+
+```text
+GMAIL_OAUTH_REDIRECT_URI=https://www.hireschema.com/hireloop-api/api/v1/gmail/callback
+```
+
+### Verify
+
+While logged in, open (returns the URI the API sends to Google):
+
+```text
+GET /api/v1/gmail/auth-url
+```
+
+The `redirect_uri` in the JSON must match a row in Google Console **character-for-character** (https, no trailing slash).

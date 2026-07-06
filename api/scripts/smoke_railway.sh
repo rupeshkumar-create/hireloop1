@@ -6,7 +6,7 @@ set -euo pipefail
 
 RAILWAY_HOST="${RAILWAY_HOST:-hireloop1-production.up.railway.app}"
 RAILWAY_URL="${1:-https://${RAILWAY_HOST}}"
-VERCEL_URL="${2:-https://hireloop1-app.vercel.app}"
+VERCEL_URL="${2:-https://www.hireschema.com}"
 
 pass() { echo "  OK  $1"; }
 fail() { echo "  FAIL $1"; exit 1; }

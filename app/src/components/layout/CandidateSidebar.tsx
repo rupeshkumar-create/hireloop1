@@ -11,7 +11,6 @@ import { HelpCircle, LogOut, Settings, Shield } from "@/components/brand/icons";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
-import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { NotificationDrawer } from "@/components/ux";
 import { HireschemaLogoMark } from "@/components/brand/HireschemaLogo";
 import { cn } from "@/lib/utils";
@@ -129,10 +128,7 @@ export function CandidateSidebar({
 
       <div className="mt-2 flex flex-col items-center gap-1">
         <RoleSwitchButton to="recruiter" target="/recruiter/inbox" variant="icon" />
-        <NotificationDrawer
-          pendingIntros={pendingIntros}
-          categories={NOTIFICATION_CATEGORIES}
-        />
+        <NotificationDrawer pendingIntros={pendingIntros} />
         {showAdminLink && (
           <Link href="/admin" title="Admin" aria-label="Admin" className={utilityClass(false)}>
             <Shield className="h-[18px] w-[18px]" strokeWidth={1.5} />

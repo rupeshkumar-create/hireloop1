@@ -1,60 +1,58 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Hireschema brand logo — structured graph mark (candidate ↔ role ↔ company schema).
+ * Hireschema brand logo — segmented italic "H" mark (lime wedges + crossbar pills).
  *
- * Three connected tiers with a lime "live node" on the center — the structured
- * career graph Aarya and Nitya reason over (replacing the old Hireloop ∞ loop).
+ * Stacked, slanted segments matching the Hireloop-style letterform: tapered vertical
+ * strokes on each side and a double-pill crossbar in the centre.
  */
 
 type MarkVariant = "app" | "lime" | "charcoal" | "white";
 
-type MarkColors = {
-  line: string;
-  node: string;
-  centre: string;
-  accentNode: string;
-  accentCentre: string;
-};
-
-function colorsFor(variant: MarkVariant): MarkColors {
+function segmentFill(variant: MarkVariant): string {
   switch (variant) {
     case "charcoal":
-      return {
-        line: "#141414",
-        node: "#141414",
-        centre: "#FFFFFF",
-        accentNode: "#141414",
-        accentCentre: "#B9F84C",
-      };
+      return "#141414";
     case "white":
-      return {
-        line: "#FAFAFA",
-        node: "#FAFAFA",
-        centre: "#141414",
-        accentNode: "#FAFAFA",
-        accentCentre: "#B9F84C",
-      };
+      return "#FAFAFA";
     case "lime":
-      return {
-        line: "#B9F84C",
-        node: "#B9F84C",
-        centre: "#141414",
-        accentNode: "#B9F84C",
-        accentCentre: "#141414",
-      };
+      return "#B9F84C";
     default:
-      return {
-        line: "#0F1400",
-        node: "#0F1400",
-        centre: "#B9F84C",
-        accentNode: "#0F1400",
-        accentCentre: "#B9F84C",
-      };
+      return "#141414";
   }
 }
 
-/** Schema lattice mark on its own (square). `app` = lime tile with charcoal graph. */
+function backgroundFill(variant: MarkVariant): string | null {
+  return variant === "app" ? "#B9F84C" : null;
+}
+
+type SegmentProps = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+  skew?: number;
+};
+
+function Segment({ x, y, width, height, fill, skew = -14 }: SegmentProps) {
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  return (
+    <g transform={`translate(${cx} ${cy}) skewX(${skew}) translate(${-cx} ${-cy})`}>
+      <rect x={x} y={y} width={width} height={height} rx={height / 2} fill={fill} />
+    </g>
+  );
+}
+
+const STEM_ROWS = [
+  { y: 4, skew: -14 },
+  { y: 13.5, skew: -12 },
+  { y: 32, skew: -10 },
+  { y: 41, skew: -8 },
+] as const;
+
+/** Segmented "H" icon. `app` = charcoal H on lime tile; `lime` = on dark backgrounds. */
 export function HireschemaLogoMark({
   size = 32,
   variant = "app",
@@ -64,18 +62,8 @@ export function HireschemaLogoMark({
   variant?: MarkVariant;
   className?: string;
 }) {
-  const c = colorsFor(variant);
-  const nodes: Array<{ cx: number; cy: number; accent?: boolean }> = [
-    { cx: 16, cy: 14 },
-    { cx: 24, cy: 14 },
-    { cx: 32, cy: 14 },
-    { cx: 16, cy: 24 },
-    { cx: 24, cy: 24, accent: true },
-    { cx: 32, cy: 24 },
-    { cx: 16, cy: 34 },
-    { cx: 24, cy: 34 },
-    { cx: 32, cy: 34 },
-  ];
+  const fill = segmentFill(variant);
+  const bg = backgroundFill(variant);
 
   return (
     <svg
@@ -87,35 +75,22 @@ export function HireschemaLogoMark({
       role="img"
       aria-label="Hireschema"
     >
-      {variant === "app" && <rect width="48" height="48" fill="#B9F84C" />}
-      <path
-        d="M16 14V34M24 14V34M32 14V34M16 14H32M16 24H32M16 34H32"
-        stroke={c.line}
-        strokeWidth="2.6"
-        strokeLinecap="square"
-        strokeLinejoin="miter"
-      />
-      {nodes.map(({ cx, cy, accent }) => (
-        <g key={`${cx}-${cy}`}>
-          <circle
-            cx={cx}
-            cy={cy}
-            r={accent ? 3.4 : 2.6}
-            fill={accent ? c.accentNode : c.node}
-          />
-          <circle
-            cx={cx}
-            cy={cy}
-            r={accent ? 1.25 : 0.95}
-            fill={accent ? c.accentCentre : c.centre}
-          />
-        </g>
-      ))}
+      {bg && <rect width="48" height="48" rx="6" fill={bg} />}
+      <g>
+        {STEM_ROWS.map(({ y, skew }) => (
+          <Segment key={`l-${y}`} x={7} y={y} width={10} height={6} fill={fill} skew={skew} />
+        ))}
+        {STEM_ROWS.map(({ y, skew }) => (
+          <Segment key={`r-${y}`} x={31} y={y} width={10} height={6} fill={fill} skew={skew} />
+        ))}
+        <Segment x={8} y={21} width={32} height={5.5} fill={fill} skew={-6} />
+        <Segment x={8} y={27.5} width={32} height={5.5} fill={fill} skew={-4} />
+      </g>
     </svg>
   );
 }
 
-/** Full lockup: schema mark + "Hireschema" wordmark (lime "schema"). */
+/** Full lockup: segmented H mark + "Hireschema" wordmark (lime "schema"). */
 export function HireschemaLogo({
   size = 32,
   wordmark = true,

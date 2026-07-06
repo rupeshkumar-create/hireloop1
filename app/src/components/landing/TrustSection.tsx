@@ -6,6 +6,8 @@ import { ArrowRight, MessageSquare, Search, Send, ShieldCheck, Zap } from "@/com
 import { LANDING_AGENTS, type LandingAudience } from "@/components/landing/landing-audience";
 import { SectionHeader } from "@/components/landing/SectionHeader";
 import { Reveal, RevealStagger, StaggerItem } from "@/components/ui/motion";
+import { BTN_PRIMARY } from "@/lib/button-classes";
+import { cn } from "@/lib/utils";
 
 const TRUST_COPY: Record<
   LandingAudience,
@@ -95,7 +97,7 @@ export function RecruitersSection() {
             </p>
             <Link
               href="/signup?role=recruiter"
-              className="group mt-6 inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3.5 text-body font-medium text-on-accent transition-colors hover:bg-accent-hover"
+              className={cn(BTN_PRIMARY, "group mt-6 gap-2 px-6 py-3.5 text-body")}
             >
               Talk to Nitya
               <Send
@@ -153,7 +155,7 @@ export function CandidatesCrossSell({ onSwitch }: { onSwitch: () => void }) {
             <button
               type="button"
               onClick={onSwitch}
-              className="group mt-6 inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3.5 text-body font-medium text-on-accent transition-colors hover:bg-accent-hover"
+              className={cn(BTN_PRIMARY, "group mt-6 gap-2 px-6 py-3.5 text-body")}
             >
               Switch to Aarya
               <ArrowRight
@@ -232,7 +234,7 @@ export function FinalCtaSection({ audience }: FinalCtaSectionProps) {
           <div className="mt-8 flex flex-col items-center gap-3">
             <Link
               href={copy.ctaHref}
-              className="group inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-8 py-3.5 text-body font-medium text-on-accent transition-transform hover:scale-[1.02] hover:bg-accent-hover"
+              className={cn(BTN_PRIMARY, "group gap-2 px-8 py-3.5 text-body")}
             >
               {copy.ctaLabel}
               <ArrowRight

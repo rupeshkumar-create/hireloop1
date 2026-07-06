@@ -12,6 +12,7 @@ import {
 } from "@/components/brand/icons";
 import type { ApplicationKit } from "@/lib/api/applicationKit";
 import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 type ApplicationKitCardsProps = {
@@ -154,7 +155,7 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
                 {kit.mock_interview?.path && (
                   <Link
                     href={kit.mock_interview.path}
-                    className="flex items-center gap-2 rounded-lg border border-accent bg-accent px-3 py-2 text-small text-on-accent hover:bg-accent-hover sm:col-span-2"
+                    className={cn(BTN_PRIMARY, "flex gap-2 px-3 py-2 text-small sm:col-span-2")}
                   >
                     <GraduationCap className="h-4 w-4 shrink-0" />
                     Start mock interview

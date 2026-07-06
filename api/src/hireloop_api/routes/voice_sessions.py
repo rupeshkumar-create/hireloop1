@@ -144,6 +144,20 @@ async def book_session(
         has_meet=bool(meet_url),
     )
 
+    try:
+        from hireloop_api.services.notifications import notify_interview_booked
+
+        await notify_interview_booked(
+            db,
+            settings,
+            user_id=str(current_user["id"]),
+            session_id=session_id,
+            session_type=body.session_type,
+            scheduled_at=start_dt,
+        )
+    except Exception as exc:
+        logger.warning("interview_booked_notify_failed", error=str(exc)[:200])
+
     msg = f"Your {body.session_type.replace('_', ' ')} is booked"
     msg += " — calendar invite sent." if event_id else "."
     return BookSessionResponse(

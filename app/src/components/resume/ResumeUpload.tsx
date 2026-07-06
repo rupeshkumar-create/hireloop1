@@ -16,6 +16,7 @@ import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { ApiUnreachableError, apiAuthFetch } from "@/lib/api/auth-fetch";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import { invalidateProfileCache } from "@/lib/api/profile";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 interface ParsedResume {
@@ -288,7 +289,7 @@ export function ResumeUpload({
             <button
               type="button"
               onClick={handleApplyToProfile}
-              className="flex-1 bg-accent hover:bg-accent-hover text-on-accent font-semibold py-2.5 px-4 rounded-xl text-sm transition-colors"
+              className={cn(BTN_PRIMARY, "flex-1 py-2.5 px-4 text-sm font-semibold")}
             >
               Apply to my profile →
             </button>
