@@ -33,4 +33,7 @@ EXPOSE 8000
 # Railway injects $PORT. ONE worker only — the app runs the Nitya LISTEN +
 # background-job workers in-process, so multiple uvicorn workers would duplicate
 # them. Scale via instances (each its own single worker), not --workers.
-CMD ["sh", "-c", "uvicorn hireloop_api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+# --no-access-log: dashboard polling emits an INFO line every ~2s per client,
+# which hit Railway's 500 logs/sec cap and DROPPED thousands of messages —
+# including real errors. structlog's slow_request + error logs cover ops needs.
+CMD ["sh", "-c", "uvicorn hireloop_api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]
