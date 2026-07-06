@@ -14,7 +14,7 @@
  *
  * Activation v2 — one screen, then dashboard chat with Aarya:
  *
- * Step 1  Activate         CV upload → confirm parsed details → dashboard
+ * Step 1  Activate         CV upload → dashboard
  *
  * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *
@@ -35,7 +35,6 @@ import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
-  type ParsedResumeSummary,
 } from "@/lib/api/onboardingProfile";
 import { invalidateProfileCache } from "@/lib/api/profile";
 import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
@@ -156,7 +155,7 @@ function Bubble({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Step 1: Activation (CV upload + confirm) ─────────────────────────────────
+// ── Step 1: Activation (CV upload) ───────────────────────────────────────────
 
 function ActivationStep({
   candidateName,
@@ -165,11 +164,9 @@ function ActivationStep({
   candidateName?: string;
   signupMethod: SignupMethod;
 }) {
-  const router = useRouter();
   const firstName = firstNameFromDisplayName(candidateName) ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [parsed, setParsed] = useState<ParsedResumeSummary | null>(null);
   const [market, setMarket] = useState<MarketCode>("IN");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
@@ -177,42 +174,9 @@ function ActivationStep({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Editable copies of the parsed CV fields — the candidate corrects anything
-  // wrong here, and the confirmed values (not the raw parse) become the profile.
-  const [editTitle, setEditTitle] = useState("");
-  const [editCompany, setEditCompany] = useState("");
-  const [editYears, setEditYears] = useState("");
-  const [editSkills, setEditSkills] = useState<string[]>([]);
-  const [newSkill, setNewSkill] = useState("");
-  const [lookingFor, setLookingFor] = useState("");
-
   const hasResume = resumeFile !== null;
 
-  function seedEditableFields(summary: ParsedResumeSummary) {
-    setEditTitle(summary.current_title?.trim() ?? "");
-    setEditCompany(summary.current_company?.trim() ?? "");
-    setEditYears(
-      typeof summary.years_experience === "number" && summary.years_experience > 0
-        ? String(summary.years_experience)
-        : "",
-    );
-    setEditSkills((summary.skills ?? []).map((s) => s.trim()).filter(Boolean));
-    setNewSkill("");
-    // Default the search target to the current title; the candidate can retarget.
-    setLookingFor(summary.current_title?.trim() ?? "");
-  }
-
-  function addSkill() {
-    const s = newSkill.trim();
-    if (!s) return;
-    if (!editSkills.some((x) => x.toLowerCase() === s.toLowerCase())) {
-      setEditSkills((prev) => [...prev, s]);
-    }
-    setNewSkill("");
-  }
-
-  // Phase 1: upload + parse the CV, then show "here's what I found" for review.
-  async function handleUploadAndReview() {
+  async function handleActivate() {
     if (saving) return;
     if (!resumeFile) {
       setError(
@@ -230,6 +194,7 @@ function ActivationStep({
     setError(null);
     try {
       const summary = await uploadResumeAndApply(resumeFile);
+
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",
         body: JSON.stringify({
@@ -241,40 +206,16 @@ function ActivationStep({
         const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
         throw new Error(data.detail ?? "Couldn't save consent.");
       }
-      seedEditableFields(summary);
-      setParsed(summary);
-    } catch (err) {
-      setError(await formatOnboardingError(err));
-    } finally {
-      setSaving(false);
-    }
-  }
 
-  // Phase 2: candidate confirmed (and possibly corrected) the parse — save the
-  // confirmed fields to the profile, then finish onboarding.
-  async function handleConfirm() {
-    if (saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const corrections: Record<string, unknown> = {};
-      if (editTitle.trim()) corrections.current_title = editTitle.trim();
-      if (editCompany.trim()) corrections.current_company = editCompany.trim();
-      const years = Number.parseInt(editYears, 10);
-      if (Number.isFinite(years) && years >= 0 && years <= 60) {
-        corrections.years_experience = years;
-      }
-      if (editSkills.length > 0) corrections.skills = editSkills;
-      if (lookingFor.trim()) corrections.looking_for = lookingFor.trim();
-
-      if (Object.keys(corrections).length > 0) {
+      const lookingFor = summary.current_title?.trim();
+      if (lookingFor) {
         const patchRes = await apiAuthFetch("/api/v1/me/profile", {
           method: "PATCH",
-          body: JSON.stringify(corrections),
+          body: JSON.stringify({ looking_for: lookingFor }),
         });
         if (!patchRes.ok) {
           const data = (await patchRes.json().catch(() => ({}))) as { detail?: string };
-          throw new Error(data.detail ?? "Couldn't save your profile details.");
+          throw new Error(data.detail ?? "Couldn't save your job search preferences.");
         }
       }
 
@@ -282,7 +223,7 @@ function ActivationStep({
         method: "POST",
         body: JSON.stringify({
           skipped_voice: true,
-          skipped_resume: resumeFile === null,
+          skipped_resume: false,
           market,
         }),
       });
@@ -303,11 +244,10 @@ function ActivationStep({
     }
   }
 
-  const activationPrompt = parsed
-    ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and we'll head to your dashboard.`
-    : signupMethod === "linkedin"
-      ? `Hey ${firstName}! LinkedIn only shares your name and email — upload your CV so I can read your experience and line up matches.`
-      : `Hey ${firstName}! Upload your CV and I'll read your experience, then we'll open your dashboard with me.`;
+  const activationPrompt =
+    signupMethod === "linkedin"
+      ? `Hey ${firstName}! Upload your CV and I'll read your experience — then we'll open your dashboard with me.`
+      : `Hey ${firstName}! Upload your CV and I'll line up matches on your dashboard.`;
 
   return (
     <div className="min-h-screen bg-paper-0 flex items-center px-6 py-12">
@@ -321,7 +261,6 @@ function ActivationStep({
           </Bubble>
         </div>
 
-        {!parsed ? (
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
           <div className="space-y-2">
             <span className="text-small font-medium text-ink-700">Upload your CV</span>
@@ -343,8 +282,8 @@ function ActivationStep({
               </span>
             </button>
             <p className="text-micro text-ink-400">
-              Aarya reads your CV to build your profile and matches. You can add
-              your LinkedIn URL later from the dashboard.
+              Aarya reads your CV to build your profile and matches. You can refine
+              details anytime from the dashboard.
             </p>
           </div>
 
@@ -447,181 +386,16 @@ function ActivationStep({
             fullWidth
             loading={saving}
             disabled={!tosAccepted || !hasResume || saving}
-            onClick={() => void handleUploadAndReview()}
+            onClick={() => void handleActivate()}
             rightIcon={
               tosAccepted && hasResume && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }
           >
-            {saving ? "Uploading your CV…" : "Review my CV"}
+            {saving ? "Setting up your dashboard…" : "Upload & meet Aarya"}
           </Button>
         </div>
-        ) : (
-        <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
-          <div className="space-y-1">
-            <p className="text-small font-medium text-ink-700">
-              Here&apos;s what I read from your CV
-            </p>
-            <p className="text-micro text-ink-400">
-              Fix anything I got wrong — these details drive your job matches.
-            </p>
-          </div>
-
-          {!parsed?.current_title &&
-            !(parsed?.skills && parsed.skills.length > 0) && (
-              <p className="text-small text-ink-500">
-                I couldn&apos;t pull much from this file. Fill in the basics
-                below, or re-upload a clearer CV.
-              </p>
-            )}
-
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label htmlFor="confirm-title" className="text-small font-medium text-ink-700">
-                  Current title
-                </label>
-                <input
-                  id="confirm-title"
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  placeholder="e.g. Category Manager"
-                  className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="confirm-company" className="text-small font-medium text-ink-700">
-                  Company
-                </label>
-                <input
-                  id="confirm-company"
-                  type="text"
-                  value={editCompany}
-                  onChange={(e) => setEditCompany(e.target.value)}
-                  placeholder="e.g. Myntra"
-                  className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor="confirm-years" className="text-small font-medium text-ink-700">
-                Years of experience
-              </label>
-              <input
-                id="confirm-years"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                max={60}
-                value={editYears}
-                onChange={(e) => setEditYears(e.target.value)}
-                placeholder="e.g. 6"
-                className="w-full sm:w-32 rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="text-small font-medium text-ink-700">Top skills</span>
-              <div className="flex flex-wrap gap-1.5">
-                {editSkills.map((s) => (
-                  <span
-                    key={s}
-                    className="inline-flex items-center gap-1 text-micro px-2 py-1 rounded-sm bg-ink-100 text-ink-700"
-                  >
-                    {s}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${s}`}
-                      onClick={() =>
-                        setEditSkills((prev) => prev.filter((x) => x !== s))
-                      }
-                      className="text-ink-400 hover:text-ink-900 transition-colors leading-none"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newSkill}
-                  onChange={(e) => setNewSkill(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addSkill();
-                    }
-                  }}
-                  placeholder="Add a skill and press Enter"
-                  className="flex-1 rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-                />
-                <button
-                  type="button"
-                  onClick={addSkill}
-                  className="rounded-md border border-ink-200 px-3 py-2 text-small text-ink-700 hover:bg-ink-50 transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 pt-1 border-t border-ink-100">
-              <label htmlFor="confirm-looking-for" className="text-small font-medium text-ink-700">
-                What role are you looking for?
-              </label>
-              <input
-                id="confirm-looking-for"
-                type="text"
-                value={lookingFor}
-                onChange={(e) => setLookingFor(e.target.value)}
-                placeholder="e.g. Senior Category Manager"
-                className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-              />
-              <p className="text-micro text-ink-400">
-                Aarya searches for this role first. Keep it simple — a plain
-                title works best.
-              </p>
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-small text-destructive rounded-lg border border-destructive/30 bg-destructive-bg px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          <Button
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={saving}
-            onClick={() => void handleConfirm()}
-            rightIcon={
-              !saving ? (
-                <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
-              ) : undefined
-            }
-          >
-            {saving ? "Finishing…" : "Looks good — meet Aarya"}
-          </Button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setParsed(null);
-              setResumeFile(null);
-              setError(null);
-            }}
-            className="w-full text-micro text-ink-500 hover:text-ink-900 transition-colors"
-          >
-            Re-upload a different CV
-          </button>
-        </div>
-        )}
       </div>
     </div>
   );
@@ -637,11 +411,11 @@ export function OnboardingFlow({
   candidateName?: string;
   signupMethod?: SignupMethod;
 }) {
-  const router = useRouter();
   const [step, setStep] = useState(1);
   const [hydrated, setHydrated] = useState(false);
   const [candidateName, setCandidateName] = useState(initialCandidateName?.trim());
   const recruiterCheckDone = useRef(false);
+  const router = useRouter();
 
   useEffect(() => {
     const next = initialCandidateName?.trim();

@@ -79,8 +79,7 @@ async function waitForResumeParse(resumeId: string): Promise<ParsedResumeSummary
   );
 }
 
-/** Upload a CV, apply the parsed fields to the profile, and return the parse
- *  summary so onboarding can show "here's what I found" for confirmation. */
+/** Upload a CV, apply the parsed fields to the profile, and return the parse summary. */
 export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSummary> {
   const fd = new FormData();
   fd.append("file", file);
