@@ -29,6 +29,11 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
     if not keep_id:
         raise SystemExit(f"Keep user not found in auth.users: {keep_email}")
 
+    keep_recruiter_id = await conn.fetchval(
+        "SELECT id FROM public.recruiters WHERE user_id = $1::uuid",
+        keep_id,
+    )
+
     delete_ids = [
         r["id"]
         for r in await conn.fetch(
@@ -39,11 +44,15 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
 
     before_auth = await conn.fetchval("SELECT count(*) FROM auth.users")
     before_public = await conn.fetchval("SELECT count(*) FROM public.users")
+    before_jobs = await conn.fetchval("SELECT count(*) FROM public.jobs WHERE deleted_at IS NULL")
     print(f"Keeping: {keep_email} ({keep_id})")
+    if keep_recruiter_id:
+        print(f"Keeping recruiter jobs for recruiter_id={keep_recruiter_id}")
     print(f"Removing {len(delete_ids)} other auth user(s)")
     print("Before:")
     print(f"  auth.users:   {before_auth}")
     print(f"  public.users: {before_public}")
+    print(f"  active jobs:  {before_jobs}")
 
     if not delete_ids:
         print("\nNo other users to remove.")
@@ -179,7 +188,32 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
             delete_ids,
         )
 
-        # Detach recruiter-owned jobs before dropping other recruiters' roles.
+        # Drop scraped market jobs and recruiter-posted jobs not owned by keep user.
+        await conn.execute(
+            """
+            UPDATE public.recruiter_invites
+            SET job_id = NULL
+            WHERE job_id IN (
+              SELECT id FROM public.jobs
+              WHERE $1::uuid IS NULL
+                 OR recruiter_id IS DISTINCT FROM $1::uuid
+                 OR recruiter_id IS NULL
+            )
+            """,
+            keep_recruiter_id,
+        )
+        jobs_removed = await conn.execute(
+            """
+            DELETE FROM public.jobs
+            WHERE $1::uuid IS NULL
+               OR recruiter_id IS DISTINCT FROM $1::uuid
+               OR recruiter_id IS NULL
+            """,
+            keep_recruiter_id,
+        )
+        print(f"Removed jobs: {jobs_removed}")
+
+        # Detach any remaining recruiter-owned jobs before dropping other recruiters' roles.
         await conn.execute(
             """
             UPDATE public.jobs
@@ -277,9 +311,7 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
     after_candidates = await conn.fetchval("SELECT count(*) FROM public.candidates")
     after_recruiters = await conn.fetchval("SELECT count(*) FROM public.recruiters")
     after_roles = await conn.fetchval("SELECT count(*) FROM public.roles")
-    jobs_left = await conn.fetchval(
-        "SELECT count(*) FROM public.jobs WHERE deleted_at IS NULL"
-    )
+    jobs_left = await conn.fetchval("SELECT count(*) FROM public.jobs WHERE deleted_at IS NULL")
 
     print("\nAfter:")
     print(f"  auth.users:   {after_auth}")
@@ -287,7 +319,7 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
     print(f"  candidates:   {after_candidates}")
     print(f"  recruiters:   {after_recruiters}")
     print(f"  roles:        {after_roles}")
-    print(f"  active jobs:  {jobs_left} (market jobs preserved)")
+    print(f"  active jobs:  {jobs_left} (kept recruiter jobs only)")
     print(f"\nDone — only {keep_email} remains.")
 
 
