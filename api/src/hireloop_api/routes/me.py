@@ -929,6 +929,8 @@ async def update_my_profile(
                 "expected_ctc_min",
                 "expected_ctc_max",
                 "current_title",
+                "current_company",
+                "years_experience",
                 "skills",
                 "looking_for",
             }
@@ -1435,6 +1437,74 @@ async def complete_onboarding(
             granted=True,
             request=request,
         )
+
+    candidate_row = await db.fetchrow(
+        """
+        SELECT id, looking_for, location_city, location_state
+        FROM public.candidates
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if candidate_row:
+        candidate_id = str(candidate_row["id"])
+        looking_for = str(candidate_row["looking_for"] or "").strip()
+        if looking_for:
+            from hireloop_api.services.career_path import CareerPathService
+
+            try:
+                await CareerPathService.prioritize(
+                    db,
+                    candidate_id,
+                    looking_for,
+                    [looking_for],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "onboarding_prioritize_path_failed",
+                    candidate_id=candidate_id,
+                    error=str(exc)[:200],
+                )
+
+        from hireloop_api.services.background_jobs import (
+            AARYA_AUTO_INGEST,
+            CAREER_PATH_INGEST,
+            MATCH_EMBED_CANDIDATE,
+            enqueue_job,
+        )
+
+        await enqueue_job(
+            db,
+            kind=MATCH_EMBED_CANDIDATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"onboarding_match:{candidate_id}",
+        )
+        await enqueue_job(
+            db,
+            kind=AARYA_AUTO_INGEST,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"onboarding_ingest:{candidate_id}",
+        )
+        if looking_for:
+            locations = [
+                p
+                for p in [
+                    candidate_row.get("location_city"),
+                    candidate_row.get("location_state"),
+                ]
+                if p
+            ] or ["India"]
+            await enqueue_job(
+                db,
+                kind=CAREER_PATH_INGEST,
+                payload={
+                    "candidate_id": candidate_id,
+                    "queries": [looking_for],
+                    "locations": locations,
+                },
+                idempotency_key=f"onboarding_path_ingest:{candidate_id}",
+            )
+
     return {"ok": True, "onboarding_complete": True, "market": market}
 
 

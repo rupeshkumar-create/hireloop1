@@ -12,10 +12,9 @@
  *   2. After DPDP consent (Legal step), LinkDAPI enrichment runs in the
  *      background from that URL — no separate LinkedIn form in the wizard.
  *
- * Activation v2 — two client steps, then dashboard with jobs open:
+ * Activation v2 — one screen, then dashboard chat with Aarya:
  *
- * Step 0  Welcome          Full-screen intro with Aarya avatar
- * Step 1  Activate         CV upload + market + DPDP consent (single screen)
+ * Step 1  Activate         CV upload → confirm parsed details → dashboard
  *
  * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *
@@ -154,59 +153,12 @@ function Bubble({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Step 0: Welcome ───────────────────────────────────────────────────────────
-
-function WelcomeStep({
-  onNext,
-  candidateName,
-  signupMethod,
-}: {
-  onNext: () => void;
-  candidateName?: string;
-  signupMethod: SignupMethod;
-}) {
-  const firstName = firstNameFromDisplayName(candidateName);
-  const greeting = firstName ? `Hey ${firstName}!` : "Hey!";
-  const introMessage =
-    signupMethod === "linkedin"
-      ? `${greeting} I'm Aarya. I'm pulling matches from your LinkedIn profile now. One quick screen — then your job matches are ready on the dashboard.`
-      : `${greeting} I'm Aarya. On the next screen, upload your CV — I'll read your experience and line up job matches on your dashboard.`;
-
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-paper-0 px-6 py-12 text-center">
-      <AaryaFace size="xl" />
-
-      <div className="mt-8 max-w-sm">
-        <Bubble>
-          <p className="text-body text-ink-900 leading-relaxed">{introMessage}</p>
-        </Bubble>
-      </div>
-
-      <button
-        type="button"
-        onClick={onNext}
-        className="
-          mt-8 inline-flex items-center gap-2 rounded-full
-          border border-ink-200 bg-paper-0 px-8 py-3
-          text-body text-ink-900 font-medium
-          hover:bg-ink-50 hover:border-ink-400
-          transition-colors duration-fast
-        "
-      >
-        Get started <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
-      </button>
-    </div>
-  );
-}
-
-// ── Step 1: Activation (phone + goal + consent) ─────────────────────────────
+// ── Step 1: Activation (CV upload + confirm) ─────────────────────────────────
 
 function ActivationStep({
-  onBack,
   candidateName,
   signupMethod,
 }: {
-  onBack: () => void;
   candidateName?: string;
   signupMethod: SignupMethod;
 }) {
@@ -337,9 +289,7 @@ function ActivationStep({
       }
 
       clearOnboardingProgress();
-      // Land in chat with the guided career kickoff: path multi-select →
-      // package → review → job search for the preferred path.
-      router.push("/dashboard?kickoff=career");
+      router.push("/dashboard");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {
@@ -348,25 +298,17 @@ function ActivationStep({
   }
 
   const activationPrompt = parsed
-    ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and I'll get the job search ready.`
+    ? `Here's what I pulled from your CV, ${firstName} — does this look right? Confirm and we'll head to your dashboard.`
     : signupMethod === "linkedin"
-      ? `Almost there, ${firstName}! LinkedIn sign-in only shares your name and email — upload your CV so I can pull your experience and show real matches.`
-      : `Almost there, ${firstName}! Upload your CV so I can pull your experience and show real matches.`;
+      ? `Hey ${firstName}! LinkedIn only shares your name and email — upload your CV so I can read your experience and line up matches.`
+      : `Hey ${firstName}! Upload your CV and I'll read your experience, then we'll open your dashboard with me.`;
 
   return (
     <div className="min-h-screen bg-paper-0 flex items-center px-6 py-12">
       <div className="max-w-lg mx-auto w-full">
         <OnboardingProgress currentStep={1} />
 
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-small text-ink-500 hover:text-ink-900 mb-8 transition-colors"
-        >
-          ← Back
-        </button>
-
-        <div className="flex items-start gap-3 mb-6">
+        <div className="flex items-start gap-3 mb-6 mt-8">
           <AaryaFace size="md" />
           <Bubble>
             <p className="text-body text-ink-900">{activationPrompt}</p>
@@ -690,7 +632,7 @@ export function OnboardingFlow({
   signupMethod?: SignupMethod;
 }) {
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(1);
   const [hydrated, setHydrated] = useState(false);
   const [candidateName, setCandidateName] = useState(initialCandidateName?.trim());
   const recruiterCheckDone = useRef(false);
@@ -722,8 +664,8 @@ export function OnboardingFlow({
       const raw = sessionStorage.getItem(ONBOARDING_STORAGE_KEY);
       if (raw) {
         const saved = JSON.parse(raw) as { step?: number };
-        if (typeof saved.step === "number" && saved.step >= 0 && saved.step <= 1) {
-          setStep(saved.step);
+        if (typeof saved.step === "number" && saved.step === 1) {
+          setStep(1);
         }
       }
     } catch {
@@ -750,30 +692,13 @@ export function OnboardingFlow({
     );
   }
 
-  const content = (() => {
-    switch (step) {
-    case 0:
-      return (
-        <WelcomeStep
-          onNext={() => setStep(1)}
-          candidateName={candidateName}
-          signupMethod={signupMethod}
-        />
-      );
-
-    case 1:
-      return (
-        <ActivationStep
-          onBack={() => setStep(0)}
-          candidateName={candidateName}
-          signupMethod={signupMethod}
-        />
-      );
-
-    default:
-      return null;
-    }
-  })();
+  const content =
+    step === 1 ? (
+      <ActivationStep
+        candidateName={candidateName}
+        signupMethod={signupMethod}
+      />
+    ) : null;
 
   return <FadeUp key={step}>{content}</FadeUp>;
 }

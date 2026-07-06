@@ -122,6 +122,7 @@ class EmbeddingService:
                 c.summary,
                 c.current_title,
                 c.current_company,
+                c.looking_for,
                 c.location_city,
                 c.location_state,
                 c.years_experience,
@@ -154,6 +155,11 @@ class EmbeddingService:
                 None,
                 [
                     row["headline"] or None,
+                    (
+                        f"Looking for: {row['looking_for']}"
+                        if row.get("looking_for")
+                        else None
+                    ),
                     (
                         " @ ".join([p for p in [row["current_title"], row["current_company"]] if p])
                         if (row["current_title"] or row["current_company"])

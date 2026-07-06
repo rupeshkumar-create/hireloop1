@@ -331,7 +331,14 @@ class JobIngester:
             SELECT
                 c.current_title,
                 c.location_city,
+                c.location_state,
                 c.skills,
+                c.looking_for,
+                (
+                    SELECT cp.prioritized_title FROM public.career_paths cp
+                    WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                    ORDER BY cp.created_at DESC LIMIT 1
+                ) AS prioritized_title,
                 (
                     SELECT cp.target_titles FROM public.career_paths cp
                     WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
@@ -350,13 +357,32 @@ class JobIngester:
         if not row:
             return {"error": "candidate not found", "candidate_id": candidate_id}
 
+        search_titles: list[str] = []
+        seen_titles: set[str] = set()
+
+        def _add_title(raw: str | None) -> None:
+            title = (raw or "").strip()
+            if not title:
+                return
+            key = title.lower()
+            if key in seen_titles:
+                return
+            seen_titles.add(key)
+            search_titles.append(title)
+
+        _add_title(row["prioritized_title"])
+        _add_title(row["looking_for"])
+        for title in list(row["target_titles"] or []):
+            _add_title(str(title))
+
         queries = derive_ingest_queries(
-            target_titles=list(row["target_titles"] or []),
+            target_titles=search_titles,
             current_title=row["current_title"],
             skills=list(row["skills"] or []),
         )
         locations = list(row["target_locations"] or []) or (
-            [row["location_city"]] if row["location_city"] else None
+            [p for p in [row["location_city"], row["location_state"]] if p]
+            or None
         )
         candidate_time_range = time_range or (
             self._settings.fantastic_jobs_candidate_time_range if self._settings else "7d"
