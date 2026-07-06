@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from hireloop_api.config import Settings
 from hireloop_api.routes import matches
+
+
+def _test_settings() -> Settings:
+    return Settings(_env_file=None, environment="test", apify_token="", openrouter_api_key="")  # type: ignore[call-arg]
 
 
 class FakeDb:
@@ -29,8 +34,16 @@ class FakeDb:
             "remote_preference": "any",
             "open_to_relocation": False,
             "location_scope": "city",
+            "aarya_state": {},
+            "market": "IN",
             "target_titles": ["Backend Software Engineer"],
         }
+
+    async def fetchval(self, query: str, *args: object) -> int:
+        return 0
+
+    async def executemany(self, query: str, args: object) -> None:
+        return None
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         if "FROM public.match_scores" in query:
@@ -83,6 +96,12 @@ class CachedAccorDb:
             "market": "IN",
             "target_titles": ["Head of GTM", "Sales Operations Lead", "GTM Lead"],
         }
+
+    async def fetchval(self, query: str, *args: object) -> int:
+        return 0
+
+    async def executemany(self, query: str, args: object) -> None:
+        return None
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         if "FROM public.match_scores" in query:
@@ -187,6 +206,9 @@ class MatchFeedTestJobsOnlyDb:
             "target_titles": ["Head of GTM"],
         }
 
+    async def fetchval(self, query: str, *args: object) -> int:
+        return 0
+
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         if "FROM public.match_scores" in query:
             return [
@@ -251,13 +273,17 @@ class MatchFeedTestJobsOnlyDb:
 async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_score_candidate(self: object, candidate_id: str, limit: int = 200) -> int:
-        return 0
+    async def fake_embed_score(*_a: object, **_kw: object) -> tuple[int, int]:
+        return 0, 0
 
-    monkeypatch.setattr(matches.MatchingEngine, "score_candidate", fake_score_candidate)
+    monkeypatch.setattr(
+        "hireloop_api.services.embeddings.embed_pending_and_score_candidate",
+        fake_embed_score,
+    )
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
 
     result = await matches.get_match_feed(
-        min_score=0.45,
+        min_score=0.38,
         limit=10,
         offset=0,
         current_user={"id": str(uuid.uuid4())},
@@ -273,10 +299,14 @@ async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles
 async def test_match_feed_falls_back_to_visible_jobs_when_scores_are_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_score_candidate(self: object, candidate_id: str, limit: int = 200) -> int:
-        return 0
+    async def fake_embed_score(*_a: object, **_kw: object) -> tuple[int, int]:
+        return 0, 0
 
-    monkeypatch.setattr(matches.MatchingEngine, "score_candidate", fake_score_candidate)
+    monkeypatch.setattr(
+        "hireloop_api.services.embeddings.embed_pending_and_score_candidate",
+        fake_embed_score,
+    )
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
 
     result = await matches.get_match_feed(
         min_score=0,
@@ -294,7 +324,17 @@ async def test_match_feed_falls_back_to_visible_jobs_when_scores_are_empty(
 
 
 @pytest.mark.asyncio
-async def test_match_feed_filters_stale_cached_accor_row_and_uses_strict_fallback() -> None:
+async def test_match_feed_filters_stale_cached_accor_row_and_uses_strict_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_embed_score(*_a: object, **_kw: object) -> tuple[int, int]:
+        return 0, 0
+
+    monkeypatch.setattr(
+        "hireloop_api.services.embeddings.embed_pending_and_score_candidate",
+        fake_embed_score,
+    )
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
     result = await matches.get_match_feed(
         min_score=0.45,
         limit=10,

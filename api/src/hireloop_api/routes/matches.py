@@ -942,6 +942,8 @@ def _candidate_quality_row(candidate: dict) -> dict:
         "full_name": candidate.get("full_name"),
         "current_title": candidate.get("current_title"),
         "current_company": candidate.get("current_company"),
+        "looking_for": candidate.get("looking_for"),
+        "prioritized_title": candidate.get("prioritized_title"),
         "headline": candidate.get("headline"),
         "summary": candidate.get("summary"),
         "years_experience": candidate.get("years_experience"),
@@ -976,10 +978,14 @@ def _current_quality_score(row: asyncpg.Record | dict, *, candidate: dict) -> di
     row_dict = dict(row)
     cand_row = _candidate_quality_row(candidate)
     job_row = _job_quality_row(row_dict)
-    score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
-    if not should_persist_match(cand_row, job_row, score):
+    stored = row_dict.get("overall_score")
+    if stored is not None:
+        result = {"overall": float(stored)}
+    else:
+        result = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
+    if not should_persist_match(cand_row, job_row, result):
         return None
-    return score
+    return result
 
 
 async def _fetch_fallback_match_rows(
@@ -997,7 +1003,11 @@ async def _fetch_fallback_match_rows(
     This keeps the feed useful immediately after resume upload or voice onboarding.
     """
     candidate_skills = [str(s).lower() for s in (candidate.get("skills") or [])]
-    current_title = candidate.get("current_title")
+    title_probe = (
+        candidate.get("prioritized_title")
+        or candidate.get("looking_for")
+        or candidate.get("current_title")
+    )
     rows_to_rank = max(100, limit + offset)
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$4")
@@ -1047,7 +1057,7 @@ async def _fetch_fallback_match_rows(
         LIMIT $3
         """,
         candidate_skills,
-        current_title,
+        title_probe,
         rows_to_rank,
         market,
     )
