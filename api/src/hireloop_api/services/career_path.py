@@ -72,9 +72,61 @@ class CareerPathService:
         """
         Generate a fresh career path via the LLM and persist it.
 
+        Idempotent under concurrency: parallel calls (double-mounted client
+        effects, retries) previously each built and saved a path, and the last
+        straggler became get_latest — an UNprioritized row that orphaned the
+        candidate's confirmed selection. Now a second caller waits for the
+        in-flight build, and a path generated in the last few minutes is
+        returned instead of rebuilt.
+
         Uses short-lived DB connections only for reads/writes; the LLM call runs
         without holding a connection (see career intelligence pattern).
         """
+        import asyncio
+        from datetime import UTC, timedelta
+
+        def _recent(path: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not path or not path.get("created_at"):
+                return None
+            try:
+                created = datetime.fromisoformat(str(path["created_at"]))
+            except ValueError:
+                return None
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            age = datetime.now(UTC) - created
+            return path if age < timedelta(minutes=5) else None
+
+        if candidate_id in _inflight_path_builds:
+            # Another request is already building — wait for it to land.
+            for _ in range(30):
+                await asyncio.sleep(2)
+                async with pool.acquire() as db:
+                    existing = await CareerPathService.get_latest(db, candidate_id)
+                recent = _recent(existing)
+                if recent is not None:
+                    return recent
+                if candidate_id not in _inflight_path_builds:
+                    break
+
+        async with pool.acquire() as db:
+            existing = await CareerPathService.get_latest(db, candidate_id)
+        recent = _recent(existing)
+        if recent is not None:
+            return recent
+
+        _inflight_path_builds.add(candidate_id)
+        try:
+            return await CareerPathService._generate_fresh(pool, candidate_id, settings)
+        finally:
+            _inflight_path_builds.discard(candidate_id)
+
+    @staticmethod
+    async def _generate_fresh(
+        pool: asyncpg.Pool,
+        candidate_id: str,
+        settings: Settings,
+    ) -> dict[str, Any]:
         async with pool.acquire() as db:
             profile = await CareerPathService._load_profile(db, candidate_id)
         if profile is None:

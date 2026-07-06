@@ -426,11 +426,13 @@ async def find_jobs_for_path(
                 rows.append(dict(r))
                 seen.add(jid)
 
-    # No cached scores yet → score now so the first click isn't empty.
-    if not rows:
+    # Thin scored coverage → score now so the first click isn't empty (or just
+    # the seeded demo jobs: _fetch_path_jobs inner-joins match_scores, so real
+    # jobs the candidate was never scored against are invisible until this runs).
+    if len(rows) < 5:
         engine = MatchingEngine(db)
         await engine.score_candidate(candidate_id, limit=80)
-        rows = await _fetch_path_jobs(
+        rescored = await _fetch_path_jobs(
             db,
             candidate_id,
             target_titles,
@@ -439,6 +441,12 @@ async def find_jobs_for_path(
             market=market,
             prioritized_title=prioritized,
         )
+        seen = {str(r["job_id"]) for r in rows}
+        for r in rescored:
+            jid = str(r["job_id"])
+            if jid not in seen:
+                rows.append(dict(r))
+                seen.add(jid)
 
     # If we have nothing to show yet, confirm the upstream source is even
     # reachable so the UI can tell the user "search is unavailable" vs. "no
