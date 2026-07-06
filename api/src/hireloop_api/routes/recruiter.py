@@ -475,11 +475,18 @@ async def list_roles(
     recruiter = current_user["recruiter"]
     rows = await db.fetch(
         """
-        SELECT id, title, status, location_city, comp_min, comp_max,
-               version, created_at, updated_at
-        FROM public.roles
-        WHERE recruiter_id = $1 AND deleted_at IS NULL
-        ORDER BY updated_at DESC
+        SELECT r.id, r.title, r.status, r.location_city, r.comp_min, r.comp_max,
+               r.version, r.created_at, r.updated_at,
+               (r.hiring_brief IS NOT NULL) AS has_brief,
+               EXISTS(
+                 SELECT 1 FROM public.jobs j
+                 WHERE j.role_id = r.id AND j.deleted_at IS NULL AND j.is_active = TRUE
+               ) AS published,
+               (SELECT count(*)::int FROM public.role_pipeline p
+                WHERE p.role_id = r.id) AS pipeline_count
+        FROM public.roles r
+        WHERE r.recruiter_id = $1 AND r.deleted_at IS NULL
+        ORDER BY r.updated_at DESC
         """,
         recruiter["id"],
     )

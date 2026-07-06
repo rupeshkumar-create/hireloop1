@@ -174,7 +174,25 @@ export type RoleListItem = {
   location_city: string | null;
   comp_min: number | null;
   comp_max: number | null;
+  /** Progress signals for the "next step" hint on the roles list. */
+  has_brief?: boolean;
+  published?: boolean;
+  pipeline_count?: number;
 };
+
+/** The single most useful thing to do next for a role. */
+export function roleNextStep(role: RoleListItem): { label: string; tab: "intake" | "pipeline" } {
+  if (!role.has_brief) {
+    return { label: "Finish the brief with Nitya", tab: "intake" };
+  }
+  if (!role.published) {
+    return { label: "Publish to request intros", tab: "intake" };
+  }
+  if (!role.pipeline_count) {
+    return { label: "Run candidate search", tab: "intake" };
+  }
+  return { label: `${role.pipeline_count} in pipeline — review`, tab: "pipeline" };
+}
 
 export type RecruiterDashboardChat = {
   id: string;

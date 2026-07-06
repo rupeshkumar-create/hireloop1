@@ -19,6 +19,7 @@ import {
 import {
   formatCompRange,
   listRoles,
+  roleNextStep,
   updateRole,
   type RoleListItem,
 } from "@/lib/api/recruiter";
@@ -155,6 +156,7 @@ export default function RecruiterRolesPage() {
             const isClosed = role.status === "closed";
             const isPaused = role.status === "paused";
             const busy = updatingId === role.id;
+            const next = roleNextStep(role);
 
             return (
               <Card key={role.id}>
@@ -184,6 +186,15 @@ export default function RecruiterRolesPage() {
                           .filter((x) => x && x !== "Not set")
                           .join(" · ") || "Details in intake"}
                       </p>
+                      {!isClosed && (
+                        <Link
+                          href={`/recruiter/roles/${role.id}/${next.tab}`}
+                          className="inline-flex items-center gap-1 mt-1.5 text-micro font-medium text-accent hover:underline"
+                        >
+                          Next: {next.label}
+                          <ChevronRight className="h-3 w-3" strokeWidth={2} />
+                        </Link>
+                      )}
                     </div>
                     <Link
                       href={`/recruiter/roles/${role.id}/pipeline`}
