@@ -74,6 +74,21 @@ function currencyHint(market?: string): { label: string; placeholderMin: string;
       return { label: "USD per year (thousands)", placeholderMin: "e.g. 120", placeholderMax: "e.g. 160" };
     case "GB":
       return { label: "GBP per year (thousands)", placeholderMin: "e.g. 60", placeholderMax: "e.g. 85" };
+    case "AT":
+    case "DE":
+    case "FR":
+    case "NL":
+      return { label: "EUR per year (thousands)", placeholderMin: "e.g. 55", placeholderMax: "e.g. 80" };
+    case "CH":
+      return { label: "CHF per year (thousands)", placeholderMin: "e.g. 90", placeholderMax: "e.g. 130" };
+    case "AE":
+      return { label: "AED per year (thousands)", placeholderMin: "e.g. 180", placeholderMax: "e.g. 280" };
+    case "AU":
+      return { label: "AUD per year (thousands)", placeholderMin: "e.g. 90", placeholderMax: "e.g. 140" };
+    case "CA":
+      return { label: "CAD per year (thousands)", placeholderMin: "e.g. 80", placeholderMax: "e.g. 120" };
+    case "SG":
+      return { label: "SGD per year (thousands)", placeholderMin: "e.g. 70", placeholderMax: "e.g. 110" };
     default:
       return { label: "INR lakhs per annum (LPA)", placeholderMin: "e.g. 18", placeholderMax: "e.g. 25" };
   }

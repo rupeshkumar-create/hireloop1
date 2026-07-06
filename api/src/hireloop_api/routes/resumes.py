@@ -661,6 +661,18 @@ async def apply_to_profile(
             *values,
         )
 
+    loc_city = updates.get("location_city") or candidate["location_city"]
+    loc_state = updates.get("location_state") or candidate["location_state"]
+    if loc_city or loc_state:
+        from hireloop_api.market_db import sync_candidate_market_from_location
+
+        await sync_candidate_market_from_location(
+            db,
+            candidate_id=uuid.UUID(candidate_id),
+            location_city=str(loc_city) if loc_city else None,
+            location_state=str(loc_state) if loc_state else None,
+        )
+
     await _sync_user_display_name_from_resume(
         db,
         user_id=user_id,

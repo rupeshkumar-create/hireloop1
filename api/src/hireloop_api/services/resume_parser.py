@@ -860,7 +860,7 @@ class ResumeParserService:
 
         if _is_linkedin_export_text(clean):
             linkedin = _parse_linkedin_export(clean)
-            if linkedin and linkedin.full_name and linkedin.work_experience:
+            if linkedin and linkedin.full_name and not _is_section_header_line(linkedin.full_name):
                 _normalise_parsed_resume(linkedin, source="linkedin_export")
                 _ensure_career_profile(linkedin)
                 return linkedin
@@ -1983,6 +1983,10 @@ _SKILL_SECTION_NOISE = frozenset(
         "personal information",
         "strengths",
         "activities",
+        "top skills",
+        "skills",
+        "certifications",
+        "summary",
     }
 )
 
@@ -2153,9 +2157,16 @@ def _repair_linkedin_pdf_lines(text: str) -> str:
         line = raw.strip()
         if not line:
             continue
+        contact_name = re.match(r"^Contact\s+(.+)$", line, re.I)
+        if contact_name and _looks_like_person_name(contact_name.group(1).strip()):
+            repaired.extend(["Contact", contact_name.group(1).strip()])
+            continue
         kontakt_name = re.match(r"^Kontakt\s+(.+)$", line, re.I)
         if kontakt_name and _looks_like_person_name(kontakt_name.group(1).strip()):
             repaired.extend(["Kontakt", kontakt_name.group(1).strip()])
+            continue
+        if re.fullmatch(r"Top Skills\s+Summary", line, re.I):
+            repaired.extend(["Top Skills", "Summary"])
             continue
         url_match = re.search(r"((?:https?://)?(?:www\.)?linkedin\.com/in/\S+)", line, re.I)
         if url_match:
@@ -2193,6 +2204,8 @@ def _is_linkedin_export_text(text: str) -> bool:
             "kontakt",
             "page 1 of",
             "(linkedin)",
+            "top skills",
+            "contact ",
         )
     )
 
@@ -2204,7 +2217,19 @@ def _section_line_index(lines: list[str], markers: frozenset[str]) -> int | None
     return None
 
 
+def _strip_location_line_noise(line: str) -> str:
+    cleaned = re.sub(r"https?://\S+", " ", line, flags=re.I)
+    cleaned = re.sub(r"\S+\.(?:com|in|org|net|ly|art)\S*", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\(LinkedIn\)", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\(Personal\)", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\(Company\)", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\(Mobile\)", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b[0-9a-f]{6,}\b", " ", cleaned, flags=re.I)
+    return re.sub(r"\s+", " ", cleaned).strip(" ,")
+
+
 def _parse_international_location(line: str) -> tuple[str | None, str | None]:
+    line = _strip_location_line_noise(line)
     parts = [p.strip() for p in line.split(",") if p.strip()]
     if not parts:
         return None, None
@@ -2252,6 +2277,29 @@ def _infer_linkedin_education(lines: list[str]) -> list[Education]:
     return out[:8]
 
 
+def _parse_linkedin_contact_header(lines: list[str]) -> tuple[str | None, int | None]:
+    """Return (name, index after contact block) from Kontakt/Contact header."""
+    for i, line in enumerate(lines[:30]):
+        low = line.lower().strip(" :")
+        if low not in {"kontakt", "contact"}:
+            continue
+        j = i + 1
+        while j < len(lines) and (_looks_like_contact_line(lines[j]) or lines[j].startswith("(")):
+            if _looks_like_contact_line(lines[j]) and "linkedin.com" not in lines[j].lower():
+                j += 1
+                continue
+            if lines[j].startswith("("):
+                j += 1
+                continue
+            break
+        if j < len(lines):
+            name = _clean_person_name(lines[j])
+            if name and not _looks_like_location_line(lines[j]):
+                return name, j + 1
+        return None, j
+    return None, None
+
+
 def _parse_linkedin_export(text: str) -> ParsedResume | None:
     """Structured parse for LinkedIn 'Save to PDF' exports (incl. non-English UI)."""
     text = _repair_linkedin_pdf_lines(text)
@@ -2265,31 +2313,24 @@ def _parse_linkedin_export(text: str) -> ParsedResume | None:
     location_city: str | None = None
     location_state: str | None = None
 
-    for i, line in enumerate(lines[:30]):
-        if line.lower() != "kontakt":
-            continue
-        j = i + 1
-        while j < len(lines) and (_looks_like_contact_line(lines[j]) or lines[j].startswith("(")):
-            if _looks_like_contact_line(lines[j]) and "linkedin.com" not in lines[j].lower():
-                j += 1
-                continue
-            if lines[j].startswith("("):
-                j += 1
-                continue
-            break
-        if j < len(lines):
-            full_name = _clean_person_name(lines[j])
-            j += 1
+    full_name, contact_end = _parse_linkedin_contact_header(lines)
+    if contact_end is not None:
+        j = contact_end
         while j < len(lines) and _looks_like_contact_line(lines[j]):
             j += 1
         if j < len(lines) and not _is_section_header_line(lines[j]):
-            headline = lines[j]
-            j += 1
+            candidate_headline = lines[j]
+            if (
+                not _looks_like_location_line(candidate_headline)
+                and not _is_section_header_line(candidate_headline)
+                and len(candidate_headline) > 8
+            ):
+                headline = candidate_headline
+                j += 1
         while j < len(lines) and lines[j].startswith("("):
             j += 1
         if j < len(lines) and _looks_like_location_line(lines[j]):
             location_city, location_state = _parse_international_location(lines[j])
-        break
 
     if not full_name:
         for i, line in enumerate(lines[:25]):
@@ -2297,16 +2338,34 @@ def _parse_linkedin_export(text: str) -> ParsedResume | None:
                 continue
             if _is_language_proficiency_line(line) or _is_section_header_line(line):
                 continue
+            if _looks_like_location_line(line):
+                if not location_city:
+                    location_city, location_state = _parse_international_location(line)
+                continue
             full_name = _clean_person_name(line)
             if i + 1 < len(lines) and not _looks_like_contact_line(lines[i + 1]):
                 candidate_headline = lines[i + 1]
                 if (
                     not _is_section_header_line(candidate_headline)
                     and not _looks_like_person_name(candidate_headline)
+                    and not _looks_like_location_line(candidate_headline)
                     and len(candidate_headline) > 12
                 ):
                     headline = candidate_headline
             break
+
+    if not location_city:
+        for line in lines[:35]:
+            if not _looks_like_location_line(line):
+                continue
+            if _looks_like_contact_line(line):
+                continue
+            city, state = _parse_international_location(line)
+            if city and not city.lower().startswith("http"):
+                location_city, location_state = city, state
+                break
+
+    skills = _infer_linkedin_sidebar_skills(lines)
 
     summary: str | None = None
     sum_i = _section_line_index(lines, _LINKEDIN_SUMMARY_MARKERS)
@@ -2351,9 +2410,55 @@ def _parse_linkedin_export(text: str) -> ParsedResume | None:
         linkedin_url=linkedin_url,
         location_city=location_city,
         location_state=location_state,
-        skills=[],
+        skills=skills,
         raw_text=text,
     )
+
+
+def _looks_like_linkedin_skill_chip(line: str) -> bool:
+    s = line.strip()
+    if not (3 <= len(s) <= 55):
+        return False
+    if _is_section_header_line(s) or _looks_like_contact_line(s):
+        return False
+    if re.search(r"\b(the|with|and|for|from|your|how|used|worked|thousands|clients)\b", s, re.I):
+        return False
+    if re.search(r"\((?:AI|UX|UI)\)", s):
+        return True
+    words = [w for w in re.split(r"\s+", s) if w]
+    if not words or len(words) > 6:
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False
+    if all(re.match(r"^[A-ZÀ-ÖØ-Þ]", w) for w in words):
+        return not _looks_like_role_title(s) or len(words) <= 4
+    return False
+
+
+def _infer_linkedin_sidebar_skills(lines: list[str]) -> list[str]:
+    """Extract skills from LinkedIn's interleaved sidebar/body PDF layout."""
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if line.lower().strip(" :") == "top skills":
+            start = i + 1
+            break
+    if start is None:
+        return []
+    end = len(lines)
+    exp_i = _section_line_index(lines, _LINKEDIN_EXP_MARKERS)
+    if exp_i is not None and exp_i > start:
+        end = exp_i
+    out: list[str] = []
+    for line in lines[start:end]:
+        if re.match(r"page \d+ of", line, re.I):
+            break
+        if _is_section_header_line(line) and line.lower().strip(" :") not in {"languages"}:
+            if out:
+                break
+            continue
+        if _looks_like_linkedin_skill_chip(line):
+            out.append(line.strip())
+    return _normalise_skill_list(out)[:20]
 
 
 def _first_match(text: str, pattern: str) -> str | None:
@@ -2924,8 +3029,12 @@ def _infer_work_experience(
 def _looks_like_person_name(text: str) -> bool:
     """Two capitalized tokens with no company suffix — likely a résumé header name."""
     v = text.strip()
+    if _looks_like_location_line(v):
+        return False
+    if v.lower().strip(" :") in _SKILL_SECTION_NOISE:
+        return False
     parts = [p for p in re.split(r"\s+", v) if p]
-    if len(parts) < 2 or len(parts) > 4:
+    if len(parts) < 2 or len(parts) > 5:
         return False
     banned = {
         "languages",
@@ -2942,10 +3051,21 @@ def _looks_like_person_name(text: str) -> bool:
         "english",
         "polish",
         "german",
+        "skills",
+        "top",
+        "lead",
+        "time",
+        "reduction",
+        "mathematical",
+        "analysis",
+        "operations",
+        "management",
+        "marketing",
+        "merchandising",
     }
-    if any(p.lower() in banned for p in parts):
+    if any(p.lower().rstrip(",.") in banned for p in parts):
         return False
-    if not all(p[0].isupper() for p in parts):
+    if not all(re.match(r"^[A-ZÀ-ÖØ-Þ][\w'.-]*$", p) for p in parts):
         return False
     if re.search(
         r"\b(pvt|ltd|llc|inc|corp|gmbh|technologies|labs|solutions|group|company)\b",

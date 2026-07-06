@@ -99,7 +99,7 @@ def test_linkedin_rejects_unresolved_market() -> None:
     scraper = _linkedin_scraper()
     raw = {
         "title": "Engineer",
-        "location": "Berlin, Germany",
+        "location": "Nairobi, Kenya",
         "jobUrl": "https://www.linkedin.com/jobs/view/1",
     }
     assert scraper.normalise(raw) is None

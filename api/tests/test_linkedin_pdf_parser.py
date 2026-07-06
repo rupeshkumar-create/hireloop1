@@ -63,6 +63,40 @@ def test_linkedin_export_parses_name_headline_and_roles() -> None:
     assert parsed.parser_metadata["source"] == "linkedin_export"
 
 
+RUPESH_KUMAR_LINKEDIN = """
+Contact
+Rupesh Kumar
+youthinkso@live.in
+Helping Recruiters Turn Resumes into Client-Ready Submissions in
+https://www.linkedin.com/in/iamrupesh
+Seconds | Go-To-Market Lead for AI Resume Builder
+(LinkedIn)
+New York, New York, United States
+www.candidate.ly/book-a-demo
+(Company)
+Summary
+Top Skills
+For the last 4+ years at Candidate.ly, I've worked directly with
+Artificial Intelligence (AI)
+thousands of staffing agencies to improve how they present
+Digital Strategy
+candidates to clients – especially in Bullhorn-driven workflows.
+Automation
+Experience
+Candidate.ly
+Go-To-Market Lead
+2021 - Present
+"""
+
+
+def test_english_linkedin_export_parses_contact_name_and_location() -> None:
+    parsed = ResumeParserService.parse_from_text(RUPESH_KUMAR_LINKEDIN)
+    assert parsed.full_name == "Rupesh Kumar"
+    assert parsed.location_city == "New York"
+    assert "artificial intelligence" in " ".join(parsed.skills)
+    assert parsed.parser_metadata["source"] == "linkedin_export"
+
+
 @pytest.mark.skipif(
     not Path("/Users/rupesh/Downloads/Profile (10).pdf").is_file(),
     reason="local fixture PDF not present",

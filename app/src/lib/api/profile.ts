@@ -178,6 +178,23 @@ export async function updateMyMarket(market: string): Promise<void> {
   invalidateProfileCache();
 }
 
+/** Infer market from CDN geo headers (Vercel / Cloudflare). Best-effort, silent. */
+export async function inferMarketFromGeo(): Promise<string | null> {
+  try {
+    const data = await apiFetch<{ ok: boolean; market: string | null; updated?: boolean }>(
+      "/api/v1/me/market/from-geo",
+      { method: "POST" },
+    );
+    if (data.ok && data.market) {
+      invalidateProfileCache();
+      return data.market;
+    }
+  } catch {
+    /* geo headers may be absent in local dev */
+  }
+  return null;
+}
+
 // ── In-memory profile cache ─────────────────────────────────────────────────
 //
 // The Profile panel fully remounts every time it's opened (the dashboard keys

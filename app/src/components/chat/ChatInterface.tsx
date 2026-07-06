@@ -106,7 +106,7 @@ import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
-import { fetchMatchFeedCount, invalidateMatchFeedCache } from "@/lib/api/matches";
+import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import {
   fetchMyProfile,
   invalidateProfileCache,
@@ -271,7 +271,6 @@ export function ChatInterface({
   const [hinglishHint, setHinglishHint] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [matchNudge, setMatchNudge] = useState<string | null>(null);
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
   const holdActiveRef = useRef(false);
@@ -412,28 +411,6 @@ export function ChatInterface({
       cancelled = true;
     };
   }, [authUserId, sessionId]);
-
-  // Proactive nudge when background scoring surfaces strong matches.
-  useEffect(() => {
-    if (messages.length > 0 || historyLoading) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const count = await fetchMatchFeedCount({ min_score: 0.7 });
-        if (!cancelled && count >= 3) {
-          setMatchNudge(`${count} new matches above 70% — want to see them?`);
-        }
-      } catch {
-        /* scoring may still be running */
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 20_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [messages.length, historyLoading]);
 
   useEffect(() => {
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
@@ -1153,7 +1130,7 @@ export function ChatInterface({
           "Use Save, Request intro, or Apply on any card — and I'm generating a " +
           "tailored resume for each of your career paths in the background."
         : `Your career paths are saved and I'm pulling fresh **${result.preferredTitle}** ` +
-          "openings right now — they'll appear in your Jobs panel in a few minutes. " +
+          "openings right now — they'll land here in a few minutes. " +
           "Meanwhile, ask me anything about your career.";
     setMessages((prev) => [
       ...prev,
@@ -1207,12 +1184,6 @@ export function ChatInterface({
         <EmptyState
           onPick={(p) => void sendMessage(p)}
           onUploadResume={() => fileInputRef.current?.click()}
-          matchNudge={matchNudge}
-          onMatchNudge={() =>
-            void sendMessage(
-              "Show me my top matches above 70% fit, ranked best first.",
-            )
-          }
         />
       ) : (
         <>
@@ -1729,13 +1700,9 @@ function buildSmartStarterCards(
 function EmptyState({
   onPick,
   onUploadResume,
-  matchNudge,
-  onMatchNudge,
 }: {
   onPick: (text: string) => void;
   onUploadResume: () => void;
-  matchNudge?: string | null;
-  onMatchNudge?: () => void;
 }) {
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [showPathPicker, setShowPathPicker] = useState(false);
@@ -1806,15 +1773,6 @@ function EmptyState({
 
       <div className="space-y-1">
         <p className="text-body text-ink-800 leading-relaxed">{greeting}</p>
-        {matchNudge && onMatchNudge && (
-          <button
-            type="button"
-            onClick={onMatchNudge}
-            className="mt-2 rounded-full border border-accent bg-accent/5 px-4 py-2 text-small text-ink-900 hover:bg-accent/10 transition-colors"
-          >
-            {matchNudge}
-          </button>
-        )}
         <p className="text-small text-ink-400 leading-relaxed">
           Tap a suggestion, or just tell me what you&apos;re looking for.
         </p>

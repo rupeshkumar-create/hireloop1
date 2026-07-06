@@ -999,6 +999,7 @@ async def _fetch_fallback_match_rows(
     offset: int,
     remote_preference: str = "any",
     market: str = "IN",
+    relaxed: bool = False,
 ) -> list[dict]:
     """
     Return visible jobs even before the precomputed scoring pipeline is ready.
@@ -1067,7 +1068,8 @@ async def _fetch_fallback_match_rows(
     ranked = [
         item
         for row in rows
-        if (item := _serialize_fallback_match_row(row, candidate=candidate)) is not None
+        if (item := _serialize_fallback_match_row(row, candidate=candidate, relaxed=relaxed))
+        is not None
     ]
     # Order by the computed score (career-path + skill aware), not just the SQL
     # ordering, so aspirational target-title matches surface.
@@ -1076,13 +1078,18 @@ async def _fetch_fallback_match_rows(
     return filtered[offset : offset + limit]
 
 
-def _serialize_fallback_match_row(row: asyncpg.Record | dict, *, candidate: dict) -> dict | None:
+def _serialize_fallback_match_row(
+    row: asyncpg.Record | dict, *, candidate: dict, relaxed: bool = False
+) -> dict | None:
     row_dict = dict(row)
     job_skills = list(row_dict.get("skills_required") or [])
     cand_row = _candidate_quality_row(candidate)
     job_row = _job_quality_row(row_dict)
     score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
-    if not should_persist_match(cand_row, job_row, score):
+    if relaxed:
+        if float(score.get("overall") or 0.0) < 0.25:
+            return None
+    elif not should_persist_match(cand_row, job_row, score):
         return None
 
     return {

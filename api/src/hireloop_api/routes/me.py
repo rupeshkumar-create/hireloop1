@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_optional, get_phone_verified_user
-from hireloop_api.market_db import fetch_candidate_market
+from hireloop_api.market_db import fetch_candidate_market, infer_market_from_geo_country
 from hireloop_api.markets import (
     MARKET_LABELS,
     SUPPORTED_MARKETS,
@@ -364,6 +364,55 @@ async def update_my_market(
     )
 
     return {"ok": True, "market": market}
+
+
+@router.post("/market/from-geo")
+async def infer_market_from_geo(
+    request: Request,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Infer home market from CDN geo headers (Cloudflare / Vercel).
+    Only updates when the user is still on the default IN market.
+    """
+    geo = (
+        request.headers.get("cf-ipcountry")
+        or request.headers.get("x-vercel-ip-country")
+        or request.headers.get("x-country-code")
+    )
+    inferred = infer_market_from_geo_country(geo)
+    if not inferred:
+        return {"ok": False, "market": None, "reason": "unsupported_geo"}
+
+    user_id = uuid.UUID(str(current_user["id"]))
+    row = await db.fetchrow(
+        "SELECT market FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
+        user_id,
+    )
+    current = normalize_market(row["market"] if row else None)
+    if current not in {None, "", "IN"} and current != inferred:
+        return {"ok": True, "market": current, "updated": False}
+
+    await db.execute(
+        """
+        UPDATE public.users
+        SET market = $2, phone_country = $2, updated_at = NOW()
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        inferred,
+    )
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET market = $2, updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+        inferred,
+    )
+    return {"ok": True, "market": inferred, "updated": True}
 
 
 @router.post("/public-profile/publish")

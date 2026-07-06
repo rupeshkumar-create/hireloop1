@@ -29,7 +29,11 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
-from hireloop_api.routes.matches import MatchedJob, _serialize_cached_match_row
+from hireloop_api.routes.matches import (
+    MatchedJob,
+    _fetch_fallback_match_rows,
+    _serialize_cached_match_row,
+)
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import default_prioritize_title
@@ -465,6 +469,38 @@ async def find_jobs_for_path(
             if jid not in seen:
                 rows.append(dict(r))
                 seen.add(jid)
+
+    # Last resort: lexical market jobs (no precomputed match_scores row required).
+    if len(rows) < 5:
+        cand_row = await db.fetchrow(
+            """
+            SELECT c.id, c.market, c.headline, c.summary, c.current_title, c.current_company,
+                   c.years_experience, c.skills, c.location_city, c.location_state,
+                   c.expected_ctc_min, c.expected_ctc_max, c.open_to_remote,
+                   c.open_to_relocation, c.location_scope, c.prioritized_title,
+                   c.looking_for
+            FROM public.candidates c
+            WHERE c.id = $1::uuid AND c.deleted_at IS NULL
+            """,
+            uuid.UUID(candidate_id),
+        )
+        if cand_row:
+            fallback = await _fetch_fallback_match_rows(
+                db,
+                candidate=dict(cand_row),
+                min_score=0.30,
+                limit=20,
+                offset=0,
+                remote_preference=remote_pref,
+                market=market,
+                relaxed=True,
+            )
+            seen = {str(r["job_id"]) for r in rows}
+            for r in fallback:
+                jid = str(r["job_id"])
+                if jid not in seen:
+                    rows.append(r)
+                    seen.add(jid)
 
     # If we have nothing to show yet, confirm the upstream source is even
     # reachable so the UI can tell the user "search is unavailable" vs. "no

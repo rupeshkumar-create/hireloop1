@@ -8,13 +8,38 @@ from __future__ import annotations
 
 import re
 
-SUPPORTED_MARKETS: frozenset[str] = frozenset({"IN", "US", "GB"})
+# ISO 3166-1 alpha-2 markets we actively support for job visibility + currency.
+SUPPORTED_MARKETS: frozenset[str] = frozenset(
+    {
+        "IN",
+        "US",
+        "GB",
+        "AT",  # Austria
+        "DE",  # Germany
+        "FR",  # France
+        "AE",  # UAE
+        "AU",  # Australia
+        "CA",  # Canada
+        "CH",  # Switzerland
+        "NL",  # Netherlands
+        "SG",  # Singapore
+    }
+)
 DEFAULT_MARKET = "IN"
 
 MARKET_CURRENCIES: dict[str, str] = {
     "IN": "INR",
     "US": "USD",
     "GB": "GBP",
+    "AT": "EUR",
+    "DE": "EUR",
+    "FR": "EUR",
+    "NL": "EUR",
+    "CH": "CHF",
+    "AE": "AED",
+    "AU": "AUD",
+    "CA": "CAD",
+    "SG": "SGD",
 }
 
 MARKET_SCRAPE_LOCATIONS: dict[str, list[str]] = {
@@ -45,12 +70,68 @@ MARKET_SCRAPE_LOCATIONS: dict[str, list[str]] = {
         "Birmingham, England, United Kingdom",
         "United Kingdom",
     ],
+    "AT": [
+        "Vienna, Austria",
+        "Graz, Austria",
+        "Salzburg, Austria",
+        "Austria",
+    ],
+    "DE": [
+        "Berlin, Germany",
+        "Munich, Germany",
+        "Frankfurt, Germany",
+        "Hamburg, Germany",
+        "Germany",
+    ],
+    "FR": [
+        "Paris, France",
+        "Lyon, France",
+        "Marseille, France",
+        "France",
+    ],
+    "AE": [
+        "Dubai, United Arab Emirates",
+        "Abu Dhabi, United Arab Emirates",
+        "United Arab Emirates",
+    ],
+    "AU": [
+        "Sydney, New South Wales, Australia",
+        "Melbourne, Victoria, Australia",
+        "Australia",
+    ],
+    "CA": [
+        "Toronto, Ontario, Canada",
+        "Vancouver, British Columbia, Canada",
+        "Canada",
+    ],
+    "CH": [
+        "Zurich, Switzerland",
+        "Geneva, Switzerland",
+        "Switzerland",
+    ],
+    "NL": [
+        "Amsterdam, Netherlands",
+        "Rotterdam, Netherlands",
+        "Netherlands",
+    ],
+    "SG": [
+        "Singapore",
+    ],
 }
 
 MARKET_LABELS: dict[str, str] = {
     "IN": "India",
     "US": "United States",
     "GB": "United Kingdom",
+    "AT": "Austria",
+    "DE": "Germany",
+    "FR": "France",
+    "AE": "United Arab Emirates",
+    "AU": "Australia",
+    "CA": "Canada",
+    "CH": "Switzerland",
+    "NL": "Netherlands",
+    "SG": "Singapore",
 }
 
 # Location substring → ISO market (first match wins).
@@ -68,15 +149,48 @@ _LOCATION_MARKET_HINTS: tuple[tuple[str, str], ...] = (
     ("chennai", "IN"),
     ("kolkata", "IN"),
     ("ahmedabad", "IN"),
+    ("ranchi", "IN"),
+    ("bokaro", "IN"),
+    ("jharkhand", "IN"),
+    ("karnataka", "IN"),
+    ("new delhi", "IN"),
     ("united states", "US"),
     ("usa", "US"),
     (" u.s.", "US"),
+    ("san francisco", "US"),
+    ("brooklyn", "US"),
+    ("new york", "US"),
+    ("california", "US"),
     ("united kingdom", "GB"),
     ("england", "GB"),
     ("scotland", "GB"),
     ("wales", "GB"),
     ("london", "GB"),
     ("manchester", "GB"),
+    ("austria", "AT"),
+    ("vienna", "AT"),
+    ("wien", "AT"),
+    ("germany", "DE"),
+    ("berlin", "DE"),
+    ("munich", "DE"),
+    ("france", "FR"),
+    ("paris", "FR"),
+    ("dubai", "AE"),
+    ("abu dhabi", "AE"),
+    ("uae", "AE"),
+    ("united arab emirates", "AE"),
+    ("australia", "AU"),
+    ("sydney", "AU"),
+    ("melbourne", "AU"),
+    ("canada", "CA"),
+    ("toronto", "CA"),
+    ("vancouver", "CA"),
+    ("switzerland", "CH"),
+    ("zurich", "CH"),
+    ("geneva", "CH"),
+    ("netherlands", "NL"),
+    ("amsterdam", "NL"),
+    ("singapore", "SG"),
 )
 
 _US_STATE_RE = re.compile(r",\s*([A-Z]{2})\s*(?:,|$)")
@@ -113,6 +227,22 @@ def resolve_country_from_location(location: str) -> str | None:
     return None
 
 
+def scrape_locations_for_market(market: str, *, city_hint: str | None = None) -> list[str]:
+    """
+    Ordered scrape/search locations: city first (when known), then country hubs.
+    """
+    m = normalize_market(market)
+    base = list(MARKET_SCRAPE_LOCATIONS.get(m, MARKET_SCRAPE_LOCATIONS["IN"]))
+    if not city_hint:
+        return base
+    hint = city_hint.strip()
+    if not hint:
+        return base
+    if hint.lower() in {b.lower() for b in base}:
+        return base
+    return [hint, *base]
+
+
 def job_visible_for_market_sql(*, job_alias: str = "j", market_param: str) -> str:
     """
     SQL boolean expression: job is visible to a candidate in `market_param`.
@@ -137,7 +267,20 @@ def job_visible_for_market_sql(*, job_alias: str = "j", market_param: str) -> st
 
 def dial_prefix_for_market(market: str) -> str:
     """E.164 country dial prefix for a supported market."""
-    return {"IN": "+91", "US": "+1", "GB": "+44"}.get(normalize_market(market), "+91")
+    return {
+        "IN": "+91",
+        "US": "+1",
+        "GB": "+44",
+        "AT": "+43",
+        "DE": "+49",
+        "FR": "+33",
+        "AE": "+971",
+        "AU": "+61",
+        "CA": "+1",
+        "CH": "+41",
+        "NL": "+31",
+        "SG": "+65",
+    }.get(normalize_market(market), "+91")
 
 
 def phone_matches_market(phone: str | None, market: str) -> bool:
@@ -168,15 +311,15 @@ def validate_e164_phone(phone: str, market: str) -> str:
             raise ValueError("Invalid Indian mobile number")
         return f"+91{digits}"
 
-    if m == "US":
+    if m in {"US", "CA"}:
         if p.startswith("+1"):
             digits = p[2:]
         elif p.startswith("1") and len(p) == 11:
             digits = p[1:]
         else:
-            raise ValueError("US numbers must start with +1")
+            raise ValueError("US/CA numbers must start with +1")
         if not digits.isdigit() or len(digits) != 10:
-            raise ValueError("Invalid US phone number")
+            raise ValueError("Invalid US/CA phone number")
         return f"+1{digits}"
 
     if m == "GB":
@@ -187,4 +330,13 @@ def validate_e164_phone(phone: str, market: str) -> str:
             raise ValueError("Invalid UK phone number")
         return f"+44{digits}"
 
-    raise ValueError(f"Unsupported market: {m}")
+    # Other markets: basic E.164 length check with expected prefix when present.
+    prefix = dial_prefix_for_market(m)
+    if not p.startswith("+"):
+        raise ValueError(f"Phone must be E.164 for market {m}")
+    if prefix and not p.startswith(prefix):
+        raise ValueError(f"Phone must start with {prefix} for market {m}")
+    digits = re.sub(r"\D", "", p)
+    if len(digits) < 10 or len(digits) > 15:
+        raise ValueError("Invalid phone number length")
+    return f"+{digits}"

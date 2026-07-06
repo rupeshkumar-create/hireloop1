@@ -21,7 +21,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "@/components/brand/icons";
-import { fetchMyProfile } from "@/lib/api/profile";
+import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds, subscribeSavedJobs } from "@/lib/api/saved-jobs";
@@ -132,6 +132,7 @@ export function DashboardClient({
     window.addEventListener("focus", onFocus);
 
     void fetchMyProfile().catch(() => {});
+    void inferMarketFromGeo().catch(() => {});
     void fetchIntros()
       .then((rows) => {
         if (!cancelled) {
@@ -181,9 +182,9 @@ export function DashboardClient({
   }
 
   function handleCareerKickoffComplete(result: KickoffResult) {
+    // Seed the matches feed silently — jobs are shown in chat, not via panel popup.
     setKickoffMatchJobs(result.jobs);
     setKickoffMatchTitle(result.preferredTitle);
-    openPanel("jobs", "matches");
   }
 
   function handleRequestIntro(job: MatchedJob) {
