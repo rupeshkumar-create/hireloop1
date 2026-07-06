@@ -270,6 +270,49 @@ async def cancel_intro(
     return {"cancelled": True, "intro_id": intro_id}
 
 
+@router.post("/{intro_id}/mark-replied", status_code=200)
+async def mark_intro_replied(
+    intro_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Candidate confirms the hiring manager replied to their intro email.
+
+    Manual by design: Gmail access is send-only (we never read candidate
+    email), so the candidate is the reply detector. This is what makes the
+    intro→conversation funnel measurable.
+    """
+    try:
+        intro_uuid = uuid.UUID(intro_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid intro ID") from exc
+
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(current_user["id"]),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    result = await db.execute(
+        """
+        UPDATE public.intro_requests
+        SET status = 'replied', replied_at = NOW(), updated_at = NOW()
+        WHERE id = $1::uuid
+          AND candidate_id = $2::uuid
+          AND status IN ('sent', 'opened')
+        """,
+        intro_uuid,
+        candidate["id"],
+    )
+    if result == "UPDATE 0":
+        raise HTTPException(
+            status_code=409,
+            detail="Intro is not in a sent state (or is not yours).",
+        )
+    return {"replied": True, "intro_id": intro_id}
+
+
 @router.post("/{intro_id}/respond", status_code=200)
 async def respond_to_intro(
     intro_id: str,

@@ -532,10 +532,17 @@ async def run_background_worker(
     Long-polling worker loop. Started from FastAPI lifespan; disabled in tests
     unless ``settings.background_worker_enabled`` is True.
     """
+    import time as _time
+
     from hireloop_api.deps import get_db_pool
 
     wid = worker_id or f"api-{uuid.uuid4().hex[:8]}"
     logger.info("background_worker_started", worker_id=wid)
+
+    # Periodic intro follow-up sweep (72h nudges) rides the same loop — no
+    # extra scheduler process. First run ~1 min after boot, then every 15 min.
+    sweep_interval_s = 15 * 60
+    next_sweep_at = _time.monotonic() + 60
 
     while not stop_event.is_set():
         try:
@@ -546,6 +553,15 @@ async def run_background_worker(
             if job:
                 await process_job(pool, settings, job)
                 continue
+
+            if _time.monotonic() >= next_sweep_at:
+                next_sweep_at = _time.monotonic() + sweep_interval_s
+                from hireloop_api.services.intro_followups import run_intro_followup_sweep
+
+                async with pool.acquire() as conn:
+                    nudged = await run_intro_followup_sweep(conn, settings)
+                if nudged:
+                    logger.info("intro_followup_sweep_done", nudged=nudged)
         except Exception as exc:
             logger.error("background_worker_poll_error", error=str(exc)[:300])
 

@@ -178,6 +178,17 @@ export function JobCard({
         ? "bg-amber-400"
         : "bg-ink-200";
 
+  // Freshness builds trust in the feed — a dated job reads as real.
+  const postedAgo = (() => {
+    if (!job.posted_at) return null;
+    const days = Math.floor((Date.now() - new Date(job.posted_at).getTime()) / 86400000);
+    if (Number.isNaN(days) || days < 0) return null;
+    if (days === 0) return "Posted today";
+    if (days === 1) return "Posted yesterday";
+    if (days <= 30) return `Posted ${days}d ago`;
+    return null; // older than a month — hide rather than advertise staleness
+  })();
+
   return (
     <Card
       className={cn(
@@ -242,6 +253,7 @@ export function JobCard({
             {job.action_label}
           </Badge>
         )}
+        {postedAgo && <Badge tone="muted">{postedAgo}</Badge>}
         {(job.tier || job.tier_label) && (
           <Badge
             tone={

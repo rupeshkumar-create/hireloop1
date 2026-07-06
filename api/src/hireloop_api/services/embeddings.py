@@ -155,11 +155,7 @@ class EmbeddingService:
                 None,
                 [
                     row["headline"] or None,
-                    (
-                        f"Looking for: {row['looking_for']}"
-                        if row.get("looking_for")
-                        else None
-                    ),
+                    (f"Looking for: {row['looking_for']}" if row.get("looking_for") else None),
                     (
                         " @ ".join([p for p in [row["current_title"], row["current_company"]] if p])
                         if (row["current_title"] or row["current_company"])

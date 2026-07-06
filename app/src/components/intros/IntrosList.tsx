@@ -15,6 +15,7 @@ import {
   getCachedIntros,
   respondToIntro,
   type IntroRequest,
+  markIntroReplied,
 } from "@/lib/api/intros";
 import { IntroChat } from "@/components/intros/IntroChat";
 import { IntroStatusTimeline, WarmHandoffCard } from "@/components/ux";
@@ -120,6 +121,27 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
     }
   }
 
+  const [markingReplied, setMarkingReplied] = useState<string | null>(null);
+
+  async function markReplied(introId: string) {
+    setMarkingReplied(introId);
+    try {
+      await markIntroReplied(introId);
+      setIntros((prev) =>
+        prev.map((i) =>
+          i.id === introId
+            ? { ...i, status: "replied", replied_at: new Date().toISOString() }
+            : i,
+        ),
+      );
+      toast.success("Marked as replied — nice!");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setMarkingReplied(null);
+    }
+  }
+
   function timeAgo(iso: string) {
     const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
     if (d === 0) return "Today";
@@ -191,6 +213,8 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
           !fromRecruiter &&
           ["pending", "invited", "recruiter_notified"].includes(intro.status);
         const canChat = intro.status === "accepted";
+        const canMarkReplied =
+          !fromRecruiter && ["sent", "opened"].includes(intro.status);
         const chatOpen = openChat.has(intro.id);
         const showFull = variant === "page";
 
@@ -279,6 +303,16 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
                         }
                       >
                         {chatOpen ? "Hide chat" : "Open chat"}
+                      </Button>
+                    ) : canMarkReplied ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void markReplied(intro.id)}
+                        loading={markingReplied === intro.id}
+                        title="Did the hiring manager reply to your email?"
+                      >
+                        They replied
                       </Button>
                     ) : canCancel ? (
                       <Button

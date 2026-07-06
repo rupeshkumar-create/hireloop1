@@ -381,8 +381,7 @@ class JobIngester:
             skills=list(row["skills"] or []),
         )
         locations = list(row["target_locations"] or []) or (
-            [p for p in [row["location_city"], row["location_state"]] if p]
-            or None
+            [p for p in [row["location_city"], row["location_state"]] if p] or None
         )
         candidate_time_range = time_range or (
             self._settings.fantastic_jobs_candidate_time_range if self._settings else "7d"

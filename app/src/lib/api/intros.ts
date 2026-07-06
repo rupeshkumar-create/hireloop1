@@ -79,6 +79,12 @@ export async function fetchIntros(
  * Cancel a pending intro. Optimistically patches the cache so a subsequent
  * panel reopen reflects the new status without waiting for a refetch.
  */
+/** Candidate confirms the HM replied — closes the intro funnel measurably. */
+export async function markIntroReplied(introId: string): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/mark-replied`, { method: "POST" });
+  _introsCache = null;
+}
+
 export async function cancelIntro(introId: string): Promise<void> {
   await apiFetch(`/api/v1/intros/${introId}/cancel`, { method: "POST" });
   if (_introsCache) {

@@ -140,12 +140,17 @@ class GmailOAuthService:
         body_html: str,
         body_text: str | None = None,
         reply_to: str | None = None,
-    ) -> tuple[bool, str | None]:
+        thread_id: str | None = None,
+    ) -> tuple[bool, str | dict[str, str | None]]:
         """
         Send an intro email from the candidate's Gmail account.
 
-        Returns (success: bool, gmail_message_id: str | None).
-        The gmail_message_id is stored in intro_requests for thread tracking.
+        Returns (True, {"id", "threadId"}) on success — both are stored on
+        intro_requests so the follow-up sweep can bump the same thread — or
+        (False, error_message).
+
+        ``thread_id`` sends the message into an existing thread (used by the
+        72h nudge; requires the same subject for Gmail to accept threading).
         """
         access_token = await self._get_token(candidate_id)
         if not access_token:
@@ -165,24 +170,28 @@ class GmailOAuthService:
 
         # Encode to base64url (Gmail API format)
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        payload: dict[str, str] = {"raw": raw}
+        if thread_id:
+            payload["threadId"] = thread_id
 
         try:
             res = await self._http.post(
                 f"{_GMAIL_API}/users/me/messages/send",
                 headers={"Authorization": f"Bearer {access_token}"},
-                json={"raw": raw},
+                json=payload,
                 timeout=30.0,
             )
 
             if res.status_code == 200:
-                gmail_msg_id = res.json().get("id")
+                data = res.json()
                 logger.info(
                     "gmail_intro_sent",
                     candidate_id=candidate_id,
                     to=to_email,
-                    msg_id=gmail_msg_id,
+                    msg_id=data.get("id"),
+                    thread_id=data.get("threadId"),
                 )
-                return True, gmail_msg_id
+                return True, {"id": data.get("id"), "threadId": data.get("threadId")}
 
             logger.error(
                 "gmail_send_failed",

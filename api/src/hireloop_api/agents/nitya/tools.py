@@ -306,17 +306,22 @@ async def send_intro_email(
         await svc.close()
 
     if success:
+        send_info = msg_id_or_error if isinstance(msg_id_or_error, dict) else {}
         await db.execute(
             """
             UPDATE public.intro_requests
-            SET status = 'sent', sent_at = NOW(), updated_at = NOW()
+            SET status = 'sent', sent_at = NOW(), updated_at = NOW(),
+                gmail_message_id = $2, gmail_thread_id = $3, gmail_subject = $4
             WHERE id = $1::uuid
             """,
             uuid.UUID(intro_id),
+            send_info.get("id"),
+            send_info.get("threadId"),
+            subject[:300],
         )
         result: dict[str, Any] = {
             "sent": True,
-            "gmail_message_id": msg_id_or_error,
+            "gmail_message_id": send_info.get("id"),
             "intro_status": "sent",
         }
         logger.info("intro_email_sent", intro_id=intro_id, to=hm_email)
