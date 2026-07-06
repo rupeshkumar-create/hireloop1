@@ -146,6 +146,7 @@ def _redact_public_fields(
     if not hide_contact:
         return {
             "display_name": display_name,
+            "avatar_url": cand.get("avatar_url"),
             "headline": cand.get("headline"),
             "summary": cand.get("summary"),
             "current_title": cand.get("current_title"),
@@ -164,6 +165,7 @@ def _redact_public_fields(
 
     return {
         "display_name": None,
+        "avatar_url": None,
         "headline": cand.get("headline"),
         "summary": cand.get("summary"),
         "current_title": cand.get("current_title"),
@@ -189,7 +191,7 @@ async def fetch_public_profile(db: asyncpg.Connection, slug: str) -> dict[str, A
                c.looking_for, c.market, c.display_currency,
                c.public_profile_enabled, c.hide_contact_public,
                c.linkedin_url, c.career_profile, c.linkedin_data,
-               u.full_name, u.email, u.phone
+               u.full_name, u.email, u.phone, u.avatar_url
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
         WHERE c.public_slug = $1
