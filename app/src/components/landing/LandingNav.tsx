@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "@/components/brand/icons";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { HireLogo } from "@/components/brand/HireLogo";
+import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
 
 /**
  * Landing nav — auth-aware CTAs without blocking the page on server getUser().
@@ -26,7 +26,7 @@ export function LandingNav() {
     <header className="sticky top-0 z-30 border-b border-ink-100 bg-paper-0/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-page items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2" aria-label="Hireschema home">
-          <HireLogo size={30} />
+          <HireschemaLogo size={30} />
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex">

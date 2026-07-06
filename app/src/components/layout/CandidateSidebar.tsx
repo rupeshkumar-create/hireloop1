@@ -13,7 +13,7 @@ import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { NotificationDrawer } from "@/components/ux";
-import { HireLogoMark } from "@/components/brand/HireLogo";
+import { HireschemaLogoMark } from "@/components/brand/HireschemaLogo";
 import { cn } from "@/lib/utils";
 
 const PANEL_HREF: Record<PanelId, string> = {
@@ -82,7 +82,7 @@ export function CandidateSidebar({
   return (
     <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
       <Link href="/dashboard" aria-label="Hireschema home" title="Hireschema" className="mb-4">
-        <HireLogoMark size={36} />
+        <HireschemaLogoMark size={36} />
       </Link>
 
       <nav className="flex flex-1 flex-col items-center gap-1">

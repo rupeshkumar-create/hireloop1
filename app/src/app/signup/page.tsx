@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 import { Suspense } from "react";
 import { SignupForm } from "@/components/auth/SignupForm";
-import { HireLogo } from "@/components/brand/HireLogo";
+import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
 
 // Auth page — skip static prerender so builds succeed without Supabase env at compile time.
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export default function SignupPage() {
     <main className="min-h-screen flex items-center justify-center bg-paper-0 px-4">
       <div className="max-w-md w-full bg-paper-1 rounded-xl shadow-2 border border-ink-100 p-8 space-y-6">
         {/* Logo */}
-        <HireLogo size={34} />
+        <HireschemaLogo size={34} />
 
         <div className="space-y-1">
           <h1 className="text-h1 text-ink-900">Get started</h1>

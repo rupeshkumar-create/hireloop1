@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
-  <rect width="48" height="48" rx="0" fill="#B9F84C"></rect><path d="M24 24C24 15.4 9.6 15.4 9.6 24C9.6 32.6 24 32.6 24 24C24 15.4 38.4 15.4 38.4 24C38.4 32.6 24 32.6 24 24Z" stroke="#0F1400" stroke-width="3.4" stroke-linecap="square" stroke-linejoin="miter"></path>
-  <circle cx="14.6" cy="24" r="3.1" fill="#0F1400"></circle><circle cx="33.4" cy="24" r="3.1" fill="#0F1400"></circle>
-  <circle cx="14.6" cy="24" r="1.15" fill="#B9F84C"></circle><circle cx="33.4" cy="24" r="1.15" fill="#B9F84C"></circle>
+  <rect width="48" height="48" fill="#B9F84C"/>
+  <path d="M16 14V34M24 14V34M32 14V34M16 14H32M16 24H32M16 34H32" stroke="#0F1400" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <circle cx="16" cy="14" r="2.6" fill="#0F1400"/><circle cx="16" cy="14" r="0.95" fill="#B9F84C"/>
+  <circle cx="24" cy="14" r="2.6" fill="#0F1400"/><circle cx="24" cy="14" r="0.95" fill="#B9F84C"/>
+  <circle cx="32" cy="14" r="2.6" fill="#0F1400"/><circle cx="32" cy="14" r="0.95" fill="#B9F84C"/>
+  <circle cx="16" cy="24" r="2.6" fill="#0F1400"/><circle cx="16" cy="24" r="0.95" fill="#B9F84C"/>
+  <circle cx="24" cy="24" r="3.4" fill="#0F1400"/><circle cx="24" cy="24" r="1.25" fill="#B9F84C"/>
+  <circle cx="32" cy="24" r="2.6" fill="#0F1400"/><circle cx="32" cy="24" r="0.95" fill="#B9F84C"/>
+  <circle cx="16" cy="34" r="2.6" fill="#0F1400"/><circle cx="16" cy="34" r="0.95" fill="#B9F84C"/>
+  <circle cx="24" cy="34" r="2.6" fill="#0F1400"/><circle cx="24" cy="34" r="0.95" fill="#B9F84C"/>
+  <circle cx="32" cy="34" r="2.6" fill="#0F1400"/><circle cx="32" cy="34" r="0.95" fill="#B9F84C"/>
 </svg>

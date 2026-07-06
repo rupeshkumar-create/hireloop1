@@ -14,7 +14,7 @@ import {
   Sparkles,
 } from "@/components/brand/icons";
 import { PublicProfileChat } from "@/components/public-portfolio/PublicProfileChat";
-import { HireLogo } from "@/components/brand/HireLogo";
+import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
 import { cn } from "@/lib/utils";
 import type { PublicProfile } from "@/lib/api/publicProfile";
 
@@ -69,7 +69,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <Link href="/" className="hover:opacity-90 transition-opacity">
-            <HireLogo size={28} />
+            <HireschemaLogo size={28} />
           </Link>
           <span className="text-micro uppercase tracking-widest text-ink-500">
             Portfolio

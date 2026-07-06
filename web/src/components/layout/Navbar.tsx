@@ -24,9 +24,19 @@ export function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-md bg-ink-900 flex items-center justify-center">
-              <span className="text-paper-0 text-h3 font-semibold">H</span>
+          <Link href="/" className="flex items-center gap-2 shrink-0" aria-label="Hireschema home">
+            <div className="w-8 h-8 shrink-0">
+              <svg viewBox="0 0 48 48" fill="none" className="h-8 w-8" aria-hidden>
+                <rect width="48" height="48" fill="#B9F84C" />
+                <path
+                  d="M16 14V34M24 14V34M32 14V34M16 14H32M16 24H32M16 34H32"
+                  stroke="#0F1400"
+                  strokeWidth="2.6"
+                  strokeLinecap="square"
+                />
+                <circle cx="24" cy="24" r="3.4" fill="#0F1400" />
+                <circle cx="24" cy="24" r="1.25" fill="#B9F84C" />
+              </svg>
             </div>
             <span className="text-h2 text-ink-900">
               Hire<span className="text-accent">schema</span>
