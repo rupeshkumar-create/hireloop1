@@ -342,12 +342,34 @@ _SECTION_HEADERS = {
     "certifications",
     "contact",
     "personal details",
+    # LinkedIn PDF export (multilingual section labels)
+    "kontakt",
+    "sprachen",
+    "languages",
+    "zusammenfassung",
+    "berufserfahrung",
+    "ausbildung",
+    "kenntnisse",
+    "über mich",
+    "about",
 }
 
+_LINKEDIN_SUMMARY_MARKERS = frozenset(
+    {"zusammenfassung", "summary", "über mich", "about", "profile"}
+)
+_LINKEDIN_EXP_MARKERS = frozenset(
+    {"berufserfahrung", "experience", "work experience", "professional experience"}
+)
+_LINKEDIN_EDU_MARKERS = frozenset({"ausbildung", "education", "bildung", "academic"})
+
 _DATE_RANGE = re.compile(
-    r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*'?\d{2,4}"
+    r"((?:jan|januar|feb|februar|mar|märz|marz|apr|april|may|mai|jun|juni|jul|juli|"
+    r"aug|august|sep|sept|september|oct|okt|oktober|nov|november|dec|dez|dezember)"
+    r"[a-zäöü]*\.?\s*'?\d{2,4}"
     r"|\d{1,2}/\d{4}|\d{4})\s*[-–—to]+\s*"
-    r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*'?\d{2,4}"
+    r"((?:jan|januar|feb|februar|mar|märz|marz|apr|april|may|mai|jun|juni|jul|juli|"
+    r"aug|august|sep|sept|september|oct|okt|oktober|nov|november|dec|dez|dezember)"
+    r"[a-zäöü]*\.?\s*'?\d{2,4}"
     r"|\d{1,2}/\d{4}|\d{4}|present|current|now|till date|ongoing)",
     re.IGNORECASE,
 )
@@ -454,7 +476,12 @@ Rules:
   projects. IGNORE a LinkedIn "Top Skills" sidebar or any standalone skills list
   that the experience does not support — those are frequently stale/aspirational
   and misrepresent the candidate (e.g. "Sales Operations" listed by a UX
-  designer). When a sidebar skill conflicts with the actual roles, omit it."""
+  designer). When a sidebar skill conflicts with the actual roles, omit it.
+- LinkedIn PDF exports: section labels may be non-English (Kontakt, Berufserfahrung,
+  Zusammenfassung, Ausbildung). "(5 Jahre)" / "(8 years)" are tenure durations —
+  NEVER use them as company names. Company is usually the line above the job title;
+  title is the line above the date range. Use the professional headline/tagline
+  for headline, not the current job title."""
 
 
 class ResumeParserService:
@@ -482,6 +509,8 @@ class ResumeParserService:
         regex tier always produces a (possibly sparse) ParsedResume.
         """
         text = cls._extract_text(file_bytes, filename, mime_type)
+        if _is_linkedin_export_text(text):
+            text = _repair_linkedin_pdf_lines(text)
         regex_result = cls.parse_from_text(text)
 
         openrouter_key = getattr(settings, "openrouter_api_key", "") if settings else ""
@@ -828,6 +857,14 @@ class ResumeParserService:
         clean = _normalise_text(text)
         if not clean.strip():
             return ParsedResume()
+
+        if _is_linkedin_export_text(clean):
+            linkedin = _parse_linkedin_export(clean)
+            if linkedin and linkedin.full_name and linkedin.work_experience:
+                _normalise_parsed_resume(linkedin, source="linkedin_export")
+                _ensure_career_profile(linkedin)
+                return linkedin
+
         lines = [line.strip() for line in clean.splitlines() if line.strip()]
 
         full_name = _infer_name(lines)
@@ -902,9 +939,6 @@ class ResumeParserService:
         return max(0, round(total_months / 12))
 
 
-# ── Layout helpers (#16) ───────────────────────────────────────────────────────
-
-
 def _words_to_lines(words: list[dict], line_tolerance: float = 3.0) -> str:
     """
     Rebuild reading-order text from pdfplumber word boxes: group words whose
@@ -923,6 +957,30 @@ def _words_to_lines(words: list[dict], line_tolerance: float = 3.0) -> str:
     return "\n".join(
         " ".join(w["text"] for w in sorted(line, key=lambda w: w["x0"])) for line in lines
     )
+
+
+def _extract_pdf_text_linkedin_columns(file_bytes: bytes) -> str:
+    """LinkedIn 'Save to PDF' exports use a fixed sidebar + body column layout."""
+    try:
+        import pdfplumber
+
+        pages: list[str] = []
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                words = page.extract_words() or []
+                if not words:
+                    pages.append(page.extract_text() or "")
+                    continue
+                midpoint = page.width / 2
+                left = [w for w in words if (w["x0"] + w["x1"]) / 2 <= midpoint]
+                right = [w for w in words if (w["x0"] + w["x1"]) / 2 > midpoint]
+                left_text = _words_to_lines(left)
+                right_text = _words_to_lines(right)
+                pages.append("\n".join(part for part in (left_text, right_text) if part))
+        return "\n\n".join(pages)
+    except Exception as exc:
+        logger.warning("linkedin_pdf_column_extract_failed", error=str(exc)[:200])
+        return ""
 
 
 # ── Field-level merge ──────────────────────────────────────────────────────────
@@ -971,6 +1029,8 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
             continue
         if not primary_val:
             val = getattr(secondary, field)
+            if field == "full_name":
+                val = _clean_person_name(val)
             if val:
                 setattr(primary, field, val)
 
@@ -988,8 +1048,11 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
                 merged_skills.append(skill)
         primary.skills = merged_skills[:40]
 
-    # Prefer the richer list for nested structures.
-    if len(secondary.work_experience) > len(primary.work_experience):
+    # Prefer the richer list for nested structures (quality-weighted — a longer
+    # regex list full of "(5 Jahre)" artifacts must not stomp a shorter LLM list).
+    if _work_experience_score(secondary.work_experience) > _work_experience_score(
+        primary.work_experience
+    ):
         primary.work_experience = secondary.work_experience
     if len(secondary.education) > len(primary.education):
         primary.education = secondary.education
@@ -1692,6 +1755,7 @@ def _infer_notice_period(text: str) -> int | None:
 
 def _normalise_parsed_resume(parsed: ParsedResume, *, source: str) -> ParsedResume:
     """Canonicalize parser output from any tier and attach quality metadata."""
+    parsed.full_name = _clean_person_name(parsed.full_name)
     if parsed.raw_text:
         parsed.phone = _normalise_india_phone(parsed.phone) or _infer_india_phone(parsed.raw_text)
         parsed.linkedin_url = _normalise_profile_url(
@@ -2028,6 +2092,270 @@ def _normalise_text(text: str) -> str:
     return "\n".join(line.strip() for line in (text or "").replace("\r", "\n").splitlines())
 
 
+def _is_section_header_line(line: str) -> bool:
+    return line.lower().strip(" :") in _SECTION_HEADERS
+
+
+def _is_language_proficiency_line(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\((?:native|bilingual|professional|elementary|full professional|limited|"
+            r"muttersprache|verhandlungssicher|grundkenntnisse)\)",
+            line,
+            re.I,
+        )
+    )
+
+
+def _looks_like_location_line(line: str) -> bool:
+    if line.count(",") >= 2:
+        return True
+    return bool(
+        re.search(
+            r"\b(united states|vereinigte staaten|india|austria|greater .+ area)\b",
+            line,
+            re.I,
+        )
+    )
+
+
+def _clean_person_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    v = name.strip()
+    for prefix in ("kontakt ", "contact ", "profile ", "resume ", "cv "):
+        if v.lower().startswith(prefix):
+            v = v[len(prefix) :].strip()
+    if _is_section_header_line(v) or _is_language_proficiency_line(v):
+        return None
+    words = v.split()
+    if 1 <= len(words) <= 4 and not any(ch.isdigit() for ch in v):
+        return _titleize(v)
+    return v
+
+
+def _work_experience_score(work: list[WorkExperience]) -> int:
+    score = 0
+    for role in work or []:
+        if role.title:
+            score += 2
+        if role.company and not _looks_like_duration_fragment(role.company):
+            score += 3
+        if role.start_date:
+            score += 1
+    return score
+
+
+def _repair_linkedin_pdf_lines(text: str) -> str:
+    """Un-merge sidebar/body lines common in LinkedIn 'Save to PDF' exports."""
+    repaired: list[str] = []
+    for raw in _normalise_text(text).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        kontakt_name = re.match(r"^Kontakt\s+(.+)$", line, re.I)
+        if kontakt_name and _looks_like_person_name(kontakt_name.group(1).strip()):
+            repaired.extend(["Kontakt", kontakt_name.group(1).strip()])
+            continue
+        url_match = re.search(r"((?:https?://)?(?:www\.)?linkedin\.com/in/\S+)", line, re.I)
+        if url_match:
+            before = line[: url_match.start()].strip()
+            url = url_match.group(1)
+            if not url.lower().startswith("http"):
+                url = f"https://{url.lstrip('/')}"
+            after = line[url_match.end() :].strip()
+            if before:
+                repaired.append(before)
+            repaired.append(url)
+            if after:
+                repaired.append(after)
+            continue
+        linkedin_loc = re.match(r"^\(LinkedIn\)\s+(.+)$", line, re.I)
+        if linkedin_loc:
+            repaired.extend(["(LinkedIn)", linkedin_loc.group(1).strip()])
+            continue
+        if re.fullmatch(r"Languages\s+Zusammenfassung", line, re.I):
+            repaired.extend(["Languages", "Zusammenfassung"])
+            continue
+        repaired.append(line)
+    return "\n".join(repaired)
+
+
+def _is_linkedin_export_text(text: str) -> bool:
+    low = text.lower()
+    if "linkedin.com/in/" not in low:
+        return False
+    return any(
+        marker in low
+        for marker in (
+            "berufserfahrung",
+            "zusammenfassung",
+            "kontakt",
+            "page 1 of",
+            "(linkedin)",
+        )
+    )
+
+
+def _section_line_index(lines: list[str], markers: frozenset[str]) -> int | None:
+    for i, line in enumerate(lines):
+        if line.lower().strip(" :") in markers:
+            return i
+    return None
+
+
+def _parse_international_location(line: str) -> tuple[str | None, str | None]:
+    parts = [p.strip() for p in line.split(",") if p.strip()]
+    if not parts:
+        return None, None
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], parts[1]
+
+
+def _infer_linkedin_education(lines: list[str]) -> list[Education]:
+    start = _section_line_index(lines, _LINKEDIN_EDU_MARKERS)
+    if start is None:
+        return []
+    out: list[Education] = []
+    i = start + 1
+    while i < len(lines):
+        line = lines[i]
+        if _is_section_header_line(line) or re.match(r"page \d+ of", line, re.I):
+            break
+        if line.startswith("·") and len(line) < 8:
+            i += 1
+            continue
+        institution = line.strip()
+        degree: str | None = None
+        start_year: str | None = None
+        end_year: str | None = None
+        if i + 1 < len(lines):
+            nxt = lines[i + 1]
+            if "·" in nxt or re.search(r"\(\s*(?:19|20)\d{2}", nxt):
+                degree = nxt.split("·", 1)[0].strip()
+                years = re.findall(r"(?:19|20)\d{2}", nxt)
+                if years:
+                    start_year = years[0]
+                    end_year = years[-1]
+                i += 1
+        if institution and not re.match(r"page \d+ of", institution, re.I):
+            out.append(
+                Education(
+                    institution=institution,
+                    degree=degree,
+                    start_date=start_year,
+                    end_date=end_year,
+                )
+            )
+        i += 1
+    return out[:8]
+
+
+def _parse_linkedin_export(text: str) -> ParsedResume | None:
+    """Structured parse for LinkedIn 'Save to PDF' exports (incl. non-English UI)."""
+    text = _repair_linkedin_pdf_lines(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+
+    linkedin_url = _infer_profile_url(text, "linkedin")
+    full_name: str | None = None
+    headline: str | None = None
+    location_city: str | None = None
+    location_state: str | None = None
+
+    for i, line in enumerate(lines[:30]):
+        if line.lower() != "kontakt":
+            continue
+        j = i + 1
+        while j < len(lines) and (_looks_like_contact_line(lines[j]) or lines[j].startswith("(")):
+            if _looks_like_contact_line(lines[j]) and "linkedin.com" not in lines[j].lower():
+                j += 1
+                continue
+            if lines[j].startswith("("):
+                j += 1
+                continue
+            break
+        if j < len(lines):
+            full_name = _clean_person_name(lines[j])
+            j += 1
+        while j < len(lines) and _looks_like_contact_line(lines[j]):
+            j += 1
+        if j < len(lines) and not _is_section_header_line(lines[j]):
+            headline = lines[j]
+            j += 1
+        while j < len(lines) and lines[j].startswith("("):
+            j += 1
+        if j < len(lines) and _looks_like_location_line(lines[j]):
+            location_city, location_state = _parse_international_location(lines[j])
+        break
+
+    if not full_name:
+        for i, line in enumerate(lines[:25]):
+            if not _looks_like_person_name(line):
+                continue
+            if _is_language_proficiency_line(line) or _is_section_header_line(line):
+                continue
+            full_name = _clean_person_name(line)
+            if i + 1 < len(lines) and not _looks_like_contact_line(lines[i + 1]):
+                candidate_headline = lines[i + 1]
+                if (
+                    not _is_section_header_line(candidate_headline)
+                    and not _looks_like_person_name(candidate_headline)
+                    and len(candidate_headline) > 12
+                ):
+                    headline = candidate_headline
+            break
+
+    summary: str | None = None
+    sum_i = _section_line_index(lines, _LINKEDIN_SUMMARY_MARKERS)
+    exp_i = _section_line_index(lines, _LINKEDIN_EXP_MARKERS)
+    if sum_i is not None:
+        end = exp_i if exp_i is not None and exp_i > sum_i else len(lines)
+        chunks: list[str] = []
+        for line in lines[sum_i + 1 : end]:
+            if re.match(r"page \d+ of", line, re.I):
+                break
+            if _is_section_header_line(line):
+                break
+            if _is_language_proficiency_line(line):
+                continue
+            if line.lower() in _SKILL_SECTION_NOISE:
+                continue
+            chunks.append(line)
+        body = re.sub(r"\s+", " ", " ".join(chunks)).strip()
+        if len(body) >= 20:
+            summary = body[:600]
+
+    work_exp = _infer_work_experience(lines, linkedin_mode=True)
+    education = _infer_linkedin_education(lines)
+    current = next((w for w in work_exp if w.is_current), work_exp[0] if work_exp else None)
+    years_experience = _estimate_years_static(work_exp)
+
+    profile_headline = headline
+    if profile_headline and _looks_like_role_title(profile_headline) and not _looks_like_tagline(
+        profile_headline
+    ):
+        profile_headline = None
+
+    return ParsedResume(
+        full_name=full_name,
+        headline=profile_headline or None,
+        summary=summary,
+        current_title=current.title if current else None,
+        current_company=current.company if current else None,
+        years_experience=years_experience,
+        work_experience=work_exp,
+        education=education,
+        linkedin_url=linkedin_url,
+        location_city=location_city,
+        location_state=location_state,
+        skills=[],
+        raw_text=text,
+    )
+
+
 def _first_match(text: str, pattern: str) -> str | None:
     match = re.search(pattern, text, flags=re.IGNORECASE)
     return match.group(0).strip() if match else None
@@ -2041,11 +2369,15 @@ def _looks_like_contact_line(line: str) -> bool:
 
 def _infer_name(lines: list[str]) -> str | None:
     """Pick the most name-like line from the top of the resume."""
-    for line in lines[:10]:
+    for line in lines[:12]:
         lowered = line.lower().strip(" :")
         if lowered in _SECTION_HEADERS:
             continue
         if _looks_like_contact_line(line):
+            continue
+        if _is_language_proficiency_line(line):
+            continue
+        if lowered in _SKILL_SECTION_NOISE:
             continue
         words = line.split()
         # A name is short, mostly alphabetic, 1-4 tokens, no digits.
@@ -2058,11 +2390,19 @@ def _infer_name(lines: list[str]) -> str | None:
             continue
         # Title-case or ALL CAPS names both accepted.
         if line.isupper() or all(w[:1].isupper() for w in words if w):
-            return _titleize(line)
+            cleaned = _clean_person_name(line)
+            if cleaned:
+                return cleaned
     # Fallback: first non-header, non-contact line.
-    for line in lines[:8]:
-        if line.lower().strip(" :") not in _SECTION_HEADERS and not _looks_like_contact_line(line):
-            return line
+    for line in lines[:10]:
+        if (
+            line.lower().strip(" :") not in _SECTION_HEADERS
+            and not _looks_like_contact_line(line)
+            and not _is_language_proficiency_line(line)
+        ):
+            cleaned = _clean_person_name(line)
+            if cleaned and _looks_like_person_name(cleaned):
+                return cleaned
     return None
 
 
@@ -2123,7 +2463,13 @@ def _looks_like_duration_fragment(text: str | None) -> bool:
     if _DURATION_ONLY_RE.match(v):
         return True
     if re.fullmatch(
-        r"\(\s*\d+\s*(?:month|months|year|years|yr|yrs|mo|mos)\s*\)",
+        r"\(\s*\d+\s*(?:month|months|year|years|yr|yrs|mo|mos|jahr|jahre|monat|monate)\s*\)",
+        v,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"\(?\s*\d+\s*(?:jahr|jahre|monat|monate)\s*\)?",
         v,
         re.I,
     ):
@@ -2133,7 +2479,7 @@ def _looks_like_duration_fragment(text: str | None) -> bool:
     if re.fullmatch(r"\d+\s*(?:mos|mo|yr|yrs)\b", v, re.I):
         return True
     if len(v) <= 32 and re.search(
-        r"\b\d+\s*(?:mos|mo|yr|yrs|month|months|year|years)\b",
+        r"\b\d+\s*(?:mos|mo|yr|yrs|month|months|year|years|jahr|jahre|monat|monate)\b",
         v,
         re.I,
     ):
@@ -2264,6 +2610,14 @@ def _looks_like_role_title(text: str) -> bool:
         "senior",
         "junior",
         "founder",
+        "partner",
+        "investor",
+        "ceo",
+        "cto",
+        "cfo",
+        "president",
+        "advisor",
+        "principal",
     )
     return any(k in text.lower() for k in role_keywords)
 
@@ -2291,18 +2645,18 @@ _MONTHS = {
     m: i + 1
     for i, names in enumerate(
         [
-            ("jan", "january"),
-            ("feb", "february"),
-            ("mar", "march"),
+            ("jan", "january", "januar"),
+            ("feb", "february", "februar"),
+            ("mar", "march", "märz", "marz"),
             ("apr", "april"),
-            ("may",),
-            ("jun", "june"),
-            ("jul", "july"),
+            ("may", "mai"),
+            ("jun", "june", "juni"),
+            ("jul", "july", "juli"),
             ("aug", "august"),
             ("sep", "sept", "september"),
-            ("oct", "october"),
+            ("oct", "october", "okt", "oktober"),
             ("nov", "november"),
-            ("dec", "december"),
+            ("dec", "december", "dez", "dezember"),
         ]
     )
     for m in names
@@ -2446,7 +2800,24 @@ def _infer_location(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
+def _looks_like_description_fragment(text: str | None) -> bool:
+    if not text:
+        return False
+    v = text.strip()
+    if v.count(" ") >= 7:
+        return True
+    if len(v) > 48 and v.endswith("."):
+        return True
+    if re.search(r"\b(dm me|learn more|click here)\b", v, re.I):
+        return True
+    return False
+
+
+def _infer_work_experience(
+    lines: list[str],
+    *,
+    linkedin_mode: bool = False,
+) -> list[WorkExperience]:
     """
     Extract multiple work-experience entries by anchoring on date ranges.
 
@@ -2462,10 +2833,15 @@ def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
     )
     entries: list[WorkExperience] = []
     in_education = False
+    exp_start = _section_line_index(lines, _LINKEDIN_EXP_MARKERS) if linkedin_mode else None
     for i, line in enumerate(lines):
         header = line.lower().strip(" :")
         if header in _SECTION_HEADERS:
-            in_education = "education" in header or "academic" in header
+            in_education = header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
+            continue
+        if linkedin_mode and exp_start is not None and i < exp_start:
+            continue
+        if re.match(r"page \d+ of", line, re.I):
             continue
         m = _DATE_RANGE.search(line)
         if not m:
@@ -2482,22 +2858,55 @@ def _infer_work_experience(lines: list[str]) -> list[WorkExperience]:
         # fragments like "(6 months)"), are candidates for title/company.
         candidates: list[str] = []
         same_line = _DATE_RANGE.sub("", line).strip(" -–—|,·")
+        same_line = _DURATION_SUFFIX_RE.sub("", same_line).strip(" -–—|,·")
         if same_line and not _looks_like_duration_fragment(same_line):
             candidates.append(same_line)
-        for j in range(i - 1, max(-1, i - 5), -1):
-            prev = lines[j].strip()
-            if not prev or _looks_like_contact_line(prev):
-                continue
-            if _looks_like_duration_fragment(prev):
-                continue
-            header = prev.lower().strip(" :")
-            if header in _SECTION_HEADERS:
-                break
-            candidates.append(prev)
 
-        title, company = _extract_title_company_from_candidates(candidates)
+        if linkedin_mode:
+            for j in range(i - 1, max(-1, i - 4), -1):
+                prev = lines[j].strip()
+                if not prev or _looks_like_contact_line(prev):
+                    continue
+                if _looks_like_duration_fragment(prev):
+                    continue
+                if _looks_like_location_line(prev):
+                    continue
+                if _is_section_header_line(prev):
+                    break
+                if _is_language_proficiency_line(prev):
+                    continue
+                candidates.append(prev)
+            title, company = _extract_title_company_from_candidates(candidates)
+            if i >= 2:
+                title_line = lines[i - 1].strip()
+                company_line = lines[i - 2].strip()
+                if (
+                    _looks_like_role_title(title_line)
+                    and company_line
+                    and not _looks_like_duration_fragment(company_line)
+                    and not _looks_like_location_line(company_line)
+                    and not _looks_like_description_fragment(company_line)
+                    and not _is_section_header_line(company_line)
+                    and not re.match(r"page \d+ of", company_line, re.I)
+                ):
+                    title = title_line
+                    company = _sanitize_company_name(company_line) or company
+        else:
+            for j in range(i - 1, max(-1, i - 5), -1):
+                prev = lines[j].strip()
+                if not prev or _looks_like_contact_line(prev):
+                    continue
+                if _looks_like_duration_fragment(prev):
+                    continue
+                header = prev.lower().strip(" :")
+                if header in _SECTION_HEADERS:
+                    break
+                candidates.append(prev)
+            title, company = _extract_title_company_from_candidates(candidates)
 
         if title or company:
+            if _looks_like_description_fragment(company) or _looks_like_description_fragment(title):
+                continue
             entries.append(
                 WorkExperience(
                     company=company,
@@ -2516,7 +2925,25 @@ def _looks_like_person_name(text: str) -> bool:
     """Two capitalized tokens with no company suffix — likely a résumé header name."""
     v = text.strip()
     parts = [p for p in re.split(r"\s+", v) if p]
-    if len(parts) != 2:
+    if len(parts) < 2 or len(parts) > 4:
+        return False
+    banned = {
+        "languages",
+        "zusammenfassung",
+        "kontakt",
+        "berufserfahrung",
+        "ausbildung",
+        "summary",
+        "experience",
+        "education",
+        "contact",
+        "profile",
+        "spanish",
+        "english",
+        "polish",
+        "german",
+    }
+    if any(p.lower() in banned for p in parts):
         return False
     if not all(p[0].isupper() for p in parts):
         return False
@@ -2655,7 +3082,7 @@ def _infer_education(lines: list[str]) -> list[Education]:
     for line in lines:
         header = line.lower().strip(" :")
         if header in _SECTION_HEADERS:
-            in_education = "education" in header or "academic" in header
+            in_education = header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
             continue
         if _looks_like_contact_line(line):
             continue
@@ -2740,8 +3167,8 @@ def _infer_summary(
     # Prefer an explicit Summary/Objective section if present.
     text = "\n".join(lines)
     m = re.search(
-        r"(?:professional summary|summary|profile|objective|about me|about)\s*[:\n]\s*"
-        r"(?P<body>.+?)(?:\n\s*\n|experience|education|skills|$)",
+        r"(?:professional summary|summary|zusammenfassung|profile|objective|about me|about|über mich)\s*[:\n]?\s*"
+        r"(?P<body>.+?)(?:\n\s*\n|berufserfahrung|experience|education|ausbildung|skills|$)",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
