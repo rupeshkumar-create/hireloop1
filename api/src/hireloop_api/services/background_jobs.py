@@ -34,6 +34,7 @@ CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
 CAREER_PATH_UPDATE = "career_path_update"
 PROFILE_COMPLETENESS = "profile_completeness"
 TAILORED_RESUME = "tailored_resume"
+CAREER_PATH_RESUMES = "career_path_resumes"
 LEARNING_ROADMAP = "learning_roadmap"
 MATCH_EMBED_ALL = "match_embed_all"
 MATCH_RECOMPUTE_ALL = "match_recompute_all"
@@ -321,6 +322,17 @@ async def _handle_profile_completeness(settings: Settings, payload: dict[str, An
     await recompute_completeness_only(settings, str(payload["candidate_id"]))
 
 
+async def _handle_career_path_resumes(settings: Settings, payload: dict[str, Any]) -> None:
+    # LLM-heavy (up to 3 resume builds) — runs here so no request connection is
+    # held for minutes; the worker uses one short-lived pooled connection.
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.career_path_resume import generate_path_resumes
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        await generate_path_resumes(conn, str(payload["candidate_id"]), settings)
+
+
 async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.routes.tailored_resumes import _run_tailor_task
 
@@ -457,6 +469,7 @@ _HANDLERS: dict[str, Handler] = {
     CAREER_PATH_UPDATE: _handle_career_path_update,
     PROFILE_COMPLETENESS: _handle_profile_completeness,
     TAILORED_RESUME: _handle_tailored_resume,
+    CAREER_PATH_RESUMES: _handle_career_path_resumes,
     LEARNING_ROADMAP: _handle_learning_roadmap,
     MATCH_EMBED_ALL: _handle_match_embed_all,
     MATCH_RECOMPUTE_ALL: _handle_match_recompute_all,

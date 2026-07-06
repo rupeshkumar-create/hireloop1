@@ -46,7 +46,9 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
         dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
         pool_kwargs: dict[str, Any] = {
             "min_size": 2,
-            "max_size": 10,
+            # 20: kickoff bursts (path build + feed + find-jobs + chat warmup in
+            # parallel) exhausted 10 and 503'd unrelated routes via acquire timeout.
+            "max_size": 20,
             "command_timeout": 30,
         }
         # Supabase (direct or transaction pooler) requires statement cache off with PgBouncer.

@@ -277,13 +277,18 @@ async def get_career_path(
 async def generate_career_path(
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
-    """(Re)generate the candidate's career path from their profile."""
+    """(Re)generate the candidate's career path from their profile.
+
+    Deliberately NOT Depends(get_db): the LLM build takes 30-45s and a request
+    connection held that long (× concurrent mounts waiting on the in-flight
+    build) starves the pool for every other route.
+    """
     # #48: full path generation is a heavy LLM call — cap per user per hour.
     check_rate_limit(str(current_user["id"]), "career_path_generate", max_per_hour=10)
-    candidate_id = await _resolve_candidate_id(db, current_user["id"])
     pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        candidate_id = await _resolve_candidate_id(db, current_user["id"])
     try:
         path = await CareerPathService.generate(pool, candidate_id, settings)
     except ValueError as exc:
@@ -569,15 +574,26 @@ async def generate_career_path_resumes(
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
-    from hireloop_api.services.career_path_resume import generate_path_resumes
+    """Queue per-path resume generation and return the current list.
+
+    Generation is several LLM calls (one per career path, minutes total) — it
+    runs on the background worker so no request connection is held through it;
+    holding one here starved the pool and 503'd unrelated routes. The resumes
+    page polls /path-resumes and shows per-row status.
+    """
+    from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES, enqueue_job
+    from hireloop_api.services.career_path_resume import list_path_resumes
 
     candidate_id = await _resolve_candidate_id(db, current_user["id"])
     check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5)
-    try:
-        resumes = await generate_path_resumes(db, candidate_id, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"resumes": resumes}
+    await enqueue_job(
+        db,
+        kind=CAREER_PATH_RESUMES,
+        payload={"candidate_id": candidate_id},
+        idempotency_key=f"career_path_resumes:{candidate_id}",
+    )
+    resumes = await list_path_resumes(db, candidate_id)
+    return {"resumes": resumes, "generating": True}
 
 
 @router.get("/path-resumes/{resume_id}/download")
