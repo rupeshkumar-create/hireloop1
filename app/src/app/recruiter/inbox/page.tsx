@@ -1,37 +1,26 @@
 "use client";
 
 /**
- * Recruiter inbox — P18
- * Cross-role activity: roles list + recent intro events.
+ * Recruiter inbox — roles strip + master/detail intro chats.
  */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Briefcase,
   ChevronRight,
-  Clock,
-  Inbox,
   Plus,
   RefreshCw,
 } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
-import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
-import { IntroChat } from "@/components/intros/IntroChat";
+import {
+  RecruiterIntrosInboxPanel,
+  useRecruiterInboxRealtime,
+  type RecruiterInboxItem,
+} from "@/components/intros/RecruiterIntrosInboxPanel";
+import { Badge, Button, EmptyState } from "@/components/ui";
 import { RecruiterBreadcrumbs } from "@/components/ux";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
-import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
-
-type InboxItem = {
-  id: string;
-  status: string;
-  direction?: string;
-  job_title: string;
-  candidate_name?: string;
-  role_title?: string | null;
-  updated_at: string;
-};
 
 type RoleRow = {
   id: string;
@@ -42,234 +31,53 @@ type RoleRow = {
 };
 
 type InboxData = {
-  items: InboxItem[];
+  items: RecruiterInboxItem[];
   roles: RoleRow[];
 };
 
-const INTRO_STATUS_BADGE: Record<string, { tone: "muted" | "strong" | "accent"; label: string }> = {
-  pending:           { tone: "accent",  label: "Needs response"  },
-  invited:           { tone: "muted",   label: "Invited"         },
-  recruiter_notified:{ tone: "accent",  label: "Notified"        },
-  draft_ready:       { tone: "accent",  label: "Draft ready"     },
-  sent:              { tone: "strong",  label: "Email sent"      },
-  accepted:          { tone: "strong",  label: "Accepted ✓"      },
-  declined:          { tone: "muted",   label: "Declined"        },
-  expired:           { tone: "muted",   label: "Expired"         },
-};
-
 const ROLE_STATUS_BADGE: Record<string, { tone: "muted" | "strong" | "accent" }> = {
-  active:   { tone: "accent" },
-  paused:   { tone: "muted"  },
-  closed:   { tone: "muted"  },
-  draft:    { tone: "muted"  },
+  active: { tone: "accent" },
+  paused: { tone: "muted" },
+  closed: { tone: "muted" },
+  draft: { tone: "muted" },
 };
 
 export default function RecruiterInboxPage() {
-  const { toast } = useToast();
-  const [data, setData]       = useState<InboxData | null>(null);
+  const [data, setData] = useState<InboxData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
-  const [responding, setResponding] = useState<string | null>(null);
-  const [selectedIntroId, setSelectedIntroId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function respond(introId: string, accept: boolean) {
-    setResponding(introId);
-    try {
-      await apiFetch(`/api/v1/recruiter/intros/${introId}/respond?accept=${accept}`, {
-        method: "POST",
-      });
-      setData((prev) =>
-        prev
-          ? {
-              ...prev,
-              items: prev.items.map((i) =>
-                i.id === introId
-                  ? { ...i, status: accept ? "accepted" : "declined" }
-                  : i
-              ),
-            }
-          : prev
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setResponding(null);
-    }
-  }
-
-  function toggleChat(introId: string) {
-    setSelectedIntroId((prev) => (prev === introId ? null : introId));
-  }
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const d = await apiFetch<InboxData>("/api/v1/recruiter/inbox");
       setData(d);
-      const chatItems = (d.items ?? []).filter((i) => i.status === "accepted");
-      setSelectedIntroId((prev) => {
-        if (prev && chatItems.some((i) => i.id === prev)) return prev;
-        return chatItems[0]?.id ?? null;
-      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => { void load(); }, []);
-
-  // Live: refetch when any of this recruiter's intros change (RLS scopes
-  // delivery). Reflects new candidate requests + accept/decline instantly.
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("intro_requests:recruiter")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "intro_requests" },
-        () => { void load(); }
-      )
-      .subscribe();
-    return () => { void supabase.removeChannel(channel); };
   }, []);
 
-  function timeAgo(iso: string) {
-    const diff = Date.now() - new Date(iso).getTime();
-    const m = Math.floor(diff / 60000);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    return `${Math.floor(h / 24)}d ago`;
-  }
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const items = (data?.items ?? []).filter(
-    (item) =>
-      !(
-        item.direction === "candidate_to_hm" &&
-        ["draft_ready", "sent"].includes(item.status)
-      )
-  );
-  const needsAction = items.filter(
-    (item) =>
-      item.direction === "candidate_to_recruiter" && item.status === "pending"
-  );
-  const inProgress = items.filter(
-    (item) =>
-      item.status === "accepted" ||
-      (item.direction === "recruiter_to_candidate" &&
-        ["pending", "invited"].includes(item.status))
-  );
-  const other = items.filter(
-    (item) => !needsAction.includes(item) && !inProgress.includes(item)
-  );
-
-  function renderIntroItem(item: InboxItem) {
-    const meta = INTRO_STATUS_BADGE[item.status] ?? {
-      tone: "muted" as const,
-      label: item.status,
-    };
-    const fromCandidate = item.direction === "candidate_to_recruiter";
-    const canRespond = fromCandidate && item.status === "pending";
-    const canChat = item.status === "accepted";
-    const chatOpen = selectedIntroId === item.id;
-    return (
-      <div
-        key={item.id}
-        role="button"
-        tabIndex={0}
-        onClick={() => canChat && setSelectedIntroId(item.id)}
-        onKeyDown={(e) => {
-          if (canChat && (e.key === "Enter" || e.key === " ")) {
-            e.preventDefault();
-            setSelectedIntroId(item.id);
-          }
-        }}
-        className={cn(
-          "rounded-lg border px-4 py-3 transition-colors",
-          chatOpen && canChat
-            ? "border-accent bg-ink-50"
-            : "border-ink-100 bg-paper-1 hover:border-ink-200",
-          canChat && "cursor-pointer",
-        )}
-      >
-        <div className="flex items-center gap-3">
-          <Clock className="h-4 w-4 text-ink-300 shrink-0" strokeWidth={1.5} />
-          <div className="flex-1 min-w-0">
-            <p className="text-small text-ink-900 truncate">
-              {item.candidate_name && (
-                <span className="font-medium">
-                  {item.candidate_name}
-                  {fromCandidate ? " wants an intro · " : " → "}
-                </span>
-              )}
-              {item.role_title ?? item.job_title}
-            </p>
-          </div>
-          <Badge tone={meta.tone}>{meta.label}</Badge>
-          <span className="text-micro text-ink-300 shrink-0">
-            {timeAgo(item.updated_at)}
-          </span>
-        </div>
-
-        {(canRespond || canChat) && (
-          <div className="flex items-center justify-end gap-2 mt-2">
-            {canRespond && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void respond(item.id, false)}
-                  disabled={responding === item.id}
-                >
-                  Decline
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void respond(item.id, true)}
-                  loading={responding === item.id}
-                >
-                  Accept
-                </Button>
-              </>
-            )}
-            {canChat && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleChat(item.id);
-                }}
-              >
-                {chatOpen ? "Selected" : "Open chat"}
-              </Button>
-            )}
-          </div>
-        )}
-
-        {canChat && chatOpen && (
-          <div className="mt-3 h-80" onClick={(e) => e.stopPropagation()}>
-            <IntroChat introId={item.id} side="recruiter" fillHeight />
-          </div>
-        )}
-      </div>
-    );
-  }
+  useRecruiterInboxRealtime(() => {
+    void load();
+  });
 
   return (
-    <div className="px-4 md:px-6 py-6 space-y-8 max-w-3xl mx-auto">
+    <div className="flex flex-col h-full min-h-0">
+      <div className="shrink-0 px-4 md:px-6 py-4 border-b border-ink-100 space-y-4">
         <RecruiterBreadcrumbs crumbs={[{ label: "Inbox" }]} />
 
-        {/* ── Header ─────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-h2 font-semibold text-ink-900">Inbox</h1>
             <p className="text-small text-ink-500 mt-0.5">
-              Roles, intros, and candidate activity
+              Candidate intros and direct chats
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -300,18 +108,9 @@ export default function RecruiterInboxPage() {
           </div>
         )}
 
-        {/* ── Needs action ───────────────────────────────────────────── */}
-        {needsAction.length > 0 && (
-          <section>
-            <h2 className="text-h3 text-ink-900 mb-3">Needs your response</h2>
-            <div className="space-y-2">{needsAction.map(renderIntroItem)}</div>
-          </section>
-        )}
-
-        {/* ── Roles ────────────────────────────────────────────────── */}
         <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-h3 text-ink-900">Your roles</h2>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-small font-semibold text-ink-900">Your roles</h2>
             {(data?.roles?.length ?? 0) > 0 && (
               <span className="text-micro text-ink-500">
                 {data!.roles.length} role{data!.roles.length !== 1 ? "s" : ""}
@@ -319,10 +118,10 @@ export default function RecruiterInboxPage() {
             )}
           </div>
 
-          {loading && (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-16 rounded-lg bg-ink-100 animate-skeleton" />
+          {loading && !data && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-16 w-48 shrink-0 rounded-lg bg-ink-100 animate-skeleton" />
               ))}
             </div>
           )}
@@ -343,50 +142,35 @@ export default function RecruiterInboxPage() {
             />
           )}
 
-          {!loading && (data?.roles ?? []).length > 0 && (
-            <div className="space-y-2">
+          {(data?.roles ?? []).length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {data!.roles.map((r) => {
                 const badgeMeta = ROLE_STATUS_BADGE[r.status] ?? { tone: "muted" as const };
                 return (
                   <div
                     key={r.id}
-                    className="rounded-lg border border-ink-100 bg-paper-1 px-4 py-3.5 hover:border-ink-300 hover:shadow-1 transition-all group"
+                    className="shrink-0 w-[min(100%,240px)] rounded-lg border border-ink-100 bg-paper-1 px-3 py-2.5 hover:border-ink-200 transition-colors"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-2">
                       <Link
                         href={`/recruiter/roles/${r.id}/intake`}
-                        className="w-8 h-8 rounded-md bg-ink-900 flex items-center justify-center shrink-0"
+                        className="min-w-0 flex-1"
                       >
-                        <Briefcase className="h-4 w-4 text-paper-0" strokeWidth={1.5} />
-                      </Link>
-                      <Link
-                        href={`/recruiter/roles/${r.id}/intake`}
-                        className="flex-1 min-w-0"
-                      >
-                        <div className="flex items-center gap-2">
-                          <p className="text-body font-medium text-ink-900 truncate">
-                            {r.title}
-                          </p>
-                          <Badge tone={badgeMeta.tone} className="capitalize shrink-0">
+                        <p className="text-small font-medium text-ink-900 truncate">
+                          {r.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge tone={badgeMeta.tone} className="capitalize text-[10px]">
                             {r.status}
                           </Badge>
+                          <span className="text-micro text-ink-500">
+                            {r.pipeline_count} in pipeline
+                          </span>
                         </div>
-                        <p className="text-micro text-ink-500">
-                          {r.pipeline_count} in pipeline
-                        </p>
                       </Link>
                       <ShareRoleLink publicRoleUrl={r.public_role_url} />
-                      <Link
-                        href={`/recruiter/roles/${r.id}/pipeline`}
-                        className="text-micro text-ink-500 hover:text-ink-800 shrink-0"
-                      >
-                        Pipeline
-                      </Link>
-                      <Link href={`/recruiter/roles/${r.id}/intake`}>
-                        <ChevronRight
-                          className="h-4 w-4 text-ink-300 group-hover:text-ink-500 transition-colors shrink-0"
-                          strokeWidth={1.5}
-                        />
+                      <Link href={`/recruiter/roles/${r.id}/pipeline`}>
+                        <ChevronRight className="h-4 w-4 text-ink-300" strokeWidth={1.5} />
                       </Link>
                     </div>
                   </div>
@@ -395,35 +179,17 @@ export default function RecruiterInboxPage() {
             </div>
           )}
         </section>
+      </div>
 
-        {/* ── In progress ─────────────────────────────────────────── */}
-        {inProgress.length > 0 && (
-          <section>
-            <h2 className="text-h3 text-ink-900 mb-3">In progress</h2>
-            <div className="space-y-2">{inProgress.map(renderIntroItem)}</div>
-          </section>
-        )}
-
-        {/* ── Other activity ───────────────────────────────────────── */}
-        <section>
-          <h2 className="text-h3 text-ink-900 mb-3">All intro activity</h2>
-
-          {!loading && other.length === 0 && needsAction.length === 0 && inProgress.length === 0 && (
-            <Card>
-              <CardBody>
-                <div className="flex items-center gap-3 text-ink-500 text-small py-2">
-                  <Inbox className="h-5 w-5 text-ink-300" strokeWidth={1.5} />
-                  <p>No intro activity yet. Nitya will notify you when candidates request intros.</p>
-                </div>
-              </CardBody>
-            </Card>
-          )}
-
-          {!loading && other.length > 0 && (
-            <div className="space-y-2">{other.map(renderIntroItem)}</div>
-          )}
-        </section>
-
+      <div className="flex-1 min-h-0">
+        <RecruiterIntrosInboxPanel
+          items={data?.items ?? []}
+          loading={loading && !data}
+          onItemsChange={(items) =>
+            setData((prev) => (prev ? { ...prev, items } : prev))
+          }
+        />
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
   }
 
   const fullBleed = Boolean(
-    pathname?.match(/\/recruiter\/roles\/[^/]+\/(intake|pipeline)/)
+    pathname?.match(/\/recruiter\/(inbox|roles\/[^/]+\/(intake|pipeline))/)
   );
 
   const isActive = (item: RecruiterNavItem) => {
