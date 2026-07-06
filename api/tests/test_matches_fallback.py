@@ -159,6 +159,116 @@ class CachedAccorOnlyDb(CachedAccorDb):
         return 1
 
 
+class MatchFeedTestJobsOnlyDb:
+    """Cached scores contain only Hireloop test roles — market feed must still load."""
+
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        assert "public.candidates" in query
+        return {
+            "id": self.candidate_id,
+            "current_title": "Go-To-Market Lead",
+            "current_company": "Candidately",
+            "headline": "B2B SaaS GTM",
+            "summary": "Staffing SaaS growth",
+            "years_experience": 10,
+            "skills": ["sales", "marketing", "automation"],
+            "location_city": "Bengaluru",
+            "location_state": "Karnataka",
+            "expected_ctc_min": None,
+            "expected_ctc_max": None,
+            "remote_preference": "any",
+            "open_to_relocation": False,
+            "location_scope": "country",
+            "aarya_state": {},
+            "market": "IN",
+            "target_titles": ["Head of GTM"],
+        }
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        if "FROM public.match_scores" in query:
+            return [
+                {
+                    "job_id": uuid.uuid4(),
+                    "title": "Go-To-Market Lead — AI Resume Builder (Staffing SaaS)",
+                    "company_name": "Hireloop Test Co",
+                    "company_domain": "hireloop-test.in",
+                    "location_city": "Bengaluru",
+                    "location_state": "Karnataka",
+                    "is_remote": True,
+                    "employment_type": "full_time",
+                    "seniority": "lead",
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "salary_currency": "INR",
+                    "skills_required": ["sales", "saas"],
+                    "description": "Internal test role.",
+                    "apply_url": "https://example.com/test",
+                    "overall_score": 0.75,
+                    "skills_score": 0.75,
+                    "experience_score": 0.75,
+                    "location_score": 0.75,
+                    "ctc_score": 0.75,
+                    "explanation": "Hireloop test role",
+                    "llm_rationale": None,
+                    "llm_rationale_at": None,
+                    "computed_at": datetime.now(UTC),
+                    "has_kit": False,
+                    "intro_status": None,
+                }
+            ]
+        if "FROM public.jobs" in query:
+            return [
+                {
+                    "job_id": uuid.uuid4(),
+                    "title": "Growth Manager",
+                    "company_name": "DrinkPrime",
+                    "company_domain": None,
+                    "location_city": "Bengaluru",
+                    "location_state": "Karnataka",
+                    "is_remote": False,
+                    "employment_type": "full_time",
+                    "seniority": "senior",
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "salary_currency": "INR",
+                    "skills_required": ["marketing", "growth"],
+                    "description": "Own growth for a consumer subscription brand.",
+                    "apply_url": "https://example.com/growth",
+                    "skills_overlap": 1,
+                    "scraped_at": datetime.now(UTC),
+                }
+            ]
+        return []
+
+    async def executemany(self, query: str, args: object) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_score_candidate(self: object, candidate_id: str, limit: int = 200) -> int:
+        return 0
+
+    monkeypatch.setattr(matches.MatchingEngine, "score_candidate", fake_score_candidate)
+
+    result = await matches.get_match_feed(
+        min_score=0.45,
+        limit=10,
+        offset=0,
+        current_user={"id": str(uuid.uuid4())},
+        db=MatchFeedTestJobsOnlyDb(),  # type: ignore[arg-type]
+    )
+
+    companies = [row["company_name"] for row in result]
+    assert "DrinkPrime" in companies
+    assert "Hireloop Test Co" not in companies or len(companies) > 1
+
+
 @pytest.mark.asyncio
 async def test_match_feed_falls_back_to_visible_jobs_when_scores_are_empty(
     monkeypatch: pytest.MonkeyPatch,

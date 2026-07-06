@@ -30,7 +30,11 @@ from hireloop_api.services.job_preferences import (
     remote_filter_sql,
 )
 from hireloop_api.services.job_present import resolve_company_logo_url
-from hireloop_api.services.match_quality import DEFAULT_FEED_MIN_SCORE, should_persist_match
+from hireloop_api.services.match_quality import (
+    DEFAULT_FEED_MIN_SCORE,
+    MIN_PERSIST_SCORE,
+    should_persist_match,
+)
 from hireloop_api.services.match_rationale import generate_match_rationales
 from hireloop_api.services.matching import (
     MatchingEngine,
@@ -57,6 +61,73 @@ router = APIRouter(prefix="/matches", tags=["matches"])
 # Per-candidate locks so a fresh candidate's first feed load scores exactly once,
 # even when several requests race right after signup (see get_match_feed).
 _first_score_locks: dict[str, asyncio.Lock] = {}
+
+
+def _is_test_match_row(row: asyncpg.Record | dict) -> bool:
+    data = dict(row)
+    return is_test_job(
+        {
+            "company_name": data.get("company_name"),
+            "company_domain": data.get("company_domain"),
+            "recruiter_email": data.get("recruiter_email"),
+        }
+    )
+
+
+def _market_match_rows(rows: list[asyncpg.Record]) -> list[asyncpg.Record]:
+    return [row for row in rows if not _is_test_match_row(row)]
+
+
+def _market_feed_items(items: list[dict]) -> list[dict]:
+    return [item for item in items if not is_test_job(item)]
+
+
+def _merge_feed_results(
+    primary: list[dict],
+    supplemental: list[dict],
+    *,
+    limit: int,
+) -> list[dict]:
+    seen = {str(item["job_id"]) for item in primary}
+    merged = list(primary)
+    for item in supplemental:
+        job_id = str(item["job_id"])
+        if job_id in seen:
+            continue
+        seen.add(job_id)
+        merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+async def _supplement_market_feed(
+    db: asyncpg.Connection,
+    *,
+    candidate: dict,
+    result: list[dict],
+    min_score: float,
+    limit: int,
+    remote_preference: str,
+    market: str,
+) -> list[dict]:
+    """Fill a thin market feed from the lexical fallback pool."""
+    if len(result) >= limit:
+        return result
+    for floor in (min_score, MIN_PERSIST_SCORE):
+        fallback = await _fetch_fallback_match_rows(
+            db,
+            candidate=candidate,
+            min_score=floor,
+            limit=limit,
+            offset=0,
+            remote_preference=remote_preference,
+            market=market,
+        )
+        result = _merge_feed_results(result, _market_feed_items(fallback), limit=limit)
+        if len(result) >= limit:
+            break
+    return result
 
 
 # ── Auth helper ───────────────────────────────────────────────────────────────
@@ -185,11 +256,12 @@ async def get_match_feed(
         market=market,
     )
 
-    if not rows and offset == 0:
+    if not _market_match_rows(rows) and offset == 0:
         # Single-flight: right after signup the feed, count, and home panel can all
         # request page 1 concurrently — without a lock each one runs the full
         # candidate-vs-jobs scoring pass (N-fold DB/LLM work and latency). The lock
         # serialises them; whoever waited re-checks the cache and skips scoring.
+        # Test-job rows alone do not count — they must not block market scoring.
         lock = _first_score_locks.setdefault(str(candidate["id"]), asyncio.Lock())
         async with lock:
             rows = await _fetch_cached_match_rows(
@@ -201,7 +273,7 @@ async def get_match_feed(
                 remote_preference=remote_pref,
                 market=market,
             )
-            if not rows:
+            if not _market_match_rows(rows):
                 engine = MatchingEngine(db)
                 scored = await engine.score_candidate(str(candidate["id"]), limit=max(50, limit))
                 logger.info(
@@ -221,16 +293,28 @@ async def get_match_feed(
                     )
         _first_score_locks.pop(str(candidate["id"]), None)
 
-    result = _serialize_current_quality_cached_rows(
-        rows, candidate=dict(candidate), min_score=min_score
+    result = _market_feed_items(
+        _serialize_current_quality_cached_rows(
+            rows, candidate=dict(candidate), min_score=min_score
+        )
     )
     if not result:
-        result = await _fetch_fallback_match_rows(
+        result = await _supplement_market_feed(
             db,
             candidate=dict(candidate),
+            result=[],
             min_score=min_score,
             limit=limit,
-            offset=offset,
+            remote_preference=remote_pref,
+            market=market,
+        )
+    elif len(result) < limit:
+        result = await _supplement_market_feed(
+            db,
+            candidate=dict(candidate),
+            result=result,
+            min_score=min_score,
+            limit=limit,
             remote_preference=remote_pref,
             market=market,
         )
@@ -465,13 +549,14 @@ async def get_match_feed_count(
         remote_preference=remote_pref,
         market=market,
     )
-    total = len(
+    market_items = _market_feed_items(
         _serialize_current_quality_cached_rows(
             cached_rows,
             candidate=dict(candidate),
             min_score=min_score,
         )
     )
+    total = len(market_items)
 
     if total == 0:
         engine = MatchingEngine(db)
@@ -491,13 +576,14 @@ async def get_match_feed_count(
                 remote_preference=remote_pref,
                 market=market,
             )
-            total = len(
+            market_items = _market_feed_items(
                 _serialize_current_quality_cached_rows(
                     cached_rows,
                     candidate=dict(candidate),
                     min_score=min_score,
                 )
             )
+            total = len(market_items)
 
     if total == 0:
         # No real scored matches above the floor. Fall back to the quick lexical
@@ -513,7 +599,18 @@ async def get_match_feed_count(
             remote_preference=remote_pref,
             market=market,
         )
-        total = len(fallback)
+        total = len(_market_feed_items(fallback))
+        if total == 0 and min_score > MIN_PERSIST_SCORE:
+            relaxed = await _fetch_fallback_match_rows(
+                db,
+                candidate=dict(candidate),
+                min_score=MIN_PERSIST_SCORE,
+                limit=50,
+                offset=0,
+                remote_preference=remote_pref,
+                market=market,
+            )
+            total = len(_market_feed_items(relaxed))
 
     test_jobs = await fetch_test_jobs_for_feed(
         db,
@@ -841,7 +938,11 @@ async def _fetch_fallback_match_rows(
     # Order by the computed score (career-path + skill aware), not just the SQL
     # ordering, so aspirational target-title matches surface.
     ranked.sort(key=lambda r: r["overall_score"], reverse=True)
-    filtered = [row for row in ranked if row["overall_score"] >= min_score]
+    filtered = [
+        row
+        for row in ranked
+        if row["overall_score"] >= min_score and not is_test_job(row)
+    ]
     return filtered[offset : offset + limit]
 
 
