@@ -2,16 +2,17 @@
 
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
 import { ArrowRight, Check, Sparkles } from "@/components/brand/icons";
 import { ChatPreviewLazy } from "@/components/landing/ChatPreviewLazy";
+import {
+  LANDING_AGENTS,
+  type LandingAudience,
+} from "@/components/landing/landing-audience";
 import { FadeUp, Stagger, StaggerItem } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
 
-type Audience = "candidate" | "recruiter";
-
 const CONTENT: Record<
-  Audience,
+  LandingAudience,
   {
     eyebrow: string;
     lead: string;
@@ -23,21 +24,21 @@ const CONTENT: Record<
   }
 > = {
   candidate: {
-    eyebrow: "AI recruiting for job seekers worldwide",
+    eyebrow: "Meet Aarya — your AI recruiter",
     lead: "Stop spraying résumés.",
     accent: "Start getting introduced.",
-    sub: "Tell Aarya what you want — in text or voice. It reads your CV, finds live roles in your city and country, scores your fit, and requests warm intros on your behalf. One chat, end to end.",
-    checks: ["Free to start", "Works in 15+ markets", "No credit card"],
-    ctaLabel: "Find my next role",
+    sub: "Aarya is built for job seekers. Tell it what you want in text or voice — it reads your CV, finds live roles in your region, scores your fit, and requests warm intros on your behalf.",
+    checks: ["Aarya for candidates", "15+ markets", "Free to start"],
+    ctaLabel: "Talk to Aarya",
     ctaHref: "/signup",
   },
   recruiter: {
-    eyebrow: "AI sourcing for hiring teams",
+    eyebrow: "Meet Nitya — your AI sourcer",
     lead: "Stop cold outreach.",
     accent: "Start warm conversations.",
-    sub: "Describe the role to Nitya in plain language. It surfaces pre-scored candidates who already opted in — then warms up the intro so you skip the résumé pile and talk to people who want the job.",
-    checks: ["Pre-scored fit", "Consent-first", "No spam"],
-    ctaLabel: "Start hiring",
+    sub: "Nitya is built for hiring teams. Describe the role in plain language — it surfaces pre-scored candidates who opted in, then warms up the intro so you skip the résumé pile.",
+    checks: ["Nitya for recruiters", "Consent-first", "Pre-scored fit"],
+    ctaLabel: "Talk to Nitya",
     ctaHref: "/signup?role=recruiter",
   },
 };
@@ -48,13 +49,17 @@ const copyVariants = {
   exit: { opacity: 0, y: -8 },
 };
 
-export function HeroSection() {
-  const [audience, setAudience] = useState<Audience>("candidate");
+type HeroSectionProps = {
+  audience: LandingAudience;
+  onAudienceChange: (audience: LandingAudience) => void;
+};
+
+export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
   const c = CONTENT[audience];
+  const agent = LANDING_AGENTS[audience];
 
   return (
     <section className="relative overflow-hidden">
-      {/* Ambient grid */}
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.35]"
         aria-hidden
@@ -71,11 +76,11 @@ export function HeroSection() {
           <Stagger className="space-y-6" delay={0.05}>
             <StaggerItem>
               <div className="inline-flex rounded-full bg-paper-1 p-1 text-small ring-1 ring-ink-100">
-                {(["candidate", "recruiter"] as Audience[]).map((a) => (
+                {(["candidate", "recruiter"] as LandingAudience[]).map((a) => (
                   <button
                     key={a}
                     type="button"
-                    onClick={() => setAudience(a)}
+                    onClick={() => onAudienceChange(a)}
                     aria-pressed={audience === a}
                     className={cn(
                       "relative rounded-full px-4 py-1.5 font-medium transition-colors duration-fast",
@@ -90,7 +95,9 @@ export function HeroSection() {
                       />
                     ) : null}
                     <span className="relative z-10">
-                      {a === "candidate" ? "I'm a candidate" : "I'm a recruiter"}
+                      {a === "candidate"
+                        ? "I'm a candidate · Aarya"
+                        : "I'm a recruiter · Nitya"}
                     </span>
                   </button>
                 ))}
@@ -108,7 +115,10 @@ export function HeroSection() {
                   transition={{ duration: 0.28, ease: [0.21, 0.47, 0.32, 0.98] }}
                   className="space-y-5"
                 >
-                  <span className="inline-flex items-center gap-1.5 text-micro font-medium text-ink-500">
+                  <span className="inline-flex items-center gap-2 text-micro font-medium text-ink-500">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-paper-0">
+                      {agent.initial}
+                    </span>
                     <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />
                     {c.eyebrow}
                   </span>
@@ -135,7 +145,7 @@ export function HeroSection() {
                       href="#process"
                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 px-6 py-3.5 text-body font-medium text-ink-800 transition-colors hover:bg-ink-50"
                     >
-                      See the process
+                      How {agent.name} works
                     </a>
                   </div>
 

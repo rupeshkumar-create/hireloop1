@@ -2,10 +2,10 @@
 
 import dynamic from "next/dynamic";
 
-type Audience = "candidate" | "recruiter";
+import type { LandingAudience } from "@/components/landing/landing-audience";
 
 type ChatPreviewLazyProps = {
-  audience?: Audience;
+  audience?: LandingAudience;
 };
 
 function ChatPreviewSkeleton() {

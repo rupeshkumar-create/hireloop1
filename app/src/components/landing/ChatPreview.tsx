@@ -3,12 +3,23 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { Mic, Send, Sparkles, Zap } from "@/components/brand/icons";
+import {
+  LANDING_AGENTS,
+  type LandingAudience,
+} from "@/components/landing/landing-audience";
 
 type Line =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; actions?: string };
 
-type Audience = "candidate" | "recruiter";
+const TYPING_MS = 850;
+const READ_MS = 1500;
+const RESTART_MS = 3000;
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
 
 const CANDIDATE_SCRIPT: Line[] = [
   {
@@ -48,32 +59,18 @@ const RECRUITER_SCRIPT: Line[] = [
   },
 ];
 
-const SCRIPTS: Record<Audience, Line[]> = {
+const SCRIPTS: Record<LandingAudience, Line[]> = {
   candidate: CANDIDATE_SCRIPT,
   recruiter: RECRUITER_SCRIPT,
 };
 
-const AGENT: Record<Audience, { name: string; tagline: string; initial: string }> = {
-  candidate: { name: "Aarya", tagline: "AI recruiting copilot", initial: "A" },
-  recruiter: { name: "Nitya", tagline: "AI sourcing copilot", initial: "N" },
-};
-
-const TYPING_MS = 850;
-const READ_MS = 1500;
-const RESTART_MS = 3000;
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-}
-
 type ChatPreviewProps = {
-  audience?: Audience;
+  audience?: LandingAudience;
 };
 
 export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
   const script = SCRIPTS[audience];
-  const agent = AGENT[audience];
+  const agent = LANDING_AGENTS[audience];
 
   const [shown, setShown] = useState(1);
   const [typing, setTyping] = useState(false);
@@ -166,7 +163,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
               transition={{ duration: 0.2 }}
             >
               <p className="text-small font-semibold leading-none text-ink-900">{agent.name}</p>
-              <p className="mt-0.5 text-micro text-ink-400">{agent.tagline}</p>
+              <p className="mt-0.5 text-micro text-ink-400">{agent.chatTagline}</p>
             </motion.div>
           </AnimatePresence>
         </div>

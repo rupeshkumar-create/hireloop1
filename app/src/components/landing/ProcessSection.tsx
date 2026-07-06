@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import type { LucideIcon } from "lucide-react";
 import {
   Briefcase,
   FileText,
@@ -9,63 +10,133 @@ import {
   Mic,
   Search,
   Send,
+  ShieldCheck,
   Sparkles,
+  Users,
   Zap,
 } from "@/components/brand/icons";
-import { RevealStagger, StaggerItem } from "@/components/ui/motion";
 import { SectionHeader } from "@/components/landing/SectionHeader";
+import {
+  LANDING_AGENTS,
+  type LandingAudience,
+} from "@/components/landing/landing-audience";
+import { RevealStagger, StaggerItem } from "@/components/ui/motion";
 
-const STEPS = [
+type Step = {
+  step: string;
+  Icon: LucideIcon;
+  title: string;
+  body: string;
+  detail: string;
+};
+
+const CANDIDATE_STEPS: Step[] = [
   {
     step: "01",
     Icon: MessageSquare,
     title: "Tell Aarya what you want",
     body: "Upload your CV or paste your LinkedIn. Say the role, city, and pay band — type it or talk. Aarya builds your profile from the conversation.",
-    detail: "Voice or text · Any format CV",
+    detail: "Aarya · voice or text",
   },
   {
     step: "02",
     Icon: Search,
-    title: "It hunts in your region",
+    title: "Aarya hunts in your region",
     body: "Live openings near you first — your city, then your country, then remote roles you qualify for. Currency and market adjust automatically.",
     detail: "Vienna → Austria → EU remote",
   },
   {
     step: "03",
     Icon: Briefcase,
-    title: "Every role gets a fit score",
-    body: "Real jobs, ranked by genuine match — skills, seniority, location, and comp. No black box: you see why each role fits and what to improve.",
+    title: "Aarya scores every role",
+    body: "Real jobs, ranked by genuine match — skills, seniority, location, and comp. You see why each role fits and what to improve.",
     detail: "Transparent scoring · Skill gaps",
   },
   {
     step: "04",
     Icon: Send,
-    title: "Request a warm intro",
+    title: "Aarya requests warm intros",
     body: "Pick a role you like. Aarya tailors your CV, drafts the outreach, and sends a warm intro from your Gmail — not a cold apply into the void.",
     detail: "CV per role · Consent-first",
   },
-] as const;
+];
 
-export function ProcessSection() {
+const RECRUITER_STEPS: Step[] = [
+  {
+    step: "01",
+    Icon: MessageSquare,
+    title: "Tell Nitya the role",
+    body: "Describe the opening in plain words — title, skills, location, and comp. Nitya turns it into a structured brief without forms or templates.",
+    detail: "Nitya · voice or text",
+  },
+  {
+    step: "02",
+    Icon: Search,
+    title: "Nitya searches the graph",
+    body: "Nitya scans pre-verified candidates in your market who match the brief — skills, seniority, location, and interest signals.",
+    detail: "Live candidate graph",
+  },
+  {
+    step: "03",
+    Icon: Users,
+    title: "Nitya ranks who opted in",
+    body: "Only candidates who want to be contacted surface in your shortlist — ranked by fit score, not keyword spam.",
+    detail: "Pre-scored · Consent-first",
+  },
+  {
+    step: "04",
+    Icon: Send,
+    title: "Nitya warms up the intro",
+    body: "Nitya drafts the outreach and coordinates a warm handoff — so you start conversations with interested people, not cold DMs.",
+    detail: "Warm intros · No spam",
+  },
+];
+
+const SECTION_COPY: Record<
+  LandingAudience,
+  { label: string; title: string; description: string }
+> = {
+  candidate: {
+    label: "How Aarya works",
+    title: "Four steps. One chat with Aarya.",
+    description:
+      "Aarya is your candidate agent — it runs the job search while you watch every move.",
+  },
+  recruiter: {
+    label: "How Nitya works",
+    title: "Four steps. One chat with Nitya.",
+    description:
+      "Nitya is your recruiter agent — it sources and shortlists while you stay in control.",
+  },
+};
+
+type ProcessSectionProps = {
+  audience: LandingAudience;
+};
+
+export function ProcessSection({ audience }: ProcessSectionProps) {
+  const steps = audience === "candidate" ? CANDIDATE_STEPS : RECRUITER_STEPS;
+  const header = SECTION_COPY[audience];
+  const agent = LANDING_AGENTS[audience];
+
   return (
     <section id="process" className="scroll-mt-20 border-t border-ink-100 bg-paper-0">
       <div className="mx-auto max-w-page px-6 py-16 md:py-24">
         <SectionHeader
-          label="The process"
-          title="Four steps. One conversation."
-          description="Hireschema isn't another job board — it's an AI agent that runs your search while you watch every move."
+          label={header.label}
+          title={header.title}
+          description={header.description}
         />
 
         <div className="relative mt-14">
-          {/* Connecting line (desktop) */}
           <div
             className="absolute left-[27px] top-8 hidden h-[calc(100%-4rem)] w-px bg-gradient-to-b from-accent/60 via-ink-200 to-transparent md:block"
             aria-hidden
           />
 
-          <RevealStagger className="space-y-6">
-            {STEPS.map(({ step, Icon, title, body, detail }, i) => (
-              <StaggerItem key={step}>
+          <RevealStagger key={audience} className="space-y-6">
+            {steps.map(({ step, Icon, title, body, detail }, i) => (
+              <StaggerItem key={`${audience}-${step}`}>
                 <motion.article
                   className="group relative grid gap-4 rounded-xl border border-ink-100 bg-paper-1 p-6 transition-colors hover:border-ink-300 md:grid-cols-[auto_1fr] md:gap-6"
                   whileHover={{ y: -2 }}
@@ -83,7 +154,9 @@ export function ProcessSection() {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-h3 text-ink-900">{title}</h3>
-                      <span className="text-micro text-ink-400">Step {step}</span>
+                      <span className="text-micro text-ink-400">
+                        {agent.name} · Step {step}
+                      </span>
                     </div>
                     <p className="text-small leading-relaxed text-ink-600">{body}</p>
                     <p className="inline-flex items-center gap-1.5 text-micro font-medium text-accent">
@@ -92,7 +165,7 @@ export function ProcessSection() {
                     </p>
                   </div>
 
-                  {i < STEPS.length - 1 ? (
+                  {i < steps.length - 1 ? (
                     <motion.div
                       className="absolute -bottom-3 left-7 hidden h-6 w-6 items-center justify-center rounded-full bg-paper-0 ring-1 ring-ink-100 md:flex"
                       initial={{ scale: 0 }}
@@ -114,17 +187,34 @@ export function ProcessSection() {
   );
 }
 
-export function CredibilityBar() {
-  const items = [
-    { Icon: Mic, label: "Text or voice", sub: "Same AI pipeline" },
-    { Icon: MapPin, label: "Global markets", sub: "IN · US · UK · EU+" },
+const CREDIBILITY: Record<
+  LandingAudience,
+  { Icon: LucideIcon; label: string; sub: string }[]
+> = {
+  candidate: [
+    { Icon: Mic, label: "Talk to Aarya", sub: "Text or voice" },
+    { Icon: MapPin, label: "Your region", sub: "City → country → remote" },
     { Icon: Zap, label: "Live actions", sub: "Every step logged" },
-    { Icon: FileText, label: "CV per role", sub: "One-click tailoring" },
-  ] as const;
+    { Icon: FileText, label: "CV per role", sub: "Aarya tailors each one" },
+  ],
+  recruiter: [
+    { Icon: Mic, label: "Talk to Nitya", sub: "Text or voice" },
+    { Icon: MapPin, label: "Your market", sub: "Local talent pools" },
+    { Icon: Zap, label: "Live actions", sub: "Every step logged" },
+    { Icon: ShieldCheck, label: "Consent-first", sub: "Opted-in candidates only" },
+  ],
+};
+
+type CredibilityBarProps = {
+  audience: LandingAudience;
+};
+
+export function CredibilityBar({ audience }: CredibilityBarProps) {
+  const items = CREDIBILITY[audience];
 
   return (
     <section className="border-y border-ink-100 bg-paper-1">
-      <RevealStagger className="mx-auto grid max-w-page grid-cols-2 gap-6 px-6 py-8 md:grid-cols-4">
+      <RevealStagger key={audience} className="mx-auto grid max-w-page grid-cols-2 gap-6 px-6 py-8 md:grid-cols-4">
         {items.map(({ Icon, label, sub }) => (
           <StaggerItem key={label}>
             <motion.div
