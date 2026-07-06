@@ -13,6 +13,7 @@ import Link from "next/link";
 import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { createClient } from "@/lib/supabase/client";
+import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
 import {
   Button,
@@ -41,6 +42,7 @@ export default function SettingsPage() {
     if (signingOut) return;
     setSigningOut(true);
     try {
+      clearClientOnboardingComplete();
       await createClient().auth.signOut();
     } catch {
       // Fall through — the hard redirect lands on /login regardless.

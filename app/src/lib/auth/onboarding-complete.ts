@@ -4,11 +4,13 @@ export const ONBOARDING_COMPLETE_PERSISTENT_KEY = "hireloop_onboarding_complete_
 
 const DEFAULT_GRACE_MS = 300_000;
 
-export function markClientOnboardingComplete(): void {
+export function markClientOnboardingComplete(userId?: string): void {
   try {
     const now = String(Date.now());
     sessionStorage.setItem(ONBOARDING_COMPLETE_AT_KEY, now);
-    localStorage.setItem(ONBOARDING_COMPLETE_PERSISTENT_KEY, "1");
+    if (userId) {
+      localStorage.setItem(ONBOARDING_COMPLETE_PERSISTENT_KEY, userId);
+    }
   } catch {
     /* ignore */
   }
@@ -23,9 +25,12 @@ export function clearClientOnboardingComplete(): void {
   }
 }
 
-export function hasPersistentOnboardingComplete(): boolean {
+export function hasPersistentOnboardingComplete(userId?: string): boolean {
   try {
-    return localStorage.getItem(ONBOARDING_COMPLETE_PERSISTENT_KEY) === "1";
+    const stored = localStorage.getItem(ONBOARDING_COMPLETE_PERSISTENT_KEY);
+    if (!stored) return false;
+    if (!userId) return stored === "1" || stored.length > 0;
+    return stored === userId || stored === "1";
   } catch {
     return false;
   }
@@ -45,8 +50,11 @@ export function isClientOnboardingCompleteRecent(
   }
 }
 
-export function isClientOnboardingTrusted(): boolean {
-  return hasPersistentOnboardingComplete() || isClientOnboardingCompleteRecent();
+export function isClientOnboardingTrusted(userId?: string): boolean {
+  return (
+    isClientOnboardingCompleteRecent() ||
+    (userId ? hasPersistentOnboardingComplete(userId) : hasPersistentOnboardingComplete())
+  );
 }
 
 export function sleep(ms: number): Promise<void> {

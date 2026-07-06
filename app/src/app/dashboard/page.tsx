@@ -8,7 +8,10 @@ import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
 import { VALID_JOBS_TABS, VALID_PANELS, LEGACY_JOBS_TAB_PANEL, type JobsTab, type PanelId } from "@/lib/dashboard/panel-types";
 import { sanitizeDisplayName } from "@/lib/auth/display-name";
+import { isOnboardingCompleteOnServer } from "@/lib/auth/server-onboarding";
 import { canApplyOrIntro, shouldShowProfileBoosters } from "@/lib/profile/readiness";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -74,13 +77,14 @@ export default async function DashboardPage({
 
   let resolvedRole = profile.role;
   const {
-    data: { session: earlySession },
+    data: { session },
   } = await supabase.auth.getSession();
-  const earlyToken = earlySession?.access_token;
-  if (earlyToken) {
+  const token = session?.access_token;
+
+  if (token) {
     try {
       const meRes = await fetch(`${API_URL}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${earlyToken}` },
+        headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
       if (meRes.ok) {
@@ -96,8 +100,6 @@ export default async function DashboardPage({
     redirect("/recruiter");
   }
 
-  // Supabase TS: .is("deleted_at", null) can infer 'never' on strict builds.
-  // Use maybeSingle() + explicit cast to avoid the inference bug.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: candidateRaw } = await (supabase as any)
     .from("candidates")
@@ -106,6 +108,8 @@ export default async function DashboardPage({
     )
     .eq("user_id", user.id)
     .is("deleted_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle() as {
     data: {
       id: string;
@@ -121,7 +125,13 @@ export default async function DashboardPage({
     redirect("/onboarding");
   }
 
-  if (candidateRaw.onboarding_complete !== true) {
+  const onboardingComplete = await isOnboardingCompleteOnServer({
+    token,
+    supabaseFallback: candidateRaw.onboarding_complete,
+    apiBase: API_URL,
+  });
+
+  if (!onboardingComplete) {
     redirect("/onboarding");
   }
 
@@ -163,11 +173,6 @@ export default async function DashboardPage({
   // (e.g. right after an OAuth redirect) the token may be absent and the API
   // returns 401. That's fine — the ChatInterface will create a session lazily
   // on the user's first message send, so the dashboard always renders.
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token;
-
   let conversationId: string | undefined;
   let canSeeAdmin = false;
   let candidateName: string | undefined =

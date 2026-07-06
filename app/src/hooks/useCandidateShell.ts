@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { fetchIntros } from "@/lib/api/intros";
 import { createClient } from "@/lib/supabase/client";
+import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 
 export function useCandidateShell() {
   const [pendingIntros, setPendingIntros] = useState(false);
@@ -26,6 +27,7 @@ export function useCandidateShell() {
     if (signingOut) return;
     setSigningOut(true);
     try {
+      clearClientOnboardingComplete();
       await createClient().auth.signOut();
     } catch {
       /* fall through */

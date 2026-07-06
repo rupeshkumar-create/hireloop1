@@ -26,6 +26,7 @@ import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds, subscribeSavedJobs } from "@/lib/api/saved-jobs";
 import { createClient } from "@/lib/supabase/client";
+import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import { cn } from "@/lib/utils";
 import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
@@ -205,6 +206,7 @@ export function DashboardClient({
     if (signingOut) return;
     setSigningOut(true);
     try {
+      clearClientOnboardingComplete();
       await createClient().auth.signOut();
     } catch {
       /* fall through */

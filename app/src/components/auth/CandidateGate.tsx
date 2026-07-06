@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  clearClientOnboardingComplete,
   markClientOnboardingComplete,
 } from "@/lib/auth/onboarding-complete";
 import { fetchMyProfile } from "@/lib/api/profile";
+import { createClient } from "@/lib/supabase/client";
 import { isPublicPath } from "@/lib/public-routes";
 
 /**
@@ -25,6 +27,8 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     void (async () => {
       try {
+        const { data: authData } = await createClient().auth.getUser();
+        const userId = authData.user?.id;
         const profile = await fetchMyProfile();
         if (cancelled) return;
 
@@ -36,7 +40,9 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
         }
 
         if (profile.candidate?.onboarding_complete === true) {
-          markClientOnboardingComplete();
+          markClientOnboardingComplete(userId);
+        } else if (userId) {
+          clearClientOnboardingComplete();
         }
       } catch {
         /* non-fatal — server layout already gated onboarding */
