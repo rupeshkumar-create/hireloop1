@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Mic, Send, Zap } from "@/components/brand/icons";
+import { Mic, Send, Zap } from "@/components/brand/icons";
 import { useParams } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -13,8 +12,8 @@ import {
 } from "@/components/chat/ActivityTimeline";
 import { ChatCandidateCards } from "@/components/chat/ChatCandidateCards";
 import { MessageText } from "@/components/chat/MessageText";
-import { PipelineLink } from "@/components/layout/RecruiterShell";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
+import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import {
   fetchNityaChatHistory,
@@ -53,6 +52,7 @@ export default function RoleIntakePage() {
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
   const [publicRoleUrl, setPublicRoleUrl] = useState<string | null>(null);
+  const [roleTitle, setRoleTitle] = useState<string | null>(null);
   const [lastSearchMeta, setLastSearchMeta] = useState<SearchMeta | null>(null);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const bootstrappedRef = useRef(false);
@@ -99,6 +99,7 @@ export default function RoleIntakePage() {
       try {
         const role = await getRole(id);
         if (cancelled) return;
+        if (role.title) setRoleTitle(role.title);
         if (role.readiness) setReadiness(role.readiness);
         if (role.hiring_brief) setBriefDone(true);
         if (role.public_role_url) setPublicRoleUrl(role.public_role_url);
@@ -352,15 +353,9 @@ export default function RoleIntakePage() {
 
   return (
     <main className="flex flex-col h-full bg-paper-0 overflow-hidden">
+      <RoleWorkspaceTabs roleId={id} active="chat" title={roleTitle} />
       <header className="shrink-0 border-b border-ink-100 bg-paper-1">
         <div className="h-14 flex items-center gap-3 px-4">
-          <Link
-            href={`/recruiter/roles/${id}/brief`}
-            className="text-ink-500 hover:text-ink-900 transition-colors p-1 -ml-1"
-          >
-            <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
-          </Link>
-
           <div className="w-8 h-8 rounded-full bg-ink-900 flex items-center justify-center shrink-0">
             <span className="text-paper-0 text-small font-semibold">N</span>
           </div>
@@ -376,7 +371,6 @@ export default function RoleIntakePage() {
             </p>
           </div>
 
-          <PipelineLink roleId={id} className="hidden sm:inline-flex" />
           <ShareRoleLink publicRoleUrl={publicRoleUrl} className="hidden sm:block" />
 
           {actionCount > 0 && (

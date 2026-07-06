@@ -5,11 +5,9 @@
  * Editable summary card + progress bar + Start search / Talk to Nitya.
  */
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   ArrowRight,
   MessageCircle,
   Search,
@@ -28,6 +26,7 @@ import { getCachedProfile } from "@/lib/api/profile";
 import { marketByCode, type MarketCode } from "@/lib/markets";
 import { compFieldLabel, profileSalaryFromStorage, profileSalaryToStorage } from "@/lib/salary";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
+import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
 import { Button, Card, CardBody, CardHeader, Field, Input } from "@/components/ui";
 
 export default function RoleBriefPage() {
@@ -148,16 +147,9 @@ export default function RoleBriefPage() {
   }
 
   return (
-    <main className="min-h-screen bg-paper-0 px-4 py-8">
-      <div className="max-w-2xl mx-auto space-y-6">
-        <Link
-          href="/recruiter"
-          className="inline-flex items-center gap-1.5 text-small text-ink-500 hover:text-ink-900"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Back to recruiter home
-        </Link>
-
+    <main className="min-h-screen bg-paper-0">
+      <RoleWorkspaceTabs roleId={id} active="brief" title={role?.title ?? null} />
+      <div className="max-w-2xl mx-auto space-y-6 px-4 py-8">
         <div className="space-y-1">
           <h1 className="text-h2 font-semibold text-ink-900">Role brief</h1>
           <p className="text-small text-ink-500">

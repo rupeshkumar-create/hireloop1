@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Kanban, Loader2 } from "@/components/brand/icons";
+import { Kanban, Loader2 } from "@/components/brand/icons";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { ScoreDot } from "@/components/ui/ScoreDot";
-import { RecruiterBreadcrumbs } from "@/components/ux";
+import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
 import { apiFetch } from "@/lib/api/client";
 import { getRole, movePipelineCandidate, type RecruiterRole } from "@/lib/api/recruiter";
 
@@ -85,14 +85,9 @@ export default function PipelinePage() {
 
   return (
     <div className="flex flex-col h-full bg-paper-0">
+      <RoleWorkspaceTabs roleId={id} active="pipeline" title={role?.title ?? null} />
       <header className="shrink-0 border-b border-ink-100 px-4 py-3">
         <div className="max-w-5xl mx-auto flex items-center gap-3">
-          <Link
-            href={`/recruiter/roles/${id}/intake`}
-            className="text-ink-500 hover:text-ink-900 p-1"
-          >
-            <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
-          </Link>
           <div className="flex-1 min-w-0">
             <h1 className="text-h3 font-semibold text-ink-900 truncate">
               {role?.title ?? "Pipeline"}
@@ -101,22 +96,10 @@ export default function PipelinePage() {
               {rows.length} candidate{rows.length !== 1 ? "s" : ""} across stages
             </p>
           </div>
-          <Link href={`/recruiter/roles/${id}/intake`}>
-            <Button variant="secondary" size="sm">
-              Back to Nitya
-            </Button>
-          </Link>
         </div>
       </header>
 
       <div className="flex-1 overflow-x-auto overflow-y-auto p-4">
-        <RecruiterBreadcrumbs
-          crumbs={[
-            { label: "Inbox", href: "/recruiter/inbox" },
-            { label: role?.title ?? "Role", href: `/recruiter/roles/${id}/intake` },
-            { label: "Pipeline" },
-          ]}
-        />
         {loading ? (
           <div className="flex justify-center py-16">
             <Loader2 className="h-6 w-6 animate-spin text-ink-300" />
