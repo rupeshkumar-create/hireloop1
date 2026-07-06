@@ -53,7 +53,6 @@ import {
   Mic,
   Paperclip,
   PenLine,
-  Phone,
   Search,
   Sparkles,
   Send,
@@ -1429,57 +1428,23 @@ export function ChatInterface({
                 }}
               />
 
-              {/* Right: reply mode + phone + voice */}
+              {/* Right: pen (type) + mic (hold to talk) — nothing else.
+                  Spoken replies happen automatically after voice messages;
+                  the old reply-mode toggle and deep-dive phone button were
+                  clutter (the deep-dive stays reachable via ?voice=deep). */}
               <div className="flex items-center gap-2">
-                {VOICE_FEATURE_ENABLED && (
-                  <div
-                    className="flex items-center rounded-lg border border-ink-100 bg-ink-50/80 p-0.5"
-                    role="group"
-                    aria-label="Reply mode"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setReplyModeAndPersist("text")}
-                      aria-pressed={replyMode === "text"}
-                      aria-label="Text replies only"
-                      title="Text replies only"
-                      className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-                        replyMode === "text"
-                          ? "bg-paper-0 text-ink-900 shadow-sm"
-                          : "text-ink-500 hover:text-ink-800"
-                      )}
-                    >
-                      <PenLine className="h-4 w-4" strokeWidth={1.5} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReplyModeAndPersist("voice")}
-                      aria-pressed={replyMode === "voice"}
-                      aria-label="Spoken replies after voice messages"
-                      title="Spoken replies after voice messages"
-                      className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-                        replyMode === "voice"
-                          ? "bg-paper-0 text-ink-900 shadow-sm"
-                          : "text-ink-500 hover:text-ink-800"
-                      )}
-                    >
-                      <Mic className="h-4 w-4" strokeWidth={1.5} />
-                    </button>
-                  </div>
-                )}
-
-                {VOICE_FEATURE_ENABLED && (
-                  <button
-                    type="button"
-                    onClick={() => setVoiceDeepDiveOpen(true)}
-                    title="15-min deep-dive call with Aarya"
-                    className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
-                  >
-                    <Phone className="h-[17px] w-[17px]" strokeWidth={1.5} />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReplyModeAndPersist("text");
+                    textareaRef.current?.focus();
+                  }}
+                  aria-label="Type a message"
+                  title="Type a message"
+                  className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
+                >
+                  <PenLine className="h-4 w-4" strokeWidth={1.5} />
+                </button>
 
                 {input.trim() && (
                   <button
@@ -1510,6 +1475,8 @@ export function ChatInterface({
                     onPointerDown={(e) => {
                       if (e.pointerType === "mouse" && e.button !== 0) return;
                       e.currentTarget.setPointerCapture(e.pointerId);
+                      // Using the mic implies wanting spoken replies back.
+                      setReplyModeAndPersist("voice");
                       void handleMicHoldStart();
                     }}
                     onPointerUp={(e) => {

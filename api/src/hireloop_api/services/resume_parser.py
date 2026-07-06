@@ -972,12 +972,19 @@ def _merge(primary: ParsedResume | None, secondary: ParsedResume | None) -> Pars
             if val:
                 setattr(primary, field, val)
 
-    # Union skills, preserve order, dedupe.
-    merged_skills: list[str] = []
-    for skill in [*primary.skills, *secondary.skills]:
-        if skill and skill not in merged_skills:
-            merged_skills.append(skill)
-    primary.skills = merged_skills[:40]
+    # Skills: the LLM tier (primary) curates from actual work evidence; the
+    # regex tier (secondary) keyword-scans the whole document and drags in
+    # noise ("communication skills" from a footer, sidebar staples the roles
+    # don't support). Only union when the primary list is too thin to stand
+    # on its own — otherwise the curation is the point.
+    if len(primary.skills) >= 5:
+        primary.skills = primary.skills[:40]
+    else:
+        merged_skills: list[str] = []
+        for skill in [*primary.skills, *secondary.skills]:
+            if skill and skill not in merged_skills:
+                merged_skills.append(skill)
+        primary.skills = merged_skills[:40]
 
     # Prefer the richer list for nested structures.
     if len(secondary.work_experience) > len(primary.work_experience):
