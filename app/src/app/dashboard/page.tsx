@@ -20,6 +20,43 @@ export const metadata: Metadata = {
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+type DashboardCandidate = {
+  id: string;
+  location_city: string | null;
+  expected_ctc_min: number | null;
+  expected_ctc_max: number | null;
+  linkedin_url: string | null;
+  onboarding_complete: boolean | null;
+  profile_complete: boolean | null;
+  current_title: string | null;
+  skills: string[] | null;
+  looking_for: string | null;
+};
+
+type DashboardApiProfile = {
+  user?: { full_name?: string | null } | null;
+  candidate?: Partial<DashboardCandidate> & { id: string } | null;
+  resume_filename?: string | null;
+};
+
+function candidateFromApi(
+  candidate: DashboardApiProfile["candidate"],
+): DashboardCandidate | null {
+  if (!candidate?.id) return null;
+  return {
+    id: candidate.id,
+    location_city: candidate.location_city ?? null,
+    expected_ctc_min: candidate.expected_ctc_min ?? null,
+    expected_ctc_max: candidate.expected_ctc_max ?? null,
+    linkedin_url: candidate.linkedin_url ?? null,
+    onboarding_complete: candidate.onboarding_complete ?? null,
+    profile_complete: candidate.profile_complete ?? null,
+    current_title: candidate.current_title ?? null,
+    skills: candidate.skills ?? null,
+    looking_for: candidate.looking_for ?? null,
+  };
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -71,11 +108,7 @@ export default async function DashboardPage({
     .is("deleted_at", null)
     .single() as { data: { full_name: string | null; role: string } | null };
 
-  if (!profile) {
-    redirect("/onboarding");
-  }
-
-  let resolvedRole = profile.role;
+  let resolvedRole = profile?.role ?? "candidate";
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -96,34 +129,45 @@ export default async function DashboardPage({
     }
   }
 
+  if (!profile && !token) {
+    redirect("/onboarding");
+  }
+
   if (resolvedRole === "recruiter") {
     redirect("/recruiter");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: candidateRaw } = await (supabase as any)
-    .from("candidates")
-    .select(
-      "id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url, onboarding_complete, profile_complete, current_title, skills, looking_for",
-    )
-    .eq("user_id", user.id)
-    .is("deleted_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle() as {
-    data: {
-      id: string;
-      location_city: string | null;
-      expected_ctc_min: number | null;
-      expected_ctc_max: number | null;
-      linkedin_url: string | null;
-      onboarding_complete: boolean | null;
-      profile_complete: boolean | null;
-      current_title: string | null;
-      skills: string[] | null;
-      looking_for: string | null;
-    } | null;
-  };
+  let apiProfileData: DashboardApiProfile | null = null;
+  if (token) {
+    try {
+      const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (profileRes.ok) {
+        apiProfileData = (await profileRes.json()) as DashboardApiProfile;
+      }
+    } catch {
+      /* fall back to direct Supabase reads below */
+    }
+  }
+
+  let candidateRaw = candidateFromApi(apiProfileData?.candidate);
+
+  if (!candidateRaw) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("candidates")
+      .select(
+        "id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url, onboarding_complete, profile_complete, current_title, skills, looking_for",
+      )
+      .eq("user_id", user.id)
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle() as { data: DashboardCandidate | null };
+    candidateRaw = data;
+  }
 
   if (!candidateRaw) {
     redirect("/onboarding");
@@ -137,14 +181,18 @@ export default async function DashboardPage({
     .select("id", { count: "exact", head: true })
     .eq("candidate_id", candidateId) as { count: number | null };
 
-  const hasResume = (resumeResult.count ?? 0) > 0;
+  const hasResume =
+    Boolean(apiProfileData?.resume_filename) || (resumeResult.count ?? 0) > 0;
 
-  const onboardingComplete = await isOnboardingCompleteOnServer({
-    token,
-    supabaseCandidate: candidateRaw,
-    hasResume,
-    apiBase: API_URL,
-  });
+  const onboardingComplete =
+    apiProfileData?.candidate
+      ? apiProfileData.candidate.onboarding_complete === true
+      : await isOnboardingCompleteOnServer({
+          token,
+          supabaseCandidate: candidateRaw,
+          hasResume,
+          apiBase: API_URL,
+        });
 
   if (!onboardingComplete) {
     redirect("/onboarding");
@@ -179,23 +227,9 @@ export default async function DashboardPage({
   let canSeeAdmin = false;
   let candidateName: string | undefined =
     sanitizeDisplayName(profile?.full_name) ?? undefined;
+  candidateName =
+    sanitizeDisplayName(apiProfileData?.user?.full_name) ?? candidateName;
   if (token) {
-    try {
-      const profileRes = await fetch(`${API_URL}/api/v1/me/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (profileRes.ok) {
-        const profileData = (await profileRes.json()) as {
-          user?: { full_name?: string | null };
-        };
-        candidateName =
-          sanitizeDisplayName(profileData.user?.full_name) ?? candidateName;
-      }
-    } catch {
-      /* use Supabase users.full_name */
-    }
-
     try {
       const sessRes = await fetch(`${API_URL}/api/v1/chat/sessions/primary`, {
         headers: { Authorization: `Bearer ${token}` },
