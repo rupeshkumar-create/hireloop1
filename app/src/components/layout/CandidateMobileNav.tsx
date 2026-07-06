@@ -24,6 +24,7 @@ const PANEL_BY_NAV: Partial<Record<CandidateNavId, PanelId>> = {
   intros: "inbox",
   profile: "profile",
   coaching: "coaching",
+  settings: "settings",
 };
 
 type CandidateMobileNavProps = {

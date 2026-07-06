@@ -141,7 +141,7 @@ export function IntrosInboxPanel() {
   if (loading) {
     return (
       <div className="flex h-full min-h-[320px]">
-        <div className="w-full max-w-xs border-r border-ink-100 p-3 space-y-2">
+        <div className="w-full max-w-[240px] border-r border-ink-100 p-3 space-y-2">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-14 rounded-lg bg-ink-100 animate-skeleton" />
           ))}
@@ -190,7 +190,7 @@ export function IntrosInboxPanel() {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="w-full max-w-[300px] shrink-0 border-r border-ink-100 overflow-y-auto">
+      <div className="w-full max-w-[240px] shrink-0 border-r border-ink-100 overflow-y-auto">
         <ul className="divide-y divide-ink-100">
           {intros.map((intro) => {
             const meta = STATUS_META[intro.status] ?? {

@@ -42,6 +42,8 @@ interface MatchFeedProps {
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onAskAarya?: () => void;
+  seedJobs?: MatchedJob[] | null;
+  seedTitle?: string | null;
   className?: string;
 }
 
@@ -111,21 +113,25 @@ export function MatchFeed({
   savedJobIds = new Set(),
   onSavedChange,
   onAskAarya,
+  seedJobs,
+  seedTitle,
   className,
 }: MatchFeedProps) {
   const initialJobs = getCachedMatchFeed(DEFAULT_MATCH_FEED_FILTERS);
-  const [jobs, setJobs] = useState<MatchedJob[]>(initialJobs ?? []);
+  const hasSeedJobs = Boolean(seedJobs?.length);
+  const [jobs, setJobs] = useState<MatchedJob[]>(seedJobs ?? initialJobs ?? []);
   const [totalCount, setTotalCount] = useState<number | null>(
-    () => getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
+    () => seedJobs?.length ?? getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
   );
-  const [loading, setLoading] = useState(initialJobs === null);
+  const [loading, setLoading] = useState(!hasSeedJobs && initialJobs === null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(
-    (initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE
+    hasSeedJobs ? false : (initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE
   );
-  const [offset, setOffset] = useState(initialJobs?.length ?? 0);
+  const [offset, setOffset] = useState(seedJobs?.length ?? initialJobs?.length ?? 0);
   const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
+  const [usingSeed, setUsingSeed] = useState(hasSeedJobs);
 
   // Filters
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
@@ -197,6 +203,10 @@ export function MatchFeed({
   );
 
   useEffect(() => {
+    if (usingSeed && seedJobs?.length) {
+      setTotalCount(seedJobs.length);
+      return;
+    }
     let cancelled = false;
     fetchMatchFeedCount({ min_score: minScore })
       .then((total) => {
@@ -208,15 +218,33 @@ export function MatchFeed({
     return () => {
       cancelled = true;
     };
-  }, [minScore]);
+  }, [minScore, seedJobs, usingSeed]);
 
   useEffect(() => {
+    if (!seedJobs?.length) return;
+    setUsingSeed(true);
+  }, [seedJobs]);
+
+  useEffect(() => {
+    if (usingSeed && seedJobs?.length) {
+      setJobs(applyLocalFilters(seedJobs, { remoteOnly, seniority }));
+      setTotalCount(seedJobs.length);
+      setHasMore(false);
+      setOffset(seedJobs.length);
+      setLoading(false);
+      setError(null);
+      setEmptyRefreshCount(0);
+    }
+  }, [remoteOnly, seedJobs, seniority, usingSeed]);
+
+  useEffect(() => {
+    if (usingSeed && seedJobs?.length) return;
     setOffset(0);
     setHasMore(true);
     setEmptyRefreshCount(0);
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minScore, remoteOnly, seniority]);
+  }, [minScore, remoteOnly, seniority, seedJobs?.length, usingSeed]);
 
   useEffect(() => {
     if (loading || error || jobs.length > 0 || emptyRefreshCount >= 5) return;
@@ -255,6 +283,14 @@ export function MatchFeed({
           {" "}— upload a CV to sharpen scores.
         </p>
       )}
+      {usingSeed && seedTitle && seedJobs?.length ? (
+        <p className="text-micro text-ink-500 mb-3 shrink-0">
+          <span className="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 font-medium text-ink-800">
+            Career path
+          </span>
+          {" "}Showing Aarya&apos;s jobs for {seedTitle}. Use filters here, or refresh for the full feed.
+        </p>
+      ) : null}
       {/* ── Filter bar (collapsed behind a toggle) ─────────────────────── */}
       {(() => {
         const activeFilterCount =
@@ -339,6 +375,20 @@ export function MatchFeed({
                 />
               </div>
             )}
+            {usingSeed && seedJobs?.length ? (
+              <div className="mt-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setUsingSeed(false);
+                    void load(true);
+                  }}
+                >
+                  Refresh full match feed
+                </Button>
+              </div>
+            ) : null}
           </div>
         );
       })()}

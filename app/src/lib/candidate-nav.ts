@@ -74,7 +74,6 @@ export const CANDIDATE_NAV: CandidateNavItem[] = [
     href: "/dashboard?panel=profile",
     panel: "profile",
     Icon: User,
-    match: ["/settings"],
   },
   {
     id: "coaching",
@@ -102,7 +101,8 @@ export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
   {
     id: "settings",
     label: "Settings",
-    href: "/settings",
+    href: "/dashboard?panel=settings",
+    panel: "settings",
     Icon: Settings,
     match: ["/settings"],
   },

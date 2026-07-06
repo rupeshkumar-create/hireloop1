@@ -30,6 +30,7 @@ import { GoogleConnectCard } from "@/components/profile/GoogleConnectCard";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import type { PanelId } from "@/lib/dashboard/panel-types";
 import {
   Badge,
   Button,
@@ -75,9 +76,11 @@ function ProfileSkeleton() {
 
 export function ProfilePanel({
   onSendToChat,
+  onOpenPanel,
 }: {
   /** Forwarded to Career Intelligence so its insights can trigger Aarya actions. */
   onSendToChat?: (message: string) => void;
+  onOpenPanel?: (id: PanelId) => void;
 } = {}) {
   const { toast } = useToast();
 
@@ -316,9 +319,19 @@ export function ProfilePanel({
           <>
             <p className="text-small text-ink-500">
               Account, notifications, and privacy live in{" "}
-              <Link href="/settings" className="text-accent font-medium hover:underline">
-                Settings
-              </Link>
+              {onOpenPanel ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenPanel("settings")}
+                  className="text-accent font-medium hover:underline"
+                >
+                  Settings
+                </button>
+              ) : (
+                <Link href="/dashboard?panel=settings" className="text-accent font-medium hover:underline">
+                  Settings
+                </Link>
+              )}
               .
             </p>
             <GoogleConnectCard />
@@ -500,13 +513,24 @@ export function ProfilePanel({
                 description="Privacy, WhatsApp alerts, and sign out"
               />
               <CardBody className="!pt-0">
-                <Link
-                  href="/settings"
-                  className="w-full flex items-center justify-between gap-2 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors"
-                >
-                  <span>Open Settings</span>
-                  <span className="text-ink-400">→</span>
-                </Link>
+                {onOpenPanel ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenPanel("settings")}
+                    className="w-full flex items-center justify-between gap-2 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+                  >
+                    <span>Open Settings</span>
+                    <span className="text-ink-400">→</span>
+                  </button>
+                ) : (
+                  <Link
+                    href="/dashboard?panel=settings"
+                    className="w-full flex items-center justify-between gap-2 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+                  >
+                    <span>Open Settings</span>
+                    <span className="text-ink-400">→</span>
+                  </Link>
+                )}
               </CardBody>
             </Card>
 

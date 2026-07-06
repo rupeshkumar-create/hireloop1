@@ -24,6 +24,8 @@ export type JobsPanelProps = {
   savedJobIds: Set<string>;
   onSavedChange: (jobId: string, saved: boolean) => void;
   savedJobsRefreshKey: number;
+  kickoffJobs?: MatchedJob[] | null;
+  kickoffTitle?: string | null;
   onAskAarya?: () => void;
 };
 
@@ -41,10 +43,14 @@ export function JobsPanel({
   savedJobIds,
   onSavedChange,
   savedJobsRefreshKey,
+  kickoffJobs,
+  kickoffTitle,
   onAskAarya,
 }: JobsPanelProps) {
   const [tab, setTab] = useState<JobsTab>(initialTab ?? "matches");
-  const [hasRequestedMatches, setHasRequestedMatches] = useState(false);
+  const [hasRequestedMatches, setHasRequestedMatches] = useState(
+    () => Boolean(kickoffTitle || kickoffJobs?.length),
+  );
 
   function selectTab(next: JobsTab) {
     setTab(next);
@@ -59,6 +65,12 @@ export function JobsPanel({
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    if (!kickoffTitle && !kickoffJobs?.length) return;
+    setTab("matches");
+    setHasRequestedMatches(true);
+  }, [kickoffJobs?.length, kickoffTitle]);
 
   return (
     <div className="flex flex-col h-full">
@@ -117,6 +129,8 @@ export function JobsPanel({
               savedJobIds={savedJobIds}
               onSavedChange={onSavedChange}
               onAskAarya={onAskAarya}
+              seedJobs={kickoffJobs}
+              seedTitle={kickoffTitle}
               className="h-full p-5"
             />
           ) : (

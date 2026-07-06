@@ -202,6 +202,7 @@ interface ChatInterfaceProps {
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
+  onCareerKickoffComplete?: (result: KickoffResult) => void;
 }
 
 const CHAT_COLUMN_CLASS = "max-w-2xl mx-auto px-4";
@@ -238,6 +239,7 @@ export function ChatInterface({
   savedJobIds = new Set(),
   onSavedChange,
   onRequestIntro,
+  onCareerKickoffComplete,
 }: ChatInterfaceProps) {
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
   const [kickoffActive, setKickoffActive] = useState(initialKickoff);
@@ -1144,6 +1146,7 @@ export function ChatInterface({
 
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
     setKickoffActive(false);
+    onCareerKickoffComplete?.(result);
     const content =
       result.jobs.length > 0
         ? `Here are the top **${result.preferredTitle}** roles I found for you. ` +
@@ -1163,7 +1166,7 @@ export function ChatInterface({
         jobs: result.jobs,
       },
     ]);
-  }, []);
+  }, [onCareerKickoffComplete]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 

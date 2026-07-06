@@ -24,6 +24,7 @@ const PANEL_HREF: Record<PanelId, string> = {
   career_path: "/dashboard?panel=career_path",
   tracker: "/dashboard?panel=tracker",
   coaching: "/dashboard?panel=coaching",
+  settings: "/dashboard?panel=settings",
 };
 
 function activePanelFromPath(pathname: string | null): PanelId | null {
@@ -60,7 +61,9 @@ export function CandidateSidebar({
   const pathname = usePathname();
   const linkMode = !onTogglePanel;
   const resolvedPanel = linkMode ? activePanelFromPath(pathname) : activePanel;
-  const settingsActive = pathname === "/settings";
+  const settingsActive = linkMode
+    ? pathname === "/settings" || pathname?.includes("panel=settings")
+    : activePanel === "settings";
 
   const utilityClass = (active: boolean) =>
     cn(
@@ -135,15 +138,28 @@ export function CandidateSidebar({
             <Shield className="h-[18px] w-[18px]" strokeWidth={1.5} />
           </Link>
         )}
-        <Link
-          href="/settings"
-          title="Settings"
-          aria-label="Settings"
-          aria-current={settingsActive ? "page" : undefined}
-          className={utilityClass(settingsActive)}
-        >
-          <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
-        </Link>
+        {linkMode ? (
+          <Link
+            href="/dashboard?panel=settings"
+            title="Settings"
+            aria-label="Settings"
+            aria-current={settingsActive ? "page" : undefined}
+            className={utilityClass(settingsActive)}
+          >
+            <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("settings")}
+            aria-pressed={settingsActive}
+            title="Settings"
+            aria-label="Settings"
+            className={utilityClass(settingsActive)}
+          >
+            <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          </button>
+        )}
         <a
           href="https://hireloop.in/help"
           target="_blank"

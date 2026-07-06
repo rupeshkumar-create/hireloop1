@@ -4,7 +4,7 @@
  * CareerKickoffFlow — guided first-run flow rendered inside chat, right after
  * onboarding. Three steps, all backed by existing APIs:
  *
- *   1. Paths   — AI proposes up to 5 career paths (top 3 pre-selected);
+ *   1. Paths   — AI proposes the top 3 career paths (pre-selected);
  *                multi-select + free-text "other". First selected = preferred.
  *   2. Package — expected CTC range for the candidate's market.
  *   3. Review  — everything Aarya will use to search; confirm saves it all,
@@ -31,7 +31,7 @@ import type { MatchedJob } from "@/lib/api/matches";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-const MAX_OPTIONS = 5;
+const MAX_OPTIONS = 3;
 const MAX_SELECTED = 3;
 
 type PathOption = {
@@ -49,7 +49,7 @@ export type KickoffResult = {
   refreshing: boolean;
 };
 
-/** Build up to 5 distinct options from path steps (next/future) + target titles. */
+/** Build up to 3 distinct options from path steps (next/future) + target titles. */
 function buildOptions(path: CareerPath): PathOption[] {
   const options: PathOption[] = [];
   const seen = new Set<string>();
@@ -394,7 +394,7 @@ export function CareerKickoffFlow({
             disabled={selected.length === 0 || busy}
             onClick={() => void confirmPaths()}
           >
-            Confirm career paths
+            Continue
           </Button>
         </>
       )}
@@ -447,7 +447,7 @@ export function CareerKickoffFlow({
               onClick={() => void confirmPackage()}
               className="flex-1"
             >
-              Save package
+              Continue
             </Button>
             <button
               type="button"
@@ -492,7 +492,7 @@ export function CareerKickoffFlow({
               onClick={() => void confirmReview()}
               className="flex-1"
             >
-              Looks right — find my jobs
+              Continue — show jobs
             </Button>
             <button
               type="button"

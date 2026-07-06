@@ -32,6 +32,7 @@ import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
+import { SettingsPanel } from "@/components/dashboard/SettingsPanel";
 import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
 import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { TopNav } from "@/components/dashboard/TopNav";
@@ -40,6 +41,7 @@ import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import { ChatPeekStrip } from "@/components/dashboard/ChatPeekStrip";
 import { type JobsTab, type PanelId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
 import { useToast } from "@/components/ui";
+import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
 
 const ChatInterface = dynamic(
   () =>
@@ -96,6 +98,8 @@ export function DashboardClient({
   const [injected, setInjected] = useState<{ text: string; nonce: number } | null>(null);
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
   const [savedJobsRefreshKey, setSavedJobsRefreshKey] = useState(0);
+  const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
+  const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
 
   useEffect(() => {
     router.prefetch("/resumes");
@@ -103,6 +107,7 @@ export function DashboardClient({
     router.prefetch("/dashboard?panel=jobs");
     router.prefetch("/dashboard?panel=career_path");
     router.prefetch("/dashboard?panel=tracker");
+    router.prefetch("/dashboard?panel=settings");
 
     let cancelled = false;
 
@@ -153,6 +158,7 @@ export function DashboardClient({
 
   function syncDashboardUrl(panel: PanelId | null, jobsTab?: JobsTab) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("kickoff");
     if (panel) params.set("panel", panel);
     else params.delete("panel");
     if (panel === "jobs" && jobsTab && jobsTab !== "matches") {
@@ -172,6 +178,12 @@ export function DashboardClient({
   function sendToChat(text: string) {
     openPanel(null);
     setInjected({ text, nonce: Date.now() });
+  }
+
+  function handleCareerKickoffComplete(result: KickoffResult) {
+    setKickoffMatchJobs(result.jobs);
+    setKickoffMatchTitle(result.preferredTitle);
+    openPanel("jobs", "matches");
   }
 
   function handleRequestIntro(job: MatchedJob) {
@@ -261,9 +273,7 @@ export function DashboardClient({
               "flex flex-col bg-paper-0 overflow-hidden border-ink-100 animate-slide-in-left",
               "absolute inset-0 z-20 w-full",
               "lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:border-r",
-              activePanel === "inbox"
-                ? "lg:w-[clamp(520px,52%,720px)]"
-                : "lg:w-[clamp(380px,42%,600px)]",
+              "lg:w-[clamp(380px,42%,600px)]",
             )}
           >
             <div className="flex items-center justify-between h-14 px-5 border-b border-ink-100 shrink-0">
@@ -297,7 +307,9 @@ export function DashboardClient({
                   <IntrosInboxPanel />
                 </div>
               )}
-              {activePanel === "profile" && <ProfilePanel onSendToChat={sendToChat} />}
+              {activePanel === "profile" && (
+                <ProfilePanel onSendToChat={sendToChat} onOpenPanel={openPanel} />
+              )}
               {activePanel === "jobs" && (
                 <JobsPanel
                   conversationId={activeConvoId ?? undefined}
@@ -313,6 +325,8 @@ export function DashboardClient({
                   savedJobIds={savedJobIds}
                   onSavedChange={handleSavedChange}
                   savedJobsRefreshKey={savedJobsRefreshKey}
+                  kickoffJobs={kickoffMatchJobs}
+                  kickoffTitle={kickoffMatchTitle}
                   onAskAarya={() =>
                     sendToChat("Find me the best matching jobs for my profile right now.")
                   }
@@ -329,6 +343,13 @@ export function DashboardClient({
               )}
               {activePanel === "tracker" && <JobTrackerPanel className="h-full" />}
               {activePanel === "coaching" && <CoachingPanel onSendToChat={sendToChat} />}
+              {activePanel === "settings" && (
+                <SettingsPanel
+                  onEditProfile={() => openPanel("profile")}
+                  onSignOut={() => void handleSignOut()}
+                  signingOut={signingOut}
+                />
+              )}
             </div>
           </div>
         )}
@@ -351,6 +372,7 @@ export function DashboardClient({
             savedJobIds={savedJobIds}
             onSavedChange={handleSavedChange}
             onRequestIntro={handleRequestIntro}
+            onCareerKickoffComplete={handleCareerKickoffComplete}
           />
         </div>
         </div>
