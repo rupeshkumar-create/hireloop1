@@ -370,8 +370,8 @@ class JobIngester:
             seen_titles.add(key)
             search_titles.append(title)
 
-        _add_title(row["prioritized_title"])
-        _add_title(row["looking_for"])
+        _add_title(row.get("prioritized_title"))
+        _add_title(row.get("looking_for"))
         for title in list(row["target_titles"] or []):
             _add_title(str(title))
 
