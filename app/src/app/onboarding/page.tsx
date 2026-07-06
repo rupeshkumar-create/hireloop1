@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 import { getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolveSignupMethod } from "@/lib/auth/signup-method";
 import { displayNameFromSupabaseUser } from "@/lib/auth/display-name";
-import { isOnboardingCompleteOnServer } from "@/lib/auth/server-onboarding";
+import { shouldRedirectOnboardingToDashboard } from "@/lib/auth/server-onboarding";
 import { createClient } from "@/lib/supabase/server";
 import { OnboardingClientGate } from "@/components/auth/OnboardingClientGate";
 import { OnboardingFlow } from "./OnboardingFlow";
@@ -49,33 +49,15 @@ export default async function OnboardingPage() {
     } catch {
       /* non-fatal */
     }
-  }
 
-  // Prefer résumé/API name, then DB row, then LinkedIn OAuth metadata on the JWT.
-  let candidateName: string | undefined = displayNameFromSupabaseUser(user);
-  let supabaseOnboardingComplete: boolean | null = null;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: candidateRow } = await (supabase as any)
-    .from("candidates")
-    .select("onboarding_complete")
-    .eq("user_id", user.id)
-    .is("deleted_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle() as { data: { onboarding_complete: boolean | null } | null };
-  supabaseOnboardingComplete = candidateRow?.onboarding_complete ?? null;
-
-  if (token) {
-    const complete = await isOnboardingCompleteOnServer({
-      token,
-      supabaseFallback: supabaseOnboardingComplete,
-      apiBase,
-    });
-    if (complete) {
+    if (await shouldRedirectOnboardingToDashboard({ token, apiBase })) {
       redirect("/dashboard");
     }
+  }
 
+  let candidateName: string | undefined = displayNameFromSupabaseUser(user);
+
+  if (token) {
     try {
       const profileRes = await fetch(`${apiBase}/api/v1/me/profile`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -90,9 +72,8 @@ export default async function OnboardingPage() {
     } catch {
       /* non-fatal */
     }
-  } else if (supabaseOnboardingComplete === true) {
-    redirect("/dashboard");
   }
+
   if (!candidateName) {
     try {
       const supabase = await createClient();

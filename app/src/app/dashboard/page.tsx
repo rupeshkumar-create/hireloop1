@@ -104,7 +104,7 @@ export default async function DashboardPage({
   const { data: candidateRaw } = await (supabase as any)
     .from("candidates")
     .select(
-      "id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url, onboarding_complete",
+      "id, location_city, expected_ctc_min, expected_ctc_max, linkedin_url, onboarding_complete, profile_complete, current_title, skills, looking_for",
     )
     .eq("user_id", user.id)
     .is("deleted_at", null)
@@ -118,6 +118,10 @@ export default async function DashboardPage({
       expected_ctc_max: number | null;
       linkedin_url: string | null;
       onboarding_complete: boolean | null;
+      profile_complete: boolean | null;
+      current_title: string | null;
+      skills: string[] | null;
+      looking_for: string | null;
     } | null;
   };
 
@@ -125,9 +129,20 @@ export default async function DashboardPage({
     redirect("/onboarding");
   }
 
+  const candidateId = candidateRaw.id;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resumeResult = await (supabase as any)
+    .from("resumes")
+    .select("id", { count: "exact", head: true })
+    .eq("candidate_id", candidateId) as { count: number | null };
+
+  const hasResume = (resumeResult.count ?? 0) > 0;
+
   const onboardingComplete = await isOnboardingCompleteOnServer({
     token,
-    supabaseFallback: candidateRaw.onboarding_complete,
+    supabaseCandidate: candidateRaw,
+    hasResume,
     apiBase: API_URL,
   });
 
@@ -135,27 +150,14 @@ export default async function DashboardPage({
     redirect("/onboarding");
   }
 
-  const candidateId = candidateRaw.id;
-
   // ── Profile readiness (frontend gates only — match APIs unchanged) ────────
-  const [resumeResult, voiceResult] = await Promise.all([
-    // Any resume uploaded for this candidate
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
-      .from("resumes")
-      .select("id", { count: "exact", head: true })
-      .eq("candidate_id", candidateId) as Promise<{ count: number | null }>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const voiceResult = await (supabase as any)
+    .from("voice_sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("candidate_id", candidateId)
+    .eq("status", "completed") as { count: number | null };
 
-    // Any completed Aarya voice session
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
-      .from("voice_sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("candidate_id", candidateId)
-      .eq("status", "completed") as Promise<{ count: number | null }>,
-  ]);
-
-  const hasResume = (resumeResult.count ?? 0) > 0;
   const hasVoiceSession = (voiceResult.count ?? 0) > 0;
   const profileForReadiness = {
     candidate: {

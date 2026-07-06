@@ -405,6 +405,8 @@ async def get_my_profile(
                is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
         """,
         user_id,
     )
@@ -431,6 +433,13 @@ async def get_my_profile(
 
     user_payload = _serialize_row(user_row) or {}
     candidate_payload = _serialize_row(candidate_row) or {}
+
+    from hireloop_api.services.onboarding_grandfather import (
+        maybe_grandfather_onboarding_complete,
+    )
+
+    if await maybe_grandfather_onboarding_complete(db, candidate=candidate_row):
+        candidate_payload["onboarding_complete"] = True
 
     # Admin status mirrors deps.get_admin_user: DB role OR the operator allow-list
     # (so a founder bootstrapped via SUPER_ADMIN_EMAILS — whose DB role is still
