@@ -28,6 +28,8 @@ logger = structlog.get_logger()
 _pool: asyncpg.Pool | None = None
 _DB_POOL_CREATE_TIMEOUT_S = 15.0
 _DB_ACQUIRE_TIMEOUT_S = 10.0
+_DB_ACQUIRE_RETRIES = 3
+_DB_ACQUIRE_RETRY_DELAY_S = 0.25
 
 
 def reset_db_pool() -> None:
@@ -47,9 +49,10 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
             "max_size": 10,
             "command_timeout": 30,
         }
-        # Supabase transaction pooler (port 6543) requires statement cache off.
-        if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
+        # Supabase (direct or transaction pooler) requires statement cache off with PgBouncer.
+        if "supabase.co" in dsn or ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
             pool_kwargs["statement_cache_size"] = 0
+            pool_kwargs["max_inactive_connection_lifetime"] = 300.0
         try:
             _pool = await asyncio.wait_for(
                 asyncpg.create_pool(dsn, **pool_kwargs),
@@ -62,15 +65,29 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
 
 
 async def _acquire_db_connection(pool: asyncpg.Pool) -> asyncpg.Connection:
-    """Acquire a pooled connection, failing fast when Postgres is unreachable."""
-    try:
-        return await asyncio.wait_for(pool.acquire(), timeout=_DB_ACQUIRE_TIMEOUT_S)
-    except TimeoutError as exc:
-        logger.error("db_acquire_timeout", timeout_s=_DB_ACQUIRE_TIMEOUT_S)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database temporarily unavailable. Please try again in a moment.",
-        ) from exc
+    """Acquire a pooled connection, retrying briefly when the pool is contended."""
+    last_exc: TimeoutError | None = None
+    for attempt in range(1, _DB_ACQUIRE_RETRIES + 1):
+        try:
+            return await asyncio.wait_for(pool.acquire(), timeout=_DB_ACQUIRE_TIMEOUT_S)
+        except TimeoutError as exc:
+            last_exc = exc
+            if attempt < _DB_ACQUIRE_RETRIES:
+                logger.warning(
+                    "db_acquire_retry",
+                    attempt=attempt,
+                    timeout_s=_DB_ACQUIRE_TIMEOUT_S,
+                )
+                await asyncio.sleep(_DB_ACQUIRE_RETRY_DELAY_S * attempt)
+    logger.error(
+        "db_acquire_timeout",
+        timeout_s=_DB_ACQUIRE_TIMEOUT_S,
+        attempts=_DB_ACQUIRE_RETRIES,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database temporarily unavailable. Please try again in a moment.",
+    ) from last_exc
 
 
 async def get_db(

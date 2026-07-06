@@ -469,34 +469,42 @@ _HANDLERS: dict[str, Handler] = {
 
 
 async def process_job(
-    db: asyncpg.Connection,
+    pool: asyncpg.Pool,
     settings: Settings,
     job: dict[str, Any],
 ) -> None:
-    """Run one claimed job to completion or schedule a retry."""
+    """Run one claimed job to completion or schedule a retry.
+
+    Handlers may run for minutes (embed + match scoring). They acquire their own
+    connections from ``pool``; this function must not hold a connection open
+    across ``handler`` execution or the API pool starves under load.
+    """
     kind = job["kind"]
     handler = _HANDLERS.get(kind)
     if handler is None:
-        await mark_job_failed(
-            db,
-            job["id"],
-            error=f"unknown job kind: {kind}",
-            attempts=job["attempts"],
-            max_attempts=job["max_attempts"],
-        )
+        async with pool.acquire() as conn:
+            await mark_job_failed(
+                conn,
+                job["id"],
+                error=f"unknown job kind: {kind}",
+                attempts=job["attempts"],
+                max_attempts=job["max_attempts"],
+            )
         return
     try:
         await handler(settings, job["payload"])
-        await mark_job_completed(db, job["id"])
+        async with pool.acquire() as conn:
+            await mark_job_completed(conn, job["id"])
         logger.info("background_job_completed", job_id=job["id"], kind=kind)
     except Exception as exc:
-        await mark_job_failed(
-            db,
-            job["id"],
-            error=str(exc),
-            attempts=job["attempts"],
-            max_attempts=job["max_attempts"],
-        )
+        async with pool.acquire() as conn:
+            await mark_job_failed(
+                conn,
+                job["id"],
+                error=str(exc),
+                attempts=job["attempts"],
+                max_attempts=job["max_attempts"],
+            )
 
 
 async def run_background_worker(
@@ -518,11 +526,12 @@ async def run_background_worker(
     while not stop_event.is_set():
         try:
             pool = await get_db_pool(settings)
+            job: dict[str, Any] | None = None
             async with pool.acquire() as conn:
                 job = await claim_next_job(conn, worker_id=wid)
-                if job:
-                    await process_job(conn, settings, job)
-                    continue
+            if job:
+                await process_job(pool, settings, job)
+                continue
         except Exception as exc:
             logger.error("background_worker_poll_error", error=str(exc)[:300])
 

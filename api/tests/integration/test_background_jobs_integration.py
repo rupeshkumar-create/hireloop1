@@ -17,6 +17,7 @@ from hireloop_api.services.background_jobs import (
     enqueue_job,
     process_job,
 )
+from tests.pool_shim import ConnectionPoolShim
 
 
 @pytest.mark.asyncio
@@ -41,7 +42,7 @@ async def test_enqueue_claim_and_complete(db_conn: asyncpg.Connection) -> None:
     original = bj._HANDLERS[AARYA_AUTO_INGEST]
     bj._HANDLERS[AARYA_AUTO_INGEST] = _noop
     try:
-        await process_job(db_conn, settings, claimed)
+        await process_job(ConnectionPoolShim(db_conn), settings, claimed)
     finally:
         bj._HANDLERS[AARYA_AUTO_INGEST] = original
 

@@ -18,6 +18,7 @@ from hireloop_api.services.background_jobs import (
     mark_job_failed,
     process_job,
 )
+from tests.pool_shim import ConnectionPoolShim
 
 
 class _JobDB:
@@ -121,7 +122,7 @@ async def test_claim_and_complete() -> None:
     original = bj._HANDLERS[AARYA_AUTO_INGEST]
     bj._HANDLERS[AARYA_AUTO_INGEST] = _noop
     try:
-        await process_job(db, settings, claimed)  # type: ignore[arg-type]
+        await process_job(ConnectionPoolShim(db), settings, claimed)  # type: ignore[arg-type]
     finally:
         bj._HANDLERS[AARYA_AUTO_INGEST] = original
 
