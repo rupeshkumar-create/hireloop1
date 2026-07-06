@@ -889,7 +889,7 @@ class MatchingEngine:
             WHERE j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND j.expires_at > NOW()
+              AND (j.expires_at IS NULL OR j.expires_at > NOW())
             ORDER BY j.scraped_at DESC
             LIMIT $2
             """,

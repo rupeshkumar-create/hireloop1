@@ -266,7 +266,7 @@ async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles
 
     companies = [row["company_name"] for row in result]
     assert "DrinkPrime" in companies
-    assert "Hireloop Test Co" not in companies or len(companies) > 1
+    assert companies[0] == "DrinkPrime"
 
 
 @pytest.mark.asyncio

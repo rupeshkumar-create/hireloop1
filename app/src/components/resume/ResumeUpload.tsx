@@ -14,6 +14,7 @@
 import { useState, useRef, useCallback } from "react";
 import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { ApiUnreachableError, apiAuthFetch } from "@/lib/api/auth-fetch";
+import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import { invalidateProfileCache } from "@/lib/api/profile";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +69,7 @@ export function ResumeUpload({
         throw new Error(err.detail ?? "Failed to apply to profile");
       }
       invalidateProfileCache();
+      invalidateMatchFeedCache();
       setState("done");
       onDone?.(result.resume_id, result.parsed);
     } catch (err) {

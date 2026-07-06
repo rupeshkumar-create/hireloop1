@@ -6,6 +6,7 @@ from hireloop_api.services.match_quality import job_in_persona_pool, should_pers
 from hireloop_api.services.test_jobs import (
     TEST_COMPANY_NAME,
     TEST_MATCH_SCORE,
+    append_test_jobs,
     is_test_job,
     prepend_test_jobs,
 )
@@ -46,6 +47,14 @@ def test_test_job_always_persisted() -> None:
         "skills_required": ["sales"],
     }
     assert should_persist_match(cand, test_job, {"overall": 0.1}) is True
+
+
+def test_append_test_jobs_puts_demo_roles_after_market_matches() -> None:
+    regular = [{"job_id": "a", "title": "Growth Manager"}]
+    test = [{"job_id": "b", "title": "Demo Role"}]
+    merged = append_test_jobs(regular, test, limit=5)
+    assert merged[0]["job_id"] == "a"
+    assert merged[-1]["job_id"] == "b"
 
 
 def test_prepend_test_jobs_keeps_test_roles_first() -> None:

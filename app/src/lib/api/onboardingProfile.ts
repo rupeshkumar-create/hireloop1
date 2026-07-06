@@ -5,6 +5,7 @@
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import { invalidateMatchFeedCache } from "@/lib/api/matches";
 
 const LINKEDIN_IN_RE = /linkedin\.com\/in\/[^/?#\s]+/i;
 const RESUME_PARSE_POLL_MS = 2000;
@@ -123,5 +124,6 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
       );
     }
   }
+  invalidateMatchFeedCache();
   return parsed;
 }

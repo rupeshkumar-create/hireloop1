@@ -49,10 +49,10 @@ from hireloop_api.services.ranking import (
 )
 from hireloop_api.services.skills import canonical_skill
 from hireloop_api.services.test_jobs import (
+    append_test_jobs,
     ensure_test_match_scores,
     fetch_test_jobs_for_feed,
     is_test_job,
-    prepend_test_jobs,
 )
 
 logger = structlog.get_logger()
@@ -61,6 +61,9 @@ router = APIRouter(prefix="/matches", tags=["matches"])
 # Per-candidate locks so a fresh candidate's first feed load scores exactly once,
 # even when several requests race right after signup (see get_match_feed).
 _first_score_locks: dict[str, asyncio.Lock] = {}
+_MIN_MARKET_FEED_JOBS = 8
+_FEED_SCORE_LIMIT = 500
+_ACTIVE_JOB_EXPIRY_SQL = "(j.expires_at IS NULL OR j.expires_at > NOW())"
 
 
 def _is_test_match_row(row: asyncpg.Record | dict) -> bool:
@@ -234,6 +237,7 @@ async def get_match_feed(
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
+    settings = get_settings()
     remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
     market = normalize_market(candidate.get("market"))
     if not candidate.get("market"):
@@ -245,6 +249,30 @@ async def get_match_feed(
         market=market,
         remote_preference="any",
     )
+
+    if offset == 0 and settings.apify_token and hasattr(db, "fetchval"):
+        apify_jobs = await db.fetchval(
+            f"""
+            SELECT count(*)::int
+            FROM public.jobs j
+            WHERE j.source = 'apify'
+              AND j.is_active = TRUE
+              AND j.deleted_at IS NULL
+              AND {_ACTIVE_JOB_EXPIRY_SQL}
+            """
+        )
+        if int(apify_jobs or 0) < 20:
+            from hireloop_api.services.background_jobs import (
+                AARYA_AUTO_INGEST,
+                enqueue_job,
+            )
+
+            await enqueue_job(
+                db,
+                kind=AARYA_AUTO_INGEST,
+                payload={"candidate_id": str(candidate["id"])},
+                idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
+            )
 
     rows = await _fetch_cached_match_rows(
         db,
@@ -275,7 +303,9 @@ async def get_match_feed(
             )
             if not _market_match_rows(rows):
                 engine = MatchingEngine(db)
-                scored = await engine.score_candidate(str(candidate["id"]), limit=max(50, limit))
+                scored = await engine.score_candidate(
+                    str(candidate["id"]), limit=_FEED_SCORE_LIMIT
+                )
                 logger.info(
                     "match_feed_live_scored",
                     candidate_id=str(candidate["id"]),
@@ -317,6 +347,35 @@ async def get_match_feed(
             market=market,
         )
 
+    if offset == 0 and len(result) < _MIN_MARKET_FEED_JOBS and hasattr(db, "executemany"):
+        engine = MatchingEngine(db)
+        await engine.score_candidate(str(candidate["id"]), limit=_FEED_SCORE_LIMIT)
+        rows = await _fetch_cached_match_rows(
+            db,
+            candidate_id=candidate["id"],
+            min_score=MIN_PERSIST_SCORE,
+            limit=max(limit, _MIN_MARKET_FEED_JOBS),
+            offset=0,
+            remote_preference=remote_pref,
+            market=market,
+        )
+        refreshed = _market_feed_items(
+            _serialize_current_quality_cached_rows(
+                rows,
+                candidate=dict(candidate),
+                min_score=MIN_PERSIST_SCORE,
+            )
+        )
+        result = await _supplement_market_feed(
+            db,
+            candidate=dict(candidate),
+            result=refreshed,
+            min_score=min_score,
+            limit=max(limit, _MIN_MARKET_FEED_JOBS),
+            remote_preference=remote_pref,
+            market=market,
+        )
+
     # Hard constraints: drop deal-breakers on every page (so pagination is
     # consistent) — roles whose stated pay band is clearly below the candidate's
     # CTC floor (minus negotiation slack), and any remote/on-site mismatch the
@@ -353,7 +412,7 @@ async def get_match_feed(
             market=market,
             remote_preference="any",
         )
-        result = prepend_test_jobs(result, test_jobs, limit=limit)
+        result = append_test_jobs(result, test_jobs, limit=limit)
         # Off the serve path: snapshot the screen and generate/persist rationales
         # on a background connection so the feed returns immediately.
         _schedule_rationale_overlay(dict(candidate), [dict(i) for i in result], limit)
@@ -641,7 +700,7 @@ async def _count_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND j.expires_at > NOW()
+          AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
         """,
         candidate_id,
@@ -710,7 +769,7 @@ async def _fetch_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND j.expires_at > NOW()
+          AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
         ORDER BY ms.overall_score * (
             -- Freshness decay (#27), applied at serve time so the stored score
@@ -910,7 +969,7 @@ async def _fetch_fallback_match_rows(
         WHERE j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND j.expires_at > NOW()
+          AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
         ORDER BY
           skills_overlap DESC,

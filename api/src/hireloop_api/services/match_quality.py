@@ -158,7 +158,7 @@ def should_persist_match(
         list(job_row.get("skills_required") or []),
     )
     role_signal = max(title_aff or 0.0, lexical or 0.0)
-    if role_signal < 0.20:
+    if role_signal < 0.15:
         return False
 
     return True

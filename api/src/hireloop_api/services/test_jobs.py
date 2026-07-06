@@ -192,3 +192,23 @@ def prepend_test_jobs(
     if limit is not None:
         return merged[:limit]
     return merged
+
+
+def append_test_jobs(
+    jobs: list[dict[str, Any]],
+    test_jobs: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Append demo/test roles after profile matches so real jobs lead the feed."""
+    seen = {str(j.get("job_id") or j.get("id")) for j in jobs}
+    merged = list(jobs)
+    for job in test_jobs:
+        jid = str(job.get("job_id") or job.get("id"))
+        if jid in seen:
+            continue
+        seen.add(jid)
+        merged.append(job)
+    if limit is not None:
+        return merged[:limit]
+    return merged

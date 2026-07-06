@@ -107,6 +107,7 @@ import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
+import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import {
   fetchMyProfile,
   invalidateProfileCache,
@@ -1058,6 +1059,7 @@ export function ChatInterface({
             { method: "POST" },
           );
           invalidateProfileCache();
+          invalidateMatchFeedCache();
         } catch {
           // best-effort — don't block the chat message
         }
