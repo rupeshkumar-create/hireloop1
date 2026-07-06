@@ -26,9 +26,17 @@ export function Footer() {
           {/* Brand column */}
           <div className="col-span-2">
             <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg ">
-                <span className="text-paper-0 font-bold text-sm">H</span>
-              </div>
+              <svg viewBox="0 0 48 48" fill="none" className="h-8 w-8 shrink-0" aria-hidden>
+                <rect width="48" height="48" fill="#B9F84C" />
+                <path
+                  d="M16 14V34M24 14V34M32 14V34M16 14H32M16 24H32M16 34H32"
+                  stroke="#0F1400"
+                  strokeWidth="2.6"
+                  strokeLinecap="square"
+                />
+                <circle cx="24" cy="24" r="3.4" fill="#0F1400" />
+                <circle cx="24" cy="24" r="1.25" fill="#B9F84C" />
+              </svg>
               <span className="font-bold text-xl text-paper-0">
                 Hire<span className="text-accent">schema</span>
               </span>
