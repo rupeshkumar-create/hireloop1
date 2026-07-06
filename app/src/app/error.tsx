@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect } from "react";
 import { BTN_GHOST, BTN_PRIMARY } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 

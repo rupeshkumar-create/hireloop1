@@ -133,5 +133,4 @@ export {
   Zap,
   Volume2,
   XCircle,
-  Zap,
 } from "lucide-react";
