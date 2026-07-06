@@ -255,7 +255,7 @@ class NityaWorker:
 
         while self._running:
             try:
-                conn = await asyncpg.connect(self._db_dsn)
+                conn = await asyncpg.connect(self._db_dsn, statement_cache_size=0)
                 try:
                     await conn.add_listener("intro_requests", self._on_notify)
                     logger.info("nitya_worker_listening")
@@ -299,7 +299,7 @@ class NityaWorker:
     async def _handle_async(self, payload: dict) -> None:
         """Spawn a fresh DB connection and handle the intro in a dedicated task."""
         try:
-            conn = await asyncpg.connect(self._db_dsn)
+            conn = await asyncpg.connect(self._db_dsn, statement_cache_size=0)
             try:
                 handler = NityaIntroHandler(settings=self._settings, db=conn)
                 result = await handler.handle(payload)
