@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { ToastProvider } from "@/components/ui";
 import { CandidateGate } from "@/components/auth/CandidateGate";
+import { OAuthReturnHandler } from "@/components/auth/OAuthReturnHandler";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AppWarmup } from "@/components/providers/AppWarmup";
 import "./globals.css";
@@ -40,7 +42,10 @@ export default function RootLayout({
         <ToastProvider>
           <QueryProvider>
             <AppWarmup />
-            <CandidateGate>{children}</CandidateGate>
+            <Suspense fallback={null}>
+              <OAuthReturnHandler />
+              <CandidateGate>{children}</CandidateGate>
+            </Suspense>
           </QueryProvider>
         </ToastProvider>
       </body>

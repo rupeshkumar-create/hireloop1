@@ -2,17 +2,38 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Canonical host is www — fixes apex when DNS points at Vercel but users type
- * hireschema.com without www.
+ * - Apex → www canonical host
+ * - OAuth `code` / email `token_hash` landed on the wrong path (Supabase Site URL
+ *   fallback) → forward to /auth/callback or /auth/confirm
  */
 export function middleware(request: NextRequest) {
+  const url = request.nextUrl.clone();
   const host = (request.headers.get("host") ?? "").split(":")[0].toLowerCase();
+
   if (host === "hireschema.com") {
-    const url = request.nextUrl.clone();
     url.protocol = "https";
     url.host = "www.hireschema.com";
     return NextResponse.redirect(url, 308);
   }
+
+  const pathname = url.pathname;
+  const code = url.searchParams.get("code");
+  const tokenHash = url.searchParams.get("token_hash");
+
+  if (code && pathname !== "/auth/callback") {
+    url.pathname = "/auth/callback";
+    return NextResponse.redirect(url);
+  }
+
+  if (
+    tokenHash &&
+    pathname !== "/auth/confirm" &&
+    pathname !== "/auth/callback"
+  ) {
+    url.pathname = "/auth/confirm";
+    return NextResponse.redirect(url);
+  }
+
   return NextResponse.next();
 }
 
