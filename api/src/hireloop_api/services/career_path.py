@@ -60,15 +60,31 @@ Rules:
 """
 
 
-async def expand_similar_titles(title: str) -> list[str]:
-    """Similar, searchable job titles for one preferred career path.
+async def expand_similar_titles(
+    title: str,
+    db: asyncpg.Connection | None = None,
+) -> list[str]:
+    """Similar, searchable job titles for a preferred career path.
 
     "Head of Growth" → ["Growth Head", "VP Growth", "Director of Growth", ...]
-    so single-path candidates still cast a realistic net across the synonyms
-    job boards actually use. Best-effort: any failure returns [] and search
-    falls back to the title alone.
+    so every path casts a realistic net across the synonyms job boards
+    actually use. Cached per title (title_expansions) — one LLM call ever per
+    distinct title. Best-effort: any failure returns [] and search falls back
+    to the title alone.
     """
     from hireloop_api.config import get_settings
+
+    title_norm = " ".join(title.lower().split())
+    if db is not None:
+        try:
+            cached = await db.fetchval(
+                "SELECT titles FROM public.title_expansions WHERE title_norm = $1",
+                title_norm,
+            )
+            if cached is not None:
+                return list(cached)
+        except Exception as exc:
+            logger.debug("title_expansion_cache_read_failed", error=str(exc)[:100])
 
     settings = get_settings()
     if not settings.openrouter_api_key:
@@ -111,7 +127,18 @@ async def expand_similar_titles(title: str) -> list[str]:
             t = str(item).strip()
             if t and t.lower() != title.lower():
                 out.append(t[:120])
-        return out[:6]
+        out = out[:6]
+        if db is not None and out:
+            try:
+                await db.execute(
+                    "INSERT INTO public.title_expansions (title_norm, titles) "
+                    "VALUES ($1, $2) ON CONFLICT (title_norm) DO NOTHING",
+                    title_norm,
+                    out,
+                )
+            except Exception as exc:
+                logger.debug("title_expansion_cache_write_failed", error=str(exc)[:100])
+        return out
     except Exception as exc:
         logger.warning("title_expansion_failed", error=str(exc)[:150])
         return []
@@ -256,7 +283,7 @@ class CareerPathService:
             raise ValueError("Title required")
         row = await db.fetchrow(
             """
-            SELECT id FROM public.career_paths
+            SELECT id, target_titles FROM public.career_paths
             WHERE candidate_id = $1::uuid AND deleted_at IS NULL
             ORDER BY created_at DESC
             LIMIT 1
@@ -266,56 +293,47 @@ class CareerPathService:
         if not row:
             return None
 
-        cleaned_selection: list[str] = []
-        if selected_titles:
-            seen: set[str] = set()
-            for raw in selected_titles:
-                t = str(raw).strip()
-                if t and t.lower() not in seen:
-                    seen.add(t.lower())
-                    cleaned_selection.append(t[:120])
-            cleaned_selection = cleaned_selection[:5]
-            # The prioritized title always leads the confirmed set.
-            if title.lower() not in {t.lower() for t in cleaned_selection}:
-                cleaned_selection.insert(0, title)
+        # Base set: the explicit selection when given, otherwise the path's
+        # existing target titles — with the prioritized title always first.
+        base: list[str] = []
+        seen: set[str] = set()
 
-        # Single-path mode: one preferred title casts too narrow a net on its
-        # own — expand it into the synonym titles job boards actually use, so
-        # pool resolution, path search, and the scrape top-up all benefit.
-        if len(cleaned_selection) == 1:
-            similar = await expand_similar_titles(title)
-            seen_l = {t.lower() for t in cleaned_selection}
-            for t in similar:
-                if t.lower() not in seen_l:
-                    seen_l.add(t.lower())
-                    cleaned_selection.append(t)
-            cleaned_selection = cleaned_selection[:6]
+        def _add(raw: object) -> None:
+            t = str(raw or "").strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                base.append(t[:120])
 
-        if cleaned_selection:
-            updated = await db.fetchrow(
-                """
-                UPDATE public.career_paths
-                SET prioritized_title = $2, target_titles = $3, updated_at = NOW()
-                WHERE id = $1
-                RETURNING id, "current_role", summary, steps, target_titles,
-                          target_locations, model, created_at, updated_at, prioritized_title
-                """,
-                row["id"],
-                title,
-                cleaned_selection,
-            )
-        else:
-            updated = await db.fetchrow(
-                """
-                UPDATE public.career_paths
-                SET prioritized_title = $2, updated_at = NOW()
-                WHERE id = $1
-                RETURNING id, "current_role", summary, steps, target_titles,
-                          target_locations, model, created_at, updated_at, prioritized_title
-                """,
-                row["id"],
-                title,
-            )
+        _add(title)
+        for raw in selected_titles or []:
+            _add(raw)
+        if not selected_titles:
+            for raw in list(row["target_titles"] or []):
+                _add(raw)
+        base = base[:5]
+
+        # EVERY prioritized path gets synonym coverage: expand the preferred
+        # title into the titles job boards actually use ("Head of Growth" →
+        # "Growth Head", "VP Growth", ...). Cached per title; best-effort.
+        seen = {t.lower() for t in base}
+        for t in await expand_similar_titles(title, db):
+            if t.lower() not in seen:
+                seen.add(t.lower())
+                base.append(t)
+        cleaned_selection = base[:8]
+
+        updated = await db.fetchrow(
+            """
+            UPDATE public.career_paths
+            SET prioritized_title = $2, target_titles = $3, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, "current_role", summary, steps, target_titles,
+                      target_locations, model, created_at, updated_at, prioritized_title
+            """,
+            row["id"],
+            title,
+            cleaned_selection,
+        )
         await db.execute(
             """
             UPDATE public.candidates
