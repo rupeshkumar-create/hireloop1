@@ -745,7 +745,18 @@ export function useVoice() {
    * Stop any in-flight speech, browser or server.
    * Defined first so both speak paths can call it before starting.
    */
+  // Generation token: speak/speakFiller fetch TTS audio for 1-3s BEFORE an
+  // Audio element exists, so cancelSpeech alone can't stop them — two clips
+  // fetched in parallel would both start playing (the "two voices at once"
+  // bug). Every new request bumps the generation; a clip may only start if
+  // its generation is still current.
+  const speechGenRef = useRef(0);
+  // True while a reply clip is being fetched/played — fillers are decorative
+  // and must never talk over the actual reply.
+  const speakBusyRef = useRef(false);
+
   const cancelSpeech = useCallback(() => {
+    speechGenRef.current += 1;
     try {
       window.speechSynthesis.cancel();
     } catch {
@@ -775,7 +786,7 @@ export function useVoice() {
    * so speak() can fall back to the browser voice.
    */
   const speakDeepgram = useCallback(
-    async (spoken: string, playbackRate = 1.0): Promise<void> => {
+    async (spoken: string, playbackRate = 1.0, isCurrent?: () => boolean): Promise<void> => {
     const res = await apiAuthFetch("/api/v1/voice/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -784,6 +795,9 @@ export function useVoice() {
     if (!res.ok) throw new Error(`TTS ${res.status}`);
     const blob = await res.blob();
     if (!blob.size) throw new Error("Empty TTS audio");
+    // A newer speak/cancel superseded this clip while it was being fetched —
+    // drop it instead of playing over the newer one.
+    if (isCurrent && !isCurrent()) return;
     const url = URL.createObjectURL(blob);
 
     await new Promise<void>((resolve, reject) => {
@@ -816,8 +830,9 @@ export function useVoice() {
   );
 
   const speakBrowser = useCallback(
-    async (spoken: string, playbackRate = 1.0): Promise<void> => {
+    async (spoken: string, playbackRate = 1.0, isCurrent?: () => boolean): Promise<void> => {
       window.speechSynthesis.cancel();
+      if (isCurrent && !isCurrent()) return;
 
       return new Promise((resolve) => {
         const utterance = new SpeechSynthesisUtterance(spoken);
@@ -868,18 +883,27 @@ export function useVoice() {
       if (!spoken) return;
 
       cancelSpeech();
+      const gen = speechGenRef.current;
+      const isCurrent = () => speechGenRef.current === gen;
+      speakBusyRef.current = true;
 
-      const playbackRate = opts?.hinglish ? 0.9 : 1.0;
-      const { tts } = await resolveVoiceConfig();
-      if (tts === "deepgram") {
-        try {
-          await speakDeepgram(spoken, playbackRate);
-          return;
-        } catch {
-          /* fall through */
+      try {
+        const playbackRate = opts?.hinglish ? 0.9 : 1.0;
+        const { tts } = await resolveVoiceConfig();
+        if (!isCurrent()) return;
+        if (tts === "deepgram") {
+          try {
+            await speakDeepgram(spoken, playbackRate, isCurrent);
+            return;
+          } catch {
+            /* fall through */
+          }
         }
+        if (!isCurrent()) return;
+        await speakBrowser(spoken, playbackRate, isCurrent);
+      } finally {
+        if (isCurrent()) speakBusyRef.current = false;
       }
-      await speakBrowser(spoken, playbackRate);
     },
     [cancelSpeech, speakDeepgram, speakBrowser]
   );
@@ -889,18 +913,24 @@ export function useVoice() {
     (text: string) => {
       const spoken = sanitizeForSpeech(text);
       if (!spoken) return;
+      // Fillers are decorative — never interrupt or overlap the actual reply.
+      if (speakBusyRef.current) return;
       cancelSpeech();
+      const gen = speechGenRef.current;
+      const isCurrent = () => speechGenRef.current === gen;
       void (async () => {
         const { tts } = await resolveVoiceConfig();
+        if (!isCurrent()) return;
         if (tts === "deepgram") {
           try {
-            await speakDeepgram(spoken);
+            await speakDeepgram(spoken, 1.0, isCurrent);
             return;
           } catch {
             /* fall through */
           }
         }
-        await speakBrowser(spoken);
+        if (!isCurrent()) return;
+        await speakBrowser(spoken, 1.0, isCurrent);
       })();
     },
     [cancelSpeech, speakDeepgram, speakBrowser]
