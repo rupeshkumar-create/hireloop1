@@ -142,6 +142,9 @@ export function SignupForm() {
     e.preventDefault();
     const addr = email.trim();
     if (!addr) return;
+    // A double-fired send makes Supabase issue a second code that silently
+    // invalidates the first — the user then pastes a dead code.
+    if (loadingAction !== null) return;
     setLoadingAction("email-send");
     setErrorMessage("");
     setInfoMessage("");
@@ -163,6 +166,41 @@ export function SignupForm() {
       setInfoMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  async function handleResendCode() {
+    if (loadingAction !== null || resendCooldown > 0) return;
+    setLoadingAction("email-send");
+    setErrorMessage("");
+    setOtpCode("");
+    try {
+      const redirectTo = `${window.location.origin}/auth/confirm?signup_role=${role}`;
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { shouldCreateUser: true, emailRedirectTo: redirectTo },
+      });
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+      setInfoMessage("New code sent — only the newest code works.");
+      setResendCooldown(30);
+      const timer = window.setInterval(() => {
+        setResendCooldown((c) => {
+          if (c <= 1) {
+            window.clearInterval(timer);
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Couldn't resend the code.");
     } finally {
       setLoadingAction(null);
     }
@@ -371,6 +409,17 @@ export function SignupForm() {
               {loadingAction === "email-verify" ? "Verifying…" : "Verify & continue"}
             </Button>
           </form>
+
+          <button
+            type="button"
+            onClick={() => void handleResendCode()}
+            disabled={loadingAction !== null || resendCooldown > 0}
+            className="w-full text-xs text-ink-600 hover:text-ink-900 disabled:opacity-50"
+          >
+            {resendCooldown > 0
+              ? `Resend code in ${resendCooldown}s`
+              : "Resend code (only the newest code works)"}
+          </button>
 
           <button
             type="button"

@@ -23,13 +23,20 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
-/** Try common Supabase email OTP types (signup vs returning sign-in). */
+/** Try common Supabase email OTP types (signup vs returning sign-in).
+ *
+ * Order matters: our send path is signInWithOtp, whose codes verify with
+ * type "email". Trying "signup" first guaranteed one failed attempt per
+ * click — and GoTrue caps verification attempts per token, so a user who
+ * retried a couple of times hit the cap and every later attempt reported
+ * "invalid or expired" even with the correct code. "email" first means the
+ * happy path costs exactly one attempt. */
 export async function verifyEmailCode(
   supabase: BrowserSupabase,
   email: string,
   token: string,
 ): Promise<VerifyEmailResult> {
-  const attempts = ["signup", "email", "magiclink"] as const;
+  const attempts = ["email", "signup", "magiclink"] as const;
   let lastError: string | null = null;
 
   for (const type of attempts) {
