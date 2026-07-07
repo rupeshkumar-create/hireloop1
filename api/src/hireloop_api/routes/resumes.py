@@ -214,13 +214,51 @@ def _schedule_resume_parse(
 
     async def _run() -> None:
         try:
-            parsed = await ResumeParserService.parse_best(
-                file_bytes=file_bytes,
-                filename=filename,
-                mime_type=mime_type,
-                settings=settings,
-            )
+            import hashlib
+
+            from hireloop_api.services.resume_parser import PARSER_VERSION
+
+            content_hash = hashlib.sha256(file_bytes).hexdigest()
             pool = await get_db_pool(settings)
+
+            # Same file + same parser version → same result. Serve from cache
+            # instead of re-running the LLM chain (re-uploads are very common).
+            parsed: ParsedResume | None = None
+            async with pool.acquire() as cache_db:
+                cached = await cache_db.fetchval(
+                    "SELECT parsed FROM public.resume_parse_cache "
+                    "WHERE content_hash = $1 AND parser_version = $2",
+                    content_hash,
+                    PARSER_VERSION,
+                )
+            if cached:
+                try:
+                    payload = json.loads(cached) if isinstance(cached, str) else cached
+                    parsed = ParsedResume.model_validate(payload)
+                    logger.info("resume_parse_cache_hit", resume_id=resume_id)
+                except Exception:
+                    parsed = None
+
+            if parsed is None:
+                parsed = await ResumeParserService.parse_best(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    mime_type=mime_type,
+                    settings=settings,
+                )
+                # Only cache parses worth reusing (identity present).
+                if parsed.full_name or parsed.current_title:
+                    async with pool.acquire() as cache_db:
+                        await cache_db.execute(
+                            "INSERT INTO public.resume_parse_cache "
+                            "  (content_hash, parser_version, parsed) "
+                            "VALUES ($1, $2, $3::jsonb) "
+                            "ON CONFLICT (content_hash, parser_version) DO NOTHING",
+                            content_hash,
+                            PARSER_VERSION,
+                            parsed.model_dump_json(),
+                        )
+
             async with pool.acquire() as bg_db:
                 await bg_db.execute(
                     """

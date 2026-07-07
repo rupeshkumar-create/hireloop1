@@ -595,6 +595,12 @@ async def run_background_worker(
 
                 async with pool.acquire() as conn:
                     nudged = await run_intro_followup_sweep(conn, settings)
+                    # Bounded retention for the parse cache (hash-keyed, so it
+                    # can't be purged per-account — the TTL bounds it instead).
+                    await conn.execute(
+                        "DELETE FROM public.resume_parse_cache "
+                        "WHERE created_at < NOW() - INTERVAL '30 days'"
+                    )
                 if nudged:
                     logger.info("intro_followup_sweep_done", nudged=nudged)
         except Exception as exc:

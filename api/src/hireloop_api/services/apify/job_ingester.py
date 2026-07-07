@@ -27,6 +27,17 @@ from hireloop_api.services.job_validator import validate_job_record
 
 logger = structlog.get_logger()
 
+# A query+location scraped within this window returns a near-identical result
+# set — skip it instead of burning another Fantastic/Apify run. The nightly
+# cron (24h cadence) is unaffected; on-demand triggers (kickoff, empty search,
+# pool top-up) are the ones that hammered the same query repeatedly.
+INGEST_DEDUPE_HOURS = 24
+
+
+def _norm_key(value: str | None) -> str:
+    return " ".join((value or "").lower().split())
+
+
 _MAX_JD_ENRICH_PER_INGEST = 20
 
 
@@ -180,6 +191,50 @@ class JobIngester:
             self._settings.fantastic_jobs_time_range if self._settings else "24h"
         )
 
+        # Recency gate: drop queries already scraped for this location inside
+        # the dedupe window; if nothing is left, skip the run entirely.
+        loc_key = _norm_key(scrape_locations[0] if scrape_locations else "")
+        if queries:
+            try:
+                recent_rows = await self._db.fetch(
+                    f"""
+                    SELECT query_norm FROM public.job_ingest_runs
+                    WHERE query_norm = ANY($1::text[])
+                      AND location_norm = $2
+                      AND last_run_at > NOW() - INTERVAL '{INGEST_DEDUPE_HOURS} hours'
+                    """,
+                    [_norm_key(q) for q in queries],
+                    loc_key,
+                )
+                recent = {r["query_norm"] for r in recent_rows}
+                kept = [q for q in queries if _norm_key(q) not in recent]
+                if len(kept) < len(queries):
+                    logger.info(
+                        "ingest_queries_deduped",
+                        skipped=len(queries) - len(kept),
+                        kept=len(kept),
+                    )
+                queries = kept
+            except Exception as exc:  # gate is an optimisation, never a blocker
+                logger.warning("ingest_dedupe_check_failed", error=str(exc)[:200])
+            if not queries:
+                logger.info("job_ingestion_skipped_recent")
+                return {
+                    "run_id": None,
+                    "dataset_id": None,
+                    "raw_items": 0,
+                    "normalised": 0,
+                    "inserted": 0,
+                    "updated": 0,
+                    "skipped": 0,
+                    "elapsed_seconds": 0.0,
+                    "sources": {},
+                    "ok": True,
+                    "degraded": False,
+                    "errors": {},
+                    "deduped": True,
+                }
+
         all_records: list[JobRecord] = []
         source_stats: dict[str, dict] = {}
         career_site_on = (
@@ -283,6 +338,27 @@ class JobIngester:
             "degraded": bool(errors),
             "errors": errors,
         }
+        # Record the run so the dedupe gate can skip identical queries for the
+        # next INGEST_DEDUPE_HOURS. Best-effort.
+        if queries and not errors:
+            try:
+                total = inserted + updated
+                for q in queries:
+                    await self._db.execute(
+                        """
+                        INSERT INTO public.job_ingest_runs
+                          (query_norm, location_norm, source, last_run_at, jobs_found)
+                        VALUES ($1, $2, 'apify', NOW(), $3)
+                        ON CONFLICT (query_norm, location_norm, source)
+                        DO UPDATE SET last_run_at = NOW(), jobs_found = $3
+                        """,
+                        _norm_key(q),
+                        loc_key,
+                        total,
+                    )
+            except Exception as exc:
+                logger.warning("ingest_run_record_failed", error=str(exc)[:200])
+
         logger.info("job_ingestion_completed", **stats)
         return stats
 

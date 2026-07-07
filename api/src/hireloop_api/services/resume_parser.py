@@ -31,6 +31,10 @@ from hireloop_api.services.skills import is_known_skill as _vocab_known
 
 logger = structlog.get_logger()
 
+# Bump when parsing quality changes (prompt, budgets, models, repair logic) —
+# invalidates resume_parse_cache entries produced by older parser versions.
+PARSER_VERSION = 3
+
 # ── Skill dictionary (canonical → aliases) ─────────────────────────────────────
 # Detection matches any alias on a word boundary and records the canonical name.
 # Kept broad but India-job-market relevant. The LLM tier finds the long tail;
@@ -522,19 +526,29 @@ class ResumeParserService:
 
         best: ParsedResume | None = None
 
-        # Tier 1 (primary): our LLM parser — strong, schema-guided, extracts the
-        # full structured profile (contact, work history with dates, education,
-        # skills, location, links).
+        # Tier 1 (primary → fallback chain): one bad response from the primary
+        # model used to mean silent regex junk. Each model gets one shot; the
+        # first SUBSTANTIAL parse wins, a thin parse is kept only as last resort.
+        fallback_model = getattr(settings, "openrouter_fallback_model", "") if settings else ""
+        model_chain = list(dict.fromkeys(m for m in (model, fallback_model) if m))
         if openrouter_key and text.strip():
-            try:
-                llm_result = await cls._parse_with_llm(
-                    text=text, api_key=openrouter_key, model=model
-                )
-                if llm_result:
-                    logger.info("resume_parsed_via", tier="llm")
+            for tier_model in model_chain:
+                try:
+                    llm_result = await cls._parse_with_llm(
+                        text=text, api_key=openrouter_key, model=tier_model
+                    )
+                except Exception as exc:
+                    logger.warning("llm_tier_failed", model=tier_model, error=str(exc)[:200])
+                    continue
+                if llm_result is None:
+                    continue
+                if best is None:
                     best = llm_result
-            except Exception as exc:
-                logger.warning("llm_tier_failed", error=str(exc)[:200])
+                if _is_substantial_parse(llm_result):
+                    best = llm_result
+                    logger.info("resume_parsed_via", tier="llm", model=tier_model)
+                    break
+                logger.warning("llm_parse_thin", model=tier_model)
 
         # Tier 1b (vision fallback): a scanned/image-only PDF yields almost no
         # text, so the text tiers can't help. Render the pages and let Claude's
@@ -1634,6 +1648,13 @@ def _loads_json_lenient(content: str) -> object:
         if repaired is not None:
             return repaired
         return None
+
+
+def _is_substantial_parse(parsed: ParsedResume) -> bool:
+    """A parse worth accepting: identity plus real content, not fragments."""
+    has_identity = bool(parsed.full_name or parsed.current_title)
+    has_content = bool(parsed.work_experience) or len(parsed.skills) >= 3
+    return has_identity and has_content
 
 
 def _repair_truncated_json(text: str) -> object:
