@@ -60,6 +60,63 @@ Rules:
 """
 
 
+async def expand_similar_titles(title: str) -> list[str]:
+    """Similar, searchable job titles for one preferred career path.
+
+    "Head of Growth" → ["Growth Head", "VP Growth", "Director of Growth", ...]
+    so single-path candidates still cast a realistic net across the synonyms
+    job boards actually use. Best-effort: any failure returns [] and search
+    falls back to the title alone.
+    """
+    from hireloop_api.config import get_settings
+
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        return []
+
+    import httpx
+
+    prompt = (
+        "List 4-6 alternative job titles that mean the same role as "
+        f'"{title}" on Indian job boards. Real, searchable titles only — no '
+        "explanations. Return ONLY a JSON array of strings."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.openrouter_fallback_model
+                    or settings.openrouter_primary_model,
+                    "temperature": 0,
+                    "max_tokens": 200,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+        if resp.status_code != 200:
+            return []
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"):
+            content = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", content).strip()
+        start, end = content.find("["), content.rfind("]")
+        if not (0 <= start < end):
+            return []
+        parsed = json.loads(content[start : end + 1])
+        out: list[str] = []
+        for item in parsed:
+            t = str(item).strip()
+            if t and t.lower() != title.lower():
+                out.append(t[:120])
+        return out[:6]
+    except Exception as exc:
+        logger.warning("title_expansion_failed", error=str(exc)[:150])
+        return []
+
+
 class CareerPathService:
     """Generate and persist candidate career paths."""
 
@@ -221,6 +278,18 @@ class CareerPathService:
             # The prioritized title always leads the confirmed set.
             if title.lower() not in {t.lower() for t in cleaned_selection}:
                 cleaned_selection.insert(0, title)
+
+        # Single-path mode: one preferred title casts too narrow a net on its
+        # own — expand it into the synonym titles job boards actually use, so
+        # pool resolution, path search, and the scrape top-up all benefit.
+        if len(cleaned_selection) == 1:
+            similar = await expand_similar_titles(title)
+            seen_l = {t.lower() for t in cleaned_selection}
+            for t in similar:
+                if t.lower() not in seen_l:
+                    seen_l.add(t.lower())
+                    cleaned_selection.append(t)
+            cleaned_selection = cleaned_selection[:6]
 
         if cleaned_selection:
             updated = await db.fetchrow(

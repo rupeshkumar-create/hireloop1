@@ -4,8 +4,9 @@
  * CareerKickoffFlow — guided first-run flow rendered inside chat, right after
  * onboarding. Three steps, all backed by existing APIs:
  *
- *   1. Paths   — AI proposes the top 3 career paths (pre-selected);
- *                multi-select + free-text "other". First selected = preferred.
+ *   1. Path    — AI proposes the top 3 directions; the candidate picks ONE
+ *                preferred path (or types their own). The server expands it
+ *                into similar titles, so one pick still casts a wide net.
  *   2. Package — expected CTC range for the candidate's market.
  *   3. Review  — everything Aarya will use to search; confirm saves it all,
  *                fires per-path resume generation, and runs the job search
@@ -33,7 +34,6 @@ import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
 
 const MAX_OPTIONS = 3;
-const MAX_SELECTED = 3;
 
 type PathOption = {
   title: string;
@@ -132,8 +132,8 @@ export function CareerKickoffFlow({
         if (p?.candidate?.expected_ctc_max) setCtcMax(String(p.candidate.expected_ctc_max));
         const opts = buildOptions(path);
         setOptions(opts);
-        // AI pre-selects the top 3 — the candidate can freely change this.
-        setSelected(opts.slice(0, MAX_SELECTED).map((o) => o.title));
+        // AI pre-selects its best guess — the candidate picks the ONE path.
+        setSelected(opts.slice(0, 1).map((o) => o.title));
         setStep("paths");
       } catch (err) {
         if (cancelled) return;
@@ -149,11 +149,8 @@ export function CareerKickoffFlow({
   }, []);
 
   const toggle = useCallback((title: string) => {
-    setSelected((prev) => {
-      if (prev.includes(title)) return prev.filter((t) => t !== title);
-      if (prev.length >= MAX_SELECTED) return prev; // hard cap — uncheck one first
-      return [...prev, title];
-    });
+    // Radio semantics: exactly one preferred path.
+    setSelected([title]);
   }, []);
 
   const addCustom = useCallback(() => {
@@ -163,11 +160,7 @@ export function CareerKickoffFlow({
       if (prev.some((o) => o.title.toLowerCase() === t.toLowerCase())) return prev;
       return [...prev, { title: t, rationale: "Your own direction", custom: true }];
     });
-    setSelected((prev) => {
-      if (prev.some((x) => x.toLowerCase() === t.toLowerCase())) return prev;
-      if (prev.length >= MAX_SELECTED) return prev;
-      return [...prev, t];
-    });
+    setSelected([t]);
     setCustomTitle("");
   }, [customTitle]);
 
@@ -346,10 +339,11 @@ export function CareerKickoffFlow({
       {step === "paths" && (
         <>
           <p className="text-small text-ink-800 leading-relaxed">
-            Based on your CV, these are the strongest career paths for you. I&apos;ve
-            pre-selected my top 3 — tap to change, or add your own. Your{" "}
-            <span className="font-medium">first pick becomes the preferred path</span>{" "}
-            I search first.
+            Based on your CV, these are the strongest career paths for you.
+            Pick <span className="font-medium">one preferred path</span> (or type
+            your own) — I&apos;ll automatically search similar titles too, like
+            &ldquo;Growth Head&rdquo; and &ldquo;VP Growth&rdquo; for &ldquo;Head
+            of Growth&rdquo;.
           </p>
           <div className="space-y-1.5">
             {options.map((opt) => {
@@ -419,8 +413,7 @@ export function CareerKickoffFlow({
             </button>
           </div>
           <p className="text-micro text-ink-400">
-            {selected.length}/{MAX_SELECTED} selected
-            {selected.length >= MAX_SELECTED ? " — uncheck one to swap" : ""}
+            One path, wide net — similar job titles are searched automatically.
           </p>
           {error && <FlowError message={error} />}
           <Button
