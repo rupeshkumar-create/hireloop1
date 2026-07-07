@@ -12,6 +12,7 @@ import { useDualRoleAccess } from "@/hooks/useDualRoleAccess";
 import { switchActiveRole, type ActiveRole } from "@/lib/api/role";
 import { Button, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { BTN_ICON } from "@/lib/button-classes";
 
 export function RoleSwitchButton({
   to,
@@ -53,9 +54,9 @@ export function RoleSwitchButton({
         onClick={() => void handleClick()}
         disabled={busy}
         className={cn(
-          "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left",
+          "flex w-full items-center gap-2.5 px-3 py-2 text-left",
           "text-small font-medium text-ink-600 transition-colors duration-fast",
-          "hover:bg-ink-50 hover:text-ink-900 disabled:opacity-50",
+          "hover:bg-paper-1 hover:text-ink-900 disabled:opacity-50",
         )}
       >
         {busy ? (
@@ -77,8 +78,8 @@ export function RoleSwitchButton({
         title={label}
         aria-label={label}
         className={cn(
-          "flex h-10 w-10 items-center justify-center rounded-xl text-ink-400",
-          "hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-50",
+          BTN_ICON,
+          "h-10 w-10 disabled:opacity-50",
         )}
       >
         {busy ? (

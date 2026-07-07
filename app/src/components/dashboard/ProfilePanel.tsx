@@ -30,6 +30,7 @@ import { GoogleConnectCard } from "@/components/profile/GoogleConnectCard";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST, BTN_ROW } from "@/lib/button-classes";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import {
   Badge,
@@ -272,7 +273,7 @@ export function ProfilePanel({
                   href={linkedinUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-ink-200 px-2.5 py-1.5 text-micro font-medium text-ink-700 hover:bg-ink-50 transition-colors"
+                  className={cn(BTN_GHOST, "inline-flex items-center gap-1.5 px-2.5 py-1.5 text-micro")}
                 >
                   <Linkedin className="h-3.5 w-3.5" strokeWidth={1.5} />
                   View LinkedIn
@@ -281,7 +282,7 @@ export function ProfilePanel({
               <button
                 type="button"
                 onClick={() => setTab("overview")}
-                className="inline-flex items-center gap-1.5 rounded-md border border-ink-200 px-2.5 py-1.5 text-micro font-medium text-ink-700 hover:bg-ink-50 transition-colors"
+                className={cn(BTN_GHOST, "inline-flex items-center gap-1.5 px-2.5 py-1.5 text-micro")}
               >
                 <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
                 Update CV
@@ -517,7 +518,7 @@ export function ProfilePanel({
                   <button
                     type="button"
                     onClick={() => onOpenPanel("settings")}
-                    className="w-full flex items-center justify-between gap-2 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+                    className={cn(BTN_ROW, "justify-between")}
                   >
                     <span>Open Settings</span>
                     <span className="text-ink-400">→</span>
@@ -525,7 +526,7 @@ export function ProfilePanel({
                 ) : (
                   <Link
                     href="/dashboard?panel=settings"
-                    className="w-full flex items-center justify-between gap-2 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+                    className={cn(BTN_ROW, "justify-between")}
                   >
                     <span>Open Settings</span>
                     <span className="text-ink-400">→</span>
@@ -559,10 +560,8 @@ export function ProfilePanel({
                       onClick={() => void selectRemotePreference(opt.id)}
                       disabled={savingRemote !== null}
                       className={cn(
-                        "w-full flex items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-fast",
-                        isActive
-                          ? "border-ink-900 bg-ink-50"
-                          : "border-ink-200 hover:border-ink-300 hover:bg-ink-50",
+                        "w-full flex items-start gap-3 px-3 py-2.5 text-left",
+                        isActive ? BTN_CHIP_ACTIVE : BTN_CHIP,
                         savingRemote !== null && "opacity-70",
                       )}
                     >
@@ -602,7 +601,7 @@ export function ProfilePanel({
                 <CardBody className="!pt-0">
                   <a
                     href="/admin"
-                    className="w-full flex items-center gap-2.5 rounded-md border border-ink-200 px-3 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors text-left"
+                    className={cn(BTN_ROW)}
                   >
                     <Shield className="h-4 w-4 text-ink-400 shrink-0" strokeWidth={1.5} />
                     Open admin panel

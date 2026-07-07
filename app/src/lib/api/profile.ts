@@ -45,6 +45,8 @@ export type MyProfileData = {
     public_profile_url?: string | null;
     hide_contact_public?: boolean;
     share_with_recruiters?: boolean;
+    /** Opt-in for per-job and per-path AI tailored resumes (default off). */
+    tailored_resume_enabled?: boolean;
   } | null;
   experience?: WorkExperience[];
   education?: Education[];
@@ -147,6 +149,7 @@ export type ProfilePatch = {
   public_profile_enabled?: boolean;
   hide_contact_public?: boolean;
   share_with_recruiters?: boolean;
+  tailored_resume_enabled?: boolean;
 };
 
 /** Generic profile PATCH. Invalidates the local profile cache on success. */

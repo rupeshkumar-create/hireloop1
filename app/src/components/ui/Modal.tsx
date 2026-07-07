@@ -18,6 +18,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
+import { BTN_ICON } from "@/lib/button-classes";
 
 export function Modal({
   open,
@@ -96,7 +97,7 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="text-ink-500 hover:text-ink-900 hover:bg-ink-50 rounded-md p-1 transition-colors duration-fast"
+            className={cn(BTN_ICON, "h-8 w-8 text-ink-500")}
           >
             <X className="h-4 w-4" strokeWidth={1.5} />
           </button>

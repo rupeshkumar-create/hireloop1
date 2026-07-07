@@ -17,6 +17,11 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
+from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
+from hireloop_api.services.tailored_resume_settings import (
+    fetch_tailored_resume_enabled,
+    tailored_resume_enabled,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/tailored-resumes", tags=["resumes-tailor"])
@@ -37,16 +42,20 @@ async def _run_tailor_task(
 
     pool = await get_db_pool(settings)
     async with pool.acquire() as db:
-        cand = await db.fetchrow(
-            """
-            SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
-                   c.skills, c.years_experience, u.full_name, u.email
-            FROM public.candidates c
-            JOIN public.users u ON u.id = c.user_id
-            WHERE c.id = $1
-            """,
-            candidate_id,
-        )
+        if not await fetch_tailored_resume_enabled(db, candidate_id):
+            await db.execute(
+                """
+                UPDATE public.tailored_resumes
+                SET status = 'failed',
+                    error_message = 'Tailored resumes are disabled in candidate settings.'
+                WHERE candidate_id = $1 AND job_id = $2
+                """,
+                candidate_id,
+                job_id,
+            )
+            return
+
+        profile = await load_tailored_resume_profile(db, candidate_id)
         job = await db.fetchrow(
             """
             SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
@@ -57,7 +66,7 @@ async def _run_tailor_task(
             """,
             job_id,
         )
-        if not cand or not job:
+        if not profile or not job:
             return
 
         llm = ChatOpenAI(
@@ -71,7 +80,6 @@ async def _run_tailor_task(
                 "X-Title": "Hireschema - Resume Tailor",
             },
         )
-        profile = dict(cand)
         job_d = dict(job)
         try:
             html = await generate_tailored_html(
@@ -117,11 +125,20 @@ async def request_tailored_resume(
     check_rate_limit(str(current_user["id"]), "tailor_resume", max_per_hour=10)
 
     candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+        """
+        SELECT id, tailored_resume_enabled
+        FROM public.candidates
+        WHERE user_id = $1 AND deleted_at IS NULL
+        """,
         current_user["id"],
     )
     if not candidate:
         raise HTTPException(404, "Candidate profile required")
+    if not tailored_resume_enabled(candidate):
+        raise HTTPException(
+            status_code=403,
+            detail="Enable tailored resumes in Settings before generating role-specific resumes.",
+        )
 
     existing = await db.fetchrow(
         """

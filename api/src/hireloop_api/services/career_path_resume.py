@@ -12,67 +12,11 @@ from langchain_openai import ChatOpenAI
 from hireloop_api.config import Settings
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import career_path_options
-from hireloop_api.services.profile_experience import (
-    build_merged_education,
-    build_merged_experience,
-)
 from hireloop_api.services.resume_tailor import generate_path_resume_html
+from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
+from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
 
 logger = structlog.get_logger()
-
-
-async def _load_candidate_profile(
-    db: asyncpg.Connection, candidate_id: str
-) -> dict[str, Any] | None:
-    row = await db.fetchrow(
-        """
-        SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
-               c.years_experience, c.location_city, c.location_state, c.skills,
-               c.looking_for, c.linkedin_url, c.linkedin_data, c.career_profile,
-               u.full_name, u.email, u.phone
-        FROM public.candidates c
-        JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
-        WHERE c.id = $1::uuid AND c.deleted_at IS NULL
-        """,
-        uuid.UUID(candidate_id),
-    )
-    if not row:
-        return None
-    data = dict(row)
-    data["skills"] = list(data.get("skills") or [])
-    career_profile = (
-        data.get("career_profile") if isinstance(data.get("career_profile"), dict) else None
-    )
-    experience = build_merged_experience(
-        resume_experience=[],
-        linkedin_data=data.get("linkedin_data"),
-        career_profile=career_profile,
-        career_intelligence=None,
-        candidate=data,
-        skills=data["skills"],
-    )
-    education = build_merged_education(
-        resume_education=[],
-        linkedin_data=data.get("linkedin_data"),
-        career_profile=career_profile,
-    )
-    return {
-        "full_name": data.get("full_name"),
-        "email": data.get("email"),
-        "phone": data.get("phone"),
-        "headline": data.get("headline"),
-        "summary": data.get("summary"),
-        "current_title": data.get("current_title"),
-        "current_company": data.get("current_company"),
-        "years_experience": data.get("years_experience"),
-        "location_city": data.get("location_city"),
-        "location_state": data.get("location_state"),
-        "skills": data["skills"],
-        "looking_for": data.get("looking_for"),
-        "linkedin_url": data.get("linkedin_url"),
-        "experience": experience[:10],
-        "education": education[:6],
-    }
 
 
 async def list_path_resumes(db: asyncpg.Connection, candidate_id: str) -> list[dict[str, Any]]:
@@ -117,6 +61,11 @@ async def generate_path_resumes(
     candidate_id: str,
     settings: Settings,
 ) -> list[dict[str, Any]]:
+    if not await fetch_tailored_resume_enabled(db, uuid.UUID(candidate_id)):
+        raise ValueError(
+            "Enable tailored resumes in Settings before generating path-specific resumes."
+        )
+
     if not settings.openrouter_api_key:
         raise ValueError("Resume generation is temporarily unavailable.")
 
@@ -128,7 +77,7 @@ async def generate_path_resumes(
     if not titles:
         raise ValueError("No career path directions to generate resumes for.")
 
-    profile = await _load_candidate_profile(db, candidate_id)
+    profile = await load_tailored_resume_profile(db, uuid.UUID(candidate_id))
     if not profile:
         raise ValueError("Candidate profile not found.")
 

@@ -22,6 +22,15 @@ logger = structlog.get_logger()
 
 TAILOR_SYSTEM = """You tailor a candidate resume for a specific job description.
 The output must be ATS-safe AND read like a polished professional document.
+
+SOURCE OF TRUTH (critical):
+- The candidate profile JSON is the ONLY authority for employers, job titles, dates,
+  locations, degrees, skills, and metrics
+- Include every role and degree from the profile; you may reorder by JD relevance
+  and rephrase bullets, but NEVER omit roles, change companies/titles/dates/tenure,
+  inflate seniority, or invent metrics
+- If a fact is missing from the profile, leave it out — never guess
+
 Rules:
 - Never fabricate experience, employers, degrees, or dates
 - Rewrite bullets to mirror this JD's vocabulary where truthful; reorder
@@ -50,6 +59,12 @@ Rules:
 """
 
 PATH_RESUME_SYSTEM = """You write an ATS-friendly resume tailored to a career-path direction.
+
+SOURCE OF TRUTH (critical):
+- The candidate profile JSON is the ONLY authority for employers, job titles, dates,
+  education, skills, and metrics — never invent or alter facts
+- Include every role and degree from the profile; reorder and rephrase only
+
 Rules:
 - Never fabricate experience, employers, degrees, or dates
 - Output valid HTML fragment only (no <html>/<head>/<body>, no markdown fences)
@@ -114,7 +129,7 @@ async def generate_tailored_html(
     """LLM generates tailored resume HTML."""
     prompt = f"""Template style: {template}
 
-Candidate profile:
+Candidate profile (source of truth — do not invent beyond this):
 {json_dumps_safe(candidate_profile)}
 
 Job:
@@ -142,7 +157,7 @@ Produce tailored resume HTML."""
 def json_dumps_safe(obj: Any) -> str:
     import json
 
-    return json.dumps(obj, default=str, indent=2)[:8000]
+    return json.dumps(obj, default=str, indent=2)[:12000]
 
 
 # A4, print-optimized shell. Wrapping the LLM's resume body in this turns the

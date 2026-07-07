@@ -157,6 +157,7 @@ class ProfileUpdateRequest(BaseModel):
     public_profile_enabled: bool | None = None
     hide_contact_public: bool | None = None
     share_with_recruiters: bool | None = None
+    tailored_resume_enabled: bool | None = None
 
 
 def _serialize_value(value: Any) -> Any:
@@ -187,7 +188,7 @@ async def _ensure_candidate_row(
                open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                current_ctc, notice_period_days,
                display_currency, public_slug, public_profile_enabled,
-               hide_contact_public, share_with_recruiters,
+               hide_contact_public, share_with_recruiters, tailored_resume_enabled,
                is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
@@ -201,16 +202,17 @@ async def _ensure_candidate_row(
         """
         INSERT INTO public.candidates (
           user_id, market, headline, profile_complete,
-          hide_contact_public, share_with_recruiters, public_profile_enabled
+          hide_contact_public, share_with_recruiters, public_profile_enabled,
+          tailored_resume_enabled
         )
-        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE)
+        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE, FALSE)
         RETURNING id, market, headline, summary, current_title, current_company,
                   years_experience, location_city, location_state, skills,
                   profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
                   open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                   current_ctc, notice_period_days,
                   display_currency, public_slug, public_profile_enabled,
-                  hide_contact_public, share_with_recruiters,
+                  hide_contact_public, share_with_recruiters, tailored_resume_enabled,
                   is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         """,
         user_id,
@@ -236,7 +238,7 @@ async def _ensure_candidate_row(
                open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                current_ctc, notice_period_days,
                display_currency, public_slug, public_profile_enabled,
-               hide_contact_public, share_with_recruiters,
+               hide_contact_public, share_with_recruiters, tailored_resume_enabled,
                is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         FROM public.candidates
         WHERE id = $1::uuid AND deleted_at IS NULL
@@ -481,7 +483,7 @@ async def get_my_profile(
                open_to_relocation, location_scope, expected_ctc_min, expected_ctc_max,
                current_ctc, notice_period_days,
                display_currency, public_slug, public_profile_enabled,
-               hide_contact_public, share_with_recruiters,
+               hide_contact_public, share_with_recruiters, tailored_resume_enabled,
                is_active, linkedin_url, linkedin_data, career_profile, career_analysis
         FROM public.candidates
         WHERE user_id = $1::uuid AND deleted_at IS NULL
@@ -888,6 +890,7 @@ async def update_my_profile(
                 "public_profile_enabled": "public_profile_enabled",
                 "hide_contact_public": "hide_contact_public",
                 "share_with_recruiters": "share_with_recruiters",
+                "tailored_resume_enabled": "tailored_resume_enabled",
             }
             if "display_currency" in updates:
                 from hireloop_api.services.display_currency import VALID_DISPLAY_CURRENCIES

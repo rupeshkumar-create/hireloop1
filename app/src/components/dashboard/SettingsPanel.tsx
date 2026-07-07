@@ -5,6 +5,7 @@ import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
 import { CandidateSharingSettings } from "@/components/settings/CandidateSharingSettings";
+import { TailoredResumeSettings } from "@/components/settings/TailoredResumeSettings";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { SUPPORTED_MARKETS, type MarketCode, marketByCode } from "@/lib/markets";
 import {
@@ -16,6 +17,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { BTN_ROW } from "@/lib/button-classes";
 
 export type SettingsPanelProps = {
   onEditProfile?: () => void;
@@ -213,6 +215,8 @@ export function SettingsPanel({
 
       <CandidateSharingSettings />
 
+      <TailoredResumeSettings />
+
       <Card>
         <CardHeader
           title="Notifications"
@@ -253,7 +257,7 @@ export function SettingsPanel({
                   "_blank",
                 )
               }
-              className="flex items-center gap-2.5 rounded-md border border-ink-200 px-4 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors text-left"
+              className={BTN_ROW}
             >
               <Shield className="h-4 w-4 text-ink-400 shrink-0" strokeWidth={1.5} />
               Export my data (JSON)
@@ -272,7 +276,7 @@ export function SettingsPanel({
             <button
               onClick={onSignOut}
               disabled={signingOut}
-              className="w-full flex items-center gap-2.5 rounded-md border border-ink-200 px-4 py-2.5 text-small text-ink-700 hover:bg-ink-50 transition-colors text-left disabled:opacity-50"
+              className={cn(BTN_ROW, "disabled:opacity-50")}
             >
               <LogOut className="h-4 w-4 text-ink-400 shrink-0" strokeWidth={1.5} />
               {signingOut ? "Signing out…" : "Sign out"}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { SkillsInput } from "@/components/profile/SkillsInput";
-import { BTN_PRIMARY } from "@/lib/button-classes";
+import { BTN_PRIMARY, BTN_GHOST } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 type ProfilePayload = {
@@ -166,7 +166,7 @@ export function ExperienceEnrichmentForm() {
             onClick={() => {
               window.location.href = "/dashboard";
             }}
-            className="rounded-lg border border-ink-100 px-4 py-2.5 text-sm font-semibold text-ink-700 hover:bg-ink-50"
+            className={cn(BTN_GHOST, "px-4 py-2.5 text-sm font-semibold")}
           >
             Continue to dashboard
           </button>

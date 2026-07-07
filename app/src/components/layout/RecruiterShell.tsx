@@ -27,6 +27,7 @@ import { RecruiterMobileNav } from "@/components/layout/RecruiterMobileNav";
 import { useRecruiterShell } from "@/hooks/useRecruiterShell";
 import { fetchRecruiterDashboard } from "@/lib/api/recruiter";
 import { cn } from "@/lib/utils";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 
 type RecruiterShellProps = {
   children: React.ReactNode;
@@ -131,7 +132,7 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
         {/* Primary action */}
         <Link
           href="/recruiter/roles/new"
-          className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2.5 text-small font-semibold text-on-accent hover:bg-accent-hover transition-colors mb-5"
+          className={cn(BTN_PRIMARY, "flex items-center justify-center gap-1.5 px-3 py-2.5 text-small font-semibold mb-5 w-full")}
         >
           <Plus className="h-4 w-4" strokeWidth={2} />
           New role

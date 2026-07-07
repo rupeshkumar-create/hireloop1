@@ -4,7 +4,7 @@ import Link from "next/link";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useEffect, useState } from "react";
 import { ArrowRight } from "@/components/brand/icons";
-import { BTN_PRIMARY } from "@/lib/button-classes";
+import { BTN_PRIMARY, BTN_GHOST } from "@/lib/button-classes";
 import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -67,7 +67,7 @@ export function LandingNav() {
           {!signedIn ? (
             <Link
               href="/login"
-              className="rounded-md px-3 py-2 text-small font-medium text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
+              className={cn(BTN_GHOST, "px-3 py-2 text-small")}
             >
               Log in
             </Link>

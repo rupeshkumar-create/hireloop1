@@ -34,6 +34,7 @@ export function CandidateSharingSettings() {
   const [savingCurrency, setSavingCurrency] = useState(false);
   const [hideContact, setHideContact] = useState(true);
   const [shareRecruiters, setShareRecruiters] = useState(true);
+  const [tailoredResumes, setTailoredResumes] = useState(false);
   const [published, setPublished] = useState(true);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [savingPrivacy, setSavingPrivacy] = useState(false);
@@ -53,6 +54,7 @@ export function CandidateSharingSettings() {
       setCurrency((p.candidate?.display_currency as DisplayCurrency) ?? "auto");
       setHideContact(p.candidate?.hide_contact_public ?? true);
       setShareRecruiters(p.candidate?.share_with_recruiters ?? true);
+      setTailoredResumes(p.candidate?.tailored_resume_enabled ?? false);
       setPublished(p.candidate?.public_profile_enabled ?? true);
       const rel = p.candidate?.public_profile_url;
       setPublicUrl(rel ? `${typeof window !== "undefined" ? window.location.origin : ""}${rel}` : null);
@@ -114,6 +116,10 @@ export function CandidateSharingSettings() {
   }
 
   async function handleGenerateResumes() {
+    if (!tailoredResumes) {
+      toast.error("Enable tailored resumes in Settings first.");
+      return;
+    }
     setGeneratingResumes(true);
     try {
       const resumes = await generateCareerPathResumes();
@@ -179,9 +185,15 @@ export function CandidateSharingSettings() {
       <Card>
         <CardHeader
           title="Career path resumes"
-          description="Private ATS-style resumes for each path direction. Preview and download — never shown on your public profile."
+          description="Private ATS-style resumes for each path direction. Requires tailored resumes to be enabled in Settings."
         />
         <CardBody className="space-y-3 !pt-0">
+          {!tailoredResumes && (
+            <p className="text-micro text-ink-500 border border-ink-100 rounded-lg px-3 py-2 bg-paper-1">
+              Turn on <span className="font-medium text-ink-700">Tailored resumes</span> in
+              Settings to generate path-specific CVs.
+            </p>
+          )}
           {pathResumes.length === 0 ? (
             <p className="text-small text-ink-500">
               Generate your career path first, then create path-specific resumes here.
@@ -217,6 +229,7 @@ export function CandidateSharingSettings() {
             variant="secondary"
             size="sm"
             loading={generatingResumes}
+            disabled={!tailoredResumes}
             onClick={() => void handleGenerateResumes()}
           >
             {generatingResumes ? "Generating…" : "Generate all 3 resumes"}

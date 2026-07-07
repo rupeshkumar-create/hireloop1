@@ -17,6 +17,7 @@ from hireloop_api.config import Settings
 from hireloop_api.services.email.resend_service import ResendService
 from hireloop_api.services.email.sendgrid_service import SendGridService
 from hireloop_api.services.email.smtp_service import SmtpService
+from hireloop_api.services.email.welcome_templates import render_welcome_email
 
 logger = structlog.get_logger()
 
@@ -111,10 +112,11 @@ async def maybe_send_signup_confirmation(
     user_id: uuid.UUID,
     email: str | None = None,
     full_name: str | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     """
-    Welcome email after phone verification / save-phone (once per user).
-    Best-effort — never raises.
+    Welcome email for a new user (once per account) — candidate vs recruiter templates.
+    Best-effort via Resend/SMTP; SendGrid template fallback when configured.
     """
     use_html = _html_email_configured(settings)  # SMTP (free, any recipient) or Resend
     use_sendgrid = _sendgrid_usable(settings) and bool(settings.sg_template_signup_confirmation)
@@ -124,10 +126,10 @@ async def maybe_send_signup_confirmation(
     if db is not None:
         if await _signup_email_already_sent(db, user_id):
             return {"sent": False, "skipped": "already_sent"}
-        if not email or not full_name:
+        if not email or not full_name or not role:
             row = await db.fetchrow(
                 """
-                SELECT email, full_name
+                SELECT email, full_name, role
                 FROM public.users
                 WHERE id = $1 AND deleted_at IS NULL
                 """,
@@ -136,23 +138,26 @@ async def maybe_send_signup_confirmation(
             if row:
                 email = email or row["email"]
                 full_name = full_name or row["full_name"]
+                role = role or row["role"]
 
     if not email:
         return {"sent": False, "skipped": "no_email"}
 
+    effective_role = role if role in ("candidate", "recruiter") else "candidate"
     display_name = full_name or "there"
+    app_base = settings.public_app_url.rstrip("/") or "https://app.hireschema.com"
+
     if use_html:
+        subject, html = render_welcome_email(
+            role=effective_role,
+            full_name=display_name,
+            app_base_url=app_base,
+        )
         sent = await _send_html_email(
             settings,
             to_email=email,
-            subject="Welcome to Hireschema",
-            html=_email_shell(
-                f"Welcome, {display_name} 👋",
-                "<p style='font-size:14px;line-height:1.6'>You're in. Tell Aarya what you're "
-                "looking for and she'll surface live roles in your market that fit your profile.</p>",
-                f"{settings.public_app_url.rstrip('/')}/dashboard",
-                "Open Hireschema",
-            ),
+            subject=subject,
+            html=html,
         )
     else:
         sg = SendGridService(

@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2 } from "@/components/brand/icons";
 import { Button, Modal, ModalFooter, useToast } from "@/components/ui";
+import { RichMarkdown } from "@/components/ui/RichMarkdown";
 import { cn } from "@/lib/utils";
 import {
   downloadTailoredResume,
@@ -188,15 +189,27 @@ export function ResumePreviewModal({
             ))}
 
           {tab === "cover_letter" && (
-            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-4">
-              {coverLetter || "No cover letter for this role yet."}
-            </p>
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-5 sm:p-6">
+              {coverLetter ? (
+                <RichMarkdown content={coverLetter} variant="document" />
+              ) : (
+                <p className="py-8 text-center text-small text-ink-500">
+                  No cover letter for this role yet.
+                </p>
+              )}
+            </div>
           )}
 
           {tab === "interview_prep" && (
-            <p className="whitespace-pre-wrap text-small text-ink-700 leading-relaxed max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-4">
-              {interviewPrep || "No interview prep for this role yet."}
-            </p>
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-ink-100 bg-paper-1 p-5 sm:p-6">
+              {interviewPrep ? (
+                <RichMarkdown content={interviewPrep} variant="document" />
+              ) : (
+                <p className="py-8 text-center text-small text-ink-500">
+                  No interview prep for this role yet.
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

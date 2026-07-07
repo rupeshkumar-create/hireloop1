@@ -19,6 +19,8 @@ from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.job_present import serialize_job_card
 from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
+from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
+from hireloop_api.services.tailored_resume_settings import tailored_resume_enabled
 
 logger = structlog.get_logger()
 
@@ -29,7 +31,7 @@ Return ONLY valid JSON (no markdown fences):
   "interview_prep": "Markdown with ## Likely questions, ## STAR stories to rehearse,
    ## Role-specific talking points, ## Questions to ask the interviewer"
 }
-Never invent employers, degrees, or metrics the candidate does not have."""
+Never invent employers, degrees, dates, titles, or metrics the candidate does not have."""
 
 # Application kits run two LLM jobs (text assets + resume HTML). Use the fast
 # fallback model and a lower token cap — quality is fine for structured outputs.
@@ -203,8 +205,12 @@ async def _ensure_tailored_resume(
     candidate_id: uuid.UUID,
     profile: dict[str, Any],
     job: dict[str, Any],
+    resume_enabled: bool = True,
 ) -> dict[str, Any]:
     """Sequential resume path (used by callers that don't parallelise LLM work)."""
+    if not resume_enabled:
+        return {"resume_id": None, "status": "disabled", "download_path": None}
+
     existing = await _fetch_existing_tailored_resume(
         db, candidate_id=candidate_id, job_id=str(job["id"])
     )
@@ -292,7 +298,8 @@ async def prepare_application_kit(
     candidate = await db.fetchrow(
         """
         SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
-               c.skills, c.years_experience, u.full_name, u.email
+               c.skills, c.years_experience, c.tailored_resume_enabled,
+               u.full_name, u.email
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id
         WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
@@ -332,8 +339,10 @@ async def prepare_application_kit(
         uuid.UUID(job_id),
     )
 
-    profile = dict(candidate)
-    profile["id"] = str(profile["id"])
+    profile = await load_tailored_resume_profile(db, candidate_id)
+    if not profile:
+        profile = dict(candidate)
+        profile["id"] = str(profile["id"])
     job = dict(job_row)
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []
@@ -353,8 +362,9 @@ async def prepare_application_kit(
     text_task = asyncio.create_task(
         _generate_text_assets(settings=settings, profile=profile, job=job)
     )
+    resume_enabled = tailored_resume_enabled(candidate)
     resume_html_task: asyncio.Task[str] | None = None
-    if not existing_resume and settings.openrouter_api_key:
+    if resume_enabled and not existing_resume and settings.openrouter_api_key:
         resume_html_task = asyncio.create_task(
             _generate_tailored_html_only(settings=settings, profile=profile, job=job)
         )
@@ -372,6 +382,8 @@ async def prepare_application_kit(
         except Exception as exc:
             logger.error("application_kit_resume_failed", error=str(exc))
             resume = {"resume_id": None, "status": "failed", "download_path": None}
+    elif not resume_enabled:
+        resume = {"resume_id": None, "status": "disabled", "download_path": None}
     else:
         resume = {"resume_id": None, "status": "unavailable", "download_path": None}
 

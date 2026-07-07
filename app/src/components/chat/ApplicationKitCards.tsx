@@ -12,7 +12,8 @@ import {
 } from "@/components/brand/icons";
 import type { ApplicationKit } from "@/lib/api/applicationKit";
 import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
-import { BTN_PRIMARY } from "@/lib/button-classes";
+import { RichMarkdown } from "@/components/ui/RichMarkdown";
+import { BTN_PRIMARY, BTN_GHOST } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 type ApplicationKitCardsProps = {
@@ -61,8 +62,9 @@ function PreviewButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 rounded-lg border border-ink-200 px-3 py-2 text-left text-small",
-        disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-ink-50",
+        BTN_GHOST,
+        "flex items-center gap-2 px-3 py-2 text-left text-small",
+        disabled && "opacity-50 cursor-not-allowed",
       )}
     >
       <Eye className="h-4 w-4 shrink-0 text-accent" />
@@ -135,9 +137,9 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
                     <span>Interview prep</span>
                   </summary>
                   <div className="mt-2 space-y-2">
-                    <p className="text-micro text-ink-600 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                      {kit.interview_prep}
-                    </p>
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-ink-100 bg-paper-0/80 p-3">
+                      <RichMarkdown content={kit.interview_prep} variant="document" />
+                    </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
@@ -167,7 +169,7 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
                     href={kit.apply_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 rounded-lg border border-ink-200 px-3 py-2 text-small font-medium hover:bg-ink-50 sm:col-span-2"
+                    className={cn(BTN_GHOST, "flex items-center justify-center gap-2 px-3 py-2 text-small sm:col-span-2")}
                   >
                     Open apply link
                   </a>

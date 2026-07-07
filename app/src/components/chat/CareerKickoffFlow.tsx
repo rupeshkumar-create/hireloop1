@@ -30,6 +30,7 @@ import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
 import type { MatchedJob } from "@/lib/api/matches";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
 
 const MAX_OPTIONS = 3;
 const MAX_SELECTED = 3;
@@ -226,12 +227,13 @@ export function CareerKickoffFlow({
     setError(null);
     setStep("finishing");
     try {
-      // Per-path tailored resumes — fire and forget; they build in the
-      // background and appear under Career > Path resumes.
-      setFinishStatus("Generating a tailored resume for each path…");
-      void generateCareerPathResumes().catch(() => {
-        /* non-fatal — resumes can be generated later from the career panel */
-      });
+      // Per-path tailored resumes — only when the candidate opted in (Settings).
+      if (profile?.candidate?.tailored_resume_enabled) {
+        setFinishStatus("Generating a tailored resume for each path…");
+        void generateCareerPathResumes().catch(() => {
+          /* non-fatal — resumes can be generated later from settings */
+        });
+      }
 
       setFinishStatus(`Searching ${selected[0]} roles for you…`);
       const result = await findJobsForPath();
@@ -338,10 +340,8 @@ export function CareerKickoffFlow({
                   aria-pressed={isSelected}
                   onClick={() => toggle(opt.title)}
                   className={cn(
-                    "w-full flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors duration-fast",
-                    isSelected
-                      ? "border-ink-900 bg-ink-50/50 ring-1 ring-ink-900/10"
-                      : "border-ink-200 bg-paper-1 hover:border-ink-300 hover:bg-ink-50",
+                    "w-full flex items-start gap-2.5 px-3 py-2.5 text-left",
+                    isSelected ? BTN_CHIP_ACTIVE : BTN_CHIP,
                   )}
                 >
                   <span
@@ -391,7 +391,7 @@ export function CareerKickoffFlow({
             <button
               type="button"
               onClick={addCustom}
-              className="rounded-md border border-ink-200 px-3 py-2 text-small text-ink-700 hover:bg-ink-50 transition-colors"
+              className={cn(BTN_GHOST, "px-3 py-2 text-small shrink-0")}
             >
               Add
             </button>
@@ -494,10 +494,12 @@ export function CareerKickoffFlow({
               </div>
             ))}
           </div>
-          <p className="text-micro text-ink-400">
-            On confirm I&apos;ll also generate a tailored resume for each of your
-            selected paths.
-          </p>
+          {profile?.candidate?.tailored_resume_enabled ? (
+            <p className="text-micro text-ink-400">
+              On confirm I&apos;ll also generate a tailored resume for each of your
+              selected paths.
+            </p>
+          ) : null}
           {error && <FlowError message={error} />}
           <div className="flex items-center gap-2">
             <Button

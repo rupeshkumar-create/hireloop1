@@ -16,7 +16,7 @@ import { DIRECT_API_URL } from "@/lib/api/base-url";
 import { ApiUnreachableError, apiAuthFetch } from "@/lib/api/auth-fetch";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import { invalidateProfileCache } from "@/lib/api/profile";
-import { BTN_PRIMARY } from "@/lib/button-classes";
+import { BTN_PRIMARY, BTN_GHOST } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 interface ParsedResume {
@@ -296,7 +296,7 @@ export function ResumeUpload({
             <button
               type="button"
               onClick={reset}
-              className="px-4 py-2.5 border border-ink-100 text-ink-700 rounded-xl text-sm hover:bg-ink-50 transition-colors"
+              className={cn(BTN_GHOST, "px-4 py-2.5 text-sm")}
             >
               Upload different
             </button>

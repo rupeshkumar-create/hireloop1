@@ -34,6 +34,28 @@
   .focus\:border-accent:focus   { border-color: #B9F84C; }
   .focus\:ring-accent-ring:focus { --tw-ring-color: rgba(185, 248, 76, 0.30); }
 
+  /* ink-50 is nearly page-colour — bump hover chips so controls read on charcoal */
+  .hover\:bg-ink-50:hover {
+    background-color: #2a2a2a;
+  }
+
+  .bg-ink-50 {
+    background-color: #2a2a2a;
+  }
+
+  /* Transparent bordered controls need a visible fill on dark canvas */
+  button.bg-transparent,
+  a.bg-transparent,
+  [role="button"].bg-transparent {
+    background-color: #1c1c1c;
+  }
+
+  button.bg-transparent:hover:not(:disabled),
+  a.bg-transparent:hover:not(:disabled),
+  [role="button"].bg-transparent:hover:not(:disabled) {
+    background-color: #2a2a2a;
+  }
+
   /* destructive (v2: lighter red for dark) */
   .bg-destructive-bg { background-color: rgba(247, 109, 109, 0.14); }
   .text-destructive  { color: #F76D6D; }
@@ -74,10 +96,10 @@
   }
 
   .hs-btn-secondary {
-    background-color: #141414;
+    background-color: #1c1c1c;
     color: #b9f84c;
     border-color: #000000;
-    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #1c1c1c, 0 0 0 4px #000000;
   }
 
   .hs-btn-secondary:hover:not(:disabled) {
@@ -88,10 +110,10 @@
   }
 
   .hs-btn-ghost {
-    background-color: transparent;
+    background-color: #1c1c1c;
     color: #fafafa;
     border-color: #000000;
-    box-shadow: 0 0 0 2px transparent, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #1c1c1c, 0 0 0 4px #000000;
   }
 
   .hs-btn-ghost:hover:not(:disabled) {
@@ -171,9 +193,31 @@
 
   /* Solid lime CTAs — label follows variant (primary inverts on hover). */
   :where(button, a, [role="button"]).hs-btn-primary {
+    background-color: #b9f84c;
     color: #000000;
   }
   :where(button, a, [role="button"]).hs-btn-primary:hover:not(:disabled) {
+    background-color: #000000;
+    color: #b9f84c;
+  }
+
+  :where(button, a, [role="button"]).hs-btn-secondary,
+  :where(button, a, [role="button"]).hs-btn-ghost {
+    background-color: #1c1c1c;
+    color: #fafafa;
+  }
+
+  :where(button, a, [role="button"]).hs-btn-secondary {
+    color: #b9f84c;
+  }
+
+  :where(button, a, [role="button"]).hs-btn-secondary:hover:not(:disabled) {
+    background-color: #b9f84c;
+    color: #000000;
+  }
+
+  :where(button, a, [role="button"]).hs-btn-ghost:hover:not(:disabled) {
+    background-color: #000000;
     color: #b9f84c;
   }
 

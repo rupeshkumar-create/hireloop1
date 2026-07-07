@@ -16,6 +16,7 @@ import {
 } from "@/lib/auth/signup-role-storage";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
+import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
 
 type Role = "candidate" | "recruiter";
 type LoadingAction = "linkedin" | "email-send" | "email-verify" | "dev" | null;
@@ -316,10 +317,8 @@ export function SignupForm() {
                 persistSignupRole(r);
               }}
               className={cn(
-                "border rounded-lg p-3 text-sm font-medium transition-all",
-                role === r
-                  ? "border-accent bg-ink-50 text-accent"
-                  : "border-ink-100 text-ink-700 hover:border-ink-300"
+                "p-3 text-sm",
+                role === r ? BTN_CHIP_ACTIVE : BTN_CHIP,
               )}
             >
               {r === "candidate" ? "Job Seeker" : "Recruiter / Hiring Manager"}
@@ -463,7 +462,7 @@ export function SignupForm() {
           <button
             type="submit"
             disabled={loadingAction !== null}
-            className="w-full rounded-lg border border-ink-200 bg-transparent py-2.5 text-sm font-medium text-ink-900 hover:bg-ink-50 hover:border-ink-300 disabled:opacity-60"
+            className={cn(BTN_GHOST, "w-full py-2.5 text-sm disabled:opacity-60")}
           >
             {loadingAction === "dev" ? "Signing in…" : "Sign in with email (dev)"}
           </button>

@@ -50,7 +50,6 @@ from hireloop_api.services.linkedin_oauth import (
 )
 from hireloop_api.services.supabase_auth_admin import (
     ensure_oauth_email_confirmed,
-    is_oauth_signup,
 )
 from hireloop_api.services.user_profiles import user_profile_flags
 from hireloop_api.services.whatsapp.msg91 import Msg91Client
@@ -292,6 +291,7 @@ async def _bootstrap_welcome_email(
     user_id: uuid.UUID,
     email: str | None,
     full_name: str | None,
+    role: str,
 ) -> None:
     """Fire-and-forget welcome email — must not block bootstrap response."""
     settings = get_settings()
@@ -304,6 +304,7 @@ async def _bootstrap_welcome_email(
                 user_id=user_id,
                 email=email,
                 full_name=full_name,
+                role=role,
             )
     except Exception as exc:
         logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
@@ -539,14 +540,14 @@ async def bootstrap_user(
     except Exception as exc:
         logger.warning("oauth_email_confirm_failed", user_id=str(user_id), error=str(exc)[:200])
 
-    # Welcome email only for email signups (not LinkedIn/OAuth — avoids confusion
-    # with Supabase's "confirm your email" message).
-    if not is_oauth_signup(supabase_user):
+    # Welcome email once for every new account (candidate vs recruiter template via Resend).
+    if is_new_user and current_user.get("email"):
         background_tasks.add_task(
             _bootstrap_welcome_email,
             user_id,
             current_user.get("email"),
             current_user.get("full_name"),
+            effective_role,
         )
 
     # `is_new_user` lets /auth/callback route first-time candidates into the

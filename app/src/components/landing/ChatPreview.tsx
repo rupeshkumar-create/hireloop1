@@ -7,6 +7,8 @@ import {
   LANDING_AGENTS,
   type LandingAudience,
 } from "@/components/landing/landing-audience";
+import { BTN_ICON, BTN_ICON_ACCENT } from "@/lib/button-classes";
+import { cn } from "@/lib/utils";
 
 type Line =
   | { role: "user"; text: string }
@@ -192,7 +194,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
                 transition={{ duration: 0.28, ease: [0.21, 0.47, 0.32, 0.98] }}
                 className="flex justify-end"
               >
-                <div className="max-w-[82%] rounded-2xl rounded-br-sm bg-ink-900 px-3.5 py-2.5 text-small leading-relaxed text-paper-0">
+                <div className="max-w-[82%] rounded-2xl rounded-br-sm border-2 border-black bg-accent px-3.5 py-2.5 text-small leading-relaxed text-on-accent shadow-[0_0_0_2px_#b9f84c,0_0_0_4px_#000000]">
                   {line.text}
                 </div>
               </motion.div>
@@ -265,17 +267,22 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
           <span className="flex-1 select-none text-small text-ink-300">
             Message {agent.name}…
           </span>
-          <span className="relative flex h-8 w-8 items-center justify-center">
-            <motion.span
-              className="absolute inset-0 rounded-lg bg-accent/10"
-              animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0.2, 0.5] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-            <Mic className="relative h-4 w-4 text-accent" strokeWidth={1.75} />
-          </span>
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent">
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            className={cn(BTN_ICON, "relative h-8 w-8 shrink-0")}
+          >
+            <Mic className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            className={cn(BTN_ICON_ACCENT, "h-8 w-8 shrink-0")}
+          >
             <Send className="h-3.5 w-3.5" strokeWidth={1.5} />
-          </span>
+          </button>
         </div>
       </div>
     </motion.div>

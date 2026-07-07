@@ -633,8 +633,14 @@ async def generate_career_path_resumes(
     """
     from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES, enqueue_job
     from hireloop_api.services.career_path_resume import list_path_resumes
+    from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
 
     candidate_id = await _resolve_candidate_id(db, current_user["id"])
+    if not await fetch_tailored_resume_enabled(db, uuid.UUID(candidate_id)):
+        raise HTTPException(
+            status_code=403,
+            detail="Enable tailored resumes in Settings before generating path-specific resumes.",
+        )
     check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5)
     await enqueue_job(
         db,

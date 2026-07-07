@@ -104,6 +104,7 @@ import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageInt
 import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
+import { BTN_ICON, BTN_ICON_ACCENT, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
@@ -1427,10 +1428,9 @@ export function ChatInterface({
               disabled={isUploading || isStreaming}
               onClick={() => fileInputRef.current?.click()}
               className={cn(
-                "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
-                isUploading || isStreaming
-                  ? "text-ink-300 cursor-not-allowed"
-                  : "text-ink-400 hover:text-ink-900 hover:bg-ink-50",
+                BTN_ICON,
+                "h-8 w-8",
+                (isUploading || isStreaming) && "opacity-40 cursor-not-allowed",
               )}
             >
               {isUploading ? (
@@ -1459,7 +1459,7 @@ export function ChatInterface({
                 }}
                 aria-label="Type a message"
                 title="Type a message"
-                className="w-8 h-8 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-ink-50 flex items-center justify-center transition-colors"
+                className={cn(BTN_ICON, "h-8 w-8")}
               >
                 <PenLine className="h-4 w-4" strokeWidth={1.5} />
               </button>
@@ -1471,10 +1471,9 @@ export function ChatInterface({
                   disabled={isStreaming}
                   aria-label="Send message"
                   className={cn(
-                    "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
-                    !isStreaming
-                      ? "bg-accent text-on-accent hover:bg-accent-hover"
-                      : "bg-ink-100 text-ink-300 cursor-not-allowed",
+                    BTN_ICON_ACCENT,
+                    "h-9 w-9",
+                    isStreaming && "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
                   {isStreaming ? (
@@ -1517,12 +1516,11 @@ export function ChatInterface({
                   aria-label="Hold to talk"
                   title="Hold to talk, release to send"
                   className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-fast",
-                    isRecording
-                      ? "bg-destructive text-paper-0 animate-pulse"
-                      : "bg-ink-50 text-ink-900 border border-ink-100 hover:bg-ink-100 hover:border-ink-200",
+                    BTN_ICON,
+                    "h-10 w-10",
+                    isRecording && "bg-destructive text-paper-0 border-destructive animate-pulse",
                     (isStreaming || voiceProcessing) &&
-                      "opacity-40 cursor-not-allowed",
+                      "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
                   {isRecording ? (
@@ -1538,7 +1536,10 @@ export function ChatInterface({
                     onClick={() => void sendMessage(input)}
                     disabled={isStreaming}
                     aria-label="Send"
-                    className="w-10 h-10 rounded-full bg-ink-100 text-ink-300 flex items-center justify-center"
+                    className={cn(
+                      BTN_ICON,
+                      "h-10 w-10 opacity-50 cursor-not-allowed",
+                    )}
                   >
                     <Send className="h-4 w-4" strokeWidth={1.5} />
                   </button>
@@ -1798,13 +1799,8 @@ function EmptyState({
                 }
               }}
             className={cn(
-              "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2",
-              "bg-paper-1 transition-colors duration-fast",
-              "hover:bg-ink-50 hover:border-ink-300",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-2",
-              card.primary
-                ? "border-ink-900 ring-1 ring-ink-900/10"
-                : "border-ink-200"
+              "w-full flex items-center gap-2.5 px-3 py-2 text-left",
+              card.primary ? BTN_CHIP_ACTIVE : BTN_CHIP,
             )}
           >
             <span
