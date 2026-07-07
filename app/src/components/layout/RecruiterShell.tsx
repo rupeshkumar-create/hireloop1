@@ -1,28 +1,64 @@
 "use client";
 
 /**
- * RecruiterShell — persistent nav for the recruiter workspace.
+ * RecruiterShell — persistent navigation for the recruiter workspace.
+ *
+ * Labeled sidebar, not an icon rail: every destination is readable at a
+ * glance (Home / Roles / Talent / Messages / Settings), "New role" is the
+ * one primary action, and Messages carries a pending-intros badge. The old
+ * 64px icon-only rail made options invisible unless you hovered each one.
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Kanban, LogOut, Plus, Settings } from "@/components/brand/icons";
-import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
+import { useEffect, useState } from "react";
 import {
-  RECRUITER_NAV,
-  type RecruiterNavItem,
-} from "@/lib/recruiter-nav";
+  Briefcase,
+  Home,
+  Inbox,
+  Kanban,
+  LogOut,
+  Plus,
+  Settings,
+  Users,
+} from "@/components/brand/icons";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { RecruiterMobileNav } from "@/components/layout/RecruiterMobileNav";
 import { useRecruiterShell } from "@/hooks/useRecruiterShell";
+import { fetchRecruiterDashboard } from "@/lib/api/recruiter";
 import { cn } from "@/lib/utils";
 
 type RecruiterShellProps = {
   children: React.ReactNode;
 };
 
+type NavEntry = {
+  id: string;
+  label: string;
+  href: string;
+  Icon: React.ElementType;
+  match?: string[];
+  badge?: number;
+};
+
 export function RecruiterShell({ children }: RecruiterShellProps) {
   const pathname = usePathname();
   const { signingOut, signOut } = useRecruiterShell();
+  const [pendingIntros, setPendingIntros] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRecruiterDashboard()
+      .then((d) => {
+        if (!cancelled) setPendingIntros(d.stats?.pending_intros ?? 0);
+      })
+      .catch(() => {
+        /* badge is a hint, never a blocker */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   if (pathname?.startsWith("/recruiter/onboarding")) {
     return <>{children}</>;
@@ -32,77 +68,122 @@ export function RecruiterShell({ children }: RecruiterShellProps) {
     pathname?.match(/\/recruiter\/(inbox|roles\/[^/]+\/(intake|pipeline))/)
   );
 
-  const isActive = (item: RecruiterNavItem) => {
-    if (item.id === "dashboard") return pathname === "/recruiter";
+  const nav: NavEntry[] = [
+    { id: "home", label: "Home", href: "/recruiter", Icon: Home },
+    {
+      id: "roles",
+      label: "Roles",
+      href: "/recruiter/roles",
+      Icon: Briefcase,
+      match: ["/recruiter/roles"],
+    },
+    {
+      id: "talent",
+      label: "Talent",
+      href: "/recruiter/candidates",
+      Icon: Users,
+      match: ["/recruiter/candidates"],
+    },
+    {
+      id: "messages",
+      label: "Messages",
+      href: "/recruiter/inbox",
+      Icon: Inbox,
+      match: ["/recruiter/inbox"],
+      badge: pendingIntros,
+    },
+  ];
+
+  const isActive = (item: NavEntry) => {
+    if (item.id === "home") return pathname === "/recruiter";
     return (
       pathname === item.href ||
       (item.match?.some((m) => pathname?.startsWith(m)) ?? false)
     );
   };
 
+  const rowClass = (active: boolean) =>
+    cn(
+      "flex items-center gap-2.5 rounded-lg px-3 py-2 text-small font-medium transition-colors duration-fast",
+      active
+        ? "bg-ink-900 text-paper-0"
+        : "text-ink-600 hover:bg-ink-50 hover:text-ink-900"
+    );
+
   return (
     <div className="flex h-screen bg-paper-0 overflow-hidden">
-      <aside className="hidden md:flex w-16 shrink-0 flex-col items-center border-r border-ink-100 bg-paper-1 py-3">
-        <Link
-          href="/recruiter"
-          aria-label="Hireschema recruiter"
-          className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900"
-        >
-          <span className="text-small font-semibold text-paper-0">N</span>
+      <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-ink-100 bg-paper-1 px-3 py-4">
+        {/* Brand */}
+        <Link href="/recruiter" className="flex items-center gap-2.5 px-2 mb-5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink-900">
+            <span className="text-small font-semibold text-paper-0">N</span>
+          </span>
+          <span className="min-w-0">
+            <span className="block text-small font-semibold text-ink-900 leading-tight">
+              Hireschema
+            </span>
+            <span className="block text-micro text-ink-400 leading-tight">
+              Recruiter workspace
+            </span>
+          </span>
         </Link>
 
-        <nav className="flex flex-1 flex-col items-center gap-1">
-          {RECRUITER_NAV.map((item) => (
+        {/* Primary action */}
+        <Link
+          href="/recruiter/roles/new"
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2.5 text-small font-semibold text-on-accent hover:bg-accent-hover transition-colors mb-5"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          New role
+        </Link>
+
+        {/* Workspace nav */}
+        <p className="px-3 mb-1 text-micro font-medium uppercase tracking-wide text-ink-400">
+          Workspace
+        </p>
+        <nav className="flex flex-col gap-0.5" aria-label="Recruiter navigation">
+          {nav.map((item) => (
             <Link
               key={item.id}
-              href={item.href!}
-              title={item.label}
-              aria-label={item.label}
+              href={item.href}
               aria-current={isActive(item) ? "page" : undefined}
-              className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-xl transition-colors duration-fast",
-                isActive(item)
-                  ? "bg-ink-900 text-paper-0"
-                  : "text-ink-500 hover:bg-ink-50 hover:text-ink-900"
-              )}
+              className={rowClass(isActive(item))}
             >
-              <item.Icon className="h-[18px] w-[18px]" strokeWidth={1.5} />
+              <item.Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} />
+              <span className="flex-1 truncate">{item.label}</span>
+              {item.badge ? (
+                <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-on-accent leading-none">
+                  {item.badge > 9 ? "9+" : item.badge}
+                </span>
+              ) : null}
             </Link>
           ))}
         </nav>
 
-        <div className="mt-2 flex flex-col items-center gap-1">
-          <RoleSwitchButton to="candidate" target="/dashboard" variant="icon" />
-          <Link
-            href="/recruiter/roles/new"
-            title="New role"
-            aria-label="New role"
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-ink-400 hover:bg-ink-50 hover:text-ink-900 transition-colors"
-          >
-            <Plus className="h-[18px] w-[18px]" strokeWidth={1.5} />
-          </Link>
+        <div className="flex-1" />
+
+        {/* Account */}
+        <p className="px-3 mb-1 text-micro font-medium uppercase tracking-wide text-ink-400">
+          Account
+        </p>
+        <div className="flex flex-col gap-0.5">
           <Link
             href="/recruiter/settings"
-            title="Settings"
-            aria-label="Settings"
-            className={cn(
-              "flex h-10 w-10 items-center justify-center rounded-xl transition-colors",
-              pathname === "/recruiter/settings"
-                ? "bg-ink-900 text-paper-0"
-                : "text-ink-400 hover:bg-ink-50 hover:text-ink-900"
-            )}
+            aria-current={pathname === "/recruiter/settings" ? "page" : undefined}
+            className={rowClass(pathname === "/recruiter/settings")}
           >
-            <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
+            <Settings className="h-4 w-4 shrink-0" strokeWidth={1.5} />
+            Settings
           </Link>
+          <RoleSwitchButton to="candidate" target="/dashboard" variant="row" />
           <button
             type="button"
             onClick={() => void signOut()}
             disabled={signingOut}
-            title="Sign out"
-            aria-label="Sign out"
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-ink-400 hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-50"
+            className={cn(rowClass(false), "disabled:opacity-50 text-left w-full")}
           >
-            <LogOut className="h-[18px] w-[18px]" strokeWidth={1.5} />
+            <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.5} />
+            {signingOut ? "Signing out…" : "Sign out"}
           </button>
         </div>
       </aside>

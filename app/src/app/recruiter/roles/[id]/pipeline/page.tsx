@@ -85,7 +85,7 @@ export default function PipelinePage() {
 
   return (
     <div className="flex flex-col h-full bg-paper-0">
-      <RoleWorkspaceTabs roleId={id} active="pipeline" title={role?.title ?? null} />
+      <RoleWorkspaceTabs roleId={id} active="pipeline" title={role?.title ?? null} publicRoleUrl={role?.public_role_url ?? null} />
       <header className="shrink-0 border-b border-ink-100 px-4 py-3">
         <div className="max-w-5xl mx-auto flex items-center gap-3">
           <div className="flex-1 min-w-0">

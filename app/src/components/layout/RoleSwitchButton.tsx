@@ -20,7 +20,7 @@ export function RoleSwitchButton({
 }: {
   to: ActiveRole;
   target: string;
-  variant?: "button" | "icon";
+  variant?: "button" | "icon" | "row";
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -44,6 +44,29 @@ export function RoleSwitchButton({
   };
 
   const label = to === "recruiter" ? "Recruiter view" : "Candidate view";
+
+  if (variant === "row") {
+    // Sidebar row — matches RecruiterShell nav row styling.
+    return (
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        disabled={busy}
+        className={cn(
+          "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left",
+          "text-small font-medium text-ink-600 transition-colors duration-fast",
+          "hover:bg-ink-50 hover:text-ink-900 disabled:opacity-50",
+        )}
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" strokeWidth={1.5} />
+        ) : (
+          <ArrowLeftRight className="h-4 w-4 shrink-0" strokeWidth={1.5} />
+        )}
+        {label}
+      </button>
+    );
+  }
 
   if (variant === "icon") {
     return (

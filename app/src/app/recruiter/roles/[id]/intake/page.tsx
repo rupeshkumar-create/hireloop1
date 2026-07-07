@@ -353,7 +353,7 @@ export default function RoleIntakePage() {
 
   return (
     <main className="flex flex-col h-full bg-paper-0 overflow-hidden">
-      <RoleWorkspaceTabs roleId={id} active="chat" title={roleTitle} />
+      <RoleWorkspaceTabs roleId={id} active="chat" title={roleTitle} publicRoleUrl={publicRoleUrl} />
       <header className="shrink-0 border-b border-ink-100 bg-paper-1">
         <div className="h-14 flex items-center gap-3 px-4">
           <div className="w-8 h-8 rounded-full bg-ink-900 flex items-center justify-center shrink-0">

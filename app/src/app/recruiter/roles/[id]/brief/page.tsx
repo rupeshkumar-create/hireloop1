@@ -148,7 +148,7 @@ export default function RoleBriefPage() {
 
   return (
     <main className="min-h-screen bg-paper-0">
-      <RoleWorkspaceTabs roleId={id} active="brief" title={role?.title ?? null} />
+      <RoleWorkspaceTabs roleId={id} active="brief" title={role?.title ?? null} publicRoleUrl={role?.public_role_url ?? null} />
       <div className="max-w-2xl mx-auto space-y-6 px-4 py-8">
         <div className="space-y-1">
           <h1 className="text-h2 font-semibold text-ink-900">Role brief</h1>

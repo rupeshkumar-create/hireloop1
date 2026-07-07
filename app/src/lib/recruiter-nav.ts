@@ -33,7 +33,7 @@ export type RecruiterNavItem = {
 
 export const RECRUITER_NAV: RecruiterNavItem[] = [
   { id: "dashboard", label: "Dashboard", href: "/recruiter", Icon: Home },
-  { id: "inbox", label: "Inbox", href: "/recruiter/inbox", Icon: Inbox },
+  { id: "inbox", label: "Messages", href: "/recruiter/inbox", Icon: Inbox },
   {
     id: "candidates",
     label: "Talent",

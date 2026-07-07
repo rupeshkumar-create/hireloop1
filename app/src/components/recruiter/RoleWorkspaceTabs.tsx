@@ -10,6 +10,7 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "@/components/brand/icons";
+import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import { cn } from "@/lib/utils";
 
 export type RoleTab = "chat" | "brief" | "pipeline";
@@ -24,10 +25,13 @@ export function RoleWorkspaceTabs({
   roleId,
   active,
   title,
+  publicRoleUrl,
 }: {
   roleId: string;
   active: RoleTab;
   title?: string | null;
+  /** When the role is published, Share (copy public link) shows in the bar. */
+  publicRoleUrl?: string | null;
 }) {
   return (
     <div className="shrink-0 border-b border-ink-100 bg-paper-1 px-4">
@@ -63,6 +67,9 @@ export function RoleWorkspaceTabs({
             </Link>
           ))}
         </nav>
+        {publicRoleUrl && (
+          <ShareRoleLink publicRoleUrl={publicRoleUrl} className="hidden sm:block" />
+        )}
       </div>
     </div>
   );
