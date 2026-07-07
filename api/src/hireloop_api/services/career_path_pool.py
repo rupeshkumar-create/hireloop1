@@ -312,9 +312,10 @@ async def ingest_pool(
                 queries=queries,
                 locations=locs,
                 max_results_per_query=40 if row["is_senior"] else 25,
-                # 7d was too narrow for exact-title pools (Customer Success in
-                # India returned zero); the per-query limit caps cost anyway.
-                time_range="6m" if row["is_senior"] else "30d",
+                # Actor enum is 1h/24h/7d/6m only. 7d was too narrow for
+                # exact-title pools (Customer Success India → zero); 6m with
+                # the per-query limit capping cost is the right net.
+                time_range="6m",
             )
             stats["ingest"] = ingest_stats
         else:
