@@ -57,3 +57,16 @@ export const BTN_CHIP_ACTIVE =
 /** Full-width list / card action row. */
 export const BTN_ROW =
   `${BTN_GHOST} w-full gap-2.5 px-4 py-2.5 text-small text-left justify-start`;
+
+/** Chat composer — icon only, no chip background (attach / mic / send). */
+export const BTN_COMPOSER_ICON =
+  "hs-composer-icon inline-flex items-center justify-center h-9 w-9 shrink-0 rounded-lg " +
+  "bg-transparent border-0 shadow-none text-ink-400 " +
+  "hover:text-accent hover:bg-transparent transition-colors duration-fast " +
+  "disabled:opacity-40 disabled:cursor-not-allowed";
+
+export const BTN_COMPOSER_SEND =
+  "hs-composer-icon inline-flex items-center justify-center h-9 w-9 shrink-0 rounded-lg " +
+  "bg-transparent border-0 shadow-none text-accent " +
+  "hover:text-accent-hover hover:bg-transparent transition-colors duration-fast " +
+  "disabled:opacity-40 disabled:cursor-not-allowed";

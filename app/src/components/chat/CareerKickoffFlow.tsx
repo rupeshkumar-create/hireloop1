@@ -98,9 +98,11 @@ function currencyHint(market?: string): { label: string; placeholderMin: string;
 export function CareerKickoffFlow({
   onComplete,
   onSkip,
+  onStepArchived,
 }: {
   onComplete: (result: KickoffResult) => void;
   onSkip: () => void;
+  onStepArchived?: (payload: { step: 1 | 2 | 3; content: string }) => void;
 }) {
   const [step, setStep] = useState<Step>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +171,28 @@ export function CareerKickoffFlow({
     setCustomTitle("");
   }, [customTitle]);
 
+  const c = profile?.candidate;
+  const hint = currencyHint(profile?.user?.market);
+  const reviewRows = useMemo(
+    () =>
+      [
+        { label: "Current role", value: c?.current_title ? `${c.current_title}${c.current_company ? ` · ${c.current_company}` : ""}` : null },
+        { label: "Experience", value: c?.years_experience ? `${c.years_experience} years` : null },
+        { label: "Location", value: c?.location_city ?? null },
+        { label: "Skills", value: (c?.skills ?? []).slice(0, 6).join(", ") || null },
+        { label: "Career paths", value: selected.join("  ·  ") || null },
+        { label: "Preferred path", value: selected[0] ?? null },
+        {
+          label: "Expected package",
+          value:
+            ctcMin || ctcMax
+              ? `${ctcMin || "—"}–${ctcMax || "—"} (${hint.label})`
+              : null,
+        },
+      ].filter((r) => r.value),
+    [c, selected, ctcMin, ctcMax, hint.label],
+  );
+
   // ── Step 1 confirm: save paths ──────────────────────────────────────────────
   async function confirmPaths() {
     if (busy || selected.length === 0) return;
@@ -176,6 +200,12 @@ export function CareerKickoffFlow({
     setError(null);
     try {
       await prioritizeCareerPath(selected[0], selected);
+      onStepArchived?.({
+        step: 1,
+        content:
+          "**Step 1 of 3** · Career paths\n\n" +
+          selected.map((t, i) => `${i === 0 ? "⭐ " : "• "}${t}`).join("\n"),
+      });
       setStep("package");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save your career paths.");
@@ -212,6 +242,14 @@ export function CareerKickoffFlow({
         const p = await fetchMyProfile({ force: true }).catch(() => profile);
         if (p) setProfile(p);
       }
+      const pkgLabel =
+        ctcMin || ctcMax
+          ? `${ctcMin || "—"} – ${ctcMax || "—"} ${currencyHint(profile?.user?.market).label}`
+          : "Not set";
+      onStepArchived?.({
+        step: 2,
+        content: `**Step 2 of 3** · Expected package\n\n${pkgLabel}`,
+      });
       setStep("review");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save your expected package.");
@@ -225,6 +263,11 @@ export function CareerKickoffFlow({
     if (busy) return;
     setBusy(true);
     setError(null);
+    const reviewLines = reviewRows.map((r) => `**${r.label}:** ${r.value}`).join("\n");
+    onStepArchived?.({
+      step: 3,
+      content: `**Step 3 of 3** · Review\n\n${reviewLines}`,
+    });
     setStep("finishing");
     try {
       // Per-path tailored resumes — only when the candidate opted in (Settings).
@@ -251,29 +294,8 @@ export function CareerKickoffFlow({
     }
   }
 
-  const c = profile?.candidate;
-  const hint = currencyHint(profile?.user?.market);
-  const stepIndex = step === "paths" ? 1 : step === "package" ? 2 : 3;
-
-  const reviewRows = useMemo(
-    () =>
-      [
-        { label: "Current role", value: c?.current_title ? `${c.current_title}${c.current_company ? ` · ${c.current_company}` : ""}` : null },
-        { label: "Experience", value: c?.years_experience ? `${c.years_experience} years` : null },
-        { label: "Location", value: c?.location_city ?? null },
-        { label: "Skills", value: (c?.skills ?? []).slice(0, 6).join(", ") || null },
-        { label: "Career paths", value: selected.join("  ·  ") || null },
-        { label: "Preferred path", value: selected[0] ?? null },
-        {
-          label: "Expected package",
-          value:
-            ctcMin || ctcMax
-              ? `${ctcMin || "—"}–${ctcMax || "—"} (${hint.label})`
-              : null,
-        },
-      ].filter((r) => r.value),
-    [c, selected, ctcMin, ctcMax, hint.label],
-  );
+  const stepIndex =
+    step === "paths" ? 1 : step === "package" ? 2 : step === "review" ? 3 : undefined;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -348,24 +370,24 @@ export function CareerKickoffFlow({
                     className={cn(
                       "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border-2",
                       isSelected
-                        ? "border-ink-900 bg-ink-900 text-paper-0"
-                        : "border-ink-300 bg-paper-0",
+                        ? "border-black bg-black text-accent"
+                        : "border-black/40 bg-transparent text-transparent",
                     )}
                     aria-hidden
                   >
                     {isSelected && <Check className="h-3 w-3" strokeWidth={3} />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-small font-medium text-ink-900">{opt.title}</span>
+                    <span className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-small font-semibold text-black">{opt.title}</span>
                       {idx === 0 && (
-                        <span className="text-micro font-medium uppercase tracking-wide text-accent">
+                        <span className="text-micro font-semibold uppercase tracking-wide text-black/70">
                           Preferred
                         </span>
                       )}
                     </span>
                     {opt.rationale && (
-                      <span className="block text-micro text-ink-500 leading-snug mt-0.5">
+                      <span className="block text-micro text-black/60 leading-snug mt-0.5">
                         {opt.rationale}
                       </span>
                     )}
@@ -546,8 +568,10 @@ function FlowShell({
         <p className="text-small font-semibold text-ink-900">
           Aarya <span className="font-normal text-ink-500">· career kickoff</span>
         </p>
-        {stepIndex && (
-          <span className="ml-auto text-micro text-ink-400">Step {stepIndex} of 3</span>
+        {stepIndex != null && (
+          <span className="ml-auto rounded border border-accent/40 bg-accent/15 px-2 py-0.5 text-micro font-semibold text-accent">
+            Step {stepIndex} of 3
+          </span>
         )}
       </div>
       <div className="rounded-lg border border-ink-100 bg-paper-1 p-4 shadow-1 space-y-3.5">

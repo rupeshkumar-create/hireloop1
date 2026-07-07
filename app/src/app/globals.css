@@ -60,6 +60,14 @@
   .bg-destructive-bg { background-color: rgba(247, 109, 109, 0.14); }
   .text-destructive  { color: #F76D6D; }
   .border-destructive { border-color: #F76D6D; }
+
+  /* Chat composer icons — stay transparent (override generic bg-transparent fill) */
+  button.hs-composer-icon,
+  button.hs-composer-icon:hover:not(:disabled) {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+  }
 }
 
 /* ── Brutalist CTA buttons: light/lime fill, black label always ─ */

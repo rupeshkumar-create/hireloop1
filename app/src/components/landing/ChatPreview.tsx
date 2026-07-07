@@ -7,7 +7,7 @@ import {
   LANDING_AGENTS,
   type LandingAudience,
 } from "@/components/landing/landing-audience";
-import { BTN_ICON, BTN_ICON_ACCENT } from "@/lib/button-classes";
+import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 type Line =
@@ -271,7 +271,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
             type="button"
             aria-hidden
             tabIndex={-1}
-            className={cn(BTN_ICON, "relative h-8 w-8 shrink-0")}
+            className={cn(BTN_COMPOSER_ICON, "relative shrink-0")}
           >
             <Mic className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -279,7 +279,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
             type="button"
             aria-hidden
             tabIndex={-1}
-            className={cn(BTN_ICON_ACCENT, "h-8 w-8 shrink-0")}
+            className={cn(BTN_COMPOSER_SEND, "shrink-0")}
           >
             <Send className="h-3.5 w-3.5" strokeWidth={1.5} />
           </button>

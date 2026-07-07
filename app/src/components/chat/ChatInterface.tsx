@@ -52,7 +52,6 @@ import {
   Loader2,
   Mic,
   Paperclip,
-  PenLine,
   Search,
   Sparkles,
   Send,
@@ -104,7 +103,7 @@ import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageInt
 import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
-import { BTN_ICON, BTN_ICON_ACCENT, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
+import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
@@ -1122,6 +1121,22 @@ export function ChatInterface({
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
 
+  const handleKickoffStepArchived = useCallback(
+    (payload: { step: 1 | 2 | 3; content: string }) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `kickoff-step-${payload.step}-${Date.now()}`,
+          role: "assistant",
+          content: payload.content,
+          content_type: "text",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    },
+    [],
+  );
+
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
     setKickoffActive(false);
     onCareerKickoffComplete?.(result);
@@ -1149,7 +1164,7 @@ export function ChatInterface({
   // ── Render ──────────────────────────────────────────────────────────────
 
   const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
-  const showKickoff = kickoffActive && isEmpty;
+  const showKickoff = kickoffActive;
 
   const scrollDeps = useMemo(
     () => [
@@ -1176,17 +1191,7 @@ export function ChatInterface({
 
   const messagesSlot = (
     <div className={cn(CHAT_COLUMN_CLASS, "py-8 space-y-6")}>
-      {showKickoff ? (
-        <CareerKickoffFlow
-          onComplete={handleKickoffComplete}
-          onSkip={() => setKickoffActive(false)}
-        />
-      ) : isEmpty ? (
-        <EmptyState
-          onPick={(p) => void sendMessage(p)}
-          onUploadResume={() => fileInputRef.current?.click()}
-        />
-      ) : (
+      {showKickoff || !isEmpty ? (
         <>
           {messages.map((msg, i) => {
             const prevUser =
@@ -1286,7 +1291,20 @@ export function ChatInterface({
           {isStreaming && streamingApplicationKits.length > 0 && (
             <ApplicationKitCards kits={streamingApplicationKits} />
           )}
+
+          {showKickoff && (
+            <CareerKickoffFlow
+              onComplete={handleKickoffComplete}
+              onSkip={() => setKickoffActive(false)}
+              onStepArchived={handleKickoffStepArchived}
+            />
+          )}
         </>
+      ) : (
+        <EmptyState
+          onPick={(p) => void sendMessage(p)}
+          onUploadResume={() => fileInputRef.current?.click()}
+        />
       )}
 
       {showProfileFlow && (
@@ -1428,8 +1446,7 @@ export function ChatInterface({
               disabled={isUploading || isStreaming}
               onClick={() => fileInputRef.current?.click()}
               className={cn(
-                BTN_ICON,
-                "h-8 w-8",
+                BTN_COMPOSER_ICON,
                 (isUploading || isStreaming) && "opacity-40 cursor-not-allowed",
               )}
             >
@@ -1450,20 +1467,7 @@ export function ChatInterface({
               }}
             />
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setReplyModeAndPersist("text");
-                  textareaRef.current?.focus();
-                }}
-                aria-label="Type a message"
-                title="Type a message"
-                className={cn(BTN_ICON, "h-8 w-8")}
-              >
-                <PenLine className="h-4 w-4" strokeWidth={1.5} />
-              </button>
-
+            <div className="flex items-center gap-1">
               {input.trim() && (
                 <button
                   type="button"
@@ -1471,8 +1475,7 @@ export function ChatInterface({
                   disabled={isStreaming}
                   aria-label="Send message"
                   className={cn(
-                    BTN_ICON_ACCENT,
-                    "h-9 w-9",
+                    BTN_COMPOSER_SEND,
                     isStreaming && "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
@@ -1516,9 +1519,9 @@ export function ChatInterface({
                   aria-label="Hold to talk"
                   title="Hold to talk, release to send"
                   className={cn(
-                    BTN_ICON,
+                    BTN_COMPOSER_ICON,
                     "h-10 w-10",
-                    isRecording && "bg-destructive text-paper-0 border-destructive animate-pulse",
+                    isRecording && "text-destructive animate-pulse",
                     (isStreaming || voiceProcessing) &&
                       "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
@@ -1536,10 +1539,7 @@ export function ChatInterface({
                     onClick={() => void sendMessage(input)}
                     disabled={isStreaming}
                     aria-label="Send"
-                    className={cn(
-                      BTN_ICON,
-                      "h-10 w-10 opacity-50 cursor-not-allowed",
-                    )}
+                    className={cn(BTN_COMPOSER_ICON, "opacity-50 cursor-not-allowed")}
                   >
                     <Send className="h-4 w-4" strokeWidth={1.5} />
                   </button>
