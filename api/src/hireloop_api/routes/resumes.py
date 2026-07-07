@@ -277,6 +277,22 @@ def _schedule_resume_parse(
                     candidate_id=candidate_id,
                     resume_full_name=parsed.full_name,
                 )
+                # The fast regex parse that drove the initial apply often lacks
+                # location — when the full LLM parse lands with one, re-sync the
+                # market too, or a New York CV stays on the IN market forever
+                # (US jobs invisible; only demo jobs survive the filter).
+                if parsed.location_city or parsed.location_state:
+                    from hireloop_api.market_db import sync_candidate_market_from_location
+
+                    try:
+                        await sync_candidate_market_from_location(
+                            bg_db,
+                            candidate_id=uuid.UUID(candidate_id),
+                            location_city=parsed.location_city,
+                            location_state=parsed.location_state,
+                        )
+                    except Exception as exc:
+                        logger.warning("bg_market_sync_failed", error=str(exc)[:150])
                 try:
                     await bg_db.execute(
                         """
