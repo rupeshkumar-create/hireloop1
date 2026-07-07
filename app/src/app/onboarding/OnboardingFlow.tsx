@@ -43,7 +43,6 @@ import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { SUPPORTED_MARKETS, type MarketCode } from "@/lib/markets";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
 
@@ -167,7 +166,6 @@ function ActivationStep({
   const firstName = firstNameFromDisplayName(candidateName) ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [market, setMarket] = useState<MarketCode>("IN");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -224,7 +222,8 @@ function ActivationStep({
         body: JSON.stringify({
           skipped_voice: true,
           skipped_resume: false,
-          market,
+          // market intentionally omitted: it is derived from the CV location
+          // (sync on parse) with a browser-geo fallback — no manual picker.
         }),
       });
       if (!completeRes.ok) {
@@ -284,27 +283,6 @@ function ActivationStep({
             <p className="text-micro text-ink-400">
               Aarya reads your CV to build your profile and matches. You can refine
               details anytime from the dashboard.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="onboarding-market" className="text-small font-medium text-ink-700">
-              Your job market
-            </label>
-            <select
-              id="onboarding-market"
-              value={market}
-              onChange={(e) => setMarket(e.target.value as MarketCode)}
-              className="w-full rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-body text-ink-900"
-            >
-              {SUPPORTED_MARKETS.map((m) => (
-                <option key={m.code} value={m.code}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-micro text-ink-500">
-              Matches and salaries are scoped to this region (India, US, or UK).
             </p>
           </div>
 
