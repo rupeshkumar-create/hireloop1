@@ -53,6 +53,8 @@ from hireloop_api.services.test_jobs import (
     ensure_test_match_scores,
     fetch_test_jobs_for_feed,
     is_test_job,
+    test_jobs_company_sql_exclude,
+    test_jobs_enabled,
 )
 
 logger = structlog.get_logger()
@@ -299,6 +301,7 @@ async def get_match_feed(
         str(candidate["id"]),
         market=market,
         remote_preference="any",
+        settings=settings,
     )
 
     if offset == 0 and settings.apify_token and hasattr(db, "fetchval"):
@@ -431,7 +434,10 @@ async def get_match_feed(
         excluded_titles=excl_titles,
     )
     result = [
-        job for job in result if is_test_job(job) or passes_hard_constraints(job, constraints)
+        job
+        for job in result
+        if (test_jobs_enabled(settings) and is_test_job(job))
+        or (not is_test_job(job) and passes_hard_constraints(job, constraints))
     ]
 
     # Presentation layer: on the opening screen (first page), personalise from
@@ -454,7 +460,7 @@ async def get_match_feed(
                 fuse_signals=("overall_score", "skills_score"),
             )
         market_count = len(_market_feed_items(result))
-        if market_count < 3:
+        if market_count < 3 and test_jobs_enabled(settings):
             test_jobs = await fetch_test_jobs_for_feed(
                 db,
                 market=market,
@@ -611,6 +617,7 @@ async def get_match_feed_count(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Total job matches for the candidate (same rules as GET /matches)."""
+    settings = get_settings()
     candidate = await db.fetchrow(
         """
         SELECT c.id, c.current_title, c.current_company, c.headline, c.summary,
@@ -643,6 +650,7 @@ async def get_match_feed_count(
         str(candidate["id"]),
         market=market,
         remote_preference="any",
+        settings=settings,
     )
 
     cached_rows = await _fetch_cached_match_rows(
@@ -692,7 +700,7 @@ async def get_match_feed_count(
         market=market,
         remote_preference="any",
     )
-    if test_jobs:
+    if test_jobs and test_jobs_enabled(settings):
         total = max(total, len(test_jobs))
 
     return {"total": total}
@@ -740,6 +748,7 @@ async def _fetch_cached_match_rows(
 ) -> list[asyncpg.Record]:
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$5")
+    company_exclude = test_jobs_company_sql_exclude(company_alias="co")
     return await db.fetch(
         f"""
         SELECT
@@ -789,6 +798,7 @@ async def _fetch_cached_match_rows(
           AND j.deleted_at IS NULL
           AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
+          {company_exclude}
         ORDER BY
             COALESCE(j.scraped_at, j.created_at) DESC NULLS LAST,
             ms.overall_score * (
@@ -967,6 +977,7 @@ async def _fetch_fallback_match_rows(
     rows_to_rank = max(100, limit + offset)
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$4")
+    company_exclude = test_jobs_company_sql_exclude(company_alias="co")
     rows = await db.fetch(
         f"""
         SELECT
@@ -1002,6 +1013,7 @@ async def _fetch_fallback_match_rows(
           AND j.deleted_at IS NULL
           AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
+          {company_exclude}
         ORDER BY
           skills_overlap DESC,
           CASE

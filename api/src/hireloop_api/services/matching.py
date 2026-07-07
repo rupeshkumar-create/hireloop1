@@ -875,11 +875,14 @@ class MatchingEngine:
             return 0
 
         market = normalize_market(cand_row.get("market"))
+        from hireloop_api.config import get_settings
+
         await ensure_test_match_scores(
             self._db,
             candidate_id,
             market=market,
             remote_preference="any",
+            settings=get_settings(),
         )
 
         vis = job_visible_for_market_sql(market_param="$3")

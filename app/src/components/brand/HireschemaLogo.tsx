@@ -1,58 +1,56 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Hireschema brand logo — segmented italic "H" mark (lime wedges + crossbar pills).
+ * Hireschema brand mark — bold geometric "H" with a single italic lean.
  *
- * Stacked, slanted segments matching the Hireloop-style letterform: tapered vertical
- * strokes on each side and a double-pill crossbar in the centre.
+ * Sharp, brutalist strokes (no pill segments) so the icon stays crisp from
+ * 16px favicons up to nav lockups.
  */
 
 type MarkVariant = "app" | "lime" | "charcoal" | "white";
 
+const LIME = "#B9F84C";
+const CHARCOAL = "#141414";
+const PAPER = "#FAFAFA";
+
 function segmentFill(variant: MarkVariant): string {
   switch (variant) {
     case "charcoal":
-      return "#141414";
+      return CHARCOAL;
     case "white":
-      return "#FAFAFA";
+      return PAPER;
     case "lime":
-      return "#B9F84C";
+      return LIME;
     default:
-      return "#141414";
+      return CHARCOAL;
   }
 }
 
 function backgroundFill(variant: MarkVariant): string | null {
-  return variant === "app" ? "#B9F84C" : null;
+  switch (variant) {
+    case "app":
+      return LIME;
+    case "charcoal":
+      return LIME;
+    default:
+      return null;
+  }
 }
 
-type SegmentProps = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fill: string;
-  skew?: number;
-};
-
-function Segment({ x, y, width, height, fill, skew = -14 }: SegmentProps) {
-  const cx = x + width / 2;
-  const cy = y + height / 2;
+/** Core H letterform — shared by React component and static SVG assets. */
+export function HireschemaHGlyph({ fill }: { fill: string }) {
   return (
-    <g transform={`translate(${cx} ${cy}) skewX(${skew}) translate(${-cx} ${-cy})`}>
-      <rect x={x} y={y} width={width} height={height} rx={height / 2} fill={fill} />
+    <g transform="translate(24 24) skewX(-10) translate(-24 -24)">
+      <rect x="10.5" y="9" width="7.5" height="12.5" fill={fill} />
+      <rect x="10.5" y="26.5" width="7.5" height="12.5" fill={fill} />
+      <rect x="30" y="9" width="7.5" height="12.5" fill={fill} />
+      <rect x="30" y="26.5" width="7.5" height="12.5" fill={fill} />
+      <rect x="10.5" y="20.5" width="27" height="7" fill={fill} />
     </g>
   );
 }
 
-const STEM_ROWS = [
-  { y: 4, skew: -14 },
-  { y: 13.5, skew: -12 },
-  { y: 32, skew: -10 },
-  { y: 41, skew: -8 },
-] as const;
-
-/** Segmented "H" icon. `app` = charcoal H on lime tile; `lime` = on dark backgrounds. */
+/** Segmented "H" icon. `app` = charcoal H on lime tile. */
 export function HireschemaLogoMark({
   size = 32,
   variant = "app",
@@ -75,22 +73,13 @@ export function HireschemaLogoMark({
       role="img"
       aria-label="Hireschema"
     >
-      {bg && <rect width="48" height="48" rx="6" fill={bg} />}
-      <g>
-        {STEM_ROWS.map(({ y, skew }) => (
-          <Segment key={`l-${y}`} x={7} y={y} width={10} height={6} fill={fill} skew={skew} />
-        ))}
-        {STEM_ROWS.map(({ y, skew }) => (
-          <Segment key={`r-${y}`} x={31} y={y} width={10} height={6} fill={fill} skew={skew} />
-        ))}
-        <Segment x={8} y={21} width={32} height={5.5} fill={fill} skew={-6} />
-        <Segment x={8} y={27.5} width={32} height={5.5} fill={fill} skew={-4} />
-      </g>
+      {bg && <rect width="48" height="48" fill={bg} />}
+      <HireschemaHGlyph fill={fill} />
     </svg>
   );
 }
 
-/** Full lockup: segmented H mark + "Hireschema" wordmark (lime "schema"). */
+/** Full lockup: H mark + "Hireschema" wordmark (lime "schema"). */
 export function HireschemaLogo({
   size = 32,
   wordmark = true,

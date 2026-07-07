@@ -28,14 +28,13 @@ export function Footer() {
             <div className="flex items-center gap-2 mb-4">
               <svg viewBox="0 0 48 48" fill="none" className="h-8 w-8 shrink-0" aria-hidden>
                 <rect width="48" height="48" fill="#B9F84C" />
-                <path
-                  d="M16 14V34M24 14V34M32 14V34M16 14H32M16 24H32M16 34H32"
-                  stroke="#0F1400"
-                  strokeWidth="2.6"
-                  strokeLinecap="square"
-                />
-                <circle cx="24" cy="24" r="3.4" fill="#0F1400" />
-                <circle cx="24" cy="24" r="1.25" fill="#B9F84C" />
+                <g transform="translate(24 24) skewX(-10) translate(-24 -24)">
+                  <rect x="10.5" y="9" width="7.5" height="12.5" fill="#141414" />
+                  <rect x="10.5" y="26.5" width="7.5" height="12.5" fill="#141414" />
+                  <rect x="30" y="9" width="7.5" height="12.5" fill="#141414" />
+                  <rect x="30" y="26.5" width="7.5" height="12.5" fill="#141414" />
+                  <rect x="10.5" y="20.5" width="27" height="7" fill="#141414" />
+                </g>
               </svg>
               <span className="font-bold text-xl text-paper-0">
                 Hire<span className="text-accent">schema</span>

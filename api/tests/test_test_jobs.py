@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hireloop_api.config import Settings
 from hireloop_api.services.match_quality import job_in_persona_pool, should_persist_match
 from hireloop_api.services.test_jobs import (
     TEST_COMPANY_NAME,
@@ -10,10 +11,17 @@ from hireloop_api.services.test_jobs import (
     is_test_job,
     prepend_test_jobs,
 )
+from hireloop_api.services.test_jobs import (
+    test_jobs_enabled as _test_jobs_enabled,
+)
 
 
 def test_is_test_job_by_company_name() -> None:
     assert is_test_job({"company_name": TEST_COMPANY_NAME}) is True
+
+
+def test_is_test_job_by_legacy_hireloop_name() -> None:
+    assert is_test_job({"company_name": "Hireloop Test Co"}) is True
 
 
 def test_is_test_job_by_recruiter_email() -> None:
@@ -63,3 +71,13 @@ def test_prepend_test_jobs_keeps_test_roles_first() -> None:
     merged = prepend_test_jobs(regular, test, limit=5)
     assert merged[0]["job_id"] == "bbb"
     assert len(merged) == 2
+
+
+def test_test_jobs_disabled_in_production() -> None:
+    settings = Settings(environment="production")
+    assert _test_jobs_enabled(settings) is False
+
+
+def test_test_jobs_enabled_in_development() -> None:
+    settings = Settings(environment="development")
+    assert _test_jobs_enabled(settings) is True

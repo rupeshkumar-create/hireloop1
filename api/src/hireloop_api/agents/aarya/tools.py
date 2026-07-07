@@ -50,6 +50,8 @@ from hireloop_api.services.test_jobs import (
     fetch_test_jobs,
     is_test_job,
     prepend_test_jobs,
+    test_jobs_company_sql_exclude,
+    test_jobs_enabled,
 )
 
 logger = structlog.get_logger()
@@ -160,6 +162,8 @@ def _quality_filter_job_rows(
         row_dict = dict(row)
         job_row = _job_quality_row(row_dict)
         if is_test_job(row_dict):
+            if not test_jobs_enabled():
+                continue
             if row_dict.get("overall_score") is None:
                 row_dict["overall_score"] = TEST_MATCH_SCORE
             row_dict["explanation"] = row_dict.get("explanation") or TEST_MATCH_EXPLANATION
@@ -606,12 +610,14 @@ async def job_search(
     market = "IN"
     if candidate:
         market = await fetch_candidate_market(db, candidate["id"])
-        await ensure_test_match_scores(
-            db,
-            str(candidate["id"]),
-            market=market,
-            remote_preference="any",
-        )
+        if test_jobs_enabled(settings):
+            await ensure_test_match_scores(
+                db,
+                str(candidate["id"]),
+                market=market,
+                remote_preference="any",
+                settings=settings,
+            )
 
     vis = job_visible_for_market_sql(market_param="$7")
 
@@ -620,6 +626,7 @@ async def job_search(
         override=remote_preference,
     )
     remote_clause = remote_filter_sql(pref)
+    company_exclude = test_jobs_company_sql_exclude(company_alias="co")
 
     target_titles: list[str] = []
     if candidate:
@@ -645,6 +652,7 @@ async def job_search(
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
+              {company_exclude}
               AND (
                 $2::text = '' OR
                 j.title ILIKE '%' || $2::text || '%' OR
@@ -669,10 +677,15 @@ async def job_search(
             candidate=candidate_profile,
             target_titles=target_titles,
         )
+        # Lenient re-fetch is only safe when step 1 had nothing REAL to offer
+        # (empty, or demo rows only). If real rows existed and strict quality
+        # filtering dropped them (e.g. domain mismatch — dental sales for a
+        # SaaS GTM profile), an honest empty beats leniently re-admitting them.
+        had_real_raw = any(not is_test_job(dict(r)) for r in step1_raw)
         if step1_filtered:
             rows = step1_filtered
-        elif not step1_raw:
-            # Step 1b: narrow query missed in the DB (not quality-filtered out).
+        elif not had_real_raw:
+            # Step 1b: narrow query missed, or only demo rows were filtered out.
             vis_fallback = job_visible_for_market_sql(market_param="$3")
             step1b_raw = await db.fetch(
                 f"""
@@ -690,6 +703,7 @@ async def job_search(
                   AND j.deleted_at IS NULL
                   AND (j.expires_at IS NULL OR j.expires_at > NOW())
                   {remote_clause}
+                  {company_exclude}
                 ORDER BY ms.overall_score DESC
                 LIMIT $2::integer
                 """,
@@ -721,6 +735,7 @@ async def job_search(
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
+              {company_exclude}
               AND (
                 $1::text = '' OR
                 j.title ILIKE '%' || $1::text || '%' OR
@@ -766,6 +781,7 @@ async def job_search(
               AND j.deleted_at IS NULL
               AND (j.expires_at IS NULL OR j.expires_at > NOW())
               {remote_clause}
+              {company_exclude}
               AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
               AND ($3::text IS NULL OR j.location_city ILIKE '%' || $3::text || '%')
               AND ($4::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $4::integer)
@@ -801,7 +817,7 @@ async def job_search(
             limit=limit,
         )
 
-    if candidate:
+    if candidate and test_jobs_enabled(settings):
         test_rows = await fetch_test_jobs(db, market=market, remote_preference="any")
         test_dicts = []
         for row in test_rows:

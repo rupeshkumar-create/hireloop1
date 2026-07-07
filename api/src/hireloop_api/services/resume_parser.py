@@ -33,7 +33,7 @@ logger = structlog.get_logger()
 
 # Bump when parsing quality changes (prompt, budgets, models, repair logic) —
 # invalidates resume_parse_cache entries produced by older parser versions.
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 # ── Skill dictionary (canonical → aliases) ─────────────────────────────────────
 # Detection matches any alias on a word boundary and records the canonical name.
@@ -344,6 +344,11 @@ _SECTION_HEADERS = {
     "technical skills",
     "projects",
     "certifications",
+    "top skills",
+    "honors-awards",
+    "honors & awards",
+    "honors and awards",
+    "awards",
     "contact",
     "personal details",
     # LinkedIn PDF export (multilingual section labels)
@@ -379,11 +384,59 @@ _DATE_RANGE = re.compile(
 )
 # Hyphen only splits title/company when surrounded by spaces — not inside
 # hyphenated titles like "Go-To-Market Lead". Dash is NOT used here because
-# subtitles like "Lead – AI Resume Builder" must stay intact.
-_TITLE_COMPANY_SEP = r"\s*(?:at|@|\||·)\s*"
+# subtitles like "Lead – AI Resume Builder" must stay intact. The word "at"
+# must be bounded by spaces, otherwise "Category" becomes "C" + "egory".
+_TITLE_COMPANY_SEP = r"(?:\s+\bat\b\s+|\s*@\s*|\s*[|·]\s*)"
 _EMPLOYMENT_TYPE_RE = re.compile(
-    r"^(full[- ]?time|part[- ]?time|contract|freelance|remote|hybrid|onsite|on[- ]?site|self[- ]?employed)\b",
+    r"^(full[- ]?time|part[- ]?time|contract|freelance|remote|hybrid|onsite|on[- ]?site)\b",
     re.I,
+)
+
+_ROLE_KEYWORDS = (
+    "engineer",
+    "developer",
+    "manager",
+    "designer",
+    "analyst",
+    "consultant",
+    "lead",
+    "architect",
+    "scientist",
+    "specialist",
+    "executive",
+    "director",
+    "intern",
+    "associate",
+    "officer",
+    "head",
+    "senior",
+    "junior",
+    "founder",
+    "partner",
+    "investor",
+    "ceo",
+    "cto",
+    "cfo",
+    "president",
+    "advisor",
+    "principal",
+    "planner",
+    "buyer",
+    "merchandiser",
+    "coordinator",
+    "fellow",
+    "researcher",
+    "research assistant",
+    "trainee",
+    "product",
+    "strategy",
+    "strategist",
+    "content",
+    "operations",
+    "chairman",
+    "member",
+    "organizer",
+    "participant",
 )
 
 
@@ -1935,16 +1988,58 @@ def _infer_india_phone(text: str) -> str | None:
 def _infer_profile_url(text: str, kind: str) -> str | None:
     if kind == "linkedin":
         pattern = r"(?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/[^\s,;)]*"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            normal = _normalise_profile_url(match.group(0), kind)
+            if normal and not normal.rsplit("/", 1)[-1].endswith("-"):
+                return normal
+        repaired = _infer_wrapped_linkedin_url(text)
+        if repaired:
+            return repaired
+        return normal if match else None
     else:
         pattern = r"(?:https?://)?(?:www\.)?github\.com/[^\s,;)]*"
     match = re.search(pattern, text, flags=re.IGNORECASE)
     return _normalise_profile_url(match.group(0), kind) if match else None
 
 
+def _infer_wrapped_linkedin_url(text: str) -> str | None:
+    lines = [line.strip() for line in _normalise_text(text).splitlines() if line.strip()]
+    for i, line in enumerate(lines):
+        lower = line.lower()
+        marker = "linkedin.com/in/"
+        if marker not in lower and "linkedin.com/pub/" not in lower:
+            continue
+        prefix_match = re.search(
+            r"((?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/)", line, re.I
+        )
+        if not prefix_match:
+            continue
+        base = prefix_match.group(1)
+        after = line[prefix_match.end() :].strip()
+        slug = ""
+        after_slug = re.match(r"([A-Za-z0-9][A-Za-z0-9-]{2,})(?:[/,;.)]|$)", after)
+        if after_slug and not re.search(r"\s", after):
+            slug = after_slug.group(1)
+        for nearby in lines[i + 1 : i + 5]:
+            token = nearby.strip()
+            token = re.sub(r"\(LinkedIn\).*$", "", token, flags=re.I).strip()
+            first = token.split()[0] if token.split() else ""
+            first = re.sub(r"[^A-Za-z0-9-].*$", "", first)
+            if not first or _looks_like_location_line(token) or _is_section_header_line(token):
+                continue
+            if slug.endswith("-") or not slug:
+                slug = f"{slug}{first}"
+                break
+        if len(slug.strip("-")) >= 3:
+            return _normalise_profile_url(f"{base}{slug}", "linkedin")
+    return None
+
+
 def _normalise_profile_url(value: str | None, kind: str) -> str | None:
     if not value:
         return None
-    raw = value.strip().strip(".,;:)]}>")
+    raw = re.sub(r"\s+", "", value.strip()).strip(".,;:)]}>")
     if not raw:
         return None
     if not raw.startswith(("http://", "https://")):
@@ -2124,8 +2219,8 @@ def _is_section_header_line(line: str) -> bool:
 def _is_language_proficiency_line(line: str) -> bool:
     return bool(
         re.search(
-            r"\((?:native|bilingual|professional|elementary|full professional|limited|"
-            r"muttersprache|verhandlungssicher|grundkenntnisse)\)",
+            r"\([^)]*(?:native|bilingual|professional|elementary|limited|working|"
+            r"muttersprache|verhandlungssicher|grundkenntnisse)[^)]*\)",
             line,
             re.I,
         )
@@ -2133,6 +2228,9 @@ def _is_language_proficiency_line(line: str) -> bool:
 
 
 def _looks_like_location_line(line: str) -> bool:
+    lowered = line.lower()
+    if any(keyword in lowered for keyword in _ROLE_KEYWORDS):
+        return False
     if line.count(",") >= 2:
         return True
     return bool(
@@ -2177,6 +2275,15 @@ def _repair_linkedin_pdf_lines(text: str) -> str:
     for raw in _normalise_text(text).splitlines():
         line = raw.strip()
         if not line:
+            continue
+        lang_with_body = re.match(
+            r"^(.+\([^)]*(?:native|bilingual|professional|elementary|limited|working|"
+            r"muttersprache|verhandlungssicher|grundkenntnisse)[^)]*\))\s+(.+)$",
+            line,
+            re.I,
+        )
+        if lang_with_body:
+            repaired.extend([lang_with_body.group(1).strip(), lang_with_body.group(2).strip()])
             continue
         contact_name = re.match(r"^Contact\s+(.+)$", line, re.I)
         if contact_name and _looks_like_person_name(contact_name.group(1).strip()):
@@ -2643,10 +2750,35 @@ def _sanitize_company_name(company: str | None) -> str | None:
     v = company.strip().strip(" -–—|,·")
     if not v:
         return None
+    v = re.sub(r"^top\s+skills\s+", "", v, flags=re.I).strip(" -–—|,·")
     # Strip "(6 months)"-style suffixes before duration checks so
     # "Acme Corp (6 months)" is not mistaken for a duration-only token.
     v = _DURATION_SUFFIX_RE.sub("", v).strip(" -–—|,·")
     if not v or _looks_like_duration_fragment(v):
+        return None
+    if (
+        _is_section_header_line(v)
+        or _looks_like_contact_line(v)
+        or _looks_like_location_line(v)
+        or _looks_like_description_fragment(v)
+        or re.match(r"page \d+ of", v, re.I)
+        or _DATE_RANGE.search(v)
+    ):
+        return None
+    if re.match(
+        r"^(introduction to|certificate\b|membership certificate|python programming|"
+        r"machine learning by|matlab onramp|vibe coding\b)",
+        v,
+        re.I,
+    ):
+        return None
+    skill_key = v.casefold()
+    alias_skill = any(
+        skill_key == canonical.casefold()
+        or any(skill_key == alias.casefold() for alias in aliases)
+        for canonical, aliases in _SKILL_ALIASES.items()
+    )
+    if _vocab_known(skill_key) or alias_skill:
         return None
     return v
 
@@ -2692,62 +2824,15 @@ def _infer_current_role(lines: list[str]) -> tuple[str | None, str | None]:
         title, company = _split_title_company(line)
         if title and _looks_like_role_title(title):
             return title, company
-    role_keywords = (
-        "engineer",
-        "developer",
-        "manager",
-        "designer",
-        "analyst",
-        "consultant",
-        "lead",
-        "architect",
-        "scientist",
-        "specialist",
-        "executive",
-        "director",
-        "intern",
-        "associate",
-        "officer",
-        "head",
-    )
     for line in lines[:15]:
         low = line.lower()
-        if any(word in low for word in role_keywords) and not _looks_like_contact_line(line):
+        if any(word in low for word in _ROLE_KEYWORDS) and not _looks_like_contact_line(line):
             return line.strip(" -–—|,·"), None
     return None, None
 
 
 def _looks_like_role_title(text: str) -> bool:
-    role_keywords = (
-        "engineer",
-        "developer",
-        "manager",
-        "designer",
-        "analyst",
-        "consultant",
-        "lead",
-        "architect",
-        "scientist",
-        "specialist",
-        "executive",
-        "director",
-        "intern",
-        "associate",
-        "officer",
-        "head",
-        "senior",
-        "junior",
-        "founder",
-        "partner",
-        "investor",
-        "ceo",
-        "cto",
-        "cfo",
-        "president",
-        "advisor",
-        "principal",
-    )
-    return any(k in text.lower() for k in role_keywords)
+    return any(k in text.lower() for k in _ROLE_KEYWORDS)
 
 
 def _infer_years_experience(text: str) -> int | None:
@@ -2934,7 +3019,9 @@ def _looks_like_description_fragment(text: str | None) -> bool:
     v = text.strip()
     if v.count(" ") >= 7:
         return True
-    if len(v) > 48 and v.endswith("."):
+    if len(v) > 36 and v.endswith("."):
+        return True
+    if len(v.split()) > 5 and re.search(r"\b(and|with|through|using|without)\b", v, re.I):
         return True
     if re.search(r"\b(dm me|learn more|click here)\b", v, re.I):
         return True
@@ -2962,6 +3049,7 @@ def _infer_work_experience(
     entries: list[WorkExperience] = []
     in_education = False
     exp_start = _section_line_index(lines, _LINKEDIN_EXP_MARKERS) if linkedin_mode else None
+    last_company: str | None = None
     for i, line in enumerate(lines):
         header = line.lower().strip(" :")
         if header in _SECTION_HEADERS:
@@ -3007,20 +3095,9 @@ def _infer_work_experience(
                     continue
                 candidates.append(prev)
             title, company = _extract_title_company_from_candidates(candidates)
-            if i >= 2:
-                title_line = lines[i - 1].strip()
-                company_line = lines[i - 2].strip()
-                if (
-                    _looks_like_role_title(title_line)
-                    and company_line
-                    and not _looks_like_duration_fragment(company_line)
-                    and not _looks_like_location_line(company_line)
-                    and not _looks_like_description_fragment(company_line)
-                    and not _is_section_header_line(company_line)
-                    and not re.match(r"page \d+ of", company_line, re.I)
-                ):
-                    title = title_line
-                    company = _sanitize_company_name(company_line) or company
+            nearby_title, nearby_company = _infer_linkedin_title_company_near_date(lines, i)
+            title = nearby_title or title
+            company = nearby_company or company
         else:
             for j in range(i - 1, max(-1, i - 5), -1):
                 prev = lines[j].strip()
@@ -3034,9 +3111,12 @@ def _infer_work_experience(
                 candidates.append(prev)
             title, company = _extract_title_company_from_candidates(candidates)
 
+        if linkedin_mode and title and not company and last_company:
+            company = last_company
         if title or company:
             if _looks_like_description_fragment(company) or _looks_like_description_fragment(title):
                 continue
+            company = _sanitize_company_name(company)
             entries.append(
                 WorkExperience(
                     company=company,
@@ -3046,9 +3126,62 @@ def _infer_work_experience(
                     is_current=is_current,
                 )
             )
+            if company:
+                last_company = company
         if len(entries) >= 8:
             break
     return entries
+
+
+def _skip_linkedin_nearby_role_line(line: str) -> bool:
+    if not line:
+        return True
+    if _looks_like_contact_line(line) or _looks_like_location_line(line):
+        return True
+    if _looks_like_duration_fragment(line) or _DATE_RANGE.search(line):
+        return True
+    if _is_section_header_line(line) or _is_language_proficiency_line(line):
+        return True
+    if re.match(r"page \d+ of", line, re.I):
+        return True
+    return False
+
+
+def _skip_linkedin_nearby_company_line(line: str) -> bool:
+    if _skip_linkedin_nearby_role_line(line):
+        return True
+    if _looks_like_role_title(line):
+        return True
+    if _looks_like_description_fragment(line):
+        return True
+    return False
+
+
+def _infer_linkedin_title_company_near_date(
+    lines: list[str],
+    date_index: int,
+) -> tuple[str | None, str | None]:
+    title: str | None = None
+    title_index: int | None = None
+    for j in range(date_index - 1, max(-1, date_index - 9), -1):
+        prev = lines[j].strip()
+        if _skip_linkedin_nearby_role_line(prev):
+            continue
+        if _looks_like_role_title(prev):
+            title = prev.strip(" -–—|,·")
+            title_index = j
+            break
+    if title_index is None:
+        return None, None
+
+    for k in range(title_index - 1, max(-1, title_index - 9), -1):
+        prev = lines[k].strip()
+        if _skip_linkedin_nearby_company_line(prev):
+            continue
+        company = _sanitize_company_name(prev)
+        if company:
+            return title, company
+    return title, None
 
 
 def _looks_like_person_name(text: str) -> bool:

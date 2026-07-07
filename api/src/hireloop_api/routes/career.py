@@ -43,6 +43,7 @@ from hireloop_api.services.test_jobs import (
     ensure_test_match_scores,
     fetch_test_jobs_for_feed,
     prepend_test_jobs,
+    test_jobs_enabled,
 )
 
 logger = structlog.get_logger()
@@ -370,6 +371,7 @@ async def find_jobs_for_path(
         candidate_id,
         market=market,
         remote_preference="any",
+        settings=settings,
     )
 
     from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, POOL_INGEST, enqueue_job
@@ -551,7 +553,8 @@ async def find_jobs_for_path(
         market=market,
         remote_preference="any",
     )
-    jobs = prepend_test_jobs(jobs, test_jobs, limit=20)
+    if test_jobs and test_jobs_enabled(settings):
+        jobs = prepend_test_jobs(jobs, test_jobs, limit=20)
     return {
         "jobs": jobs,
         "refreshing": source_available,

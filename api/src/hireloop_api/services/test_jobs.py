@@ -21,6 +21,13 @@ from hireloop_api.services.job_preferences import remote_filter_sql
 TEST_RECRUITER_EMAIL = "rupesh.kumar@candidate.ly"
 TEST_COMPANY_DOMAIN = "hireschema-test.com"
 TEST_COMPANY_NAME = "Hireschema Test Co"
+_LEGACY_TEST_COMPANY_NAMES = frozenset(
+    {
+        TEST_COMPANY_NAME,
+        "Hireloop Test Co",
+        "Hireschema Test Co",
+    }
+)
 TEST_MATCH_SCORE = 0.75
 TEST_MATCH_EXPLANATION = (
     "Hireschema test role — use this to try job discovery, chat, and intro requests."
@@ -33,16 +40,51 @@ def is_test_job(job_row: Mapping[str, Any]) -> bool:
     if domain == TEST_COMPANY_DOMAIN:
         return True
     name = (job_row.get("company_name") or "").strip()
-    if name == TEST_COMPANY_NAME:
+    if name in _LEGACY_TEST_COMPANY_NAMES:
         return True
     email = (job_row.get("recruiter_email") or "").lower()
     return email == TEST_RECRUITER_EMAIL
 
 
+def test_jobs_enabled(settings: Any | None = None) -> bool:
+    """Demo/test roles are dev-only — never inject them in production (R15)."""
+    if settings is None:
+        from hireloop_api.config import get_settings
+
+        settings = get_settings()
+    if settings.is_production:
+        return False
+    return settings.environment in ("development", "test")
+
+
+def test_jobs_sql_exclude(*, company_alias: str = "co", user_alias: str = "u") -> str:
+    """SQL fragment to omit test jobs from feeds when disabled."""
+    if test_jobs_enabled():
+        return ""
+    legacy_names = "', '".join(sorted(_LEGACY_TEST_COMPANY_NAMES))
+    return f""" AND NOT (
+        {company_alias}.domain = '{TEST_COMPANY_DOMAIN}'
+        OR {company_alias}.name IN ('{legacy_names}')
+        OR {user_alias}.email = '{TEST_RECRUITER_EMAIL}'
+    )"""
+
+
+def test_jobs_company_sql_exclude(*, company_alias: str = "co") -> str:
+    """Company-only exclude for queries that do not join recruiter users."""
+    if test_jobs_enabled():
+        return ""
+    legacy_names = "', '".join(sorted(_LEGACY_TEST_COMPANY_NAMES))
+    return f""" AND NOT (
+        {company_alias}.domain = '{TEST_COMPANY_DOMAIN}'
+        OR {company_alias}.name IN ('{legacy_names}')
+    )"""
+
+
 def _test_job_sql_predicate(*, company_alias: str = "co", user_alias: str = "u") -> str:
+    legacy_names = "', '".join(sorted(_LEGACY_TEST_COMPANY_NAMES))
     return f"""(
         {company_alias}.domain = '{TEST_COMPANY_DOMAIN}'
-        OR {company_alias}.name = '{TEST_COMPANY_NAME}'
+        OR {company_alias}.name IN ('{legacy_names}')
         OR {user_alias}.email = '{TEST_RECRUITER_EMAIL}'
     )"""
 
@@ -107,8 +149,11 @@ async def ensure_test_match_scores(
     *,
     market: str = "IN",
     remote_preference: str = "any",
+    settings: Any | None = None,
 ) -> None:
     """Upsert match_scores so test jobs appear in feed/search for every candidate."""
+    if not test_jobs_enabled(settings):
+        return
     if not hasattr(db, "executemany"):
         return
     rows = await fetch_test_jobs(db, market=market, remote_preference=remote_preference)
