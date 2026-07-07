@@ -340,7 +340,9 @@ class JobIngester:
         }
         # Record the run so the dedupe gate can skip identical queries for the
         # next INGEST_DEDUPE_HOURS. Best-effort.
-        if queries and not errors:
+        # Zero-result runs are NOT recorded: an empty answer (too-narrow
+        # window, thin function) must not block a retry for 24h.
+        if queries and not errors and (inserted + updated) > 0:
             try:
                 total = inserted + updated
                 for q in queries:

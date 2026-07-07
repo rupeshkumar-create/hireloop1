@@ -132,14 +132,13 @@ class Settings(BaseSettings):
     fantastic_jobs_organization_slug_exclusions: list[str] = []
     fantastic_jobs_industry_exclusions: list[str] = []
     fantastic_jobs_ai_work_arrangement: list[str] = []
-    fantastic_jobs_ai_employment_types: list[str] = [
-        "FULL_TIME",
-        "PART_TIME",
-        "CONTRACTOR",
-        "INTERN",
-    ]
+    # AI-enrichment filters EXCLUDE any job Fantastic hasn't enriched — listing
+    # all types is not "allow everything", it silently drops unenriched rows
+    # (zeroed out a 7d Customer Success run that returned jobs on the console).
+    # Off by default; enable via env only with intent.
+    fantastic_jobs_ai_employment_types: list[str] = []
     fantastic_jobs_ai_experience_levels: list[str] = []
-    fantastic_jobs_ai_languages: list[str] = ["English"]
+    fantastic_jobs_ai_languages: list[str] = []  # same enrichment-exclusion trap
     fantastic_jobs_seniority_filter: list[str] = []
     fantastic_jobs_industry_filter: list[str] = []
     fantastic_jobs_organization_search: list[str] = []
