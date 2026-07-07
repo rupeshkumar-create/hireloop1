@@ -4,6 +4,7 @@
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import { recordJobApplication } from "@/lib/api/job-applications";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export type MatchedJob = {
   tier_label?: string | null;
   // Action-state — what's already been done for this role (kit prepared, intro
   // requested/sent…). null when the candidate hasn't acted on it yet.
-  action_state?: "kit_ready" | "intro" | null;
+  action_state?: "kit_ready" | "intro" | "applied" | null;
   action_label?: string | null;
 };
 
@@ -226,24 +227,13 @@ export async function fetchSingleMatch(jobId: string): Promise<MatchedJob> {
 }
 
 /**
- * Record a direct application through the Aarya chat API.
- * Opens the apply URL in a new tab AND logs the application in the DB.
+ * Record a direct application and open the employer apply page.
  */
 export async function recordDirectApply(
-  conversationId: string,
+  _conversationId: string,
   jobId: string,
   applyUrl: string
 ): Promise<void> {
-  // Open the job's native apply page immediately (don't block on API call)
   window.open(applyUrl, "_blank", "noopener,noreferrer");
-
-  // Fire-and-forget — log the application
-  await apiAuthFetch(`/api/v1/chat/sessions/${conversationId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: `direct_apply:${jobId}`,
-      content_type: "text",
-    }),
-  }).catch(() => {/* silent — the tab already opened */});
+  await recordJobApplication(jobId).catch(() => undefined);
 }

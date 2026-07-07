@@ -190,6 +190,10 @@ async def create_candidate_intro(
     if not job:
         return {"error": "Job not found"}
 
+    from hireloop_api.services.job_pipeline import ensure_saved_job
+
+    await ensure_saved_job(db, candidate_id, job["id"])
+
     # ── 1. Registered recruiter → in-app intro ────────────────────────────────
     if job["recruiter_id"]:
         recruiter = await db.fetchrow(

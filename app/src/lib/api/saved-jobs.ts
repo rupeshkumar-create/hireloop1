@@ -19,6 +19,8 @@ function notifySavedJobsChanged(): void {
   }
 }
 
+export { notifySavedJobsChanged };
+
 export async function fetchSavedJobs(): Promise<MatchedJob[]> {
   const res = await apiAuthFetch("/api/v1/me/saved-jobs", { cache: "no-store" });
   if (!res.ok) {

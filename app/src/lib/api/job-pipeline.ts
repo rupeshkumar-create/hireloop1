@@ -4,6 +4,12 @@ export type JobPipelineStage =
   | "saved"
   | "kit_ready"
   | "applied"
+  | "screening"
+  | "interview"
+  | "offer"
+  | "hired"
+  | "rejected"
+  | "withdrawn"
   | "intro_in_progress"
   | "intro_accepted"
   | "tracked";

@@ -46,6 +46,7 @@ import { JobCard } from "./JobCard";
 interface CareerPathPanelProps {
   conversationId?: string;
   onRequestIntro?: (job: MatchedJob) => void;
+  onDirectApply?: (job: MatchedJob) => void;
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   className?: string;
@@ -65,6 +66,7 @@ const LEVEL_META: Record<
 export function CareerPathPanel({
   conversationId,
   onRequestIntro,
+  onDirectApply,
   savedJobIds = new Set(),
   onSavedChange,
   className,
@@ -443,10 +445,7 @@ export function CareerPathPanel({
                 job={job}
                 conversationId={conversationId}
                 onRequestIntro={onRequestIntro}
-                onDirectApply={(j) => {
-                  if (j.apply_url)
-                    window.open(j.apply_url, "_blank", "noopener,noreferrer");
-                }}
+                onDirectApply={onDirectApply}
                 onTailorResume={handlePrepareKit}
                 tailorStatus={kitByJob[job.job_id] ?? "idle"}
                 onOpenKitPreview={openKitPreview}

@@ -96,7 +96,14 @@ export function JobCard({
 }: JobCardProps) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
-  const [introSent, setIntroSent] = useState(false);
+  const [introSent, setIntroSent] = useState(
+    () => job.action_state === "intro" || Boolean(job.action_label?.toLowerCase().includes("intro")),
+  );
+  const [applied, setApplied] = useState(
+    () =>
+      job.action_state === "applied" ||
+      Boolean(job.action_label?.toLowerCase().includes("applied")),
+  );
   const isChat = variant === "chat";
 
   const tailoring = tailorStatus === "loading";
@@ -118,7 +125,9 @@ export function JobCard({
       onApplyLocked?.();
       return;
     }
+    if (introSent) return;
     setIntroSent(true);
+    onSavedChange?.(job.job_id, true);
     onRequestIntro?.(job);
   };
 
@@ -127,6 +136,14 @@ export function JobCard({
       onApplyLocked?.();
       return;
     }
+    if (applied) {
+      if (job.apply_url) {
+        window.open(job.apply_url, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
+    setApplied(true);
+    onSavedChange?.(job.job_id, true);
     onDirectApply?.(job);
     if (job.apply_url) {
       window.open(job.apply_url, "_blank", "noopener,noreferrer");
@@ -386,12 +403,18 @@ export function JobCard({
           variant="secondary"
           size="sm"
           onClick={handleApply}
-          disabled={!applyLocked && !job.apply_url}
+          disabled={!applyLocked && !job.apply_url && !applied}
           title={applyLocked ? "Upload a resume or add city + CTC to apply" : undefined}
-          leftIcon={<ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />}
+          leftIcon={
+            applied ? (
+              <Check className="h-3.5 w-3.5" strokeWidth={2} />
+            ) : (
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+            )
+          }
           className="flex-1"
         >
-          Apply
+          {applied ? "Applied" : "Apply"}
         </Button>
 
         {!isChat && (

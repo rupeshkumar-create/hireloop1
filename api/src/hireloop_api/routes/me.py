@@ -1065,12 +1065,24 @@ def _pipeline_stage(
         "pending",
         "invited",
         "recruiter_notified",
+        "enriching",
+        "drafting",
         "draft_ready",
         "sent",
+        "opened",
+        "replied",
     ):
         return "intro_in_progress"
-    if application_status:
-        return "applied"
+    if application_status in (
+        "applied",
+        "screening",
+        "interview",
+        "offer",
+        "hired",
+        "rejected",
+        "withdrawn",
+    ):
+        return application_status
     if kit_id:
         return "kit_ready"
     if saved_at:
@@ -1350,6 +1362,29 @@ async def unsave_job(
         uuid.UUID(job_id),
     )
     return {"saved": False}
+
+
+@router.post("/jobs/{job_id}/apply", status_code=201)
+async def record_job_application(
+    job_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Log a direct application and bookmark the job for the tracker."""
+    from hireloop_api.services.job_pipeline import record_direct_application
+
+    result = await record_direct_application(
+        db,
+        user_id=str(current_user["id"]),
+        job_id=job_id,
+        settings=settings,
+    )
+    if "error" in result:
+        detail = result["error"]
+        status = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail)
+    return result
 
 
 @router.post("/onboarding-consent")

@@ -16,6 +16,7 @@ import {
   type JobPipelineItem,
   type JobPipelineStage,
 } from "@/lib/api/job-pipeline";
+import { subscribeJobPipeline } from "@/lib/api/job-applications";
 import { downloadTailoredResume } from "@/lib/api/tailored";
 import { Badge, Button, EmptyState } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,10 @@ const STAGES: { id: JobPipelineStage; label: string }[] = [
   { id: "saved", label: "Saved" },
   { id: "kit_ready", label: "Kit ready" },
   { id: "applied", label: "Applied" },
+  { id: "screening", label: "Screening" },
+  { id: "interview", label: "Interview" },
+  { id: "offer", label: "Offer" },
+  { id: "hired", label: "Hired" },
   { id: "intro_in_progress", label: "Intro" },
   { id: "intro_accepted", label: "Chat open" },
 ];
@@ -32,6 +37,12 @@ const STAGE_TONE: Record<JobPipelineStage, "muted" | "strong" | "accent"> = {
   saved: "muted",
   kit_ready: "accent",
   applied: "strong",
+  screening: "accent",
+  interview: "accent",
+  offer: "strong",
+  hired: "strong",
+  rejected: "muted",
+  withdrawn: "muted",
   intro_in_progress: "accent",
   intro_accepted: "strong",
   tracked: "muted",
@@ -41,12 +52,21 @@ const STAGE_LABEL: Record<JobPipelineStage, string> = {
   saved: "Saved",
   kit_ready: "Kit generated",
   applied: "Applied",
+  screening: "In screening",
+  interview: "Interview scheduled",
+  offer: "Offer received",
+  hired: "Hired",
+  rejected: "Not selected",
+  withdrawn: "Withdrawn",
   intro_in_progress: "Intro in progress",
   intro_accepted: "Intro accepted",
   tracked: "Tracked",
 };
 
 function stageIndex(stage: JobPipelineStage): number {
+  if (stage === "rejected" || stage === "withdrawn") {
+    return STAGES.findIndex((s) => s.id === "applied");
+  }
   const idx = STAGES.findIndex((s) => s.id === stage);
   return idx >= 0 ? idx : 0;
 }
@@ -110,9 +130,9 @@ function JobPipelineCard({ item }: { item: JobPipelineItem }) {
           </span>
         )}
         {item.application_status && (
-          <span className="inline-flex items-center gap-1 text-micro text-ink-500">
+          <span className="inline-flex items-center gap-1 text-micro text-ink-500 capitalize">
             <CheckCircle className="h-3 w-3" strokeWidth={1.5} />
-            Applied
+            {STAGE_LABEL[item.stage as JobPipelineStage] ?? item.application_status}
           </span>
         )}
         {item.intro_status && (
@@ -185,6 +205,10 @@ export function JobTrackerPanel({ className }: { className?: string }) {
 
   useEffect(() => {
     void load();
+    const unsubscribe = subscribeJobPipeline(() => {
+      void load();
+    });
+    return unsubscribe;
   }, [load]);
 
   return (

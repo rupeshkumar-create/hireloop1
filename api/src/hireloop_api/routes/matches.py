@@ -784,6 +784,11 @@ async def _fetch_cached_match_rows(
                 WHERE k.candidate_id = ms.candidate_id AND k.job_id = ms.job_id
             ) AS has_kit,
             (
+                SELECT ja.status FROM public.job_applications ja
+                WHERE ja.candidate_id = ms.candidate_id AND ja.job_id = ms.job_id
+                ORDER BY ja.applied_at DESC LIMIT 1
+            ) AS application_status,
+            (
                 SELECT ir.status FROM public.intro_requests ir
                 WHERE ir.candidate_id = ms.candidate_id AND ir.job_id = ms.job_id
                 ORDER BY ir.created_at DESC LIMIT 1
@@ -837,7 +842,23 @@ _INTRO_STATUS_LABELS = {
 }
 
 
-def _action_state(*, has_kit: bool, intro_status: str | None) -> tuple[str | None, str | None]:
+_APPLICATION_STATUS_LABELS = {
+    "applied": "Applied",
+    "screening": "In screening",
+    "interview": "Interview",
+    "offer": "Offer",
+    "hired": "Hired",
+    "rejected": "Not selected",
+    "withdrawn": "Withdrawn",
+}
+
+
+def _action_state(
+    *,
+    has_kit: bool,
+    intro_status: str | None,
+    application_status: str | None = None,
+) -> tuple[str | None, str | None]:
     """Return (state, label) describing what's already been done for this role.
 
     Intro progress takes precedence over a prepared kit, since it's the later
@@ -847,6 +868,9 @@ def _action_state(*, has_kit: bool, intro_status: str | None) -> tuple[str | Non
         label = _INTRO_STATUS_LABELS.get(intro_status)
         if label:
             return "intro", label
+    if application_status:
+        label = _APPLICATION_STATUS_LABELS.get(application_status, "Applied")
+        return "applied", label
     if has_kit:
         return "kit_ready", "Kit ready"
     return None, None
@@ -860,10 +884,15 @@ def _serialize_cached_match_row(row: asyncpg.Record | dict) -> dict:
     llm_at = data.pop("llm_rationale_at", None)
     has_kit = bool(data.pop("has_kit", False))
     intro_status = data.pop("intro_status", None)
+    application_status = data.pop("application_status", None)
     computed_at = data["computed_at"]
     fresh = bool(llm) and (llm_at is None or computed_at is None or llm_at >= computed_at)
 
-    action_state, action_label = _action_state(has_kit=has_kit, intro_status=intro_status)
+    action_state, action_label = _action_state(
+        has_kit=has_kit,
+        intro_status=intro_status,
+        application_status=application_status,
+    )
 
     item = {
         **data,

@@ -27,6 +27,7 @@ import {
 } from "@/components/brand/icons";
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
+import { recordJobApplication } from "@/lib/api/job-applications";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import { AppShell } from "@/components/layout/AppShell";
@@ -144,6 +145,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [introSent, setIntroSent] = useState(false);
+  const [applied, setApplied] = useState(false);
   const [prepStarted, setPrepStarted] = useState(false);
 
   useEffect(() => {
@@ -154,6 +156,8 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
       .then((data) => {
         if (cancelled) return;
         setJob(data);
+        if (data.action_state === "applied") setApplied(true);
+        if (data.action_state === "intro") setIntroSent(true);
         return fetchSavedJobIds().then((ids) => {
           if (!cancelled) setSaved(ids.has(jobId));
         });
@@ -173,6 +177,8 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   const handleRequestIntro = () => {
     if (!job) return;
     setIntroSent(true);
+    setSaved(true);
+    void saveJob(job.job_id).catch(() => undefined);
     const msg = `I'd like to request an intro for the "${job.title}" role at ${
       job.company_name ?? "this company"
     } (job ID: ${job.job_id}).`;
@@ -194,7 +200,18 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   };
 
   const handleApply = () => {
-    if (job?.apply_url) {
+    if (!job || applied) {
+      if (job?.apply_url) {
+        window.open(job.apply_url, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
+    setApplied(true);
+    setSaved(true);
+    void recordJobApplication(job.job_id)
+      .then(() => toast.success("Marked as applied — tracked in Job tracker"))
+      .catch(() => toast.error("Couldn't log application"));
+    if (job.apply_url) {
       window.open(job.apply_url, "_blank", "noopener,noreferrer");
     }
   };
@@ -253,6 +270,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
           saved={saved}
           saving={saving}
           introSent={introSent}
+          applied={applied}
           prepStarted={prepStarted}
           onPrepare={handlePrepare}
           onRequestIntro={handleRequestIntro}
@@ -271,6 +289,7 @@ function JobDetailBody({
   saved,
   saving,
   introSent,
+  applied,
   prepStarted,
   onPrepare,
   onRequestIntro,
@@ -281,6 +300,7 @@ function JobDetailBody({
   saved: boolean;
   saving: boolean;
   introSent: boolean;
+  applied: boolean;
   prepStarted: boolean;
   onPrepare: () => void;
   onRequestIntro: () => void;
@@ -522,11 +542,17 @@ function JobDetailBody({
             variant="secondary"
             size="md"
             onClick={onApply}
-            disabled={!job.apply_url}
-            leftIcon={<ExternalLink className="h-4 w-4" strokeWidth={1.5} />}
+            disabled={!job.apply_url && !applied}
+            leftIcon={
+              applied ? (
+                <Check className="h-4 w-4" strokeWidth={2} />
+              ) : (
+                <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
+              )
+            }
             className="flex-1"
           >
-            Apply
+            {applied ? "Applied" : "Apply"}
           </Button>
 
           <Button

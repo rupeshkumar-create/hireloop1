@@ -24,7 +24,8 @@ import { X } from "@/components/brand/icons";
 import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
-import { fetchSavedJobIds, subscribeSavedJobs } from "@/lib/api/saved-jobs";
+import { fetchSavedJobIds, saveJob, subscribeSavedJobs } from "@/lib/api/saved-jobs";
+import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import { cn } from "@/lib/utils";
@@ -193,6 +194,10 @@ export function DashboardClient({
       openPanel("jobs");
       return;
     }
+    handleSavedChange(job.job_id, true);
+    void saveJob(job.job_id).catch(() => {
+      /* Aarya intro path also bookmarks server-side */
+    });
     sendToChat(
       `I'd like to request an intro for the "${job.title}" role at ${
         job.company_name ?? "this company"
@@ -206,9 +211,14 @@ export function DashboardClient({
       openPanel("jobs");
       return;
     }
-    if (job.apply_url) {
-      window.open(job.apply_url, "_blank", "noopener,noreferrer");
-    }
+    handleSavedChange(job.job_id, true);
+    void recordJobApplication(job.job_id)
+      .then(() => {
+        toast.success(`Marked as applied — tracked in Job tracker`);
+      })
+      .catch(() => {
+        toast.error("Couldn't log application — try again from Job tracker");
+      });
   }
 
   function handleProfileBoosted() {
@@ -337,6 +347,7 @@ export function DashboardClient({
                 <CareerPathPanel
                   conversationId={activeConvoId ?? undefined}
                   onRequestIntro={handleRequestIntro}
+                  onDirectApply={handleDirectApply}
                   savedJobIds={savedJobIds}
                   onSavedChange={handleSavedChange}
                   className="h-full"

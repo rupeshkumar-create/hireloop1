@@ -107,6 +107,8 @@ import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from 
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
+import { recordJobApplication } from "@/lib/api/job-applications";
+import { saveJob } from "@/lib/api/saved-jobs";
 import {
   fetchMyProfile,
   invalidateProfileCache,
@@ -654,12 +656,14 @@ export function ChatInterface({
 
   const handleRequestIntroWithConfirm = useCallback(
     (job: MatchedJob) => {
+      onSavedChange?.(job.job_id, true);
+      void saveJob(job.job_id).catch(() => undefined);
       onRequestIntro?.(job);
       appendSystemNote(
-        `Intro requested for **${job.title}** at ${job.company_name ?? "this company"}.`
+        `Intro requested for **${job.title}** at ${job.company_name ?? "this company"}. Saved to your jobs.`
       );
     },
-    [onRequestIntro, appendSystemNote]
+    [onRequestIntro, onSavedChange, appendSystemNote]
   );
 
   // ── Send message ────────────────────────────────────────────────────────
@@ -928,12 +932,13 @@ export function ChatInterface({
 
   const handleJobApply = useCallback(
     (job: MatchedJob) => {
-      const company = job.company_name ?? "this company";
-      void sendMessage(
-        `I want to apply for ${job.title} at ${company}. Prepare my full application kit for job ${job.job_id}.`
+      onSavedChange?.(job.job_id, true);
+      void recordJobApplication(job.job_id).catch(() => undefined);
+      appendSystemNote(
+        `Marked **${job.title}** at ${job.company_name ?? "this company"} as applied — see Job tracker for status.`
       );
     },
-    [sendMessage]
+    [onSavedChange, appendSystemNote]
   );
 
   const handleWhyFit = useCallback(
