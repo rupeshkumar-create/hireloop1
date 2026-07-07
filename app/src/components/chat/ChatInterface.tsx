@@ -274,6 +274,7 @@ export function ChatInterface({
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
   const holdActiveRef = useRef(false);
+  const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
   const streamingTtsQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -459,6 +460,14 @@ export function ChatInterface({
     ta.style.height = "auto";
     ta.style.height = Math.min(ta.scrollHeight, COMPOSER_TEXT_MAX_H) + "px";
   }, [input]);
+
+  // Re-focus the composer as soon as Aarya finishes drafting so the user can reply.
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) {
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   useEffect(() => {
     if (initialInput && textareaRef.current) {
@@ -1112,13 +1121,6 @@ export function ChatInterface({
     [isUploading, isStreaming, sendMessage]
   );
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendMessage(input);
-    }
-  };
-
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
 
   const handleKickoffStepArchived = useCallback(
@@ -1165,6 +1167,18 @@ export function ChatInterface({
 
   const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
   const showKickoff = kickoffActive;
+  /** True while Aarya is thinking / running tools before any visible draft text. */
+  const isAwaitingDraft = isStreaming && !streamingContent.trim();
+  const composerInputDisabled =
+    isAwaitingDraft || voiceProcessing || Boolean(pendingVoiceTranscript);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (isStreaming || composerInputDisabled) return;
+      void sendMessage(input);
+    }
+  };
 
   const scrollDeps = useMemo(
     () => [
@@ -1426,12 +1440,14 @@ export function ChatInterface({
                 ? "Tap here to type instead…"
                 : pendingVoiceTranscript
                   ? "Edit your voice message above, then send."
-                  : "Ask Aarya anything…"
+                  : isAwaitingDraft
+                    ? "Aarya is thinking…"
+                    : isStreaming
+                      ? "Type your reply — send when Aarya finishes…"
+                      : "Ask Aarya anything…"
             }
             rows={1}
-            disabled={
-              isStreaming || voiceProcessing || Boolean(pendingVoiceTranscript)
-            }
+            disabled={composerInputDisabled}
             className={cn(
               "w-full bg-transparent resize-none text-body text-ink-900",
               "placeholder:text-ink-400 focus:outline-none leading-relaxed",
@@ -1472,11 +1488,13 @@ export function ChatInterface({
                 <button
                   type="button"
                   onClick={() => void sendMessage(input)}
-                  disabled={isStreaming}
-                  aria-label="Send message"
+                  disabled={isStreaming || composerInputDisabled}
+                  aria-label={isStreaming ? "Wait for Aarya to finish" : "Send message"}
+                  title={isStreaming ? "Wait for Aarya to finish replying" : undefined}
                   className={cn(
                     BTN_COMPOSER_SEND,
-                    isStreaming && "opacity-40 cursor-not-allowed pointer-events-none",
+                    (isStreaming || composerInputDisabled) &&
+                      "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
                   {isStreaming ? (
