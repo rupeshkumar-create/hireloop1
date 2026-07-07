@@ -580,6 +580,7 @@ async def job_search(
     import time
 
     from hireloop_api.services.career_path import CareerPathService
+    from hireloop_api.services.job_recall_pipeline import union_and_rank_recall_pools
     from hireloop_api.services.job_search_refresh import (
         compute_job_search_fetch_limit,
         exclude_job_rows,
@@ -627,12 +628,25 @@ async def job_search(
     company_exclude = test_jobs_company_sql_exclude(company_alias="co")
 
     target_titles: list[str] = []
+    intelligence_skills: list[str] = []
     if candidate:
         path = await CareerPathService.get_latest(db, str(candidate["id"]))
         target_titles = list((path or {}).get("target_titles") or [])
-    candidate_profile = dict(candidate) if candidate else None
+        try:
+            from hireloop_api.services.candidate_intelligence import load_candidate_intelligence
 
-    rows = None
+            snapshot = await load_candidate_intelligence(db, candidate["id"])
+            if snapshot is not None:
+                job_context = snapshot.for_job_search()
+                target_titles = job_context.primary_titles or target_titles
+                intelligence_skills = job_context.skills
+        except Exception as exc:
+            logger.warning("candidate_intelligence_snapshot_unavailable", error=str(exc)[:200])
+    candidate_profile = dict(candidate) if candidate else None
+    if candidate_profile and intelligence_skills:
+        candidate_profile["skills"] = intelligence_skills
+
+    recall_pools: list[tuple[str, list[dict[str, Any]]]] = []
     if candidate:
         step1_raw = await db.fetch(
             f"""
@@ -681,7 +695,7 @@ async def job_search(
         # SaaS GTM profile), an honest empty beats leniently re-admitting them.
         had_real_raw = any(not is_test_job(dict(r)) for r in step1_raw)
         if step1_filtered:
-            rows = step1_filtered
+            recall_pools.append(("precomputed_query", step1_filtered))
         elif not had_real_raw:
             # Step 1b: narrow query missed, or only demo rows were filtered out.
             vis_fallback = job_visible_for_market_sql(market_param="$3")
@@ -709,61 +723,64 @@ async def job_search(
                 fetch_limit,
                 market,
             )
-            rows = _quality_filter_job_rows(
+            step1b_filtered = _quality_filter_job_rows(
                 step1b_raw,
                 candidate=candidate_profile,
                 target_titles=target_titles,
                 lenient=True,
             )
+            if step1b_filtered:
+                recall_pools.append(("precomputed_broad", step1b_filtered))
 
     # Step 2: fallback — unranked keyword search (no match scores yet at all)
     vis_kw = job_visible_for_market_sql(market_param="$6")
-    if not rows:
-        rows = await db.fetch(
-            f"""
-            SELECT j.id, j.title, j.location_city, j.location_state,
-                   j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url, j.description,
-                   co.name AS company_name, co.logo_url,
-                   NULL::real AS overall_score
-            FROM public.jobs j
-            LEFT JOIN public.companies co ON co.id = j.company_id
-            WHERE j.is_active = TRUE
-              AND {vis_kw}
-              AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
-              {remote_clause}
-              {company_exclude}
-              AND (
-                $1::text = '' OR
-                j.title ILIKE '%' || $1::text || '%' OR
-                j.description ILIKE '%' || $1::text || '%'
-              )
-              AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
-              AND ($3::text IS NULL OR j.location_city ILIKE '%' || $3::text || '%')
-              AND ($4::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $4::integer)
-            ORDER BY j.scraped_at DESC
-            LIMIT $5::integer
-            """,
-            query_text,
-            skills_filter,
-            location_city,
-            ctc_min,
-            fetch_limit,
-            market,
-        )
-        rows = _quality_filter_job_rows(
-            rows,
-            candidate=candidate_profile,
-            target_titles=target_titles,
-        )
+    keyword_rows = await db.fetch(
+        f"""
+        SELECT j.id, j.title, j.location_city, j.location_state,
+               j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+               j.employment_type, j.seniority, j.apply_url, j.description,
+               co.name AS company_name, co.logo_url,
+               NULL::real AS overall_score
+        FROM public.jobs j
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE j.is_active = TRUE
+          AND {vis_kw}
+          AND j.deleted_at IS NULL
+          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          {remote_clause}
+          {company_exclude}
+          AND (
+            $1::text = '' OR
+            j.title ILIKE '%' || $1::text || '%' OR
+            j.description ILIKE '%' || $1::text || '%'
+          )
+          AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
+          AND ($3::text IS NULL OR j.location_city ILIKE '%' || $3::text || '%')
+          AND ($4::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $4::integer)
+        ORDER BY j.scraped_at DESC
+        LIMIT $5::integer
+        """,
+        query_text,
+        skills_filter,
+        location_city,
+        ctc_min,
+        fetch_limit,
+        market,
+    )
+    keyword_filtered = _quality_filter_job_rows(
+        keyword_rows,
+        candidate=candidate_profile,
+        target_titles=target_titles,
+    )
+    if keyword_filtered:
+        recall_pools.append(("keyword", keyword_filtered))
 
     # Step 2b: the exact phrase missed. Relax to token-level matching so a
     # decorated title ("Category Manager - Fashion & Apparel") degrades to the
     # closest live roles instead of a dead end. Rank by how many query tokens
     # appear in the title, then recency. Quality filter still gates fit.
     tokens = _search_tokens(query_text)
-    if not rows and tokens:
+    if tokens:
         vis_tok = job_visible_for_market_sql(market_param="$6")
         tok_rows = await db.fetch(
             f"""
@@ -801,63 +818,68 @@ async def job_search(
             fetch_limit,
             market,
         )
-        rows = _quality_filter_job_rows(
+        token_filtered = _quality_filter_job_rows(
             tok_rows,
             candidate=candidate_profile,
             target_titles=target_titles,
             lenient=True,
         )
+        if token_filtered:
+            recall_pools.append(("token", token_filtered))
 
     # Step 3: exact title/city can still be too brittle for generalist titles
     # ("Assistant Manager", "Senior Executive") or sparse city feeds. Pull a
     # broader visible market pool, score it against the CV, and keep the best
     # profile-fit roles so Aarya always has cards before narrating a dry feed.
-    if not rows:
-        vis_profile = job_visible_for_market_sql(market_param="$4")
-        broad_limit = max(fetch_limit * 5, 50)
-        profile_rows = await db.fetch(
-            f"""
-            SELECT j.id, j.title, j.location_city, j.location_state,
-                   j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
-                   j.employment_type, j.seniority, j.apply_url, j.description,
-                   co.name AS company_name, co.logo_url,
-                   NULL::real AS overall_score
-            FROM public.jobs j
-            LEFT JOIN public.companies co ON co.id = j.company_id
-            WHERE j.is_active = TRUE
-              AND {vis_profile}
-              AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
-              {remote_clause}
-              {company_exclude}
-              AND ($2::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $2::integer)
-            ORDER BY
-              CASE
-                WHEN $1::text IS NOT NULL
-                 AND j.location_city ILIKE '%' || $1::text || '%'
-                THEN 0
-                ELSE 1
-              END,
-              j.scraped_at DESC
-            LIMIT $3::integer
-            """,
-            location_city,
-            ctc_min,
-            broad_limit,
-            market,
-        )
-        rows = _quality_filter_job_rows(
+    vis_profile = job_visible_for_market_sql(market_param="$4")
+    broad_limit = max(fetch_limit * 5, 50)
+    profile_rows = await db.fetch(
+        f"""
+        SELECT j.id, j.title, j.location_city, j.location_state,
+               j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+               j.employment_type, j.seniority, j.apply_url, j.description,
+               co.name AS company_name, co.logo_url,
+               NULL::real AS overall_score
+        FROM public.jobs j
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE j.is_active = TRUE
+          AND {vis_profile}
+          AND j.deleted_at IS NULL
+          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          {remote_clause}
+          {company_exclude}
+          AND ($2::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $2::integer)
+        ORDER BY
+          CASE
+            WHEN $1::text IS NOT NULL
+             AND j.location_city ILIKE '%' || $1::text || '%'
+            THEN 0
+            ELSE 1
+          END,
+          j.scraped_at DESC
+        LIMIT $3::integer
+        """,
+        location_city,
+        ctc_min,
+        broad_limit,
+        market,
+    )
+    profile_filtered = _quality_filter_job_rows(
+        profile_rows,
+        candidate=candidate_profile,
+        target_titles=target_titles,
+    )
+    if not profile_filtered:
+        profile_filtered = _quality_filter_job_rows(
             profile_rows,
             candidate=candidate_profile,
             target_titles=target_titles,
+            lenient=True,
         )
-        if not rows:
-            rows = _quality_filter_job_rows(
-                profile_rows,
-                candidate=candidate_profile,
-                target_titles=target_titles,
-                lenient=True,
-            )
+    if profile_filtered:
+        recall_pools.append(("profile_broad", profile_filtered))
+
+    rows = union_and_rank_recall_pools(recall_pools, limit=fetch_limit)
 
     if rows:
         rows = exclude_job_rows(

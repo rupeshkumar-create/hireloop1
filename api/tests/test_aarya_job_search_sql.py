@@ -273,6 +273,120 @@ async def test_job_search_broadens_to_profile_fit_when_exact_title_and_city_are_
     assert len(out["job_cards"]) == 1
 
 
+async def test_job_search_unions_narrow_and_broad_recall_before_ranking() -> None:
+    cand_id = uuid.uuid4()
+    generic_id = uuid.uuid4()
+    strong_id = uuid.uuid4()
+
+    class _DB:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "COALESCE(NULLIF(c.market" in query:
+                return {"market": "IN"}
+            if "FROM public.career_paths" in query:
+                return {
+                    "id": uuid.uuid4(),
+                    "current_role": "Growth Manager",
+                    "summary": "Growth leadership path",
+                    "steps": [{"title": "Head of Growth"}],
+                    "target_titles": ["Head of Growth", "Lifecycle Marketing Lead"],
+                    "target_locations": ["Bengaluru"],
+                    "model": "test",
+                    "prioritized_title": "Head of Growth",
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            return {
+                "id": cand_id,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "Senior Growth Manager",
+                "current_company": "Acme SaaS",
+                "full_name": "Candidate",
+                "headline": "SaaS lifecycle and PLG growth leader",
+                "summary": "Owns retention, lifecycle marketing, SQL analytics, and PLG.",
+                "years_experience": 8,
+                "skills": ["growth", "lifecycle marketing", "sql", "retention"],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": True,
+                "location_scope": "country",
+            }
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            if "FROM public.match_scores" in query:
+                narrow_has_query_filter = "$2::text = ''" in query
+                if narrow_has_query_filter:
+                    return [
+                        {
+                            "id": generic_id,
+                            "title": "Growth Executive",
+                            "location_city": "Bengaluru",
+                            "location_state": "Karnataka",
+                            "is_remote": False,
+                            "ctc_min": None,
+                            "ctc_max": None,
+                            "skills_required": ["growth"],
+                            "employment_type": "full_time",
+                            "seniority": "mid",
+                            "apply_url": "https://example.test/generic-growth",
+                            "company_name": "GenericCo",
+                            "logo_url": None,
+                            "description": "Generic growth execution role.",
+                            "overall_score": 0.41,
+                            "skills_score": 0.2,
+                            "experience_score": 0.5,
+                            "location_score": 1.0,
+                            "ctc_score": 0.5,
+                            "explanation": "Generic growth fit",
+                        }
+                    ]
+                return []
+            if "FROM public.jobs" not in query:
+                return []
+            if "j.title ILIKE '%' || $1::text || '%'" in query:
+                return []
+            if "EXISTS (" in query:
+                return []
+            return [
+                {
+                    "id": strong_id,
+                    "title": "Head of Growth - SaaS",
+                    "location_city": "Mumbai",
+                    "location_state": "Maharashtra",
+                    "is_remote": True,
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "skills_required": ["growth", "lifecycle marketing", "sql", "retention"],
+                    "employment_type": "full_time",
+                    "seniority": "director",
+                    "apply_url": "https://example.test/head-growth",
+                    "company_name": "Modern SaaS",
+                    "logo_url": None,
+                    "description": "Lead SaaS PLG, lifecycle, retention, and analytics.",
+                    "overall_score": None,
+                }
+            ]
+
+        async def execute(self, query: str, *args: object) -> str:
+            return "INSERT 0 1"
+
+    out = await job_search(
+        _DB(),  # type: ignore[arg-type]
+        str(uuid.uuid4()),
+        "sess",
+        "growth",
+    )
+
+    assert [m["title"] for m in out["matches"]][:2] == [
+        "Head of Growth - SaaS",
+        "Growth Executive",
+    ]
+    assert out["matches"][0]["recall_sources"]
+    assert "recall_diagnostics" in out["matches"][0]
+
+
 async def test_job_search_drops_dental_sales_for_staffing_saas_gtm_candidate() -> None:
     cand_id = uuid.uuid4()
 

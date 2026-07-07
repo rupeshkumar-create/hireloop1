@@ -24,6 +24,7 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql, normalize_market
+from hireloop_api.services.candidate_intelligence import load_candidate_intelligence
 from hireloop_api.services.job_preferences import (
     extract_negative_preferences,
     normalize_remote_preference,
@@ -34,6 +35,7 @@ from hireloop_api.services.job_relevance_pipeline import (
     filter_and_rerank_jobs,
     rationale_overlay_items,
 )
+from hireloop_api.services.match_audit import audit_match_quality
 from hireloop_api.services.match_quality import (
     DEFAULT_FEED_MIN_SCORE,
     MIN_PERSIST_SCORE,
@@ -110,6 +112,98 @@ def _merge_feed_results(
         if len(merged) >= limit:
             break
     return merged
+
+
+def _unique_nonempty(values: list[object]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def _join_text(*values: object) -> str:
+    return " ".join(_unique_nonempty(list(values)))
+
+
+async def _candidate_with_intelligence(
+    db: asyncpg.Connection,
+    candidate: asyncpg.Record | dict,
+) -> dict:
+    """Merge canonical candidate intelligence into the feed candidate row.
+
+    The feed still runs without this layer, but when the saved memory/goals/resume
+    snapshot is available it should influence relevance filtering before jobs are
+    hidden.
+    """
+    base = dict(candidate)
+    try:
+        snapshot = await load_candidate_intelligence(db, base["id"])
+    except Exception as exc:
+        logger.warning(
+            "match_feed_candidate_intelligence_failed",
+            candidate_id=str(base.get("id")),
+            error=str(exc)[:300],
+        )
+        return base
+    if snapshot is None:
+        return base
+
+    ctx = snapshot.for_job_search()
+    enriched = dict(base)
+    primary_titles = _unique_nonempty(
+        [
+            enriched.get("prioritized_title"),
+            *(enriched.get("target_titles") or []),
+            enriched.get("looking_for"),
+            *ctx.primary_titles,
+            enriched.get("current_title"),
+        ]
+    )
+    if primary_titles:
+        enriched["prioritized_title"] = primary_titles[0]
+        enriched["target_titles"] = primary_titles
+        enriched["looking_for"] = enriched.get("looking_for") or primary_titles[0]
+
+    enriched["skills"] = _unique_nonempty([*(enriched.get("skills") or []), *ctx.skills])
+    enriched["market"] = ctx.hard_filters.market or enriched.get("market")
+    enriched["remote_preference"] = ctx.hard_filters.remote_preference or enriched.get(
+        "remote_preference"
+    )
+    enriched["location_scope"] = ctx.hard_filters.location_scope or enriched.get("location_scope")
+    if ctx.hard_filters.ctc_floor is not None:
+        enriched["expected_ctc_min"] = ctx.hard_filters.ctc_floor
+
+    state = dict(enriched.get("aarya_state") or {})
+    negative = dict(state.get("negative_preferences") or {})
+    negative["companies"] = _unique_nonempty(
+        [
+            *(negative.get("companies") or []),
+            *ctx.negative_preferences.companies,
+            *ctx.hard_filters.excluded_companies,
+        ]
+    )
+    negative["titles"] = _unique_nonempty(
+        [
+            *(negative.get("titles") or []),
+            *ctx.negative_preferences.titles,
+            *ctx.hard_filters.excluded_titles,
+        ]
+    )
+    if negative["companies"] or negative["titles"]:
+        state["negative_preferences"] = negative
+        enriched["aarya_state"] = state
+
+    if ctx.memory_summary and ctx.memory_summary not in str(enriched.get("summary") or ""):
+        enriched["summary"] = _join_text(enriched.get("summary"), ctx.memory_summary)
+    if ctx.desired_industry:
+        enriched["summary"] = _join_text(enriched.get("summary"), ctx.desired_industry)
+    enriched["candidate_intelligence_sources"] = ctx.source_inventory
+    return enriched
 
 
 async def _supplement_market_feed(
@@ -251,6 +345,8 @@ class MatchedJob(BaseModel):
     # Presentation layer (services.ranking) — confidence badge for the UI.
     tier: str | None = None
     tier_label: str | None = None
+    # Backend-only transparency metadata; optional so older clients can ignore it.
+    match_diagnostics: dict | None = None
 
 
 class RecomputeResponse(BaseModel):
@@ -317,6 +413,7 @@ async def get_match_feed(
     )
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
+    candidate = await _candidate_with_intelligence(db, candidate)
 
     settings = get_settings()
     remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
@@ -693,6 +790,7 @@ async def get_match_feed_count(
     )
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
+    candidate = await _candidate_with_intelligence(db, candidate)
 
     remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
     market = normalize_market(candidate.get("market"))
@@ -958,7 +1056,12 @@ def _action_state(
     return None, None
 
 
-def _serialize_cached_match_row(row: asyncpg.Record | dict) -> dict:
+def _serialize_cached_match_row(
+    row: asyncpg.Record | dict,
+    *,
+    candidate: dict | None = None,
+    current_quality: dict | None = None,
+) -> dict:
     data = dict(row)
     # A cached LLM rationale is usable only if it was generated AFTER the latest
     # score (otherwise the row was re-scored and the rationale may be stale).
@@ -989,6 +1092,15 @@ def _serialize_cached_match_row(row: asyncpg.Record | dict) -> dict:
     }
     if fresh:
         item["explanation"] = llm
+    if candidate is not None:
+        cand_row = _candidate_quality_row(candidate)
+        job_row = _job_quality_row(data)
+        quality = current_quality or {"overall": float(data.get("overall_score") or 0.0)}
+        item["match_diagnostics"] = audit_match_quality(
+            cand_row,
+            job_row,
+            quality,
+        ).model_dump(mode="json")
     return item
 
 
@@ -1009,7 +1121,9 @@ def _serialize_current_quality_cached_rows(
         current = _current_quality_score(row, candidate=candidate)
         if current is None or current["overall"] < min_score:
             continue
-        result.append(_serialize_cached_match_row(row))
+        result.append(
+            _serialize_cached_match_row(row, candidate=candidate, current_quality=current)
+        )
     return result
 
 
@@ -1157,8 +1271,7 @@ async def _fetch_starter_market_jobs(
                 "location_score": None,
                 "ctc_score": None,
                 "explanation": (
-                    "Starter match from your market — Aarya is still ranking roles "
-                    "against your CV."
+                    "Starter match from your market — Aarya is still ranking roles against your CV."
                 ),
                 "computed_at": now,
             }
@@ -1276,6 +1389,7 @@ def _serialize_fallback_match_row(
     elif not should_persist_match(cand_row, job_row, score):
         return None
 
+    audit = audit_match_quality(cand_row, job_row, score).model_dump(mode="json")
     return {
         "job_id": str(row_dict["job_id"]),
         "title": row_dict["title"],
@@ -1297,6 +1411,7 @@ def _serialize_fallback_match_row(
         "ctc_score": round(score["ctc_score"], 4),
         "explanation": f"{score['explanation']} Aarya is still finalising your full ranking.",
         "computed_at": datetime.now(UTC).isoformat(),
+        "match_diagnostics": audit,
     }
 
 

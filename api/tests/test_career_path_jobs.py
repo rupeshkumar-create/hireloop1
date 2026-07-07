@@ -31,6 +31,16 @@ def test_job_matches_path_titles_accepts_relevant_customer_roles() -> None:
     assert job_matches_path_titles("Customer Experience Manager - SaaS", titles)
 
 
+def test_job_matches_path_titles_rejects_bare_team_lead_false_positive() -> None:
+    titles = [
+        "Customer Success Manager",
+        "Implementation Team Lead",
+        "CX Operations Lead",
+    ]
+    assert not job_matches_path_titles("Team Lead", titles)
+    assert job_matches_path_titles("Implementation Team Lead", titles)
+
+
 def test_job_matches_path_titles_accepts_category_roles() -> None:
     titles = ["Category Manager", "Assistant Manager - Category"]
     assert job_matches_path_titles("Category Manager - Fashion", titles)

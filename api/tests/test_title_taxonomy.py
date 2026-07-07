@@ -22,6 +22,14 @@ def test_seniority_words_ignored() -> None:
     assert title_affinity("Junior Data Analyst", "Lead Data Analyst") == 1.0
 
 
+def test_team_lead_words_are_not_role_function_signal() -> None:
+    assert canonical_title_tokens("Team Lead") == frozenset()
+    assert canonical_title_tokens("Customer Success Team Lead") == frozenset(
+        {"customer", "success"}
+    )
+    assert title_affinity("Team Lead", "Implementation Team Lead") is None
+
+
 def test_unrelated_roles_score_low() -> None:
     aff = title_affinity("Sales Executive", "Backend Engineer")
     assert aff is not None and aff < 0.2

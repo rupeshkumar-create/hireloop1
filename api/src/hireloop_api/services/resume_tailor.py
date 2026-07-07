@@ -18,6 +18,8 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from hireloop_api.services.ai_context import compose_candidate_prompt
+
 logger = structlog.get_logger()
 
 TAILOR_SYSTEM = """You tailor a candidate resume for a specific job description.
@@ -97,13 +99,15 @@ async def generate_path_resume_html(
     path_summary: str | None = None,
 ) -> str:
     """LLM generates an ATS-oriented career-path resume HTML fragment."""
-    prompt = f"""Target career direction: {path_title}
+    task_prompt = f"""Target career direction: {path_title}
 {f"Path context: {path_summary}" if path_summary else ""}
 
-Candidate profile (source of truth — do not invent beyond this):
-{json_dumps_safe(candidate_profile)}
-
 Produce the ATS-friendly resume HTML fragment for the target direction."""
+    prompt = compose_candidate_prompt(
+        candidate_profile,
+        task="path_resume",
+        task_prompt=task_prompt,
+    )
 
     resp = await llm.ainvoke(
         [
@@ -112,11 +116,7 @@ Produce the ATS-friendly resume HTML fragment for the target direction."""
         ]
     )
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.split("\n")
-        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return content
+    return normalize_tailored_resume_html(content, candidate_profile=candidate_profile)
 
 
 async def generate_tailored_html(
@@ -127,10 +127,7 @@ async def generate_tailored_html(
     template: str,
 ) -> str:
     """LLM generates tailored resume HTML."""
-    prompt = f"""Template style: {template}
-
-Candidate profile (source of truth — do not invent beyond this):
-{json_dumps_safe(candidate_profile)}
+    task_prompt = f"""Template style: {template}
 
 Job:
 Title: {job.get("title")}
@@ -138,6 +135,11 @@ Company: {job.get("company_name", "Company")}
 Description: {(job.get("description") or "")[:4000]}
 
 Produce tailored resume HTML."""
+    prompt = compose_candidate_prompt(
+        candidate_profile,
+        task="tailored_resume",
+        task_prompt=task_prompt,
+    )
 
     resp = await llm.ainvoke(
         [
@@ -146,18 +148,263 @@ Produce tailored resume HTML."""
         ]
     )
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
-    # Strip accidental markdown fences
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.split("\n")
-        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return content
+    return normalize_tailored_resume_html(content, candidate_profile=candidate_profile)
 
 
 def json_dumps_safe(obj: Any) -> str:
     import json
 
     return json.dumps(obj, default=str, indent=2)[:12000]
+
+
+_PLACEHOLDER_RE = re.compile(r"^(?:null|none|undefined|n/a|na|—|-)?$", re.IGNORECASE)
+_DANGEROUS_BLOCK_RE = re.compile(
+    r"<(script|style|iframe|object|embed|form|table|thead|tbody|tr|td|th|svg|canvas|button)"
+    r"[^>]*>.*?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+_DANGEROUS_VOID_RE = re.compile(
+    r"<(?:img|input|link|meta|source|video|audio)[^>]*>", re.IGNORECASE | re.DOTALL
+)
+_ALLOWED_INLINE_TAGS = ("strong", "b", "em", "i", "u", "a")
+
+
+def normalize_tailored_resume_html(
+    raw_html: str,
+    *,
+    candidate_profile: dict[str, Any],
+) -> str:
+    """Sanitize and complete an LLM-produced ATS resume fragment.
+
+    The model may style, omit, or placeholder sections. This guardrail keeps the
+    stored document single-column, removes null-like display text, and restores
+    source-of-truth roles/education from the backend profile without inventing.
+    """
+    inner = _extract_resume_body(_strip_markdown_fence(raw_html))
+    inner = _sanitize_resume_fragment(inner)
+    inner = _remove_placeholder_blocks(inner)
+    inner = _ensure_header(inner, candidate_profile)
+    inner = _ensure_summary(inner, candidate_profile)
+    inner = _ensure_skills(inner, candidate_profile)
+    inner = _ensure_experience(inner, candidate_profile)
+    inner = _ensure_education(inner, candidate_profile)
+    return _compact_html(inner)
+
+
+def resume_summary_line(html_content: str) -> str:
+    """Plain-text summary snippet safe for list views."""
+    for paragraph in re.findall(r"<p[^>]*>(.*?)</p>", html_content or "", flags=re.I | re.S):
+        text = _plain_text(paragraph)
+        if text and not _is_placeholder_text(text):
+            return text[:200]
+    return ""
+
+
+def _strip_markdown_fence(content: str) -> str:
+    text = (content or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    return text.strip()
+
+
+def _extract_resume_body(content: str) -> str:
+    body_match = re.search(r"<body[^>]*>(.*)</body>", content, re.IGNORECASE | re.DOTALL)
+    if body_match:
+        return body_match.group(1).strip()
+    content = re.sub(r"<head[^>]*>.*?</head>", "", content, flags=re.IGNORECASE | re.DOTALL)
+    return re.sub(r"</?(?:html|body)[^>]*>", "", content, flags=re.IGNORECASE).strip()
+
+
+def _sanitize_resume_fragment(content: str) -> str:
+    content = _DANGEROUS_BLOCK_RE.sub("", content or "")
+    content = _DANGEROUS_VOID_RE.sub("", content)
+    content = re.sub(r"\s+on\w+=(?:\"[^\"]*\"|'[^']*'|[^\s>]+)", "", content, flags=re.I)
+    content = re.sub(r"""href=(["'])\s*javascript:[^"']*\1""", 'href="#"', content, flags=re.I)
+    return content
+
+
+def _remove_placeholder_blocks(content: str) -> str:
+    for tag in ("p", "li", "span", "div"):
+        content = re.sub(
+            rf"<{tag}[^>]*>\s*(?:null|none|undefined|n/a|na|—|-)\s*</{tag}>",
+            "",
+            content,
+            flags=re.I,
+        )
+    content = re.sub(r"\b(?:null|none|undefined)\b\s*(?:·\s*)?", "", content, flags=re.I)
+    return content
+
+
+def _ensure_header(content: str, profile: dict[str, Any]) -> str:
+    name = _first_text(profile.get("full_name"), profile.get("name")) or "Resume"
+    h1_match = re.search(r"<h1[^>]*>(.*?)</h1>", content, flags=re.I | re.S)
+    h1 = f"<h1>{html.escape(name)}</h1>"
+    if h1_match and _is_placeholder_text(_plain_text(h1_match.group(1))):
+        content = content[: h1_match.start()] + h1 + content[h1_match.end() :]
+    elif not h1_match:
+        content = f"{h1}\n{content}"
+
+    contact = _contact_line(profile)
+    if contact:
+        contact_html = f'<p class="resume-contact">{html.escape(contact)}</p>'
+        contact_match = re.search(
+            r"<p[^>]*class=[\"'][^\"']*resume-contact[^\"']*[\"'][^>]*>.*?</p>",
+            content,
+            flags=re.I | re.S,
+        )
+        if contact_match and _is_placeholder_text(_plain_text(contact_match.group(0))):
+            content = (
+                content[: contact_match.start()] + contact_html + content[contact_match.end() :]
+            )
+        elif not contact_match:
+            h1_end = re.search(r"</h1>", content, flags=re.I)
+            if h1_end:
+                content = content[: h1_end.end()] + f"\n{contact_html}" + content[h1_end.end() :]
+    return content
+
+
+def _ensure_summary(content: str, profile: dict[str, Any]) -> str:
+    if _has_heading(content, "Professional Summary"):
+        return content
+    summary = _first_text(
+        profile.get("summary"), profile.get("headline"), profile.get("looking_for")
+    )
+    if not summary:
+        return content
+    return f"{content}\n<h2>Professional Summary</h2>\n<p>{html.escape(summary)}</p>"
+
+
+def _ensure_skills(content: str, profile: dict[str, Any]) -> str:
+    if _has_heading(content, "Core Skills"):
+        return content
+    skills = [_first_text(skill) for skill in (profile.get("skills") or [])]
+    skills = [s for s in skills if s]
+    if not skills:
+        return content
+    return f"{content}\n<h2>Core Skills</h2>\n<p>{html.escape(', '.join(skills[:18]))}</p>"
+
+
+def _ensure_experience(content: str, profile: dict[str, Any]) -> str:
+    roles = [r for r in (profile.get("experience") or []) if isinstance(r, dict)]
+    if not roles:
+        return content
+    if not _has_heading(content, "Professional Experience"):
+        content = f"{content}\n<h2>Professional Experience</h2>"
+    text = _plain_text(content).lower()
+    missing: list[str] = []
+    for role in roles[:12]:
+        title = _first_text(role.get("title"), role.get("current_title"))
+        company = _first_text(role.get("company"), role.get("company_name"), role.get("employer"))
+        if not title and not company:
+            continue
+        key = " ".join(part for part in (title, company) if part).lower()
+        if key and all(part.lower() in text for part in key.split()):
+            continue
+        heading = " — ".join(html.escape(part) for part in (title, company) if part)
+        meta = _role_meta(role)
+        missing.append(
+            f"<h3>{heading}</h3>{f'<p class="role-meta">{html.escape(meta)}</p>' if meta else ''}"
+        )
+    if missing:
+        content = f"{content}\n" + "\n".join(missing)
+    return content
+
+
+def _ensure_education(content: str, profile: dict[str, Any]) -> str:
+    education = [e for e in (profile.get("education") or []) if isinstance(e, dict)]
+    if not education:
+        return content
+    if not _has_heading(content, "Education"):
+        content = f"{content}\n<h2>Education</h2>"
+    text = _plain_text(content).lower()
+    missing: list[str] = []
+    for item in education[:8]:
+        degree = _first_text(item.get("degree"), item.get("qualification"), item.get("program"))
+        institution = _first_text(
+            item.get("institution"), item.get("school"), item.get("university")
+        )
+        year = _first_text(item.get("year"), item.get("end_date"), item.get("graduation_year"))
+        if not degree and not institution:
+            continue
+        key = " ".join(part for part in (degree, institution) if part).lower()
+        if key and all(part.lower() in text for part in key.split()):
+            continue
+        line = " — ".join(html.escape(part) for part in (degree, institution) if part)
+        if year:
+            line = f"{line} · {html.escape(year)}"
+        missing.append(f"<p>{line}</p>")
+    if missing:
+        content = f"{content}\n" + "\n".join(missing)
+    return content
+
+
+def _role_meta(role: dict[str, Any]) -> str:
+    dates = " – ".join(
+        part
+        for part in (
+            _first_text(role.get("start_date"), role.get("start")),
+            _first_text(role.get("end_date"), role.get("end")) or "Present",
+        )
+        if part
+    )
+    location = _first_text(role.get("location"), role.get("location_city"))
+    return " · ".join(part for part in (dates, location) if part)
+
+
+def _contact_line(profile: dict[str, Any]) -> str:
+    location = ", ".join(
+        part
+        for part in (
+            _first_text(profile.get("location_city")),
+            _first_text(profile.get("location_state")),
+        )
+        if part
+    )
+    return " · ".join(
+        part
+        for part in (
+            location,
+            _first_text(profile.get("email")),
+            _first_text(profile.get("phone")),
+            _first_text(profile.get("linkedin_url")),
+        )
+        if part
+    )
+
+
+def _has_heading(content: str, heading: str) -> bool:
+    return bool(
+        re.search(
+            rf"<h2[^>]*>\s*{re.escape(heading)}\s*</h2>",
+            content or "",
+            flags=re.I,
+        )
+    )
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text and not _is_placeholder_text(text):
+            return text
+    return None
+
+
+def _is_placeholder_text(value: str) -> bool:
+    return bool(_PLACEHOLDER_RE.match(_plain_text(value).strip()))
+
+
+def _plain_text(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    text = html.unescape(text).replace("\xa0", " ")
+    return " ".join(text.split())
+
+
+def _compact_html(content: str) -> str:
+    content = re.sub(r"\n{3,}", "\n\n", content or "")
+    content = re.sub(r">\s+<", ">\n<", content)
+    return content.strip()
 
 
 # A4, print-optimized shell. Wrapping the LLM's resume body in this turns the

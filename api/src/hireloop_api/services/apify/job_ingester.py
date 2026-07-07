@@ -23,11 +23,13 @@ from hireloop_api.markets import (
     SUPPORTED_MARKETS,
     resolve_country_from_location,
 )
+from hireloop_api.services.apify.candidate_job_query_plan import build_candidate_job_ingest_plan
 from hireloop_api.services.apify.jobs_scraper import (
     DEFAULT_GOOGLE_JOBS_ACTOR,
     ApifyJobsScraper,
     JobRecord,
 )
+from hireloop_api.services.candidate_intelligence import load_candidate_intelligence
 from hireloop_api.services.job_validator import validate_job_record
 
 logger = structlog.get_logger()
@@ -83,6 +85,21 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "Customer Success Manager",
         "Customer Success Associate",
         "Client Success Manager",
+    ),
+    "customer experience": (
+        "Customer Experience Manager",
+        "Customer Success Manager",
+        "CX Operations Manager",
+    ),
+    "cx operations": (
+        "CX Operations Manager",
+        "Customer Success Operations Manager",
+        "Customer Support Operations Manager",
+    ),
+    "implementation": (
+        "Implementation Manager",
+        "Customer Onboarding Manager",
+        "Customer Success Manager",
     ),
     "customer support": (
         "Customer Support Executive",
@@ -303,11 +320,43 @@ def _title_lookup_text(title: str) -> str:
     return f"{low} {low.replace('-', ' ')}"
 
 
+_GENERIC_SEARCH_TITLES = frozenset({"team lead", "team leader"})
+
+
+def _is_generic_search_title(title: str | None) -> bool:
+    low = _norm_key(title)
+    return low in _GENERIC_SEARCH_TITLES
+
+
+def _has_customer_ops_context(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "customer",
+            "client",
+            "cx",
+            "support",
+            "success",
+            "experience",
+            "implementation",
+            "onboarding",
+        )
+    )
+
+
+def _should_skip_expansion_keyword(text: str, keyword: str) -> bool:
+    # "CX Operations Lead" should search customer/onboarding ops roles, not broad
+    # Operations Manager / Program Manager roles.
+    return keyword == "operations" and _has_customer_ops_context(text)
+
+
 def _expand_title(title: str) -> list[str]:
     """Board-real adjacent titles for a (possibly niche) target title."""
     low = _title_lookup_text(title)
     extras: list[str] = []
     for keyword, adjacents in _TITLE_EXPANSIONS.items():
+        if _should_skip_expansion_keyword(low, keyword):
+            continue
         if keyword in low:
             extras.extend(adjacents)
     return extras
@@ -319,6 +368,8 @@ def _expand_skills(skills: list[str] | None) -> list[str]:
     extras: list[str] = []
     seen: set[str] = set()
     for keyword, adjacents in _TITLE_EXPANSIONS.items():
+        if _should_skip_expansion_keyword(text, keyword):
+            continue
         if keyword in text:
             for adjacent in adjacents:
                 key = adjacent.lower()
@@ -355,7 +406,19 @@ def _title_function_tokens(title: str | None) -> set[str]:
 
 
 _COMPATIBLE_QUERY_FAMILIES: tuple[frozenset[str], ...] = (
-    frozenset({"category", "planner", "planning", "merchandiser", "merchandising", "buyer", "buying", "fashion", "retail"}),
+    frozenset(
+        {
+            "category",
+            "planner",
+            "planning",
+            "merchandiser",
+            "merchandising",
+            "buyer",
+            "buying",
+            "fashion",
+            "retail",
+        }
+    ),
     frozenset({"customer", "success", "client", "support", "relationship", "account"}),
     frozenset({"data", "analyst", "analytics", "engineer", "scientist", "reporting", "sql"}),
     frozenset({"growth", "gtm", "gotomarket", "revenue", "sales"}),
@@ -366,7 +429,10 @@ _COMPATIBLE_QUERY_FAMILIES: tuple[frozenset[str], ...] = (
 
 
 def _same_query_family(candidate_tokens: set[str], target_tokens: set[str]) -> bool:
-    return any(candidate_tokens & family and target_tokens & family for family in _COMPATIBLE_QUERY_FAMILIES)
+    return any(
+        candidate_tokens & family and target_tokens & family
+        for family in _COMPATIBLE_QUERY_FAMILIES
+    )
 
 
 def _fits_selected_target(candidate_title: str, selected_targets: list[str]) -> bool:
@@ -413,7 +479,9 @@ def derive_ingest_queries(
             seen.add(key)
             out.append(cleaned)
 
-    selected_targets = [t for t in (target_titles or []) if (t or "").strip()]
+    selected_targets = [
+        t for t in (target_titles or []) if (t or "").strip() and not _is_generic_search_title(t)
+    ]
 
     for title in selected_targets:
         _add(title)
@@ -651,6 +719,42 @@ class JobIngester:
         "find jobs for my path" flow, so a designer's scrape pulls design roles
         rather than generic defaults.
         """
+        try:
+            snapshot = await load_candidate_intelligence(self._db, candidate_id)
+        except Exception as exc:
+            snapshot = None
+            logger.warning(
+                "candidate_intelligence_ingest_plan_failed",
+                candidate_id=candidate_id,
+                error=str(exc)[:200],
+            )
+
+        if snapshot is not None:
+            plan = build_candidate_job_ingest_plan(snapshot)
+            queries = derive_ingest_queries(
+                target_titles=plan.title_inputs,
+                current_title=plan.current_title,
+                skills=plan.skills,
+            )
+            locations = derive_ingest_locations(plan.raw_locations or None, self._settings)
+            candidate_time_range = time_range or (
+                self._settings.google_jobs_candidate_time_range if self._settings else "7d"
+            )
+            logger.info(
+                "job_ingestion_for_candidate_started",
+                candidate_id=candidate_id,
+                queries=queries,
+                locations=locations,
+                planner="candidate_intelligence",
+                planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
+            )
+            return await self.ingest(
+                queries=queries or None,
+                locations=locations,
+                max_results_per_query=max_results_per_query,
+                time_range=candidate_time_range,
+            )
+
         row = await self._db.fetchrow(
             """
             SELECT

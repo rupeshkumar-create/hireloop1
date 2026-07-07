@@ -7,6 +7,10 @@ import pytest
 
 from hireloop_api.config import Settings
 from hireloop_api.routes import matches
+from hireloop_api.services.candidate_intelligence import (
+    JobSearchContext,
+    JobSearchHardFilters,
+)
 
 
 def _test_settings() -> Settings:
@@ -271,6 +275,83 @@ class MatchFeedTestJobsOnlyDb:
         return None
 
 
+class SparseProfileGrowthDb:
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        assert "public.candidates" in query
+        return {
+            "id": self.candidate_id,
+            "current_title": "Customer Support Associate",
+            "current_company": "Acme SaaS",
+            "headline": "Customer support operator",
+            "summary": "Helps customers with onboarding.",
+            "years_experience": 4,
+            "skills": ["zendesk"],
+            "location_city": "Bengaluru",
+            "location_state": "Karnataka",
+            "expected_ctc_min": None,
+            "expected_ctc_max": None,
+            "remote_preference": "any",
+            "open_to_relocation": True,
+            "location_scope": "country",
+            "aarya_state": {},
+            "market": "IN",
+            "target_titles": [],
+            "prioritized_title": None,
+            "looking_for": None,
+        }
+
+    async def fetchval(self, query: str, *args: object) -> int:
+        return 0
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        if "FROM public.match_scores" in query:
+            return []
+        if "FROM public.jobs" in query:
+            return [
+                {
+                    "job_id": uuid.uuid4(),
+                    "title": "Growth Manager",
+                    "company_name": "Modern SaaS",
+                    "company_domain": None,
+                    "location_city": "Mumbai",
+                    "location_state": "Maharashtra",
+                    "is_remote": False,
+                    "employment_type": "full_time",
+                    "seniority": "mid",
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "salary_currency": "INR",
+                    "skills_required": ["growth", "experimentation"],
+                    "description": "Own PLG experiments and lifecycle growth for a B2B SaaS product.",
+                    "apply_url": "https://example.com/growth",
+                    "skills_overlap": 0,
+                    "scraped_at": datetime.now(UTC),
+                }
+            ]
+        return []
+
+    async def executemany(self, query: str, args: object) -> None:
+        return None
+
+
+class FakeJobSearchSnapshot:
+    def for_job_search(self) -> JobSearchContext:
+        return JobSearchContext(
+            candidate_id="ignored",
+            market="IN",
+            primary_titles=["Growth Manager"],
+            skills=["growth", "experimentation"],
+            desired_industry="SaaS",
+            memory_summary="User wants to move into growth roles.",
+            career_facts={"desired_title": "Growth Manager"},
+            hard_filters=JobSearchHardFilters(market="IN"),
+            source_inventory={"memory": True, "resume": True, "career_path": True},
+        )
+
+
 @pytest.mark.asyncio
 async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles(
     monkeypatch: pytest.MonkeyPatch,
@@ -295,6 +376,28 @@ async def test_match_feed_supplements_market_jobs_when_cache_only_has_test_roles
     companies = [row["company_name"] for row in result]
     assert "DrinkPrime" in companies
     assert companies[0] == "DrinkPrime"
+
+
+@pytest.mark.asyncio
+async def test_match_feed_uses_candidate_intelligence_before_relevance_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_load_candidate_intelligence(*_a: object, **_kw: object) -> FakeJobSearchSnapshot:
+        return FakeJobSearchSnapshot()
+
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
+    monkeypatch.setattr(matches, "load_candidate_intelligence", fake_load_candidate_intelligence)
+
+    result = await matches.get_match_feed(
+        min_score=0.38,
+        limit=10,
+        offset=0,
+        current_user={"id": str(uuid.uuid4())},
+        db=SparseProfileGrowthDb(),  # type: ignore[arg-type]
+    )
+
+    assert [row["title"] for row in result] == ["Growth Manager"]
+    assert result[0]["match_diagnostics"]["signals"]["skill_overlap"] > 0
 
 
 @pytest.mark.asyncio

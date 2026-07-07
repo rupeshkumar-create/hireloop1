@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable
 import structlog
 
 from hireloop_api.config import Settings
+from hireloop_api.services.ai_context import compose_candidate_prompt
 
 logger = structlog.get_logger()
 
@@ -157,11 +158,14 @@ async def generate_match_rationales(
             return {}
         caller = _build_openrouter_llm(settings)
 
-    user_prompt = (
-        "CANDIDATE\n"
-        f"{_candidate_brief(candidate)}\n\n"
-        "JOBS (write a reason for each job_id)\n"
-        f"{_jobs_block(short)}"
+    user_prompt = compose_candidate_prompt(
+        candidate,
+        task="match_rationale",
+        task_prompt=(
+            f"CANDIDATE BRIEF\n{_candidate_brief(candidate)}\n\n"
+            "JOBS (write a reason for each job_id)\n"
+            f"{_jobs_block(short)}"
+        ),
     )
 
     try:

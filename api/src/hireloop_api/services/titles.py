@@ -23,6 +23,7 @@ _STOPWORDS = frozenset(
         "senior", "junior", "lead", "staff", "principal", "associate",
         "sr", "jr", "i", "ii", "iii", "iv", "v", "1", "2", "3",
         "intern", "trainee", "head", "chief", "vp", "avp", "director",
+        "team", "leader",
     }
 )  # fmt: skip
 

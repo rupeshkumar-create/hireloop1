@@ -68,6 +68,9 @@ Rules:
 - target_titles are roles they can apply for now or within 12 months — real
   {job_board_phrase}, 3 to 6 items, including their current title or nearest
   equivalent and one natural step up.
+- Do NOT emit bare generic titles like "Team Lead", "Manager", or "Operations
+  Manager" unless the function/domain is included. Use "Implementation Team Lead",
+  "Customer Success Team Lead", "CX Operations Manager", "Category Manager", etc.
 - Location matters: generate titles that make sense for {market_label}; do not
   use India-only salary, notice-period, or title assumptions for non-IN markets.
 - Keep skills_to_build practical and tied to the gaps between steps.

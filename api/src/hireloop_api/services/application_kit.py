@@ -17,8 +17,13 @@ from langchain_openai import ChatOpenAI
 from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.services.ai_context import compose_candidate_prompt
 from hireloop_api.services.job_present import serialize_job_card
-from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
+from hireloop_api.services.resume_tailor import (
+    generate_tailored_html,
+    resume_summary_line,
+    save_tailored_resume,
+)
 from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
 
 logger = structlog.get_logger()
@@ -36,6 +41,13 @@ Never invent employers, degrees, dates, titles, or metrics the candidate does no
 # fallback model and a lower token cap — quality is fine for structured outputs.
 _KIT_LLM_MAX_TOKENS_TEXT = 2048
 _KIT_LLM_MAX_TOKENS_RESUME = 2048
+_PLACEHOLDER_VALUES = {"", "null", "none", "undefined", "n/a", "na", "-", "—"}
+_INTERVIEW_PREP_REQUIRED_SECTIONS = (
+    "## Likely questions",
+    "## STAR stories to rehearse",
+    "## Role-specific talking points",
+    "## Questions to ask them",
+)
 
 
 def _kit_llm_model(settings: Settings) -> str:
@@ -95,6 +107,76 @@ def _fallback_interview_prep(job: dict[str, Any]) -> str:
     )
 
 
+def _clean_generated_text(value: Any) -> str:
+    """Remove placeholder-only lines from LLM text assets."""
+    if not isinstance(value, str):
+        return ""
+    cleaned: list[str] = []
+    for raw_line in value.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if line.lower() in _PLACEHOLDER_VALUES:
+            continue
+        if line.startswith("-") and line.lstrip("- ").strip().lower() in _PLACEHOLDER_VALUES:
+            continue
+        cleaned.append(raw_line.rstrip())
+    return "\n".join(cleaned).strip()
+
+
+def _is_useful_cover_letter(text: str) -> bool:
+    plain = text.strip()
+    if plain.lower() in _PLACEHOLDER_VALUES:
+        return False
+    return len(plain.split()) >= 40 and any(
+        marker in plain.lower() for marker in ("dear ", "hiring", "interest")
+    )
+
+
+def _normalize_interview_prep(text: str, *, fallback: str) -> str:
+    cleaned = _clean_generated_text(text)
+    if not cleaned:
+        return fallback
+    missing = [section for section in _INTERVIEW_PREP_REQUIRED_SECTIONS if section not in cleaned]
+    if not missing:
+        return cleaned
+
+    fallback_sections = _split_markdown_sections(fallback)
+    parts = [cleaned]
+    for heading in missing:
+        section = fallback_sections.get(heading)
+        if section:
+            parts.append(section)
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
+def _split_markdown_sections(markdown: str) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            current = line.strip()
+            sections[current] = [line.rstrip()]
+        elif current is not None:
+            sections[current].append(line.rstrip())
+    return {heading: "\n".join(lines).strip() for heading, lines in sections.items()}
+
+
+def normalize_application_text_assets(
+    *,
+    cover_letter: Any,
+    interview_prep: Any,
+    profile: dict[str, Any],
+    job: dict[str, Any],
+) -> tuple[str, str]:
+    """Validate and repair LLM-generated application-kit text before persistence."""
+    fallback_cover = _fallback_cover_letter(profile, job)
+    fallback_prep = _fallback_interview_prep(job)
+    cover = _clean_generated_text(cover_letter)
+    if not _is_useful_cover_letter(cover):
+        cover = fallback_cover
+    prep = _normalize_interview_prep(str(interview_prep or ""), fallback=fallback_prep)
+    return cover, prep
+
+
 async def _generate_text_assets(
     *,
     settings: Settings,
@@ -109,9 +191,10 @@ async def _generate_text_assets(
         max_tokens=_KIT_LLM_MAX_TOKENS_TEXT,
         title="Hireschema - Application Kit",
     )
-    prompt = (
-        f"Candidate:\n{json.dumps(profile, default=str)[:6000]}\n\n"
-        f"Job:\n{json.dumps(job, default=str)[:6000]}"
+    prompt = compose_candidate_prompt(
+        profile,
+        task="application_kit",
+        task_prompt=f"Job:\n{json.dumps(job, default=str)[:6000]}",
     )
     try:
         resp = await llm.ainvoke([SystemMessage(content=KIT_SYSTEM), HumanMessage(content=prompt)])
@@ -121,9 +204,12 @@ async def _generate_text_assets(
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         data = json.loads(raw)
-        cover = str(data.get("cover_letter") or "").strip() or _fallback_cover_letter(profile, job)
-        prep = str(data.get("interview_prep") or "").strip() or _fallback_interview_prep(job)
-        return cover, prep
+        return normalize_application_text_assets(
+            cover_letter=data.get("cover_letter") if isinstance(data, dict) else None,
+            interview_prep=data.get("interview_prep") if isinstance(data, dict) else None,
+            profile=profile,
+            job=job,
+        )
     except Exception as exc:
         logger.warning("application_kit_llm_failed", error=str(exc))
         return _fallback_cover_letter(profile, job), _fallback_interview_prep(job)
@@ -180,7 +266,7 @@ async def _persist_tailored_resume(
     job: dict[str, Any],
     html: str,
 ) -> dict[str, Any]:
-    summary = html.split("<p>", 2)[1][:200] if "<p>" in html else ""
+    summary = resume_summary_line(html)
     resume_id = await save_tailored_resume(
         db,
         candidate_id=candidate_id,

@@ -16,7 +16,11 @@ from pydantic import BaseModel, Field
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.rate_limit import check_rate_limit
-from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
+from hireloop_api.services.resume_tailor import (
+    generate_tailored_html,
+    resume_summary_line,
+    save_tailored_resume,
+)
 from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
 from hireloop_api.services.tailored_resume_settings import (
     fetch_tailored_resume_enabled,
@@ -88,7 +92,7 @@ async def _run_tailor_task(
                 job=job_d,
                 template=template,
             )
-            summary = html.split("<p>", 2)[1][:200] if "<p>" in html else ""
+            summary = resume_summary_line(html)
             await save_tailored_resume(
                 db,
                 candidate_id=candidate_id,

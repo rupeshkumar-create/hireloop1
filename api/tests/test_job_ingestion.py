@@ -14,6 +14,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from hireloop_api.services.apify import job_ingester as job_ingester_module
+from hireloop_api.services.apify.candidate_job_query_plan import CandidateJobIngestPlan
 from hireloop_api.services.apify.job_ingester import (
     JobIngester,
     derive_ingest_locations,
@@ -86,9 +88,7 @@ def test_google_jobs_normalises_valid_india_job() -> None:
         "description": "Own renewals, customer support, communication, and relationship management.",
         "job_id": "google-job-123",
         "detected_extensions": {"schedule_type": "Full-time"},
-        "apply_options": [
-            {"title": "Company site", "link": "https://clientos.example/jobs/123"}
-        ],
+        "apply_options": [{"title": "Company site", "link": "https://clientos.example/jobs/123"}],
     }
 
     rec = scraper.normalise(raw)
@@ -406,6 +406,41 @@ def test_derive_ingest_queries_do_not_pollute_selected_customer_success_path() -
     assert "Operations Manager" not in q
 
 
+def test_derive_ingest_queries_contextualizes_bare_team_lead_targets() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Team Lead"],
+        current_title="Category Team Lead (Fastag)",
+        skills=[
+            "Customer Experience Management",
+            "Customer Success",
+            "CX Operations",
+            "SLA Management",
+            "KPI Management",
+        ],
+        max_queries=10,
+    )
+
+    assert "Team Lead" not in q
+    assert "Customer Experience Manager" in q
+    assert "Customer Success Manager" in q
+    assert "CX Operations Manager" in q
+
+
+def test_derive_ingest_queries_keeps_cx_operations_in_customer_success_lane() -> None:
+    q = derive_ingest_queries(
+        target_titles=["CX Operations Lead"],
+        current_title="Category Team Lead (Fastag)",
+        skills=["Customer Experience Management", "SLA Management", "KPI Management"],
+        max_queries=10,
+    )
+
+    assert q[0] == "CX Operations Lead"
+    assert "CX Operations Manager" in q
+    assert "Customer Success Operations Manager" in q
+    assert "Operations Manager" not in q
+    assert "Program Manager" not in q
+
+
 def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
     q = derive_ingest_queries(
         target_titles=[],
@@ -452,6 +487,68 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     assert "UX Designer" in captured["queries"]  # current title still included
     assert "Product Designer" in captured["queries"]  # board-real adjacent expansion
     assert captured["locations"] == ["Bengaluru, Karnataka, India", "Remote"]
+
+
+async def test_ingest_for_candidate_uses_candidate_intelligence_plan(monkeypatch) -> None:
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            return {
+                "current_title": "Legacy Title",
+                "location_city": "Mumbai",
+                "skills": ["legacy"],
+                "target_titles": ["Legacy Target"],
+                "target_locations": ["Mumbai"],
+            }
+
+    async def _fake_load_candidate_intelligence(db: object, candidate_id: object) -> object:
+        return {"candidate_id": str(candidate_id)}
+
+    def _fake_build_plan(snapshot: object) -> CandidateJobIngestPlan:
+        return CandidateJobIngestPlan(
+            candidate_id="11111111-1111-1111-1111-111111111111",
+            market="IN",
+            remote_preference="remote_only",
+            title_inputs=["Head of Growth", "Lifecycle Marketing Lead"],
+            current_title="Senior Growth Manager",
+            skills=["Lifecycle Marketing", "SQL"],
+            raw_locations=["Remote", "Bengaluru"],
+        )
+
+    monkeypatch.setattr(
+        job_ingester_module,
+        "load_candidate_intelligence",
+        _fake_load_candidate_intelligence,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        job_ingester_module,
+        "build_candidate_job_ingest_plan",
+        _fake_build_plan,
+        raising=False,
+    )
+
+    captured: dict = {}
+    ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
+
+    async def _fake_ingest(
+        *,
+        queries,
+        locations,
+        max_results_per_query,
+        time_range,
+        description_search=None,
+    ):
+        captured["queries"] = queries
+        captured["locations"] = locations
+        return {"inserted": 0}
+
+    ing.ingest = _fake_ingest  # type: ignore[method-assign]
+    await ing.ingest_for_candidate("11111111-1111-1111-1111-111111111111")
+
+    assert captured["queries"][0] == "Head of Growth"
+    assert "Lifecycle Marketing Lead" in captured["queries"]
+    assert "Legacy Target" not in captured["queries"]
+    assert captured["locations"] == ["Remote", "Bengaluru, Karnataka, India"]
 
 
 async def test_ingest_uses_google_jobs_as_only_runtime_source() -> None:
