@@ -30,6 +30,7 @@ import { fetchCareerIntelligence, fetchCareerPath } from "@/lib/api/career";
 import { CareerPathOptionCards } from "@/components/career/CareerPathOptionCards";
 import { CollapsibleSection } from "@/components/dashboard/CollapsibleSection";
 import { HomeMissionHero } from "@/components/dashboard/HomeMissionHero";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { firstNameFromDisplayName, sanitizeDisplayName } from "@/lib/auth/display-name";
@@ -342,6 +343,12 @@ export function HomePanel({
         introCount={introCount}
         intelCompleteness={intelCompleteness}
         onOpenPanel={onOpenPanel}
+      />
+
+      <RoleSwitchButton
+        to="recruiter"
+        target="/recruiter/inbox"
+        variant="banner"
       />
 
       {showProfileBoosters && (

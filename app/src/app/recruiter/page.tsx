@@ -31,6 +31,7 @@ import {
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 
 const ROLE_STATUS_TONE: Record<string, "muted" | "strong" | "accent"> = {
   draft: "muted",
@@ -241,6 +242,8 @@ export default function RecruiterDashboardPage() {
 
   return (
     <div className="px-4 md:px-6 py-6 space-y-8 max-w-4xl mx-auto">
+      <RoleSwitchButton to="candidate" target="/dashboard" variant="banner" />
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-micro font-medium uppercase tracking-wide text-ink-400">

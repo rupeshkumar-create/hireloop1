@@ -21,7 +21,7 @@ export function RoleSwitchButton({
 }: {
   to: ActiveRole;
   target: string;
-  variant?: "button" | "icon" | "row";
+  variant?: "button" | "icon" | "row" | "banner";
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -45,6 +45,45 @@ export function RoleSwitchButton({
   };
 
   const label = to === "recruiter" ? "Recruiter view" : "Candidate view";
+  const bannerTitle =
+    to === "recruiter" ? "Recruiter workspace" : "Candidate dashboard";
+  const bannerHint =
+    to === "recruiter"
+      ? "This account also has a recruiter profile — switch to manage roles and candidates."
+      : "This account also has a candidate profile — switch to job search and Aarya.";
+
+  if (variant === "banner") {
+    return (
+      <div className="flex flex-col gap-3 rounded-lg border border-ink-100 bg-ink-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <ArrowLeftRight
+            className="mt-0.5 h-4 w-4 shrink-0 text-accent"
+            strokeWidth={1.5}
+          />
+          <div className="min-w-0">
+            <p className="text-small font-medium text-ink-900">{bannerTitle}</p>
+            <p className="text-micro text-ink-500">{bannerHint}</p>
+          </div>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleClick()}
+          disabled={busy}
+          className="shrink-0 self-start sm:self-center"
+          leftIcon={
+            busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
+            ) : (
+              <ArrowLeftRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+            )
+          }
+        >
+          {label}
+        </Button>
+      </div>
+    );
+  }
 
   if (variant === "row") {
     // Sidebar row — matches RecruiterShell nav row styling.

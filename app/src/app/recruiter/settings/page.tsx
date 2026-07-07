@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Building2, Briefcase, LogOut, User } from "@/components/brand/icons";
 import { Button, Card, CardBody, CardHeader, Field, Input, Textarea } from "@/components/ui";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { useRecruiterShell } from "@/hooks/useRecruiterShell";
 import {
   fetchRecruiterProfile,
@@ -161,7 +162,8 @@ export default function RecruiterSettingsPage() {
 
       <Card>
         <CardHeader title="Account" />
-        <CardBody>
+        <CardBody className="space-y-3">
+          <RoleSwitchButton to="candidate" target="/dashboard" variant="banner" />
           <Button
             variant="secondary"
             loading={signingOut}

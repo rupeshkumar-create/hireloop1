@@ -5,6 +5,7 @@ import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
 import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
 import { CandidateSharingSettings } from "@/components/settings/CandidateSharingSettings";
+import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { TailoredResumeSettings } from "@/components/settings/TailoredResumeSettings";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
 import { SUPPORTED_MARKETS, type MarketCode, marketByCode } from "@/lib/markets";
@@ -272,7 +273,12 @@ export function SettingsPanel({
       {onSignOut && (
         <Card>
           <CardHeader title="Account" />
-          <CardBody className="!pt-0">
+          <CardBody className="!pt-0 space-y-3">
+            <RoleSwitchButton
+              to="recruiter"
+              target="/recruiter/inbox"
+              variant="banner"
+            />
             <button
               onClick={onSignOut}
               disabled={signingOut}
