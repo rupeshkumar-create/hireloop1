@@ -2010,9 +2010,7 @@ def _infer_wrapped_linkedin_url(text: str) -> str | None:
         marker = "linkedin.com/in/"
         if marker not in lower and "linkedin.com/pub/" not in lower:
             continue
-        prefix_match = re.search(
-            r"((?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/)", line, re.I
-        )
+        prefix_match = re.search(r"((?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/)", line, re.I)
         if not prefix_match:
             continue
         base = prefix_match.group(1)
@@ -2774,8 +2772,7 @@ def _sanitize_company_name(company: str | None) -> str | None:
         return None
     skill_key = v.casefold()
     alias_skill = any(
-        skill_key == canonical.casefold()
-        or any(skill_key == alias.casefold() for alias in aliases)
+        skill_key == canonical.casefold() or any(skill_key == alias.casefold() for alias in aliases)
         for canonical, aliases in _SKILL_ALIASES.items()
     )
     if _vocab_known(skill_key) or alias_skill:
