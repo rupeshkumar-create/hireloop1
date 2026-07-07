@@ -12,14 +12,21 @@
  * so the candidate lands in a live conversation with job cards.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Sparkles } from "@/components/brand/icons";
 import {
+  fetchCareerPath,
   generateCareerPath,
   prioritizeCareerPath,
   type CareerPath,
 } from "@/lib/api/career";
 import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
+import {
+  clearCareerKickoffProgress,
+  readCareerKickoffProgress,
+  saveCareerKickoffProgress,
+  type KickoffProgressStep,
+} from "@/lib/auth/career-kickoff";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
@@ -110,10 +117,12 @@ function buildAnalysisRows(profile: MyProfileData | null) {
 }
 
 export function CareerKickoffFlow({
+  userId,
   onComplete,
   onSkip,
   onStepArchived,
 }: {
+  userId?: string | null;
   onComplete: (result: KickoffResult) => void;
   onSkip: () => void;
   onStepArchived?: (payload: { step: 1 | 2 | 3; content: string }) => void;
@@ -125,16 +134,94 @@ export function CareerKickoffFlow({
   const [selected, setSelected] = useState<string[]>([]);
   const [customTitle, setCustomTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const archivedStepsRef = useRef<Set<1 | 2 | 3>>(new Set());
 
-  // ── Load: profile from CV parse (onboarding) ───────────────────────────────
+  const persistProgress = useCallback(
+    (
+      nextStep: KickoffProgressStep,
+      nextSelected: string[],
+      nextOptions: PathOption[],
+    ) => {
+      saveCareerKickoffProgress(
+        {
+          step: nextStep,
+          selected: nextSelected,
+          options: nextOptions,
+        },
+        userId ?? undefined,
+      );
+    },
+    [userId],
+  );
+
+  const archiveStepOnce = useCallback(
+    (payload: { step: 1 | 2 | 3; content: string }) => {
+      if (archivedStepsRef.current.has(payload.step)) return;
+      archivedStepsRef.current.add(payload.step);
+      onStepArchived?.(payload);
+    },
+    [onStepArchived],
+  );
+
+  // ── Load: profile + resume in-progress kickoff from session/API ─────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const p = await fetchMyProfile().catch(() => null);
+        const [p, path, saved] = await Promise.all([
+          fetchMyProfile().catch(() => null),
+          fetchCareerPath().catch(() => null),
+          Promise.resolve(readCareerKickoffProgress(userId ?? undefined)),
+        ]);
         if (cancelled) return;
         setProfile(p);
+
+        const currentTitle = p?.candidate?.current_title ?? null;
+        const pathOptions = path ? buildOptions(path, currentTitle) : [];
+        const defaultPick =
+          saved?.selected[0] ??
+          path?.prioritized_title ??
+          pathOptions.find((o) =>
+            currentTitle ? o.title.toLowerCase() === currentTitle.toLowerCase() : false,
+          )?.title ??
+          pathOptions[0]?.title ??
+          "";
+
+        if (path?.prioritized_title) {
+          const pick = path.prioritized_title;
+          const opts = saved?.options.length ? saved.options : pathOptions;
+          setOptions(opts.length ? opts : [{ title: pick, rationale: null }]);
+          setSelected([pick]);
+          setStep("review");
+          persistProgress("review", [pick], opts.length ? opts : [{ title: pick, rationale: null }]);
+          return;
+        }
+
+        if (saved?.step === "review" && saved.selected[0]) {
+          setOptions(saved.options);
+          setSelected(saved.selected);
+          setStep("review");
+          return;
+        }
+
+        if (saved?.step === "paths" && saved.options.length > 0) {
+          setOptions(saved.options);
+          setSelected(saved.selected.length > 0 ? saved.selected : [saved.options[0].title]);
+          setStep("paths");
+          return;
+        }
+
+        if (pathOptions.length > 0) {
+          const pick = defaultPick || pathOptions[0].title;
+          setOptions(pathOptions);
+          setSelected(pick ? [pick] : []);
+          setStep("paths");
+          persistProgress("paths", pick ? [pick] : [], pathOptions);
+          return;
+        }
+
         setStep("analysis");
+        persistProgress("analysis", [], []);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Couldn't load your profile.");
@@ -144,22 +231,28 @@ export function CareerKickoffFlow({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [persistProgress, userId]);
 
-  const toggle = useCallback((title: string) => {
-    setSelected([title]);
-  }, []);
+  const toggle = useCallback(
+    (title: string) => {
+      setSelected([title]);
+      persistProgress(step === "review" ? "review" : "paths", [title], options);
+    },
+    [options, persistProgress, step],
+  );
 
   const addCustom = useCallback(() => {
     const t = customTitle.trim();
     if (!t) return;
     setOptions((prev) => {
       if (prev.some((o) => o.title.toLowerCase() === t.toLowerCase())) return prev;
-      return [...prev, { title: t, rationale: "Your own direction", custom: true }];
+      const next = [...prev, { title: t, rationale: "Your own direction", custom: true }];
+      setSelected([t]);
+      persistProgress(step === "review" ? "review" : "paths", [t], next);
+      return next;
     });
-    setSelected([t]);
     setCustomTitle("");
-  }, [customTitle]);
+  }, [customTitle, persistProgress, step]);
 
   const c = profile?.candidate;
   const analysisRows = useMemo(() => buildAnalysisRows(profile), [profile]);
@@ -181,6 +274,22 @@ export function CareerKickoffFlow({
     if (busy) return;
     setBusy(true);
     setError(null);
+
+    const cached = readCareerKickoffProgress(userId ?? undefined);
+    if (cached?.options.length && cached.step !== "analysis") {
+      setOptions(cached.options);
+      setSelected(cached.selected.length > 0 ? cached.selected : [cached.options[0].title]);
+      archiveStepOnce({
+        step: 1,
+        content:
+          "**Step 1 of 3** · Resume analysis\n\n" +
+          analysisRows.map((r) => `**${r.label}:** ${r.value}`).join("\n"),
+      });
+      setStep("paths");
+      setBusy(false);
+      return;
+    }
+
     setStep("paths_loading");
     try {
       const path = await generateCareerPath();
@@ -192,8 +301,10 @@ export function CareerKickoffFlow({
             ? o.title.toLowerCase() === profile.candidate.current_title.toLowerCase()
             : false,
         ) ?? opts[0];
-      setSelected(defaultPick ? [defaultPick.title] : []);
-      onStepArchived?.({
+      const pick = defaultPick ? [defaultPick.title] : [];
+      setSelected(pick);
+      persistProgress("paths", pick, opts);
+      archiveStepOnce({
         step: 1,
         content:
           "**Step 1 of 3** · Resume analysis\n\n" +
@@ -217,7 +328,8 @@ export function CareerKickoffFlow({
     setError(null);
     try {
       await prioritizeCareerPath(selected[0], selected);
-      onStepArchived?.({
+      persistProgress("review", selected, options);
+      archiveStepOnce({
         step: 2,
         content:
           "**Step 2 of 3** · Career path\n\n" +
@@ -233,14 +345,15 @@ export function CareerKickoffFlow({
 
   // ── Step 3 confirm: ask Aarya through the normal chat search path ───────────
   function confirmReview() {
-    if (busy) return;
+    if (busy || selected.length === 0) return;
     setBusy(true);
     setError(null);
     const reviewLines = reviewRows.map((r) => `**${r.label}:** ${r.value}`).join("\n");
-    onStepArchived?.({
+    archiveStepOnce({
       step: 3,
       content: `**Step 3 of 3** · Final search brief\n\n${reviewLines}`,
     });
+    clearCareerKickoffProgress();
     onComplete({
       preferredTitle: selected[0],
       selectedTitles: selected,
@@ -422,6 +535,7 @@ export function CareerKickoffFlow({
               type="button"
               onClick={() => {
                 setError(null);
+                persistProgress("analysis", selected, options);
                 setStep("analysis");
               }}
               className="text-small text-ink-500 hover:text-ink-900 transition-colors px-2 shrink-0"
@@ -429,6 +543,13 @@ export function CareerKickoffFlow({
               Back
             </button>
           </div>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="w-full text-center text-small text-ink-500 hover:text-ink-900 transition-colors"
+          >
+            Skip — just chat
+          </button>
         </>
       )}
 
@@ -463,6 +584,7 @@ export function CareerKickoffFlow({
               type="button"
               onClick={() => {
                 setError(null);
+                persistProgress("paths", selected, options);
                 setStep("paths");
               }}
               className="text-small text-ink-500 hover:text-ink-900 transition-colors px-2 shrink-0"
@@ -470,6 +592,13 @@ export function CareerKickoffFlow({
               Back
             </button>
           </div>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="w-full text-center text-small text-ink-500 hover:text-ink-900 transition-colors"
+          >
+            Skip — just chat
+          </button>
         </>
       )}
     </FlowShell>

@@ -127,10 +127,15 @@ import {
   type CareerPathOption,
 } from "@/components/career/CareerPathOptionCards";
 import {
+  clearCareerKickoffProgress,
   hasCareerKickoffDone,
+  hasCareerKickoffInProgress,
   markCareerKickoffDone,
 } from "@/lib/auth/career-kickoff";
-import { isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
+import {
+  clearClientOnboardingComplete,
+  isClientOnboardingCompleteRecent,
+} from "@/lib/auth/onboarding-complete";
 import { fetchCareerPath } from "@/lib/api/career";
 import {
   CareerKickoffFlow,
@@ -256,7 +261,9 @@ export function ChatInterface({
   onJobsFound,
 }: ChatInterfaceProps) {
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
-  const [kickoffActive, setKickoffActive] = useState(initialKickoff);
+  const [kickoffActive, setKickoffActive] = useState(
+    () => initialKickoff && !hasCareerKickoffDone(),
+  );
   const kickoffAutoCheckedRef = useRef(false);
   const [input, setInput]             = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming]  = useState(false);
@@ -435,16 +442,27 @@ export function ChatInterface({
   // Post-onboarding: start guided flow when URL says so, onboarding just finished,
   // or the candidate has not picked a career path yet (first dashboard visit).
   useEffect(() => {
-    if (kickoffAutoCheckedRef.current || kickoffActive || historyLoading) return;
+    if (historyLoading) return;
+    if (kickoffAutoCheckedRef.current) return;
+
+    if (kickoffActive) {
+      kickoffAutoCheckedRef.current = true;
+      return;
+    }
+
     kickoffAutoCheckedRef.current = true;
 
     let cancelled = false;
     void (async () => {
+      if (hasCareerKickoffDone(authUserId ?? undefined)) return;
+      if (hasCareerKickoffInProgress(authUserId ?? undefined)) {
+        if (!cancelled) setKickoffActive(true);
+        return;
+      }
       if (initialKickoff || isClientOnboardingCompleteRecent()) {
         if (!cancelled) setKickoffActive(true);
         return;
       }
-      if (authUserId && hasCareerKickoffDone(authUserId)) return;
 
       const path = await fetchCareerPath().catch(() => null);
       if (cancelled) return;
@@ -746,6 +764,11 @@ export function ChatInterface({
       streamJobsRef.current = [];
       setThinkingStatus("Thinking…");
       const trimmedIntent = text.trim();
+      if (isJobSearchIntent(trimmedIntent)) {
+        markCareerKickoffDone(authUserId ?? undefined);
+        clearClientOnboardingComplete();
+        setKickoffActive(false);
+      }
       lastUserTurnRef.current = {
         expectJobCards: isJobSearchIntent(trimmedIntent),
         expectApplicationKits: isJobApplicationIntent(trimmedIntent),
@@ -986,6 +1009,7 @@ export function ChatInterface({
       attachJobsToLastAssistant,
       interruptSpeech,
       cancelRecording,
+      authUserId,
     ]
   );
 
@@ -1205,6 +1229,7 @@ export function ChatInterface({
 
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
     markCareerKickoffDone(authUserId ?? undefined);
+    clearClientOnboardingComplete();
     setKickoffActive(false);
     onCareerKickoffComplete?.(result);
     void sendMessage(result.prompt);
@@ -1212,6 +1237,8 @@ export function ChatInterface({
 
   const handleKickoffSkip = useCallback(() => {
     markCareerKickoffDone(authUserId ?? undefined);
+    clearCareerKickoffProgress();
+    clearClientOnboardingComplete();
     setKickoffActive(false);
   }, [authUserId]);
 
@@ -1360,6 +1387,7 @@ export function ChatInterface({
 
           {showKickoff && (
             <CareerKickoffFlow
+              userId={authUserId}
               onComplete={handleKickoffComplete}
               onSkip={handleKickoffSkip}
               onStepArchived={handleKickoffStepArchived}
