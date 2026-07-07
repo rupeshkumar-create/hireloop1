@@ -11,7 +11,7 @@
  *   │  React  TypeScript  Postgres  +3 more            │
  *   │  Aarya's match explanation, 1-2 lines.           │
  *   │  ─────────────────────────────────────────────   │
- *   │  [Request intro]  [Apply]  [Tailor]    [♡]       │
+ *   │  [✉]  [↗]  [📄]  [🎓]  [♡]                       │
  *   └──────────────────────────────────────────────────┘
  *
  * All visual chrome from <Card>. Buttons from <Button>. Score from <ScoreDot>.
@@ -377,16 +377,22 @@ export function JobCard({
         </button>
       )}
 
-      {/* ── Actions ────────────────────────────────────────────────────── */}
-      {/* Request intro is the single primary action (the MVP loop). Apply /
-          Tailor are secondary. Save is a quiet ghost heart, not a CTA. */}
+      {/* ── Actions (icon-only; labels on hover via title / aria-label) ── */}
       <div className="flex items-center gap-2 pt-3 border-t border-ink-100">
         <Button
           variant={introSent ? "secondary" : "primary"}
           size="sm"
           onClick={handleIntro}
           disabled={introSent}
-          title={applyLocked ? "Upload a resume or add city + CTC to request intros" : undefined}
+          aria-label={introSent ? "Intro requested" : "Request intro"}
+          title={
+            applyLocked
+              ? "Upload a resume or add city + CTC to request intros"
+              : introSent
+                ? "Intro requested"
+                : "Request intro"
+          }
+          className="shrink-0 px-2"
           leftIcon={
             introSent ? (
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
@@ -394,17 +400,22 @@ export function JobCard({
               <Send className="h-3.5 w-3.5" strokeWidth={1.5} />
             )
           }
-          className="flex-1"
-        >
-          {introSent ? "Requested" : "Request intro"}
-        </Button>
+        />
 
         <Button
           variant="secondary"
           size="sm"
           onClick={handleApply}
           disabled={!applyLocked && !job.apply_url && !applied}
-          title={applyLocked ? "Upload a resume or add city + CTC to apply" : undefined}
+          aria-label={applied ? "Applied" : "Apply"}
+          title={
+            applyLocked
+              ? "Upload a resume or add city + CTC to apply"
+              : applied
+                ? "Applied"
+                : "Apply"
+          }
+          className="shrink-0 px-2"
           leftIcon={
             applied ? (
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
@@ -412,10 +423,7 @@ export function JobCard({
               <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
             )
           }
-          className="flex-1"
-        >
-          {applied ? "Applied" : "Apply"}
-        </Button>
+        />
 
         {!isChat && (
           <Button
@@ -423,6 +431,19 @@ export function JobCard({
             size="sm"
             onClick={handleTailor}
             disabled={tailoring || (!onTailorResume && !tailoredReady)}
+            aria-label={
+              tailoring
+                ? "Generating application kit"
+                : tailoredReady
+                  ? "Preview application kit"
+                  : "Generate application kit"
+            }
+            title={
+              tailoredReady
+                ? "Preview resume, cover letter, and interview prep"
+                : "Generate resume, cover letter, and interview prep"
+            }
+            className="shrink-0 px-2"
             leftIcon={
               tailoring ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
@@ -432,15 +453,7 @@ export function JobCard({
                 <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
               )
             }
-            className="flex-1"
-            title={
-              tailoredReady
-                ? "Preview resume, cover letter, and interview prep"
-                : "Generate resume, cover letter, and interview prep"
-            }
-          >
-            {tailoring ? "Generating…" : tailoredReady ? "Preview kit" : "Generate application"}
-          </Button>
+          />
         )}
 
         {!isChat && onLearningRoadmap && (
@@ -449,6 +462,15 @@ export function JobCard({
             size="sm"
             onClick={handleRoadmap}
             disabled={roadmapBuilding}
+            aria-label={
+              roadmapBuilding
+                ? "Building learning roadmap"
+                : roadmapReady
+                  ? "Open learning roadmap"
+                  : "Generate learning roadmap"
+            }
+            title="Generate a personal AI learning roadmap for this role"
+            className="shrink-0 px-2"
             leftIcon={
               roadmapBuilding ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
@@ -458,11 +480,7 @@ export function JobCard({
                 <GraduationCap className="h-3.5 w-3.5" strokeWidth={1.5} />
               )
             }
-            className="flex-1"
-            title="Generate a personal AI learning roadmap for this role"
-          >
-            {roadmapBuilding ? "Building" : roadmapReady ? "Open" : "Roadmap"}
-          </Button>
+          />
         )}
 
         <Button
@@ -473,7 +491,7 @@ export function JobCard({
           aria-label={isSaved ? "Remove from saved" : "Save job"}
           aria-pressed={isSaved}
           title={isSaved ? "Saved" : "Save job"}
-          className={cn("shrink-0 px-2", isSaved && "text-accent")}
+          className={cn("shrink-0 px-2 ml-auto", isSaved && "text-accent")}
           leftIcon={
             <Heart
               className="h-3.5 w-3.5"

@@ -2,13 +2,11 @@
 
 /**
  * CareerKickoffFlow — guided first-run flow rendered inside chat, right after
- * onboarding. Two steps, all backed by existing APIs:
+ * onboarding. Three steps, all backed by existing APIs:
  *
- *   1. Path    — AI proposes the top 3 directions; the candidate picks ONE
- *                preferred path (or types their own). The server expands it
- *                into similar titles, so one pick still casts a wide net.
- *   2. Review  — everything Aarya will use to search; confirm sends the same
- *                concrete chat prompt used by the working "Ask Aarya" path.
+ *   1. Analysis — show what Aarya extracted from the CV
+ *   2. Path      — AI proposes top directions; candidate picks ONE preferred path
+ *   3. Review    — confirm the search brief; parent sends it through normal chat
  *
  * On completion the parent (ChatInterface) starts the normal Aarya chat search,
  * so the candidate lands in a live conversation with job cards.
@@ -27,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
 
 const MAX_OPTIONS = 3;
+const TOTAL_STEPS = 3;
 
 type PathOption = {
   title: string;
@@ -34,7 +33,7 @@ type PathOption = {
   custom?: boolean;
 };
 
-type Step = "loading" | "paths" | "review" | "error";
+type Step = "loading" | "analysis" | "paths_loading" | "paths" | "review" | "error";
 
 export type KickoffResult = {
   preferredTitle: string;
@@ -92,6 +91,24 @@ function buildRoleSearchPrompt(profile: MyProfileData | null, title: string): st
   return `${segments.join(" ")}.`;
 }
 
+function buildAnalysisRows(profile: MyProfileData | null) {
+  const c = profile?.candidate;
+  const skills = (c?.skills ?? []).map((s) => s.trim()).filter(Boolean);
+  return [
+    {
+      label: "Current role",
+      value: c?.current_title
+        ? `${c.current_title}${c.current_company ? ` · ${c.current_company}` : ""}`
+        : null,
+    },
+    { label: "Experience", value: c?.years_experience ? `${c.years_experience} years` : null },
+    { label: "Location", value: c?.location_city ?? null },
+    { label: "Skills", value: skills.length > 0 ? skills.slice(0, 8).join(", ") : null },
+    { label: "Looking for", value: c?.looking_for?.trim() || null },
+    { label: "CV", value: profile?.resume_filename ?? null },
+  ].filter((r) => r.value);
+}
+
 export function CareerKickoffFlow({
   onComplete,
   onSkip,
@@ -99,42 +116,28 @@ export function CareerKickoffFlow({
 }: {
   onComplete: (result: KickoffResult) => void;
   onSkip: () => void;
-  onStepArchived?: (payload: { step: 1 | 2; content: string }) => void;
+  onStepArchived?: (payload: { step: 1 | 2 | 3; content: string }) => void;
 }) {
   const [step, setStep] = useState<Step>("loading");
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [options, setOptions] = useState<PathOption[]>([]);
-  // Selection order matters: first = preferred.
   const [selected, setSelected] = useState<string[]>([]);
   const [customTitle, setCustomTitle] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // ── Load: profile + career path (generate on first run) ────────────────────
+  // ── Load: profile from CV parse (onboarding) ───────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const p = await fetchMyProfile().catch(() => null);
-        const path = await generateCareerPath();
         if (cancelled) return;
         setProfile(p);
-        const opts = buildOptions(path, p?.candidate?.current_title);
-        setOptions(opts);
-        // Default to current role when available — closest match to their CV.
-        const defaultPick =
-          opts.find((o) =>
-            p?.candidate?.current_title
-              ? o.title.toLowerCase() === p.candidate.current_title.toLowerCase()
-              : false,
-          ) ?? opts[0];
-        setSelected(defaultPick ? [defaultPick.title] : []);
-        setStep("paths");
+        setStep("analysis");
       } catch (err) {
         if (cancelled) return;
-        setError(
-          err instanceof Error ? err.message : "Couldn't analyse your CV for career paths.",
-        );
+        setError(err instanceof Error ? err.message : "Couldn't load your profile.");
         setStep("error");
       }
     })();
@@ -144,7 +147,6 @@ export function CareerKickoffFlow({
   }, []);
 
   const toggle = useCallback((title: string) => {
-    // Radio semantics: exactly one preferred path.
     setSelected([title]);
   }, []);
 
@@ -160,6 +162,7 @@ export function CareerKickoffFlow({
   }, [customTitle]);
 
   const c = profile?.candidate;
+  const analysisRows = useMemo(() => buildAnalysisRows(profile), [profile]);
   const reviewRows = useMemo(
     () =>
       [
@@ -173,7 +176,41 @@ export function CareerKickoffFlow({
     [c, selected, profile],
   );
 
-  // ── Step 1 confirm: save paths ──────────────────────────────────────────────
+  // ── Step 1 confirm: resume analysis looks good ─────────────────────────────
+  async function confirmAnalysis() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setStep("paths_loading");
+    try {
+      const path = await generateCareerPath();
+      const opts = buildOptions(path, profile?.candidate?.current_title);
+      setOptions(opts);
+      const defaultPick =
+        opts.find((o) =>
+          profile?.candidate?.current_title
+            ? o.title.toLowerCase() === profile.candidate.current_title.toLowerCase()
+            : false,
+        ) ?? opts[0];
+      setSelected(defaultPick ? [defaultPick.title] : []);
+      onStepArchived?.({
+        step: 1,
+        content:
+          "**Step 1 of 3** · Resume analysis\n\n" +
+          analysisRows.map((r) => `**${r.label}:** ${r.value}`).join("\n"),
+      });
+      setStep("paths");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Couldn't map career paths from your CV.",
+      );
+      setStep("analysis");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ── Step 2 confirm: save paths ──────────────────────────────────────────────
   async function confirmPaths() {
     if (busy || selected.length === 0) return;
     setBusy(true);
@@ -181,9 +218,9 @@ export function CareerKickoffFlow({
     try {
       await prioritizeCareerPath(selected[0], selected);
       onStepArchived?.({
-        step: 1,
+        step: 2,
         content:
-          "**Step 1 of 2** · Career path\n\n" +
+          "**Step 2 of 3** · Career path\n\n" +
           selected.map((t, i) => `${i === 0 ? "Preferred: " : "Also search: "}${t}`).join("\n"),
       });
       setStep("review");
@@ -194,15 +231,15 @@ export function CareerKickoffFlow({
     }
   }
 
-  // ── Step 2 confirm: ask Aarya through the normal chat search path ───────────
+  // ── Step 3 confirm: ask Aarya through the normal chat search path ───────────
   function confirmReview() {
     if (busy) return;
     setBusy(true);
     setError(null);
     const reviewLines = reviewRows.map((r) => `**${r.label}:** ${r.value}`).join("\n");
     onStepArchived?.({
-      step: 2,
-      content: `**Step 2 of 2** · Final search brief\n\n${reviewLines}`,
+      step: 3,
+      content: `**Step 3 of 3** · Final search brief\n\n${reviewLines}`,
     });
     onComplete({
       preferredTitle: selected[0],
@@ -211,7 +248,8 @@ export function CareerKickoffFlow({
     });
   }
 
-  const stepIndex = step === "paths" ? 1 : step === "review" ? 2 : undefined;
+  const stepIndex =
+    step === "analysis" ? 1 : step === "paths" || step === "paths_loading" ? 2 : step === "review" ? 3 : undefined;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -220,7 +258,18 @@ export function CareerKickoffFlow({
       <FlowShell>
         <div className="flex items-center gap-2.5 text-small text-ink-600">
           <Loader2 className="h-4 w-4 animate-spin text-ink-400" strokeWidth={1.75} />
-          Analysing your CV and mapping career paths…
+          Loading your profile from your CV…
+        </div>
+      </FlowShell>
+    );
+  }
+
+  if (step === "paths_loading") {
+    return (
+      <FlowShell stepIndex={2}>
+        <div className="flex items-center gap-2.5 text-small text-ink-600">
+          <Loader2 className="h-4 w-4 animate-spin text-ink-400" strokeWidth={1.75} />
+          Mapping career paths from your experience…
         </div>
       </FlowShell>
     );
@@ -248,6 +297,35 @@ export function CareerKickoffFlow({
 
   return (
     <FlowShell stepIndex={stepIndex}>
+      {step === "analysis" && (
+        <>
+          <p className="text-small text-ink-800 leading-relaxed">
+            I&apos;ve analysed your CV. Here&apos;s what I&apos;ll use to map career
+            paths and rank jobs — check it looks right before we continue.
+          </p>
+          <div className="rounded-lg border border-ink-100 bg-paper-0 divide-y divide-ink-100">
+            {analysisRows.map((row) => (
+              <div key={row.label} className="flex items-start gap-3 px-3 py-2">
+                <span className="w-28 shrink-0 text-micro font-medium uppercase tracking-wide text-ink-400 pt-0.5">
+                  {row.label}
+                </span>
+                <span className="text-small text-ink-900 min-w-0">{row.value}</span>
+              </div>
+            ))}
+          </div>
+          {error && <FlowError message={error} />}
+          <Button
+            variant="primary"
+            size="md"
+            fullWidth
+            loading={busy}
+            onClick={() => void confirmAnalysis()}
+          >
+            Continue to career paths
+          </Button>
+        </>
+      )}
+
       {step === "paths" && (
         <>
           <p className="text-small text-ink-800 leading-relaxed">
@@ -328,16 +406,29 @@ export function CareerKickoffFlow({
             One path, wide net — similar job titles are searched automatically.
           </p>
           {error && <FlowError message={error} />}
-          <Button
-            variant="primary"
-            size="md"
-            fullWidth
-            loading={busy}
-            disabled={selected.length === 0 || busy}
-            onClick={() => void confirmPaths()}
-          >
-            Continue
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="md"
+              fullWidth
+              loading={busy}
+              disabled={selected.length === 0 || busy}
+              onClick={() => void confirmPaths()}
+              className="flex-1"
+            >
+              Continue to review
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setStep("analysis");
+              }}
+              className="text-small text-ink-500 hover:text-ink-900 transition-colors px-2 shrink-0"
+            >
+              Back
+            </button>
+          </div>
         </>
       )}
 
@@ -366,7 +457,7 @@ export function CareerKickoffFlow({
               onClick={confirmReview}
               className="flex-1"
             >
-              Ask Aarya to find roles
+              Find matching jobs
             </Button>
             <button
               type="button"
@@ -401,11 +492,11 @@ function FlowShell({
           <Sparkles className="h-4 w-4 text-paper-0" strokeWidth={1.5} />
         </div>
         <p className="text-small font-semibold text-ink-900">
-          Aarya <span className="font-normal text-ink-500">· career kickoff</span>
+          Aarya <span className="font-normal text-ink-500">· getting started</span>
         </p>
         {stepIndex != null && (
           <span className="ml-auto rounded border border-accent/40 bg-accent/15 px-2 py-0.5 text-micro font-semibold text-accent">
-            Step {stepIndex} of 2
+            Step {stepIndex} of {TOTAL_STEPS}
           </span>
         )}
       </div>

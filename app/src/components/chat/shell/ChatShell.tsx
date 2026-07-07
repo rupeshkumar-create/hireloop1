@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Loader2, Send } from "@/components/brand/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, Loader2, Send } from "@/components/brand/icons";
 import { ChatBubble } from "@/components/ux/ChatBubble";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -62,14 +62,48 @@ export function ChatShell({
 }: ChatShellProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // True while the viewport is pinned to the latest content. Flips off the moment
+  // the user scrolls up so incoming job cards never yank them back down.
+  const stickToBottomRef = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const isStreaming = Boolean(streamingText);
   const useDefaultMessages = messagesSlot === undefined;
   const useDefaultComposer = composerSlot === undefined;
   const scrollAnchorRef = externalEndRef ?? bottomRef;
 
+  // How close to the bottom (px) still counts as "pinned".
+  const NEAR_BOTTOM_PX = 120;
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+  }, []);
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      if (typeof scrollAnchorRef !== "function") {
+        scrollAnchorRef.current?.scrollIntoView({ behavior, block: "end" });
+      }
+      stickToBottomRef.current = true;
+      setShowJumpToLatest(false);
+    },
+    [scrollAnchorRef],
+  );
+
+  // Track user scroll intent: pin to bottom only while already near the bottom.
+  const handleScroll = useCallback(() => {
+    const nearBottom = isNearBottom();
+    stickToBottomRef.current = nearBottom;
+    setShowJumpToLatest(!nearBottom);
+  }, [isNearBottom]);
+
   useEffect(() => {
     if (typeof scrollAnchorRef === "function") return;
-    scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!stickToBottomRef.current) return;
+    scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, streamingText, status, chips, messagesSlot, scrollAnchorRef, scrollDeps]);
 
   const showEmpty =
@@ -82,7 +116,10 @@ export function ChatShell({
     <div className={cn("flex flex-col min-h-0 h-full bg-paper-0", className)}>
       {header}
 
+      <div className="relative flex-1 min-h-0 flex flex-col">
       <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
         className={cn(
           "flex-1 overflow-y-auto min-h-0",
           useDefaultMessages && "px-4 py-4 space-y-3",
@@ -133,6 +170,24 @@ export function ChatShell({
           messagesSlot
         )}
         <div ref={scrollAnchorRef} />
+      </div>
+
+      {showJumpToLatest && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom("smooth")}
+          aria-label="Jump to latest"
+          className={cn(
+            "absolute bottom-3 left-1/2 -translate-x-1/2 z-10",
+            "flex items-center gap-1.5 rounded-full border border-ink-200 bg-paper-0",
+            "px-3 py-1.5 text-micro font-medium text-ink-800 shadow-2",
+            "hover:border-accent hover:text-ink-900 transition-colors",
+          )}
+        >
+          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+          Jump to latest
+        </button>
+      )}
       </div>
 
       {useDefaultComposer ? (

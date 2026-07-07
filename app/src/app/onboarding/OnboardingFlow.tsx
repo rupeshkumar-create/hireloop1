@@ -12,9 +12,9 @@
  *   2. After DPDP consent (Legal step), LinkDAPI enrichment runs in the
  *      background from that URL — no separate LinkedIn form in the wizard.
  *
- * Activation v2 — one screen, then dashboard Jobs panel:
+ * Activation v2 — one screen, then dashboard chat kickoff:
  *
- * Step 1  Activate         CV upload → dashboard (Jobs panel)
+ * Step 1  Activate         CV upload → dashboard chat (guided kickoff)
  *
  * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *

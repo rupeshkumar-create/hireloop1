@@ -127,6 +127,12 @@ import {
   type CareerPathOption,
 } from "@/components/career/CareerPathOptionCards";
 import {
+  hasCareerKickoffDone,
+  markCareerKickoffDone,
+} from "@/lib/auth/career-kickoff";
+import { isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
+import { fetchCareerPath } from "@/lib/api/career";
+import {
   CareerKickoffFlow,
   type KickoffResult,
 } from "./CareerKickoffFlow";
@@ -205,6 +211,11 @@ interface ChatInterfaceProps {
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
   onCareerKickoffComplete?: (result: KickoffResult) => void;
+  /**
+   * Report jobs surfaced in chat (job_search results) so the parent can mirror
+   * them into the Matches sidebar without the user clicking "Find jobs".
+   */
+  onJobsFound?: (jobs: MatchedJob[]) => void;
 }
 
 const CHAT_COLUMN_CLASS = "max-w-2xl mx-auto px-4";
@@ -242,9 +253,11 @@ export function ChatInterface({
   onSavedChange,
   onRequestIntro,
   onCareerKickoffComplete,
+  onJobsFound,
 }: ChatInterfaceProps) {
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
   const [kickoffActive, setKickoffActive] = useState(initialKickoff);
+  const kickoffAutoCheckedRef = useRef(false);
   const [input, setInput]             = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming]  = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -419,6 +432,32 @@ export function ChatInterface({
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
   }, [initialVoiceDeepDive]);
 
+  // Post-onboarding: start guided flow when URL says so, onboarding just finished,
+  // or the candidate has not picked a career path yet (first dashboard visit).
+  useEffect(() => {
+    if (kickoffAutoCheckedRef.current || kickoffActive || historyLoading) return;
+    kickoffAutoCheckedRef.current = true;
+
+    let cancelled = false;
+    void (async () => {
+      if (initialKickoff || isClientOnboardingCompleteRecent()) {
+        if (!cancelled) setKickoffActive(true);
+        return;
+      }
+      if (authUserId && hasCareerKickoffDone(authUserId)) return;
+
+      const path = await fetchCareerPath().catch(() => null);
+      if (cancelled) return;
+      if (!path?.prioritized_title && messages.length === 0) {
+        setKickoffActive(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUserId, historyLoading, initialKickoff, kickoffActive, messages.length]);
+
   useEffect(() => {
     voiceRepliesEnabledRef.current = replyMode === "voice";
   }, [replyMode]);
@@ -480,9 +519,24 @@ export function ChatInterface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Every job surfaced in chat is accumulated here (deduped) and mirrored to the
+  // parent so the Matches sidebar reflects chat results without a "Find jobs" click.
+  const allChatJobsRef = useRef<MatchedJob[]>([]);
+  const reportChatJobs = useCallback(
+    (jobs: MatchedJob[]) => {
+      if (!onJobsFound || !jobs.length) return;
+      const merged = dedupeJobs([...jobs, ...allChatJobsRef.current]);
+      if (merged.length === allChatJobsRef.current.length) return;
+      allChatJobsRef.current = merged;
+      onJobsFound(merged);
+    },
+    [onJobsFound],
+  );
+
   const attachJobsToLastAssistant = useCallback((jobs: MatchedJob[]) => {
     const unique = dedupeJobs(jobs);
     if (!unique.length) return;
+    reportChatJobs(unique);
     setMessages((prev) => {
       let lastIdx = -1;
       for (let i = prev.length - 1; i >= 0; i -= 1) {
@@ -499,7 +553,7 @@ export function ChatInterface({
       // without guessing from prose (Aarya often lists matches without "roles found").
       return prev.map((m, i) => (i === lastIdx ? { ...m, jobs: unique } : m));
     });
-  }, []);
+  }, [reportChatJobs]);
 
   const attachApplicationKitsToLastAssistant = useCallback(
     (kits: ApplicationKit[]) => {
@@ -710,6 +764,11 @@ export function ChatInterface({
       setStreamingContent("");
       setTurnActionBaseline(actionCount);
       setIsStreaming(true);
+      // Sending is an explicit "take me to the reply" intent — re-pin to bottom
+      // even if the user had scrolled up to read earlier job cards.
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      });
 
       abortRef.current = new AbortController();
       let finalReply = "";
@@ -1129,7 +1188,7 @@ export function ChatInterface({
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
 
   const handleKickoffStepArchived = useCallback(
-    (payload: { step: 1 | 2; content: string }) => {
+    (payload: { step: 1 | 2 | 3; content: string }) => {
       setMessages((prev) => [
         ...prev,
         {
@@ -1145,10 +1204,16 @@ export function ChatInterface({
   );
 
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
+    markCareerKickoffDone(authUserId ?? undefined);
     setKickoffActive(false);
     onCareerKickoffComplete?.(result);
     void sendMessage(result.prompt);
-  }, [onCareerKickoffComplete, sendMessage]);
+  }, [authUserId, onCareerKickoffComplete, sendMessage]);
+
+  const handleKickoffSkip = useCallback(() => {
+    markCareerKickoffDone(authUserId ?? undefined);
+    setKickoffActive(false);
+  }, [authUserId]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -1296,7 +1361,7 @@ export function ChatInterface({
           {showKickoff && (
             <CareerKickoffFlow
               onComplete={handleKickoffComplete}
-              onSkip={() => setKickoffActive(false)}
+              onSkip={handleKickoffSkip}
               onStepArchived={handleKickoffStepArchived}
             />
           )}

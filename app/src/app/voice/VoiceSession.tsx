@@ -18,6 +18,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
+import { createClient } from "@/lib/supabase/client";
 import { streamAaryaMessage, ensureAaryaSession, prefetchAaryaWarmup, readStoredAaryaSession, storeAaryaSession } from "@/lib/chat/aaryaStream";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { warmupChatContext } from "@/lib/chat/warmup";
@@ -366,6 +368,8 @@ export function VoiceSession({
           method: "POST",
           body: JSON.stringify({ skipped_voice: false }),
         });
+        const { data: authData } = await createClient().auth.getUser();
+        markClientOnboardingComplete(authData.user?.id);
       } catch {
         /* non-fatal */
       }
@@ -388,7 +392,7 @@ export function VoiceSession({
       if (embedded && onComplete) {
         onComplete();
       } else {
-        router.push("/dashboard?voice=done");
+        router.push("/dashboard?kickoff=career");
       }
     }, 1200);
   }, [elapsedSecs, embedded, fromOnboarding, onComplete, router, stopSpeaking]);

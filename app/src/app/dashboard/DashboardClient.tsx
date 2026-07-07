@@ -28,7 +28,7 @@ import { fetchSavedJobIds, saveJob, subscribeSavedJobs } from "@/lib/api/saved-j
 import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
 import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
-import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
+import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
 import { cn } from "@/lib/utils";
 import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
 import { HomePanel } from "@/components/dashboard/HomePanel";
@@ -91,7 +91,9 @@ export function DashboardClient({
   // Post-onboarding guided flow (?kickoff=career) — read once on mount so the
   // wizard survives the URL cleanup below.
   const [initialKickoff] = useState(
-    () => searchParams?.get("kickoff") === "career",
+    () =>
+      searchParams?.get("kickoff") === "career" ||
+      isClientOnboardingCompleteRecent(),
   );
   const [activeConvoId, setActiveConvoId] = useState<string | null>(initialConvoId ?? null);
   const [pendingIntros, setPendingIntros] = useState(false);
@@ -102,6 +104,9 @@ export function DashboardClient({
   const [savedJobsRefreshKey, setSavedJobsRefreshKey] = useState(0);
   const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
+  // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
+  // never has to click "Find jobs" to see them there.
+  const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
 
   useEffect(() => {
     router.prefetch("/resumes");
@@ -339,7 +344,7 @@ export function DashboardClient({
                   savedJobIds={savedJobIds}
                   onSavedChange={handleSavedChange}
                   savedJobsRefreshKey={savedJobsRefreshKey}
-                  kickoffJobs={kickoffMatchJobs}
+                  kickoffJobs={chatJobs ?? kickoffMatchJobs}
                   kickoffTitle={kickoffMatchTitle}
                   onAskAarya={() =>
                     sendToChat("Find me the best matching roles for my profile right now.")
@@ -389,6 +394,7 @@ export function DashboardClient({
             onSavedChange={handleSavedChange}
             onRequestIntro={handleRequestIntro}
             onCareerKickoffComplete={handleCareerKickoffComplete}
+            onJobsFound={setChatJobs}
           />
         </div>
         </div>

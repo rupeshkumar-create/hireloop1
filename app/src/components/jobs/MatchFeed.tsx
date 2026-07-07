@@ -26,6 +26,7 @@ import {
   type MatchedJob,
   type MatchFeedFilters,
 } from "@/lib/api/matches";
+import { dedupeJobs } from "@/lib/chat/dedupeJobs";
 import { useJobCardAssets } from "@/hooks/useJobCardAssets";
 import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Button, Card, EmptyState, Select } from "@/components/ui";
@@ -119,20 +120,16 @@ export function MatchFeed({
   className,
 }: MatchFeedProps) {
   const initialJobs = getCachedMatchFeed(DEFAULT_MATCH_FEED_FILTERS);
-  const hasSeedJobs = Boolean(seedJobs?.length);
-  const [jobs, setJobs] = useState<MatchedJob[]>(seedJobs ?? initialJobs ?? []);
+  const [jobs, setJobs] = useState<MatchedJob[]>(initialJobs ?? []);
   const [totalCount, setTotalCount] = useState<number | null>(
-    () => seedJobs?.length ?? getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
+    () => getCachedMatchFeedCount(DEFAULT_MATCH_FEED_FILTERS)
   );
-  const [loading, setLoading] = useState(!hasSeedJobs && initialJobs === null);
+  const [loading, setLoading] = useState(initialJobs === null && !seedJobs?.length);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(
-    hasSeedJobs ? false : (initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE
-  );
-  const [offset, setOffset] = useState(seedJobs?.length ?? initialJobs?.length ?? 0);
+  const [hasMore, setHasMore] = useState((initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE);
+  const [offset, setOffset] = useState(initialJobs?.length ?? 0);
   const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
-  const [usingSeed, setUsingSeed] = useState(hasSeedJobs);
 
   // Filters
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
@@ -221,10 +218,6 @@ export function MatchFeed({
   );
 
   useEffect(() => {
-    if (usingSeed && seedJobs?.length) {
-      setTotalCount(seedJobs.length);
-      return;
-    }
     let cancelled = false;
     fetchMatchFeedCount({ min_score: minScore })
       .then((total) => {
@@ -236,33 +229,15 @@ export function MatchFeed({
     return () => {
       cancelled = true;
     };
-  }, [minScore, seedJobs, usingSeed]);
+  }, [minScore]);
 
   useEffect(() => {
-    if (!seedJobs?.length) return;
-    setUsingSeed(true);
-  }, [seedJobs]);
-
-  useEffect(() => {
-    if (usingSeed && seedJobs?.length) {
-      setJobs(applyLocalFilters(seedJobs, { remoteOnly, seniority }));
-      setTotalCount(seedJobs.length);
-      setHasMore(false);
-      setOffset(seedJobs.length);
-      setLoading(false);
-      setError(null);
-      setEmptyRefreshCount(0);
-    }
-  }, [remoteOnly, seedJobs, seniority, usingSeed]);
-
-  useEffect(() => {
-    if (usingSeed && seedJobs?.length) return;
     setOffset(0);
     setHasMore(true);
     setEmptyRefreshCount(0);
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minScore, remoteOnly, seniority, seedJobs?.length, usingSeed]);
+  }, [minScore, remoteOnly, seniority]);
 
   useEffect(() => {
     if (loading || error || jobs.length > 0 || emptyRefreshCount >= 5) return;
@@ -273,16 +248,22 @@ export function MatchFeed({
     return () => window.clearTimeout(id);
   }, [emptyRefreshCount, error, jobs.length, load, loading]);
 
-  const visibleCount = jobs.length;
-  const sections = groupByTier(jobs);
+  // Merge chat/kickoff seed jobs on top of the live feed (deduped) so anything
+  // Aarya showed in chat appears here immediately, while the feed still loads.
+  const displayJobs = applyLocalFilters(
+    seedJobs?.length ? dedupeJobs([...seedJobs, ...jobs]) : jobs,
+    { remoteOnly, seniority },
+  );
+  const visibleCount = displayJobs.length;
+  const sections = groupByTier(displayJobs);
   // Hide headers when the only section is the untiered "More" bucket (e.g. the
   // backend didn't curate this page) — a lone "More matches" header reads oddly.
   const showHeaders =
     sections.length > 1 || (sections.length === 1 && sections[0].key !== MORE_SECTION.key);
   const hasLocalFilters = remoteOnly || Boolean(seniority);
   const countLabel = (() => {
-    if (loading) return "";
-    if (hasLocalFilters) {
+    if (loading && visibleCount === 0) return "";
+    if (hasLocalFilters || seedJobs?.length) {
       return `${visibleCount} match${visibleCount !== 1 ? "es" : ""} shown`;
     }
     if (totalCount !== null) {
@@ -301,12 +282,15 @@ export function MatchFeed({
           {" "}— upload a CV to sharpen scores.
         </p>
       )}
-      {usingSeed && seedTitle && seedJobs?.length ? (
+      {seedJobs?.length ? (
         <p className="text-micro text-ink-500 mb-3 shrink-0">
           <span className="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 font-medium text-ink-800">
-            Career path
+            From Aarya
           </span>
-          {" "}Showing Aarya&apos;s jobs for {seedTitle}. Use filters here, or refresh for the full feed.
+          {" "}
+          {seedTitle
+            ? `Including Aarya's jobs for ${seedTitle}.`
+            : "Including the roles Aarya just found in chat."}
         </p>
       ) : null}
       {/* ── Filter bar (collapsed behind a toggle) ─────────────────────── */}
@@ -393,20 +377,6 @@ export function MatchFeed({
                 />
               </div>
             )}
-            {usingSeed && seedJobs?.length ? (
-              <div className="mt-3">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setUsingSeed(false);
-                    void load(true);
-                  }}
-                >
-                  Refresh full match feed
-                </Button>
-              </div>
-            ) : null}
           </div>
         );
       })()}
@@ -414,9 +384,10 @@ export function MatchFeed({
       {/* ── Content ────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 pb-6">
         {loading &&
+          visibleCount === 0 &&
           Array.from({ length: 4 }).map((_, i) => <JobCardSkeleton key={i} />)}
 
-        {!loading && error && (
+        {!loading && error && visibleCount === 0 && (
           <EmptyState
             icon={<AlertCircle strokeWidth={1.5} />}
             title="Couldn't load matches"
@@ -429,14 +400,14 @@ export function MatchFeed({
           />
         )}
 
-        {!loading && !error && jobs.length === 0 && (
+        {!loading && !error && visibleCount === 0 && (
           <MatchesEmptyPanel
             onAskAarya={onAskAarya}
             isSearching={emptyRefreshCount < 5}
           />
         )}
 
-        {!loading &&
+        {visibleCount > 0 &&
           sections.map((section) => (
             <div key={section.key} className="space-y-3">
               {showHeaders && (
@@ -484,7 +455,7 @@ export function MatchFeed({
             </div>
           ))}
 
-        {!loading && !error && hasMore && jobs.length > 0 && (
+        {!loading && !error && hasMore && jobs.length > 0 && !seedJobs?.length && (
           <div className="pt-2">
             <Button
               variant="ghost"
