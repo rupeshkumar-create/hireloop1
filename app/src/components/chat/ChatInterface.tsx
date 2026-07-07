@@ -106,8 +106,7 @@ import { createClient } from "@/lib/supabase/client";
 import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
-import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
-import { findJobsForPath } from "@/lib/api/career";
+import { invalidateMatchFeedCache } from "@/lib/api/matches";
 import { recordJobApplication } from "@/lib/api/job-applications";
 import { saveJob } from "@/lib/api/saved-jobs";
 import {
@@ -211,8 +210,6 @@ interface ChatInterfaceProps {
 const CHAT_COLUMN_CLASS = "max-w-2xl mx-auto px-4";
 const COMPOSER_TEXT_MAX_H = 80;
 const VOICE_FEATURE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED !== "false";
-const KICKOFF_MIN_JOB_CARDS = 10;
-const KICKOFF_JOB_POLL_DELAYS_MS = [2000, 5000, 10000, 20000, 30000, 45000, 60000, 90000];
 
 // ── Option-block parser ───────────────────────────────────────────────────────
 
@@ -1132,7 +1129,7 @@ export function ChatInterface({
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
 
   const handleKickoffStepArchived = useCallback(
-    (payload: { step: 1 | 2 | 3; content: string }) => {
+    (payload: { step: 1 | 2; content: string }) => {
       setMessages((prev) => [
         ...prev,
         {
@@ -1149,128 +1146,9 @@ export function ChatInterface({
 
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
     setKickoffActive(false);
-    const initialJobs = dedupeJobs(result.jobs).slice(0, KICKOFF_MIN_JOB_CARDS);
-    onCareerKickoffComplete?.({ ...result, jobs: initialJobs });
-    const kickoffMsgId = `kickoff-${Date.now()}`;
-    const content = (() => {
-      if (initialJobs.length >= KICKOFF_MIN_JOB_CARDS) {
-        return (
-          `Here are **${initialJobs.length}** relevant **${result.preferredTitle}** roles I found for you. ` +
-          "Use Save, Request intro, or Apply on any card."
-        );
-      }
-      if (initialJobs.length > 0) {
-        return (
-          `I found **${initialJobs.length}** relevant **${result.preferredTitle}** roles so far. ` +
-          `I'm still pulling more until I have at least **${KICKOFF_MIN_JOB_CARDS}** strong options.`
-        );
-      }
-      if (result.sourceAvailable === false) {
-        return (
-          `Your career paths are saved, but the live job source is unavailable right now. ` +
-          "I’ll keep the search queued, and Jobs → Matches will update as soon as the source recovers."
-        );
-      }
-      return (
-        `Your career paths are saved — I'm pulling **${result.preferredTitle}** openings right now. ` +
-        `I'll deliver at least **${KICKOFF_MIN_JOB_CARDS}** relevant roles here as soon as they're ready.`
-      );
-    })();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: kickoffMsgId,
-        role: "assistant",
-        content,
-        content_type: "text",
-        created_at: new Date().toISOString(),
-        jobs: initialJobs,
-      },
-    ]);
-
-    if (initialJobs.length >= KICKOFF_MIN_JOB_CARDS || result.sourceAvailable === false) return;
-
-    void (async () => {
-      let bestJobs = initialJobs;
-      for (const delay of KICKOFF_JOB_POLL_DELAYS_MS) {
-        await new Promise((resolve) => window.setTimeout(resolve, delay));
-        try {
-          const pathResult = await findJobsForPath();
-          let jobs = dedupeJobs([...bestJobs, ...pathResult.jobs]).slice(
-            0,
-            KICKOFF_MIN_JOB_CARDS,
-          );
-          if (jobs.length < KICKOFF_MIN_JOB_CARDS && pathResult.source_available !== false) {
-            const feedJobs = await fetchMatchFeed(
-              { min_score: 0.38, limit: KICKOFF_MIN_JOB_CARDS },
-              { force: true },
-            );
-            jobs = dedupeJobs([...jobs, ...feedJobs]).slice(0, KICKOFF_MIN_JOB_CARDS);
-          }
-          if (jobs.length <= bestJobs.length) {
-            if (pathResult.source_available === false) {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === kickoffMsgId
-                    ? {
-                        ...m,
-                        content:
-                          `Your career paths are saved, but the live job source is unavailable right now. ` +
-                          "I’ll keep the search queued, and Jobs → Matches will update as soon as the source recovers.",
-                      }
-                    : m,
-                ),
-              );
-              return;
-            }
-            continue;
-          }
-
-          bestJobs = jobs;
-          invalidateMatchFeedCache();
-          onCareerKickoffComplete?.({
-            ...result,
-            jobs,
-            refreshing: false,
-          });
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === kickoffMsgId
-                ? {
-                    ...m,
-                    jobs,
-                    content:
-                      jobs.length >= KICKOFF_MIN_JOB_CARDS
-                        ? `Here are **${jobs.length}** relevant **${result.preferredTitle}** roles. ` +
-                          "Use Save, Request intro, or Apply on any card."
-                        : `I found **${jobs.length}** relevant **${result.preferredTitle}** roles so far. ` +
-                          `I'm still pulling more until I have at least **${KICKOFF_MIN_JOB_CARDS}** strong options.`,
-                  }
-                : m,
-            ),
-          );
-          if (jobs.length >= KICKOFF_MIN_JOB_CARDS) return;
-        } catch {
-          /* retry */
-        }
-      }
-
-      if (bestJobs.length === 0) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === kickoffMsgId
-              ? {
-                  ...m,
-                  content:
-                    `I'm still pulling **${result.preferredTitle}** openings. ` +
-                    "The search is queued and I’ll update Jobs → Matches as soon as scored roles land.",
-                }
-              : m,
-          ),
-        );
-      }
-    })();
-  }, [onCareerKickoffComplete]);
+    onCareerKickoffComplete?.(result);
+    void sendMessage(result.prompt);
+  }, [onCareerKickoffComplete, sendMessage]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 

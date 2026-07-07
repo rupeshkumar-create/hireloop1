@@ -186,9 +186,9 @@ export function DashboardClient({
   }
 
   function handleCareerKickoffComplete(result: KickoffResult) {
-    setKickoffMatchJobs(result.jobs.length > 0 ? result.jobs : null);
+    setKickoffMatchJobs(null);
     setKickoffMatchTitle(result.preferredTitle);
-    openPanel("jobs");
+    syncDashboardUrl(activePanel);
   }
 
   function handleRequestIntro(job: MatchedJob) {

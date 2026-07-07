@@ -2,32 +2,26 @@
 
 /**
  * CareerKickoffFlow — guided first-run flow rendered inside chat, right after
- * onboarding. Three steps, all backed by existing APIs:
+ * onboarding. Two steps, all backed by existing APIs:
  *
  *   1. Path    — AI proposes the top 3 directions; the candidate picks ONE
  *                preferred path (or types their own). The server expands it
  *                into similar titles, so one pick still casts a wide net.
- *   2. Package — expected CTC range for the candidate's market.
- *   3. Review  — everything Aarya will use to search; confirm saves it all,
- *                fires per-path resume generation, and runs the job search
- *                for the preferred path.
+ *   2. Review  — everything Aarya will use to search; confirm sends the same
+ *                concrete chat prompt used by the working "Ask Aarya" path.
  *
- * On completion the parent (ChatInterface) appends the jobs as a normal
- * assistant message, so the candidate lands in a live conversation.
+ * On completion the parent (ChatInterface) starts the normal Aarya chat search,
+ * so the candidate lands in a live conversation with job cards.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Sparkles } from "@/components/brand/icons";
-import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
-  findJobsForPath,
   generateCareerPath,
-  generateCareerPathResumes,
   prioritizeCareerPath,
   type CareerPath,
 } from "@/lib/api/career";
 import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
-import type { MatchedJob } from "@/lib/api/matches";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
@@ -40,14 +34,12 @@ type PathOption = {
   custom?: boolean;
 };
 
-type Step = "loading" | "paths" | "package" | "review" | "finishing" | "error";
+type Step = "loading" | "paths" | "review" | "error";
 
 export type KickoffResult = {
   preferredTitle: string;
   selectedTitles: string[];
-  jobs: MatchedJob[];
-  refreshing: boolean;
-  sourceAvailable?: boolean;
+  prompt: string;
 };
 
 /** Build up to 3 distinct options from path steps (next/future) + target titles. */
@@ -72,30 +64,32 @@ function buildOptions(path: CareerPath, currentTitle?: string | null): PathOptio
   return options;
 }
 
-function currencyHint(market?: string): { label: string; placeholderMin: string; placeholderMax: string } {
-  switch (market) {
-    case "US":
-      return { label: "USD per year (thousands)", placeholderMin: "e.g. 120", placeholderMax: "e.g. 160" };
-    case "GB":
-      return { label: "GBP per year (thousands)", placeholderMin: "e.g. 60", placeholderMax: "e.g. 85" };
-    case "AT":
-    case "DE":
-    case "FR":
-    case "NL":
-      return { label: "EUR per year (thousands)", placeholderMin: "e.g. 55", placeholderMax: "e.g. 80" };
-    case "CH":
-      return { label: "CHF per year (thousands)", placeholderMin: "e.g. 90", placeholderMax: "e.g. 130" };
-    case "AE":
-      return { label: "AED per year (thousands)", placeholderMin: "e.g. 180", placeholderMax: "e.g. 280" };
-    case "AU":
-      return { label: "AUD per year (thousands)", placeholderMin: "e.g. 90", placeholderMax: "e.g. 140" };
-    case "CA":
-      return { label: "CAD per year (thousands)", placeholderMin: "e.g. 80", placeholderMax: "e.g. 120" };
-    case "SG":
-      return { label: "SGD per year (thousands)", placeholderMin: "e.g. 70", placeholderMax: "e.g. 110" };
-    default:
-      return { label: "INR lakhs per annum (LPA)", placeholderMin: "e.g. 18", placeholderMax: "e.g. 25" };
+function buildRoleSearchPrompt(profile: MyProfileData | null, title: string): string {
+  const candidate = profile?.candidate;
+  const segments = [`Find ${title.trim() || "roles"}`];
+  const city = candidate?.location_city?.trim();
+  if (city) segments.push(`in ${city}`);
+
+  const years =
+    typeof candidate?.years_experience === "number" && candidate.years_experience > 0
+      ? candidate.years_experience
+      : null;
+  const skills = (candidate?.skills ?? [])
+    .map((skill) => skill.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (years && skills.length > 0) {
+    segments.push(
+      `for someone with ${years}+ years of experience matching my skills in ${skills.join(", ")}`,
+    );
+  } else if (years) {
+    segments.push(`for someone with ${years}+ years of experience`);
+  } else if (skills.length > 0) {
+    segments.push(`matching my skills in ${skills.join(", ")}`);
   }
+
+  return `${segments.join(" ")}.`;
 }
 
 export function CareerKickoffFlow({
@@ -105,7 +99,7 @@ export function CareerKickoffFlow({
 }: {
   onComplete: (result: KickoffResult) => void;
   onSkip: () => void;
-  onStepArchived?: (payload: { step: 1 | 2 | 3; content: string }) => void;
+  onStepArchived?: (payload: { step: 1 | 2; content: string }) => void;
 }) {
   const [step, setStep] = useState<Step>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -114,10 +108,7 @@ export function CareerKickoffFlow({
   // Selection order matters: first = preferred.
   const [selected, setSelected] = useState<string[]>([]);
   const [customTitle, setCustomTitle] = useState("");
-  const [ctcMin, setCtcMin] = useState("");
-  const [ctcMax, setCtcMax] = useState("");
   const [busy, setBusy] = useState(false);
-  const [finishStatus, setFinishStatus] = useState("");
 
   // ── Load: profile + career path (generate on first run) ────────────────────
   useEffect(() => {
@@ -128,8 +119,6 @@ export function CareerKickoffFlow({
         const path = await generateCareerPath();
         if (cancelled) return;
         setProfile(p);
-        if (p?.candidate?.expected_ctc_min) setCtcMin(String(p.candidate.expected_ctc_min));
-        if (p?.candidate?.expected_ctc_max) setCtcMax(String(p.candidate.expected_ctc_max));
         const opts = buildOptions(path, p?.candidate?.current_title);
         setOptions(opts);
         // Default to current role when available — closest match to their CV.
@@ -171,7 +160,6 @@ export function CareerKickoffFlow({
   }, [customTitle]);
 
   const c = profile?.candidate;
-  const hint = currencyHint(profile?.user?.market);
   const reviewRows = useMemo(
     () =>
       [
@@ -179,17 +167,10 @@ export function CareerKickoffFlow({
         { label: "Experience", value: c?.years_experience ? `${c.years_experience} years` : null },
         { label: "Location", value: c?.location_city ?? null },
         { label: "Skills", value: (c?.skills ?? []).slice(0, 6).join(", ") || null },
-        { label: "Career paths", value: selected.join("  ·  ") || null },
         { label: "Preferred path", value: selected[0] ?? null },
-        {
-          label: "Expected package",
-          value:
-            ctcMin || ctcMax
-              ? `${ctcMin || "—"}–${ctcMax || "—"} (${hint.label})`
-              : null,
-        },
+        { label: "Aarya prompt", value: selected[0] ? buildRoleSearchPrompt(profile, selected[0]) : null },
       ].filter((r) => r.value),
-    [c, selected, ctcMin, ctcMax, hint.label],
+    [c, selected, profile],
   );
 
   // ── Step 1 confirm: save paths ──────────────────────────────────────────────
@@ -202,100 +183,35 @@ export function CareerKickoffFlow({
       onStepArchived?.({
         step: 1,
         content:
-          "**Step 1 of 3** · Career paths\n\n" +
-          selected.map((t, i) => `${i === 0 ? "⭐ " : "• "}${t}`).join("\n"),
-      });
-      setStep("package");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save your career paths.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // ── Step 2 confirm: save CTC ────────────────────────────────────────────────
-  async function confirmPackage() {
-    if (busy) return;
-    const min = Number.parseInt(ctcMin, 10);
-    const max = Number.parseInt(ctcMax, 10);
-    const payload: Record<string, number> = {};
-    if (Number.isFinite(min) && min > 0) payload.expected_ctc_min = min;
-    if (Number.isFinite(max) && max > 0) payload.expected_ctc_max = max;
-    if (payload.expected_ctc_min && payload.expected_ctc_max && payload.expected_ctc_max < payload.expected_ctc_min) {
-      setError("Max should be at least the min.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      if (Object.keys(payload).length > 0) {
-        const res = await apiAuthFetch("/api/v1/me/profile", {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { detail?: string };
-          throw new Error(data.detail ?? "Couldn't save your expected package.");
-        }
-        // Refresh so the review step shows what was actually saved.
-        const p = await fetchMyProfile({ force: true }).catch(() => profile);
-        if (p) setProfile(p);
-      }
-      const pkgLabel =
-        ctcMin || ctcMax
-          ? `${ctcMin || "—"} – ${ctcMax || "—"} ${currencyHint(profile?.user?.market).label}`
-          : "Not set";
-      onStepArchived?.({
-        step: 2,
-        content: `**Step 2 of 3** · Expected package\n\n${pkgLabel}`,
+          "**Step 1 of 2** · Career path\n\n" +
+          selected.map((t, i) => `${i === 0 ? "Preferred: " : "Also search: "}${t}`).join("\n"),
       });
       setStep("review");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save your expected package.");
+      setError(err instanceof Error ? err.message : "Couldn't save your career path.");
     } finally {
       setBusy(false);
     }
   }
 
-  // ── Step 3 confirm: resumes + job search ────────────────────────────────────
-  async function confirmReview() {
+  // ── Step 2 confirm: ask Aarya through the normal chat search path ───────────
+  function confirmReview() {
     if (busy) return;
     setBusy(true);
     setError(null);
     const reviewLines = reviewRows.map((r) => `**${r.label}:** ${r.value}`).join("\n");
     onStepArchived?.({
-      step: 3,
-      content: `**Step 3 of 3** · Review\n\n${reviewLines}`,
+      step: 2,
+      content: `**Step 2 of 2** · Final search brief\n\n${reviewLines}`,
     });
-    setStep("finishing");
-    try {
-      // Per-path tailored resumes — only when the candidate opted in (Settings).
-      if (profile?.candidate?.tailored_resume_enabled) {
-        setFinishStatus("Generating a tailored resume for each path…");
-        void generateCareerPathResumes().catch(() => {
-          /* non-fatal — resumes can be generated later from settings */
-        });
-      }
-
-      setFinishStatus(`Searching ${selected[0]} roles for you…`);
-      const result = await findJobsForPath();
-      onComplete({
-        preferredTitle: selected[0],
-        selectedTitles: selected,
-        jobs: result.jobs,
-        refreshing: result.refreshing,
-        sourceAvailable: result.source_available ?? true,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start the job search.");
-      setStep("review");
-    } finally {
-      setBusy(false);
-    }
+    onComplete({
+      preferredTitle: selected[0],
+      selectedTitles: selected,
+      prompt: buildRoleSearchPrompt(profile, selected[0]),
+    });
   }
 
-  const stepIndex =
-    step === "paths" ? 1 : step === "package" ? 2 : step === "review" ? 3 : undefined;
+  const stepIndex = step === "paths" ? 1 : step === "review" ? 2 : undefined;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -325,17 +241,6 @@ export function CareerKickoffFlow({
           >
             Skip — just chat
           </button>
-        </div>
-      </FlowShell>
-    );
-  }
-
-  if (step === "finishing") {
-    return (
-      <FlowShell>
-        <div className="flex items-center gap-2.5 text-small text-ink-600">
-          <Loader2 className="h-4 w-4 animate-spin text-ink-400" strokeWidth={1.75} />
-          {finishStatus || "Setting things up…"}
         </div>
       </FlowShell>
     );
@@ -436,75 +341,11 @@ export function CareerKickoffFlow({
         </>
       )}
 
-      {step === "package" && (
-        <>
-          <p className="text-small text-ink-800 leading-relaxed">
-            What package are you targeting? I&apos;ll use this to filter salary-fit
-            roles — you can change it anytime in Settings.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label htmlFor="kickoff-ctc-min" className="text-small font-medium text-ink-700">
-                Minimum
-              </label>
-              <input
-                id="kickoff-ctc-min"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={ctcMin}
-                onChange={(e) => setCtcMin(e.target.value)}
-                placeholder={hint.placeholderMin}
-                className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="kickoff-ctc-max" className="text-small font-medium text-ink-700">
-                Maximum
-              </label>
-              <input
-                id="kickoff-ctc-max"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={ctcMax}
-                onChange={(e) => setCtcMax(e.target.value)}
-                placeholder={hint.placeholderMax}
-                className="w-full rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-              />
-            </div>
-          </div>
-          <p className="text-micro text-ink-400">{hint.label}</p>
-          {error && <FlowError message={error} />}
-          <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              size="md"
-              loading={busy}
-              onClick={() => void confirmPackage()}
-              className="flex-1"
-            >
-              Continue
-            </Button>
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setStep("review");
-              }}
-              className="text-small text-ink-500 hover:text-ink-900 transition-colors px-2 shrink-0"
-            >
-              Skip
-            </button>
-          </div>
-        </>
-      )}
-
       {step === "review" && (
         <>
           <p className="text-small text-ink-800 leading-relaxed">
-            Last check — this is everything I&apos;ll use to find your jobs. If
-            something&apos;s off, fix it in your profile later; otherwise let&apos;s go.
+            Last check — this is the search brief I&apos;ll send to Aarya now.
+            It uses your CV, location, and selected career path.
           </p>
           <div className="rounded-lg border border-ink-100 bg-paper-1 divide-y divide-ink-100">
             {reviewRows.map((row) => (
@@ -516,22 +357,16 @@ export function CareerKickoffFlow({
               </div>
             ))}
           </div>
-          {profile?.candidate?.tailored_resume_enabled ? (
-            <p className="text-micro text-ink-400">
-              On confirm I&apos;ll also generate a tailored resume for each of your
-              selected paths.
-            </p>
-          ) : null}
           {error && <FlowError message={error} />}
           <div className="flex items-center gap-2">
             <Button
               variant="primary"
               size="md"
               loading={busy}
-              onClick={() => void confirmReview()}
+              onClick={confirmReview}
               className="flex-1"
             >
-              Continue — show jobs
+              Ask Aarya to find roles
             </Button>
             <button
               type="button"
@@ -570,7 +405,7 @@ function FlowShell({
         </p>
         {stepIndex != null && (
           <span className="ml-auto rounded border border-accent/40 bg-accent/15 px-2 py-0.5 text-micro font-semibold text-accent">
-            Step {stepIndex} of 3
+            Step {stepIndex} of 2
           </span>
         )}
       </div>

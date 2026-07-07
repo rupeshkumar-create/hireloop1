@@ -235,7 +235,7 @@ function ActivationStep({
       const { data: authData } = await createClient().auth.getUser();
       markClientOnboardingComplete(authData.user?.id);
       clearOnboardingProgress();
-      window.location.replace("/dashboard?panel=jobs");
+      window.location.replace("/dashboard?kickoff=career");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {
