@@ -24,6 +24,14 @@ from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 # Minimum overall score to write match_scores (below → row deleted / skipped).
 MIN_PERSIST_SCORE = 0.35
 
+# Jobs matching the candidate's CHOSEN career path get a lower floor: a
+# skill-sparse fresh profile scores ~0.30 against a perfectly-on-path job
+# (skill overlap 0 → the 0.40-weight dimension contributes nothing), and the
+# 0.35 floor silently erased the exact roles the candidate asked for — the
+# recurring "only demo jobs after onboarding" failure.
+PATH_ALIGNED_MIN_PERSIST = 0.22
+PATH_ALIGNED_MIN_AFFINITY = 0.25
+
 # Default relevance floor for candidate feed (API + app).
 # Kept near MIN_PERSIST_SCORE so career-path-aligned roles (e.g. Growth Manager
 # for Head of Growth) surface once embeddings are computed — not only test jobs.
@@ -139,7 +147,11 @@ def should_persist_match(
         return True
 
     overall = float(result.get("overall") or 0.0)
-    if overall < MIN_PERSIST_SCORE:
+    candidate_titles = candidate_role_titles(cand_row)
+    title_aff = _best_title_affinity(job_row.get("title"), candidate_titles)
+    path_aligned = title_aff is not None and title_aff >= PATH_ALIGNED_MIN_AFFINITY
+    floor = PATH_ALIGNED_MIN_PERSIST if path_aligned else MIN_PERSIST_SCORE
+    if overall < floor:
         return False
 
     cand_domains = detect_domains(
@@ -157,8 +169,6 @@ def should_persist_match(
     if domain_fit_multiplier(cand_domains, job_domains) < MIN_DOMAIN_MULTIPLIER_POOL:
         return False
 
-    candidate_titles = candidate_role_titles(cand_row)
-    title_aff = _best_title_affinity(job_row.get("title"), candidate_titles)
     lexical = _skill_overlap_score(
         list(cand_row.get("skills") or []),
         list(job_row.get("skills_required") or []),

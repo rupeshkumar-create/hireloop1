@@ -58,11 +58,42 @@ def test_saas_job_in_persona_pool() -> None:
     assert job_in_persona_pool(_job(), _cand()) is True
 
 
-def test_weak_overall_not_persisted() -> None:
+def test_weak_overall_persists_when_path_aligned() -> None:
+    # 0.30 vs the exact role family the candidate chose: a skill-sparse fresh
+    # profile can't clear 0.35 (skill overlap 0 kills the 0.40-weight dim),
+    # and dropping it erased every real on-path job ("only demo jobs" bug).
     assert (
         should_persist_match(
             _cand(),
             _job(),
+            {"overall": MIN_PERSIST_SCORE - 0.05},
+        )
+        is True
+    )
+
+
+def test_very_weak_overall_not_persisted_even_when_aligned() -> None:
+    assert (
+        should_persist_match(
+            _cand(),
+            _job(),
+            {"overall": 0.15},
+        )
+        is False
+    )
+
+
+def test_weak_overall_not_persisted_when_off_path() -> None:
+    off_path = _job(
+        title="Staff Accountant",
+        company_name="Ledger LLP",
+        description="bookkeeping and monthly close",
+        skills_required=["accounting", "tally"],
+    )
+    assert (
+        should_persist_match(
+            _cand(),
+            off_path,
             {"overall": MIN_PERSIST_SCORE - 0.05},
         )
         is False
