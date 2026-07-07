@@ -268,6 +268,12 @@ export function LandingFooter() {
           <Link href="/signup" className="transition-colors hover:text-ink-700">
             Sign up
           </Link>
+          <Link href="/privacy" className="transition-colors hover:text-ink-700">
+            Privacy Policy
+          </Link>
+          <Link href="/terms" className="transition-colors hover:text-ink-700">
+            Terms of Service
+          </Link>
         </div>
       </div>
     </footer>
