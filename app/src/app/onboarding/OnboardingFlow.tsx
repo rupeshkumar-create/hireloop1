@@ -12,9 +12,9 @@
  *   2. After DPDP consent (Legal step), LinkDAPI enrichment runs in the
  *      background from that URL — no separate LinkedIn form in the wizard.
  *
- * Activation v2 — one screen, then dashboard chat with Aarya:
+ * Activation v2 — one screen, then dashboard Jobs panel:
  *
- * Step 1  Activate         CV upload → dashboard
+ * Step 1  Activate         CV upload → dashboard (Jobs panel)
  *
  * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *
@@ -235,7 +235,7 @@ function ActivationStep({
       const { data: authData } = await createClient().auth.getUser();
       markClientOnboardingComplete(authData.user?.id);
       clearOnboardingProgress();
-      window.location.replace("/dashboard?kickoff=career");
+      window.location.replace("/dashboard?panel=jobs");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {

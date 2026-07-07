@@ -19,13 +19,14 @@ import {
   downloadTailoredResumeDocx,
   fetchTailoredResumeHtml,
 } from "@/lib/api/tailored";
-import { getApplicationKitForJob, type JobApplicationKit } from "@/lib/api/applicationKit";
+import { getApplicationKitForJob, prepareApplicationKit, type JobApplicationKit } from "@/lib/api/applicationKit";
 
 type Tab = "resume" | "cover_letter" | "interview_prep";
 
 export function ResumePreviewModal({
   open,
   onClose,
+  onAfterClose,
   resumeId,
   jobId,
   jobTitle,
@@ -35,6 +36,8 @@ export function ResumePreviewModal({
 }: {
   open: boolean;
   onClose: () => void;
+  /** Called after the modal closes (e.g. advance saved-job queue). */
+  onAfterClose?: () => void;
   resumeId: string | null;
   jobId: string | null;
   jobTitle?: string | null;
@@ -46,6 +49,7 @@ export function ResumePreviewModal({
   const [tab, setTab] = useState<Tab>("resume");
   const [html, setHtml] = useState<string | null>(null);
   const [kit, setKit] = useState<JobApplicationKit | null>(null);
+  const [effectiveResumeId, setEffectiveResumeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<"pdf" | "docx" | null>(null);
@@ -54,10 +58,32 @@ export function ResumePreviewModal({
     setLoading(true);
     setError(null);
     try {
-      const [resumeHtml, kitData] = await Promise.all([
-        resumeId ? fetchTailoredResumeHtml(resumeId) : Promise.resolve(null),
-        jobId ? getApplicationKitForJob(jobId).catch(() => null) : Promise.resolve(null),
-      ]);
+      let kitData = jobId ? await getApplicationKitForJob(jobId).catch(() => null) : null;
+      let resolvedResumeId = resumeId ?? kitData?.tailored_resume_id ?? null;
+
+      // Older kits may lack a resume (generated before always-on tailoring). Re-prepare once.
+      if (!resolvedResumeId && jobId) {
+        const prepared = await prepareApplicationKit(jobId);
+        kitData = {
+          id: prepared.kit_id ?? kitData?.id ?? "",
+          job_id: jobId,
+          job_title: prepared.job?.title ?? kitData?.job_title ?? null,
+          company_name: prepared.job?.company_name ?? kitData?.company_name ?? null,
+          cover_letter: prepared.cover_letter,
+          interview_prep: prepared.interview_prep,
+          tailored_resume_id: prepared.resume?.resume_id ?? null,
+          mock_interview_id: prepared.mock_interview?.mock_interview_id ?? null,
+          created_at: kitData?.created_at ?? new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        resolvedResumeId = prepared.resume?.resume_id ?? null;
+      }
+
+      const resumeHtml = resolvedResumeId
+        ? await fetchTailoredResumeHtml(resolvedResumeId)
+        : null;
+
+      setEffectiveResumeId(resolvedResumeId);
       setHtml(resumeHtml);
       setKit(kitData);
       const cover = coverLetterProp ?? kitData?.cover_letter ?? null;
@@ -87,15 +113,16 @@ export function ResumePreviewModal({
     else {
       setHtml(null);
       setKit(null);
+      setEffectiveResumeId(null);
       setError(null);
     }
   }, [open, load]);
 
   const handleDownload = async () => {
-    if (!resumeId || downloading) return;
+    if (!effectiveResumeId || downloading) return;
     setDownloading("pdf");
     try {
-      await downloadTailoredResume(resumeId);
+      await downloadTailoredResume(effectiveResumeId);
     } catch {
       toast.error("Couldn't open the resume for download");
     } finally {
@@ -104,10 +131,10 @@ export function ResumePreviewModal({
   };
 
   const handleDocx = async () => {
-    if (!resumeId || downloading) return;
+    if (!effectiveResumeId || downloading) return;
     setDownloading("docx");
     try {
-      await downloadTailoredResumeDocx(resumeId);
+      await downloadTailoredResumeDocx(effectiveResumeId);
     } catch {
       toast.error("Couldn't download the Word file");
     } finally {
@@ -124,10 +151,15 @@ export function ResumePreviewModal({
     { key: "interview_prep", label: "Interview prep", available: !!interviewPrep },
   ];
 
+  const handleClose = () => {
+    onClose();
+    onAfterClose?.();
+  };
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       title="Application kit"
       description={jobTitle ?? kit?.job_title ?? undefined}
       size="lg"
@@ -215,13 +247,13 @@ export function ResumePreviewModal({
       )}
 
       <ModalFooter>
-        <Button variant="ghost" onClick={onClose}>
+        <Button variant="ghost" onClick={handleClose}>
           Close
         </Button>
         <Button
           variant="secondary"
           onClick={() => void handleDocx()}
-          disabled={!resumeId || downloading !== null}
+          disabled={!effectiveResumeId || downloading !== null}
           loading={downloading === "docx"}
           leftIcon={<Download className="h-3.5 w-3.5" />}
         >
@@ -230,7 +262,7 @@ export function ResumePreviewModal({
         <Button
           variant="primary"
           onClick={() => void handleDownload()}
-          disabled={!resumeId || downloading !== null}
+          disabled={!effectiveResumeId || downloading !== null}
           leftIcon={
             downloading === "pdf" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

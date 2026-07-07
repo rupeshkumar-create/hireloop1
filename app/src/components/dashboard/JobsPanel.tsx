@@ -5,6 +5,7 @@ import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
+import { JobsQueueStatusBar } from "@/components/jobs/JobsQueueStatusBar";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ export type JobsPanelProps = {
   kickoffJobs?: MatchedJob[] | null;
   kickoffTitle?: string | null;
   onAskAarya?: () => void;
+  pendingIntros?: boolean;
 };
 
 export function JobsPanel({
@@ -44,8 +46,10 @@ export function JobsPanel({
   kickoffJobs,
   kickoffTitle,
   onAskAarya,
+  pendingIntros = false,
 }: JobsPanelProps) {
   const [tab, setTab] = useState<JobsTab>(initialTab ?? "matches");
+  const [kitsReadyCount, setKitsReadyCount] = useState(0);
 
   function selectTab(next: JobsTab) {
     setTab(next);
@@ -63,7 +67,7 @@ export function JobsPanel({
   }, [kickoffJobs?.length, kickoffTitle]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {showProfileBoosters && (
         <div className="p-5 pb-0 shrink-0">
           <ProfileBoosters
@@ -129,10 +133,18 @@ export function JobsPanel({
             savedJobIds={savedJobIds}
             onSavedChange={onSavedChange}
             refreshKey={savedJobsRefreshKey}
-            className="h-full p-5 flex flex-col"
+            onKitsReadyCountChange={setKitsReadyCount}
+            className="h-full flex flex-col"
           />
         )}
       </div>
+
+      <JobsQueueStatusBar
+        savedCount={savedJobIds.size}
+        kitsReadyCount={kitsReadyCount}
+        pendingIntros={pendingIntros}
+        onOpenSaved={() => selectTab("saved")}
+      />
     </div>
   );
 }

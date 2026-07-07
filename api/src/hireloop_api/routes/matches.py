@@ -30,6 +30,10 @@ from hireloop_api.services.job_preferences import (
     remote_filter_sql,
 )
 from hireloop_api.services.job_present import resolve_company_logo_url
+from hireloop_api.services.job_relevance_pipeline import (
+    filter_and_rerank_jobs,
+    rationale_overlay_items,
+)
 from hireloop_api.services.match_quality import (
     DEFAULT_FEED_MIN_SCORE,
     MIN_PERSIST_SCORE,
@@ -65,6 +69,8 @@ router = APIRouter(prefix="/matches", tags=["matches"])
 _first_score_locks: dict[str, asyncio.Lock] = {}
 _MIN_MARKET_FEED_JOBS = 8
 _FEED_SCORE_LIMIT = 500
+# Floor for brand-new signups while embeddings/scores are still computing.
+_STARTER_FEED_MIN_SCORE = 0.25
 _ACTIVE_JOB_EXPIRY_SQL = "(j.expires_at IS NULL OR j.expires_at > NOW())"
 
 
@@ -148,10 +154,32 @@ async def _supplement_market_feed(
             offset=0,
             remote_preference=remote_preference,
             market=market,
+            relaxed=floor <= MIN_PERSIST_SCORE,
         )
         result = _merge_feed_results(result, _market_feed_items(fallback), limit=limit)
         if len(result) >= limit:
             break
+    if len(result) < limit:
+        relaxed = await _fetch_fallback_match_rows(
+            db,
+            candidate=candidate,
+            min_score=_STARTER_FEED_MIN_SCORE,
+            limit=limit,
+            offset=0,
+            remote_preference=remote_preference,
+            market=market,
+            relaxed=True,
+        )
+        result = _merge_feed_results(result, _market_feed_items(relaxed), limit=limit)
+    if len(result) < limit:
+        starter = await _fetch_starter_market_jobs(
+            db,
+            candidate_id=candidate_id,
+            limit=limit,
+            remote_preference=remote_preference,
+            market=market,
+        )
+        result = _merge_feed_results(result, starter, limit=limit)
     return result
 
 
@@ -422,6 +450,16 @@ async def get_match_feed(
                 market=market,
             )
 
+    if offset == 0 and len(result) < 3:
+        starter = await _fetch_starter_market_jobs(
+            db,
+            candidate_id=candidate["id"],
+            limit=limit,
+            remote_preference=remote_pref,
+            market=market,
+        )
+        result = _merge_feed_results(result, starter, limit=limit)
+
     # Hard constraints: drop deal-breakers on every page (so pagination is
     # consistent) — roles whose stated pay band is clearly below the candidate's
     # CTC floor (minus negotiation slack), and any remote/on-site mismatch the
@@ -439,6 +477,7 @@ async def get_match_feed(
         if (test_jobs_enabled(settings) and is_test_job(job))
         or (not is_test_job(job) and passes_hard_constraints(job, constraints))
     ]
+    result = filter_and_rerank_jobs(dict(candidate), result, limit=limit)
 
     # Presentation layer: on the opening screen (first page), personalise from
     # saved jobs, then de-duplicate and MMR-diversify so the candidate isn't
@@ -456,7 +495,7 @@ async def get_match_feed(
             # when skills_score is absent.
             result = assemble_first_screen(
                 result,
-                screen_size=min(limit, 8),
+                screen_size=min(limit, 10),
                 fuse_signals=("overall_score", "skills_score"),
             )
         market_count = len(_market_feed_items(result))
@@ -469,7 +508,11 @@ async def get_match_feed(
             result = append_test_jobs(result, test_jobs, limit=limit)
         # Off the serve path: snapshot the screen and generate/persist rationales
         # on a background connection so the feed returns immediately.
-        _schedule_rationale_overlay(dict(candidate), [dict(i) for i in result], limit)
+        _schedule_rationale_overlay(
+            dict(candidate),
+            rationale_overlay_items(result, limit=limit),
+            limit,
+        )
         # #33: log impressions for the learned re-ranker. Best-effort — feed
         # latency and correctness never depend on analytics writes.
         try:
@@ -527,6 +570,9 @@ def _schedule_rationale_overlay(candidate: dict, items: list[dict], limit: int) 
     run the overlay on its own pooled connection; the rationales persist to
     match_scores and surface (from cache) on the candidate's next load.
     """
+    items = rationale_overlay_items(items, limit=limit)
+    if not items:
+        return
 
     async def _run() -> None:
         try:
@@ -560,13 +606,17 @@ async def _overlay_llm_rationale(
         return
 
     # Only spend LLM calls on items without a fresh cached rationale.
-    pending = [item for item in result if not item.get("_rationale_cached")]
+    pending = [
+        item
+        for item in rationale_overlay_items(result, limit=limit)
+        if not item.get("_rationale_cached")
+    ]
     if not pending:
         return
 
     try:
         reasons = await generate_match_rationales(
-            candidate, pending, settings=cfg, max_jobs=min(limit, 8)
+            candidate, pending, settings=cfg, max_jobs=min(limit, 10)
         )
     except Exception as exc:  # never let rationale enrichment break the feed
         logger.warning("match_feed_rationale_overlay_failed", error=str(exc)[:300])
@@ -669,6 +719,7 @@ async def get_match_feed_count(
             min_score=min_score,
         )
     )
+    market_items = filter_and_rerank_jobs(dict(candidate), market_items, limit=100)
     total = len(market_items)
 
     if total == 0:
@@ -681,8 +732,9 @@ async def get_match_feed_count(
             offset=0,
             remote_preference=remote_pref,
             market=market,
+            relaxed=min_score <= MIN_PERSIST_SCORE,
         )
-        total = len(_market_feed_items(fallback))
+        total = len(filter_and_rerank_jobs(dict(candidate), _market_feed_items(fallback), limit=50))
         if total == 0 and min_score > MIN_PERSIST_SCORE:
             relaxed = await _fetch_fallback_match_rows(
                 db,
@@ -692,8 +744,34 @@ async def get_match_feed_count(
                 offset=0,
                 remote_preference=remote_pref,
                 market=market,
+                relaxed=True,
             )
-            total = len(_market_feed_items(relaxed))
+            total = len(
+                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+            )
+        if total == 0:
+            relaxed = await _fetch_fallback_match_rows(
+                db,
+                candidate=dict(candidate),
+                min_score=_STARTER_FEED_MIN_SCORE,
+                limit=50,
+                offset=0,
+                remote_preference=remote_pref,
+                market=market,
+                relaxed=True,
+            )
+            total = len(
+                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+            )
+        if total == 0:
+            starter = await _fetch_starter_market_jobs(
+                db,
+                candidate_id=candidate["id"],
+                limit=50,
+                remote_preference=remote_pref,
+                market=market,
+            )
+            total = len(filter_and_rerank_jobs(dict(candidate), starter, limit=50))
 
     test_jobs = await fetch_test_jobs_for_feed(
         db,
@@ -980,6 +1058,108 @@ def _current_quality_score(row: asyncpg.Record | dict, *, candidate: dict) -> di
     if not should_persist_match(cand_row, job_row, result):
         return None
     return result
+
+
+async def _candidate_has_resume(db: asyncpg.Connection, candidate_id: uuid.UUID) -> bool:
+    return bool(
+        await db.fetchval(
+            """
+            SELECT EXISTS(
+              SELECT 1 FROM public.resumes
+              WHERE candidate_id = $1::uuid
+            )
+            """,
+            candidate_id,
+        )
+    )
+
+
+async def _fetch_starter_market_jobs(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    limit: int,
+    remote_preference: str = "any",
+    market: str = "IN",
+) -> list[dict]:
+    """
+    Last-resort feed for fresh signups: show recent market jobs once a CV is on
+    file, even when parsing produced sparse fields and scoring is still running.
+    """
+    if not await _candidate_has_resume(db, candidate_id):
+        return []
+
+    remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$2")
+    company_exclude = test_jobs_company_sql_exclude(company_alias="co")
+    rows = await db.fetch(
+        f"""
+        SELECT
+            j.id AS job_id,
+            j.title,
+            co.name AS company_name,
+            co.logo_url AS company_logo_url,
+            co.domain AS company_domain,
+            j.location_city,
+            j.location_state,
+            j.is_remote,
+            j.employment_type,
+            j.seniority,
+            j.ctc_min,
+            j.ctc_max,
+            j.salary_currency,
+            j.skills_required,
+            j.apply_url,
+            j.scraped_at
+        FROM public.jobs j
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE j.is_active = TRUE
+          AND {vis}
+          AND j.deleted_at IS NULL
+          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          {remote_clause}
+          {company_exclude}
+        ORDER BY j.scraped_at DESC NULLS LAST, j.created_at DESC
+        LIMIT $1
+        """,
+        limit,
+        market,
+    )
+
+    now = datetime.now(UTC).isoformat()
+    items: list[dict] = []
+    for row in rows:
+        row_dict = dict(row)
+        if is_test_job(row_dict):
+            continue
+        items.append(
+            {
+                "job_id": str(row_dict["job_id"]),
+                "title": row_dict["title"],
+                "company_name": row_dict.get("company_name"),
+                "company_logo_url": resolve_company_logo_url(row_dict),
+                "location_city": row_dict.get("location_city"),
+                "location_state": row_dict.get("location_state"),
+                "is_remote": bool(row_dict.get("is_remote")),
+                "employment_type": row_dict.get("employment_type"),
+                "seniority": row_dict.get("seniority"),
+                "ctc_min": row_dict.get("ctc_min"),
+                "ctc_max": row_dict.get("ctc_max"),
+                "skills_required": list(row_dict.get("skills_required") or []),
+                "apply_url": row_dict.get("apply_url"),
+                "overall_score": 0.36,
+                "skills_score": None,
+                "experience_score": None,
+                "location_score": None,
+                "ctc_score": None,
+                "explanation": (
+                    "Starter match from your market — Aarya is still ranking roles "
+                    "against your CV."
+                ),
+                "computed_at": now,
+            }
+        )
+    return items
 
 
 async def _fetch_fallback_match_rows(

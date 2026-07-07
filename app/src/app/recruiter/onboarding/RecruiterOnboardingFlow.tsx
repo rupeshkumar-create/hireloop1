@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Building2,
@@ -27,9 +27,15 @@ import {
   importRoleFromUrl,
   updateRecruiterProfile,
 } from "@/lib/api/recruiter";
+import {
+  readPostAuthRedirect,
+  clearPostAuthRedirect,
+  persistPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
 
 export function RecruiterOnboardingFlow() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [companyName, setCompanyName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [roleCity, setRoleCity] = useState("");
@@ -40,6 +46,11 @@ export function RecruiterOnboardingFlow() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const roleCheckDone = useRef(false);
+
+  useEffect(() => {
+    const returnTo = readPostAuthRedirect(searchParams);
+    if (returnTo) persistPostAuthRedirect(returnTo);
+  }, [searchParams]);
 
   useEffect(() => {
     if (roleCheckDone.current) return;
@@ -58,15 +69,16 @@ export function RecruiterOnboardingFlow() {
   useEffect(() => {
     fetchRecruiterProfile()
       .then((p) => {
+        const returnTo = readPostAuthRedirect(searchParams);
         if (p.onboarding_complete) {
-          router.replace("/recruiter");
+          router.replace(returnTo ?? "/recruiter");
           return;
         }
         setCompanyName(p.company_name === "My Company" ? "" : (p.company_name ?? ""));
       })
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [router]);
+  }, [router, searchParams]);
 
   async function handleImportFromUrl() {
     const url = importUrl.trim();
@@ -105,8 +117,12 @@ export function RecruiterOnboardingFlow() {
         title: roleTitle.trim().slice(0, 120),
         location_city: roleCity.trim() || undefined,
       });
-      // Land in the role's Nitya intake chat — the brief conversation starts
-      // immediately instead of an empty inbox.
+      const returnTo = readPostAuthRedirect(searchParams);
+      if (returnTo?.startsWith("/p/")) {
+        clearPostAuthRedirect();
+        router.push(returnTo);
+        return;
+      }
       router.push(
         created.role_id ? `/recruiter/roles/${created.role_id}/intake` : "/recruiter",
       );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
@@ -14,6 +15,11 @@ import {
   oauthCallbackUrl,
   persistSignupRole,
 } from "@/lib/auth/signup-role-storage";
+import {
+  clearPostAuthRedirect,
+  persistPostAuthRedirect,
+  readPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
@@ -58,6 +64,11 @@ export function SignupForm() {
   }, [defaultRole]);
 
   useEffect(() => {
+    const returnTo = readPostAuthRedirect(searchParams);
+    if (returnTo) persistPostAuthRedirect(returnTo);
+  }, [searchParams]);
+
+  useEffect(() => {
     const error = searchParams.get("error");
     const message = searchParams.get("message");
     const decodedMessage = message
@@ -94,25 +105,14 @@ export function SignupForm() {
     resolvedRole: string | undefined,
     isNewUser: boolean | undefined,
   ) {
-    const redirectParam = searchParams.get("redirect");
-    const safeRedirect =
-      redirectParam?.startsWith("/") && !redirectParam.startsWith("//")
-        ? redirectParam
-        : null;
+    const savedRedirect = readPostAuthRedirect(searchParams);
+    if (savedRedirect) {
+      clearPostAuthRedirect();
+      router.push(savedRedirect);
+      return;
+    }
 
-    if (resolvedRole === "recruiter") {
-      router.push(
-        safeRedirect?.startsWith("/recruiter")
-          ? safeRedirect
-          : resolvePostAuthDestination("recruiter", Boolean(isNewUser)),
-      );
-      return;
-    }
-    if (safeRedirect && !safeRedirect.startsWith("/recruiter")) {
-      router.push(safeRedirect);
-      return;
-    }
-    router.push(resolvePostAuthDestination("candidate", Boolean(isNewUser)));
+    router.push(resolvePostAuthDestination(resolvedRole ?? role, Boolean(isNewUser)));
   }
 
   async function handleLinkedInSignIn() {
@@ -232,8 +232,11 @@ export function SignupForm() {
         }
         return;
       }
-      const destination = await finishAuthSession(accessToken, role);
+      const destination = await finishAuthSession(accessToken, role, {
+        redirect: readPostAuthRedirect(searchParams),
+      });
       clearSignupRole();
+      clearPostAuthRedirect();
       router.replace(destination);
     } catch (error) {
       if (error instanceof ApiUnreachableError && typeof window !== "undefined") {
@@ -303,8 +306,20 @@ export function SignupForm() {
     }
   }
 
+  const returnTo = readPostAuthRedirect(searchParams);
+  const authToggleQs = new URLSearchParams();
+  if (role === "recruiter") authToggleQs.set("role", "recruiter");
+  if (!isSignIn) authToggleQs.set("mode", "signin");
+  if (returnTo) authToggleQs.set("from", returnTo);
+  const authToggleHref = `/signup${authToggleQs.toString() ? `?${authToggleQs}` : ""}`;
+
   return (
     <div className="space-y-6">
+      {isSignIn && (
+        <p className="text-small text-ink-600">
+          Welcome back — sign in to continue where you left off.
+        </p>
+      )}
       <div className="space-y-2">
         <p className="text-sm font-medium text-ink-700">I am a…</p>
         <div className="grid grid-cols-2 gap-3">
@@ -436,6 +451,24 @@ export function SignupForm() {
 
       <p className="text-xs text-ink-500 text-center">
         Email sign-in sends a secure link to your inbox. Resume upload happens in onboarding.
+      </p>
+
+      <p className="text-xs text-ink-500 text-center">
+        {isSignIn ? (
+          <>
+            New to Hireschema?{" "}
+            <Link href={authToggleHref} className="font-medium text-accent hover:underline">
+              Create an account
+            </Link>
+          </>
+        ) : (
+          <>
+            Already have an account?{" "}
+            <Link href={authToggleHref} className="font-medium text-accent hover:underline">
+              Log in
+            </Link>
+          </>
+        )}
       </p>
 
       {DEV_EMAIL_LOGIN && (

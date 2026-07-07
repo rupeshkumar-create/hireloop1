@@ -53,9 +53,17 @@ Return ONLY valid JSON (no markdown, no prose) with exactly this shape:
 
 Rules:
 - 3 to 5 steps. The first step's level is "current"; include at least one "next".
-- target_titles are the roles they are ready to apply for now or very soon —
-  use real, searchable Indian job titles (e.g. "Senior Backend Engineer",
-  "Engineering Manager"), not aspirational titles 5 years out.
+- Infer industry from company name, title, and skills (wedding/hospitality, SaaS, retail,
+  manufacturing, etc.). target_titles MUST stay in the SAME industry and function as
+  their current role — never jump to unrelated generic titles.
+- Hospitality/events/wedding backgrounds → use searchable titles like "Venue Operations
+  Manager", "Events Operations Manager", "Wedding Operations Manager" — NOT vague
+  "Operations Manager" unless their CV is explicitly general ops outside events.
+- The "next" step should be a realistic promotion from their current title at a similar
+  company type (e.g. Assistant Manager at a wedding company → "Operations Manager -
+  Events" or "Venue Manager", not "Software Operations Manager").
+- target_titles are roles they can apply for now or within 12 months — real Indian job
+  board titles, 3 to 6 items, including their current title and one natural step up.
 - Keep skills_to_build practical and tied to the gaps between steps.
 """
 
@@ -364,7 +372,7 @@ class CareerPathService:
             """
             SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
                    c.location_city, c.location_state, c.years_experience,
-                   c.skills, u.full_name
+                   c.skills, c.career_profile, u.full_name
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id
             WHERE c.id = $1::uuid AND c.deleted_at IS NULL
@@ -452,7 +460,82 @@ def _build_profile_brief(profile: dict[str, Any]) -> str:
         f"Summary: {profile.get('summary') or '—'}",
         f"Skills: {skills}",
     ]
+    career_profile = profile.get("career_profile")
+    if isinstance(career_profile, dict) and career_profile:
+        industries = career_profile.get("industries") or career_profile.get("industry")
+        if industries:
+            parts.append(f"Industries from CV: {industries}")
+        recent_roles = career_profile.get("recent_roles") or career_profile.get("roles")
+        if recent_roles:
+            parts.append(f"Recent roles from CV: {recent_roles}")
     return "Candidate profile:\n" + "\n".join(parts)
+
+
+def _infer_industry_bucket(profile: dict[str, Any]) -> str:
+    company = (profile.get("current_company") or "").lower()
+    title = (profile.get("current_title") or "").lower()
+    skills = " ".join(str(s) for s in (profile.get("skills") or [])).lower()
+    blob = f"{company} {title} {skills}"
+    if any(
+        k in blob
+        for k in (
+            "wedding",
+            "event",
+            "venue",
+            "hospitality",
+            "hotel",
+            "banquet",
+            "catering",
+            "resort",
+        )
+    ):
+        return "hospitality_events"
+    return "general"
+
+
+def _fallback_path(profile: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic path when the LLM is unavailable or returns junk."""
+    title = (profile.get("current_title") or "Professional").strip()
+    skills = profile.get("skills") or []
+    industry = _infer_industry_bucket(profile)
+
+    if industry == "hospitality_events":
+        if "assistant" in title.lower():
+            next_title = "Operations Manager - Events"
+        elif "manager" in title.lower():
+            next_title = "Venue Operations Manager"
+        else:
+            next_title = f"Senior {title}"
+        target_titles = [title, next_title, "Events Operations Manager"]
+    else:
+        next_title = f"Senior {title}" if not title.lower().startswith("senior") else title
+        target_titles = [title, next_title]
+
+    return {
+        "current_role": title,
+        "summary": (
+            f"You're building strong momentum as a {title}. With focused growth "
+            "you can step into more senior, higher-impact roles over the next "
+            "couple of years."
+        ),
+        "steps": [
+            {
+                "title": title,
+                "level": "current",
+                "timeframe": "now",
+                "rationale": "Where you are today, based on your profile.",
+                "skills_to_build": skills[:4],
+            },
+            {
+                "title": next_title,
+                "level": "next",
+                "timeframe": "6-12 months",
+                "rationale": "A natural next step in your industry, based on your CV.",
+                "skills_to_build": [],
+            },
+        ],
+        "target_titles": target_titles,
+    }
 
 
 def _parse_llm_json(content: str) -> dict[str, Any] | None:
@@ -531,38 +614,6 @@ def _clean_titles(raw: object) -> list[str]:
 def _derive_locations(profile: dict[str, Any]) -> list[str]:
     city = (profile.get("location_city") or "").strip()
     return [city] if city else []
-
-
-def _fallback_path(profile: dict[str, Any]) -> dict[str, Any]:
-    """Deterministic path when the LLM is unavailable or returns junk."""
-    title = (profile.get("current_title") or "Professional").strip()
-    skills = profile.get("skills") or []
-    next_title = f"Senior {title}" if not title.lower().startswith("senior") else title
-    return {
-        "current_role": title,
-        "summary": (
-            f"You're building strong momentum as a {title}. With focused growth "
-            "you can step into more senior, higher-impact roles over the next "
-            "couple of years."
-        ),
-        "steps": [
-            {
-                "title": title,
-                "level": "current",
-                "timeframe": "now",
-                "rationale": "Where you are today, based on your profile.",
-                "skills_to_build": skills[:4],
-            },
-            {
-                "title": next_title,
-                "level": "next",
-                "timeframe": "6-12 months",
-                "rationale": "A natural next step that builds on your current strengths.",
-                "skills_to_build": [],
-            },
-        ],
-        "target_titles": [title, next_title],
-    }
 
 
 async def run_career_path_update(

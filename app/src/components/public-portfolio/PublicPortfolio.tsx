@@ -17,8 +17,10 @@ import {
   Zap,
 } from "@/components/brand/icons";
 import { PublicProfileChat } from "@/components/public-portfolio/PublicProfileChat";
+import { PublicPortfolioRecruiterBar } from "@/components/public-portfolio/PublicPortfolioRecruiterBar";
 import { PortfolioIllustration } from "@/components/public-portfolio/PortfolioIllustration";
 import { HireschemaLogo } from "@/components/brand/HireschemaLogo";
+import { recruiterAuthUrl } from "@/lib/auth/post-auth-redirect";
 import { cn } from "@/lib/utils";
 import type { PublicIntelligence, PublicProfile } from "@/lib/api/publicProfile";
 
@@ -310,6 +312,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-6 lg:gap-8">
+          <PublicPortfolioRecruiterBar profile={profile} />
           {job && (
             <div className="lg:col-span-2 rounded-xl border border-accent/30 bg-accent/5 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="min-w-0">
@@ -626,7 +629,7 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
                       recruiter to request a warm intro.
                     </p>
                     <Link
-                      href={`/signup?role=recruiter&from=${encodeURIComponent(`/p/${profile.slug}`)}`}
+                      href={recruiterAuthUrl({ from: `/p/${profile.slug}` })}
                       className="inline-flex text-small font-medium text-accent hover:underline"
                     >
                       Sign up as a recruiter →
@@ -640,13 +643,13 @@ export function PublicPortfolio({ profile }: { profile: PublicProfile }) {
                     </p>
                     <div className="flex flex-wrap gap-3">
                       <Link
-                        href={`/signup?role=recruiter&from=${encodeURIComponent(`/p/${profile.slug}`)}`}
+                        href={recruiterAuthUrl({ from: `/p/${profile.slug}` })}
                         className="inline-flex text-small font-medium text-accent hover:underline"
                       >
                         Sign up →
                       </Link>
                       <Link
-                        href={`/login?from=${encodeURIComponent(`/p/${profile.slug}`)}`}
+                        href={recruiterAuthUrl({ from: `/p/${profile.slug}`, mode: "signin" })}
                         className="inline-flex text-small font-medium text-ink-700 hover:underline"
                       >
                         Log in

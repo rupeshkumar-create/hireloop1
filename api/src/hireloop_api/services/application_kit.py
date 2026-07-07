@@ -20,7 +20,6 @@ from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.job_present import serialize_job_card
 from hireloop_api.services.resume_tailor import generate_tailored_html, save_tailored_resume
 from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
-from hireloop_api.services.tailored_resume_settings import tailored_resume_enabled
 
 logger = structlog.get_logger()
 
@@ -362,9 +361,8 @@ async def prepare_application_kit(
     text_task = asyncio.create_task(
         _generate_text_assets(settings=settings, profile=profile, job=job)
     )
-    resume_enabled = tailored_resume_enabled(candidate)
     resume_html_task: asyncio.Task[str] | None = None
-    if resume_enabled and not existing_resume and settings.openrouter_api_key:
+    if not existing_resume and settings.openrouter_api_key:
         resume_html_task = asyncio.create_task(
             _generate_tailored_html_only(settings=settings, profile=profile, job=job)
         )
@@ -382,8 +380,6 @@ async def prepare_application_kit(
         except Exception as exc:
             logger.error("application_kit_resume_failed", error=str(exc))
             resume = {"resume_id": None, "status": "failed", "download_path": None}
-    elif not resume_enabled:
-        resume = {"resume_id": None, "status": "disabled", "download_path": None}
     else:
         resume = {"resume_id": None, "status": "unavailable", "download_path": None}
 

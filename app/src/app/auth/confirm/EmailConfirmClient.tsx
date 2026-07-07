@@ -7,6 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import {
+  clearPostAuthRedirect,
+  readPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
+import {
   clearSignupRole,
   readSignupRole,
   signupUrl,
@@ -74,8 +78,11 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
     const role = readSignupRole();
 
     try {
-      const destination = await finishAuthSession(accessToken, role);
+      const destination = await finishAuthSession(accessToken, role, {
+        redirect: readPostAuthRedirect(),
+      });
       clearSignupRole();
+      clearPostAuthRedirect();
       router.replace(destination);
     } catch (err) {
       setErrorMessage(

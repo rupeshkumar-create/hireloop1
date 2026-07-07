@@ -151,7 +151,7 @@ export function MatchFeed({
   } = useJobCardAssets();
 
   const load = useCallback(
-    async (reset = false) => {
+    async (reset = false, scoreFloor = minScore) => {
       const currentOffset = reset ? 0 : offset;
       const isFirst = reset || currentOffset === 0;
 
@@ -159,7 +159,7 @@ export function MatchFeed({
 
       try {
         const filters: MatchFeedFilters = {
-          min_score: minScore,
+          min_score: scoreFloor,
           limit: PAGE_SIZE,
           offset: currentOffset,
         };
@@ -191,6 +191,10 @@ export function MatchFeed({
 
         const rawData = await fetchMatchFeed(filters);
         const data = applyLocalFilters(rawData, { remoteOnly, seniority });
+
+        if (isFirst && data.length === 0 && scoreFloor > 0.25) {
+          return load(true, 0.25);
+        }
 
         setJobs((prev) => (isFirst ? data : [...prev, ...data]));
         if (isFirst && data.length > 0) setEmptyRefreshCount(0);

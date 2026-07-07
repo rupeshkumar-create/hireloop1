@@ -1,5 +1,6 @@
 """Career-path job title matching — block generic token false positives."""
 
+from hireloop_api.routes.career import needs_path_job_top_up
 from hireloop_api.services.career_path_jobs import (
     job_matches_path_titles,
     normalize_path_search_titles,
@@ -36,6 +37,19 @@ def test_job_matches_path_titles_accepts_category_roles() -> None:
     assert not job_matches_path_titles("Marketing Operations Manager", titles)
 
 
+def test_job_matches_path_titles_rejects_opposite_engineering_specialties() -> None:
+    titles = ["Senior Backend Engineer", "Backend Developer"]
+    assert not job_matches_path_titles("Frontend Engineer", titles)
+    assert not job_matches_path_titles("Mobile Engineer", titles)
+    assert job_matches_path_titles("Backend Engineer - Python", titles)
+
+
+def test_job_matches_path_titles_rejects_data_engineer_for_scientist_path() -> None:
+    titles = ["Data Scientist", "Machine Learning Scientist"]
+    assert not job_matches_path_titles("Data Engineer", titles)
+    assert job_matches_path_titles("Senior Data Scientist", titles)
+
+
 def test_rank_path_job_rows_prefers_phrase_matches() -> None:
     titles = ["Customer Success Manager"]
     rows = [
@@ -44,3 +58,10 @@ def test_rank_path_job_rows_prefers_phrase_matches() -> None:
     ]
     ranked = rank_path_job_rows(rows, titles, limit=5)
     assert [r["job_id"] for r in ranked] == ["2"]
+
+
+def test_path_discovery_tops_up_until_ten_relevant_jobs() -> None:
+    assert needs_path_job_top_up(0)
+    assert needs_path_job_top_up(9)
+    assert not needs_path_job_top_up(10)
+    assert not needs_path_job_top_up(20)

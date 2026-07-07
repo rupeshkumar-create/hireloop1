@@ -177,7 +177,7 @@ export function JobCard({
     try {
       if (next) {
         await saveJob(job.job_id);
-        toast.success("Saved to Jobs");
+        toast.success("Saved — open Saved tab below to build your application");
       } else {
         await unsaveJob(job.job_id);
         toast.success("Removed from saved");
@@ -439,7 +439,7 @@ export function JobCard({
                 : "Generate resume, cover letter, and interview prep"
             }
           >
-            {tailoring ? "Preparing" : tailoredReady ? "Preview" : "Prepare"}
+            {tailoring ? "Generating…" : tailoredReady ? "Preview kit" : "Generate application"}
           </Button>
         )}
 

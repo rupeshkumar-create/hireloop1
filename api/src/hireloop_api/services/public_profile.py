@@ -406,4 +406,17 @@ async def fetch_public_profile(
     }
     if job_context:
         payload["job_context"] = job_context
+
+    if viewer:
+        recruiter_row = await db.fetchrow(
+            """
+            SELECT id FROM public.recruiters
+            WHERE user_id = $1::uuid AND deleted_at IS NULL
+            """,
+            uuid.UUID(str(viewer["id"])),
+        )
+        if recruiter_row:
+            payload["viewer_is_recruiter"] = True
+            payload["candidate_id"] = str(cand["id"])
+
     return payload

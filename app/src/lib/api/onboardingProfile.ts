@@ -114,14 +114,8 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
     `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
     { method: "POST" },
   );
-  if (!applyRes.ok) {
-    const err = await applyRes.json().catch(() => ({}));
-    // Still show the parse summary — profile apply can be retried from dashboard.
-    if (applyRes.status !== 409) {
-      throw new Error(
-        (err as { detail?: string }).detail ?? "Couldn't apply your CV to your profile.",
-      );
-    }
+  if (!applyRes.ok && applyRes.status !== 409) {
+    // Resume is stored — profile apply can be retried from dashboard.
   }
   invalidateMatchFeedCache();
   return parsed;

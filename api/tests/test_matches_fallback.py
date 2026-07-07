@@ -174,6 +174,8 @@ class CachedAccorOnlyDb(CachedAccorDb):
         return []
 
     async def fetchval(self, query: str, *args: object) -> int:
+        if "FROM public.resumes" in query:
+            return 0
         assert "FROM public.match_scores" in query
         return 1
 

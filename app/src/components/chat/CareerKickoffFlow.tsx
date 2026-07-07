@@ -20,7 +20,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Sparkles } from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
-  fetchCareerPath,
   findJobsForPath,
   generateCareerPath,
   generateCareerPathResumes,
@@ -48,10 +47,11 @@ export type KickoffResult = {
   selectedTitles: string[];
   jobs: MatchedJob[];
   refreshing: boolean;
+  sourceAvailable?: boolean;
 };
 
 /** Build up to 3 distinct options from path steps (next/future) + target titles. */
-function buildOptions(path: CareerPath): PathOption[] {
+function buildOptions(path: CareerPath, currentTitle?: string | null): PathOption[] {
   const options: PathOption[] = [];
   const seen = new Set<string>();
   const push = (title: string, rationale: string | null) => {
@@ -60,6 +60,9 @@ function buildOptions(path: CareerPath): PathOption[] {
     seen.add(t.toLowerCase());
     options.push({ title: t, rationale });
   };
+  if (currentTitle?.trim()) {
+    push(currentTitle.trim(), "Your current role — search similar openings");
+  }
   for (const s of path.steps) {
     if (s.level === "next" || s.level === "future") {
       push(s.title, s.rationale);
@@ -121,19 +124,22 @@ export function CareerKickoffFlow({
     let cancelled = false;
     (async () => {
       try {
-        const [p, existing] = await Promise.all([
-          fetchMyProfile().catch(() => null),
-          fetchCareerPath().catch(() => null),
-        ]);
-        const path = existing ?? (await generateCareerPath());
+        const p = await fetchMyProfile().catch(() => null);
+        const path = await generateCareerPath();
         if (cancelled) return;
         setProfile(p);
         if (p?.candidate?.expected_ctc_min) setCtcMin(String(p.candidate.expected_ctc_min));
         if (p?.candidate?.expected_ctc_max) setCtcMax(String(p.candidate.expected_ctc_max));
-        const opts = buildOptions(path);
+        const opts = buildOptions(path, p?.candidate?.current_title);
         setOptions(opts);
-        // AI pre-selects its best guess — the candidate picks the ONE path.
-        setSelected(opts.slice(0, 1).map((o) => o.title));
+        // Default to current role when available — closest match to their CV.
+        const defaultPick =
+          opts.find((o) =>
+            p?.candidate?.current_title
+              ? o.title.toLowerCase() === p.candidate.current_title.toLowerCase()
+              : false,
+          ) ?? opts[0];
+        setSelected(defaultPick ? [defaultPick.title] : []);
         setStep("paths");
       } catch (err) {
         if (cancelled) return;
@@ -278,6 +284,7 @@ export function CareerKickoffFlow({
         selectedTitles: selected,
         jobs: result.jobs,
         refreshing: result.refreshing,
+        sourceAvailable: result.source_available ?? true,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start the job search.");

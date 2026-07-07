@@ -15,6 +15,11 @@ import { cn } from "@/lib/utils";
 
 type NotificationDrawerProps = {
   pendingIntros?: boolean;
+  /** Controlled open state (optional — defaults to internal toggle). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Hide the bell trigger (when another component opens the drawer). */
+  hideTrigger?: boolean;
 };
 
 function formatWhen(iso: string | null): string {
@@ -32,9 +37,22 @@ function formatWhen(iso: string | null): string {
   return date.toLocaleDateString();
 }
 
-export function NotificationDrawer({ pendingIntros = false }: NotificationDrawerProps) {
+export function NotificationDrawer({
+  pendingIntros = false,
+  open: openProp,
+  onOpenChange,
+  hideTrigger = false,
+}: NotificationDrawerProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (onOpenChange) onOpenChange(next);
+      else setOpenInternal(next);
+    },
+    [onOpenChange],
+  );
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -104,6 +122,7 @@ export function NotificationDrawer({ pendingIntros = false }: NotificationDrawer
 
   return (
     <>
+      {!hideTrigger && (
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -115,6 +134,7 @@ export function NotificationDrawer({ pendingIntros = false }: NotificationDrawer
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-accent" />
         )}
       </button>
+      )}
       {open && (
         <div
           className="fixed inset-0 z-50 flex justify-end bg-ink-900/20"

@@ -6,6 +6,7 @@ import { MessageCircle } from "@/components/brand/icons";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { ChatShellDrawer } from "@/components/chat/shell/ChatShellDrawer";
 import type { ChatChip, ChatMessage } from "@/lib/chat/types";
+import { recruiterAuthUrl } from "@/lib/auth/post-auth-redirect";
 import {
   fetchPublicProfileChat,
   getOrCreateVisitorSessionId,
@@ -160,10 +161,17 @@ export function PublicProfileChat({
         <p className="text-micro text-ink-500 text-center">
           Hiring?{" "}
           <Link
-            href={`/signup?role=recruiter&from=${encodeURIComponent(`/p/${slug}`)}`}
+            href={recruiterAuthUrl({ from: `/p/${slug}`, mode: "signin" })}
             className="text-accent hover:underline"
           >
-            Join as a recruiter
+            Log in
+          </Link>
+          {" · "}
+          <Link
+            href={recruiterAuthUrl({ from: `/p/${slug}` })}
+            className="text-accent hover:underline"
+          >
+            Sign up as recruiter
           </Link>
         </p>
       }

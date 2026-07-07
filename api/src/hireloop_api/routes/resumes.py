@@ -429,14 +429,20 @@ def _build_profile_updates_from_resume(
         updates["career_analysis"] = parsed.career_analysis
         fields_updated.append("career_analysis")
 
-    profile_will_have_title = bool(updates.get("current_title") or candidate["current_title"])
-    profile_will_have_experience = bool(
-        updates.get("years_experience") or candidate["years_experience"]
-    )
-    profile_will_have_skills = bool(updates.get("skills") or candidate["skills"])
-    if profile_will_have_title and (profile_will_have_experience or profile_will_have_skills):
+    if overwrite:
+        # Any deliberate CV upload counts as profile activation — even sparse parses.
         updates["profile_complete"] = True
-        fields_updated.append("profile_complete")
+        if "profile_complete" not in fields_updated:
+            fields_updated.append("profile_complete")
+    else:
+        profile_will_have_title = bool(updates.get("current_title") or candidate["current_title"])
+        profile_will_have_experience = bool(
+            updates.get("years_experience") or candidate["years_experience"]
+        )
+        profile_will_have_skills = bool(updates.get("skills") or candidate["skills"])
+        if profile_will_have_title and (profile_will_have_experience or profile_will_have_skills):
+            updates["profile_complete"] = True
+            fields_updated.append("profile_complete")
 
     return updates, fields_updated
 
@@ -756,6 +762,7 @@ async def apply_to_profile(
         AARYA_AUTO_INGEST,
         CAREER_INTELLIGENCE_UPDATE,
         CAREER_PATH_UPDATE,
+        MATCH_EMBED_CANDIDATE,
         RESUME_EMBED_SCORE,
         enqueue_job,
     )
@@ -765,6 +772,12 @@ async def apply_to_profile(
         kind=RESUME_EMBED_SCORE,
         payload={"candidate_id": candidate_id},
         idempotency_key=f"resume_embed_score:{candidate_id}",
+    )
+    await enqueue_job(
+        db,
+        kind=MATCH_EMBED_CANDIDATE,
+        payload={"candidate_id": candidate_id},
+        idempotency_key=f"match_embed_apply:{candidate_id}",
     )
     await enqueue_job(
         db,

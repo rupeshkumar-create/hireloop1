@@ -25,6 +25,7 @@ import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
 import { fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds, saveJob, subscribeSavedJobs } from "@/lib/api/saved-jobs";
+import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
 import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
@@ -134,6 +135,8 @@ export function DashboardClient({
 
     void fetchMyProfile().catch(() => {});
     void inferMarketFromGeo().catch(() => {});
+    invalidateMatchFeedCache();
+    void fetchMatchFeed(undefined, { force: true }).catch(() => {});
     void fetchIntros()
       .then((rows) => {
         if (!cancelled) {
@@ -183,9 +186,9 @@ export function DashboardClient({
   }
 
   function handleCareerKickoffComplete(result: KickoffResult) {
-    // Seed the matches feed silently — jobs are shown in chat, not via panel popup.
-    setKickoffMatchJobs(result.jobs);
+    setKickoffMatchJobs(result.jobs.length > 0 ? result.jobs : null);
     setKickoffMatchTitle(result.preferredTitle);
+    openPanel("jobs");
   }
 
   function handleRequestIntro(job: MatchedJob) {
@@ -339,8 +342,9 @@ export function DashboardClient({
                   kickoffJobs={kickoffMatchJobs}
                   kickoffTitle={kickoffMatchTitle}
                   onAskAarya={() =>
-                    sendToChat("Find me the best matching jobs for my profile right now.")
+                    sendToChat("Find me the best matching roles for my profile right now.")
                   }
+                  pendingIntros={pendingIntros}
                 />
               )}
               {activePanel === "career_path" && (

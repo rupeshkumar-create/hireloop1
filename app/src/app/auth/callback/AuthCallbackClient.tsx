@@ -7,6 +7,10 @@ import { finishAuthSession } from "@/lib/auth/finish-auth-session";
 import { exchangeOAuthCodeOnce } from "@/lib/auth/oauth-exchange";
 import { decodeAuthError } from "@/lib/auth/auth-errors";
 import {
+  clearPostAuthRedirect,
+  readPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
+import {
   clearSignupRole,
   readSignupRole,
   signupUrl,
@@ -96,7 +100,9 @@ export function AuthCallbackClient() {
 
       let destination = role === "recruiter" ? "/recruiter/onboarding" : "/onboarding";
       try {
-        destination = await finishAuthSession(session.access_token, role);
+        destination = await finishAuthSession(session.access_token, role, {
+          redirect: readPostAuthRedirect(searchParams),
+        });
       } catch (err) {
         const message =
           err instanceof ApiUnreachableError
@@ -111,6 +117,7 @@ export function AuthCallbackClient() {
       }
 
       clearSignupRole();
+      clearPostAuthRedirect();
 
       const isRealDeepLink =
         !!explicitNext && explicitNext.startsWith("/") && explicitNext !== "/onboarding";

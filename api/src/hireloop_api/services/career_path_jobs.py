@@ -37,6 +37,18 @@ _CROSS_FUNCTION_TOKENS = frozenset(
     }
 )
 
+_ENGINEERING_SPECIALTIES = frozenset(
+    {
+        "backend",
+        "frontend",
+        "mobile",
+        "fullstack",
+        "devops",
+        "quality",
+        "reliability",
+    }
+)
+
 
 def _conflicting_function_tokens(job_title: str | None, target: str) -> set[str]:
     job_tokens = canonical_title_tokens(job_title)
@@ -45,8 +57,29 @@ def _conflicting_function_tokens(job_title: str | None, target: str) -> set[str]
     return extra & _CROSS_FUNCTION_TOKENS
 
 
+def _role_family_conflict(job_title: str | None, target: str) -> bool:
+    job_tokens = canonical_title_tokens(job_title)
+    target_tokens = canonical_title_tokens(target)
+    if not job_tokens or not target_tokens:
+        return False
+
+    target_specialties = target_tokens & _ENGINEERING_SPECIALTIES
+    job_specialties = job_tokens & _ENGINEERING_SPECIALTIES
+    if target_specialties and job_specialties and not (target_specialties & job_specialties):
+        return True
+
+    if "scientist" in target_tokens and "engineer" in job_tokens:
+        science_tokens = {"scientist", "machine", "learning"}
+        if not (job_tokens & science_tokens):
+            return True
+
+    return False
+
+
 def _phrase_matches_title(target: str, job_title: str) -> bool:
     """Whole-phrase match without allowing 'Operations Manager' ⊂ 'Marketing Operations Manager'."""
+    if _role_family_conflict(job_title, target):
+        return False
     target_lower = target.strip().lower()
     job_lower = job_title.strip().lower()
     if len(target_lower) < 10:
@@ -93,15 +126,18 @@ def job_matches_path_titles(job_title: str | None, path_titles: list[str]) -> bo
     if not job_title or not path_titles:
         return False
 
-    if _meaningful_title_overlap(job_title, path_titles):
-        return True
-
     for target in path_titles:
+        if _role_family_conflict(job_title, target):
+            continue
+        if _meaningful_title_overlap(job_title, [target]):
+            return True
         if _phrase_matches_title(target, job_title):
             return True
 
     job_tokens = canonical_title_tokens(job_title)
     for target in path_titles:
+        if _role_family_conflict(job_title, target):
+            continue
         aff = title_affinity(target, job_title)
         if aff is None or aff < PATH_JOB_MIN_AFFINITY:
             continue

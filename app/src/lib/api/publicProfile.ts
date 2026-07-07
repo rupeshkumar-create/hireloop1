@@ -111,6 +111,8 @@ export type PublicProfile = {
   linkedin_url: string | null;
   privacy_mode?: boolean;
   viewer_authenticated?: boolean;
+  viewer_is_recruiter?: boolean;
+  candidate_id?: string | null;
   market?: string | null;
   intelligence?: PublicIntelligence | null;
   job_context?: {

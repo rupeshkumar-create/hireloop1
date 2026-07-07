@@ -4,13 +4,17 @@
 import { ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { getApiBaseUrl, getServerApiBaseUrl } from "@/lib/api/base-url";
 import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
+import {
+  isSafeRedirect,
+  readPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
 
 const BOOTSTRAP_TIMEOUT_MS = 45_000;
 
 export async function finishAuthSession(
   accessToken: string,
   role: "candidate" | "recruiter",
-  options?: { appOrigin?: string },
+  options?: { appOrigin?: string; redirect?: string | null },
 ): Promise<string> {
   const base =
     typeof window !== "undefined"
@@ -55,5 +59,11 @@ export async function finishAuthSession(
   }
 
   const resolvedRole = data.role ?? role;
+  const savedRedirect =
+    (options?.redirect && isSafeRedirect(options.redirect) ? options.redirect : null) ??
+    readPostAuthRedirect();
+  if (savedRedirect) {
+    return savedRedirect;
+  }
   return resolvePostAuthDestination(resolvedRole, Boolean(data.is_new_user));
 }

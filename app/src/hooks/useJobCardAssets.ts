@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { prepareApplicationKit } from "@/lib/api/applicationKit";
+import { getApplicationKitForJob, prepareApplicationKit } from "@/lib/api/applicationKit";
 import type { MatchedJob } from "@/lib/api/matches";
+import { saveJob } from "@/lib/api/saved-jobs";
 import {
   openLearningRoadmap,
   pollLearningRoadmap,
@@ -21,7 +22,12 @@ export type KitPreviewState = {
   tab: KitPreviewTab;
 } | null;
 
-export function useJobCardAssets() {
+export type UseJobCardAssetsOptions = {
+  onKitReady?: (job: MatchedJob) => void;
+  onJobSaved?: (jobId: string) => void;
+};
+
+export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
   const { toast } = useToast();
   const [kitByJob, setKitByJob] = useState<Record<string, AssetStatus>>({});
   const [roadmapByJob, setRoadmapByJob] = useState<Record<string, AssetStatus>>({});
@@ -30,11 +36,19 @@ export function useJobCardAssets() {
   const [preview, setPreview] = useState<KitPreviewState>(null);
 
   const openKitPreview = useCallback(
-    (job: MatchedJob, tab: KitPreviewTab = "resume") => {
+    async (job: MatchedJob, tab: KitPreviewTab = "resume") => {
+      let resumeId: string | null = resumeIdByJob[job.job_id] ?? null;
+      if (!resumeId) {
+        const kit = await getApplicationKitForJob(job.job_id).catch(() => null);
+        resumeId = kit?.tailored_resume_id ?? null;
+        if (resumeId) {
+          setResumeIdByJob((s) => ({ ...s, [job.job_id]: resumeId! }));
+        }
+      }
       setPreview({
         jobId: job.job_id,
         jobTitle: job.title,
-        resumeId: resumeIdByJob[job.job_id] ?? null,
+        resumeId,
         tab,
       });
     },
@@ -47,13 +61,15 @@ export function useJobCardAssets() {
     async (job: MatchedJob) => {
       const status = kitByJob[job.job_id];
       if (status === "ready") {
-        openKitPreview(job, "resume");
+        await openKitPreview(job, "resume");
         return;
       }
       if (status === "loading") return;
 
       setKitByJob((s) => ({ ...s, [job.job_id]: "loading" }));
       try {
+        options.onJobSaved?.(job.job_id);
+        void saveJob(job.job_id).catch(() => undefined);
         const kit = await prepareApplicationKit(job.job_id);
         const resumeId = kit.resume?.resume_id ?? null;
         if (resumeId) {
@@ -66,12 +82,13 @@ export function useJobCardAssets() {
           resumeId,
           tab: resumeId ? "resume" : kit.cover_letter ? "cover_letter" : "interview_prep",
         });
+        options.onKitReady?.(job);
       } catch (err) {
         setKitByJob((s) => ({ ...s, [job.job_id]: "error" }));
         toast.error((err as Error).message ?? "Couldn't prepare application kit");
       }
     },
-    [kitByJob, openKitPreview, toast]
+    [kitByJob, openKitPreview, options, toast]
   );
 
   const handleLearningRoadmap = useCallback(

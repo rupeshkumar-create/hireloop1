@@ -4,6 +4,7 @@
  */
 
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getServerApiBaseUrl } from "@/lib/api/base-url";
 import { createClient } from "@/lib/supabase/server";
@@ -44,5 +45,15 @@ export default async function RecruiterOnboardingPage() {
     }
   }
 
-  return <RecruiterOnboardingFlow />;
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-paper-0 text-ink-500 text-small">
+          Loading…
+        </div>
+      }
+    >
+      <RecruiterOnboardingFlow />
+    </Suspense>
+  );
 }

@@ -32,6 +32,7 @@ from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.routes.matches import (
     MatchedJob,
     _fetch_fallback_match_rows,
+    _fetch_starter_market_jobs,
     _serialize_cached_match_row,
 )
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
@@ -112,6 +113,13 @@ async def _resolve_candidate_id(db: asyncpg.Connection, user_id: str) -> str:
 # Prefilter SQL pool before Python title-fit gate (wider net, stricter final filter).
 _PATH_JOBS_SQL_PREFILTER_SCORE = 0.45
 _PATH_JOBS_SQL_FETCH_MULTIPLIER = 8
+MIN_PATH_DISCOVERY_JOBS = 10
+PATH_DISCOVERY_RETURN_LIMIT = 20
+
+
+def needs_path_job_top_up(job_count: int) -> bool:
+    """True until the career-path discovery has enough roles for the chat handoff."""
+    return job_count < MIN_PATH_DISCOVERY_JOBS
 
 
 async def _fetch_path_jobs(
@@ -376,10 +384,23 @@ async def find_jobs_for_path(
     from hireloop_api.services.job_preferences import normalize_remote_preference
 
     pref_row = await db.fetchrow(
-        "SELECT remote_preference FROM public.candidates WHERE id = $1::uuid",
+        """
+        SELECT remote_preference, location_city, location_state
+        FROM public.candidates
+        WHERE id = $1::uuid
+        """,
         uuid.UUID(candidate_id),
     )
-    remote_pref = normalize_remote_preference(pref_row["remote_preference"] if pref_row else None)
+    pref_data = dict(pref_row) if pref_row else {}
+    remote_pref = normalize_remote_preference(pref_data.get("remote_preference"))
+    candidate_locations = [
+        p
+        for p in [
+            pref_data.get("location_city"),
+            pref_data.get("location_state"),
+        ]
+        if p
+    ]
 
     path = await CareerPathService.get_latest(db, candidate_id)
     if path is None:
@@ -437,14 +458,14 @@ async def find_jobs_for_path(
             db,
             candidate_id,
             definition["id"],
-            limit=40,
+            limit=PATH_DISCOVERY_RETURN_LIMIT * 2,
             remote_preference=remote_pref,
             market=market,
         )
         rows = rank_path_job_rows(
             [dict(r) for r in pool_rows],
             path_search_titles,
-            limit=20,
+            limit=PATH_DISCOVERY_RETURN_LIMIT,
         )
         # Unscored pool rows (LEFT JOIN — fresh candidate) can't be served:
         # NULL score/computed_at fails response validation and renders as a
@@ -458,25 +479,25 @@ async def find_jobs_for_path(
                 db,
                 candidate_id,
                 definition["id"],
-                limit=40,
+                limit=PATH_DISCOVERY_RETURN_LIMIT * 2,
                 remote_preference=remote_pref,
                 market=market,
             )
             rows = rank_path_job_rows(
                 [dict(r) for r in pool_rows],
                 path_search_titles,
-                limit=20,
+                limit=PATH_DISCOVERY_RETURN_LIMIT,
             )
         # Below-threshold pairs stay unscored even after the pass — drop them.
         rows = [r for r in rows if r.get("overall_score") is not None]
 
     # 2) Supplement with per-candidate path matches when the pool is thin.
-    if len(rows) < 20:
+    if len(rows) < PATH_DISCOVERY_RETURN_LIMIT:
         extra = await _fetch_path_jobs(
             db,
             candidate_id,
             target_titles,
-            limit=20 - len(rows),
+            limit=PATH_DISCOVERY_RETURN_LIMIT - len(rows),
             remote_preference=remote_pref,
             market=market,
             prioritized_title=prioritized,
@@ -491,14 +512,14 @@ async def find_jobs_for_path(
     # Thin scored coverage → score now so the first click isn't empty (or just
     # the seeded demo jobs: _fetch_path_jobs inner-joins match_scores, so real
     # jobs the candidate was never scored against are invisible until this runs).
-    if len(rows) < 5:
+    if needs_path_job_top_up(len(rows)):
         engine = MatchingEngine(db)
-        await engine.score_candidate(candidate_id, limit=80)
+        await engine.score_candidate(candidate_id, limit=120)
         rescored = await _fetch_path_jobs(
             db,
             candidate_id,
             target_titles,
-            limit=20,
+            limit=PATH_DISCOVERY_RETURN_LIMIT,
             remote_preference=remote_pref,
             market=market,
             prioritized_title=prioritized,
@@ -511,7 +532,7 @@ async def find_jobs_for_path(
                 seen.add(jid)
 
     # Last resort: lexical market jobs (no precomputed match_scores row required).
-    if len(rows) < 5:
+    if needs_path_job_top_up(len(rows)):
         cand_row = await db.fetchrow(
             """
             SELECT c.id, c.market, c.headline, c.summary, c.current_title, c.current_company,
@@ -535,7 +556,7 @@ async def find_jobs_for_path(
                 db,
                 candidate=dict(cand_row),
                 min_score=0.30,
-                limit=20,
+                limit=PATH_DISCOVERY_RETURN_LIMIT,
                 offset=0,
                 remote_preference=remote_pref,
                 market=market,
@@ -547,6 +568,26 @@ async def find_jobs_for_path(
                 if jid not in seen:
                     rows.append(r)
                     seen.add(jid)
+
+    if needs_path_job_top_up(len(rows)):
+        starter = await _fetch_starter_market_jobs(
+            db,
+            candidate_id=uuid.UUID(candidate_id),
+            limit=PATH_DISCOVERY_RETURN_LIMIT,
+            remote_preference=remote_pref,
+            market=market,
+        )
+        ranked_starter = rank_path_job_rows(
+            [dict(r) for r in starter],
+            path_search_titles,
+            limit=PATH_DISCOVERY_RETURN_LIMIT - len(rows),
+        )
+        seen = {str(r["job_id"]) for r in rows}
+        for r in ranked_starter:
+            jid = str(r["job_id"])
+            if jid not in seen:
+                rows.append(dict(r))
+                seen.add(jid)
 
     # If we have nothing to show yet, confirm the upstream source is even
     # reachable so the UI can tell the user "search is unavailable" vs. "no
@@ -571,14 +612,14 @@ async def find_jobs_for_path(
             },
             idempotency_key=f"pool_ingest:{definition['slug']}:{market}",
         )
-    elif len(rows) < 8:
+    elif needs_path_job_top_up(len(rows)):
         await enqueue_job(
             db,
             kind=CAREER_PATH_INGEST,
             payload={
                 "candidate_id": candidate_id,
                 "queries": path_search_titles or target_titles,
-                "locations": target_locations,
+                "locations": target_locations or candidate_locations or ["India"],
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
         )
@@ -592,7 +633,7 @@ async def find_jobs_for_path(
         remote_preference="any",
     )
     if test_jobs and test_jobs_enabled(settings):
-        jobs = prepend_test_jobs(jobs, test_jobs, limit=20)
+        jobs = prepend_test_jobs(jobs, test_jobs, limit=PATH_DISCOVERY_RETURN_LIMIT)
     return {
         "jobs": jobs,
         "refreshing": source_available,
