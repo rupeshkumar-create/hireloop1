@@ -477,8 +477,14 @@ async def find_jobs_for_path(
             SELECT c.id, c.market, c.headline, c.summary, c.current_title, c.current_company,
                    c.years_experience, c.skills, c.location_city, c.location_state,
                    c.expected_ctc_min, c.expected_ctc_max, c.remote_preference,
-                   c.open_to_relocation, c.location_scope, c.prioritized_title,
-                   c.looking_for
+                   c.open_to_relocation, c.location_scope, c.looking_for,
+                   (
+                       SELECT cp.prioritized_title
+                       FROM public.career_paths cp
+                       WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                       ORDER BY cp.created_at DESC
+                       LIMIT 1
+                   ) AS prioritized_title
             FROM public.candidates c
             WHERE c.id = $1::uuid AND c.deleted_at IS NULL
             """,
