@@ -79,6 +79,48 @@ async def _send_html(settings: Settings, *, to_email: str, subject: str, html: s
     return False
 
 
+def default_notification_prefs(*, marketing_emails: bool = True) -> dict[str, dict[str, bool]]:
+    """Default opt-in matrix — matches Settings → Notifications categories."""
+    default_on = {"email": True, "whatsapp": True}
+    return {
+        "job_match_alerts": dict(default_on),
+        "intro_updates": dict(default_on),
+        "interview_reminders": dict(default_on),
+        "aarya_digest": dict(default_on),
+        "profile_views": dict(default_on),
+        "application_updates": dict(default_on),
+        "platform_updates": {"email": marketing_emails, "whatsapp": False},
+        # Legacy keys kept for older clients
+        "intro_status": dict(default_on),
+    }
+
+
+async def ensure_default_notification_prefs(
+    db: asyncpg.Connection,
+    user_id: uuid.UUID | str,
+) -> None:
+    """Seed notification_prefs when empty so Settings toggles gate email delivery."""
+    uid = uuid.UUID(str(user_id))
+    row = await db.fetchrow(
+        "SELECT notification_prefs FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+        uid,
+    )
+    if not row:
+        return
+    prefs = row["notification_prefs"]
+    if isinstance(prefs, dict) and prefs:
+        return
+    await db.execute(
+        """
+        UPDATE public.users
+        SET notification_prefs = $2::jsonb, updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL
+        """,
+        uid,
+        json.dumps(default_notification_prefs()),
+    )
+
+
 def _pref_channel_allowed(prefs: dict | None, category: str, channel: str) -> bool:
     """Default opt-in: missing prefs or missing channel → allowed."""
     if not prefs:

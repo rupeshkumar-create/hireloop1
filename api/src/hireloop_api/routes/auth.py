@@ -48,6 +48,7 @@ from hireloop_api.services.linkedin_oauth import (
     extract_linkedin_profile_url,
     heal_candidate_headline_from_linkedin,
 )
+from hireloop_api.services.notifications import ensure_default_notification_prefs
 from hireloop_api.services.supabase_auth_admin import (
     ensure_oauth_email_confirmed,
 )
@@ -298,7 +299,8 @@ async def _bootstrap_welcome_email(
     try:
         pool = await get_db_pool(settings)
         async with pool.acquire() as conn:
-            await maybe_send_signup_confirmation(
+            await ensure_default_notification_prefs(conn, user_id)
+            result = await maybe_send_signup_confirmation(
                 conn,
                 settings,
                 user_id=user_id,
@@ -306,6 +308,12 @@ async def _bootstrap_welcome_email(
                 full_name=full_name,
                 role=role,
             )
+            if not result.get("sent"):
+                logger.info(
+                    "bootstrap_welcome_email",
+                    user_id=str(user_id),
+                    **{k: result[k] for k in ("skipped",) if k in result},
+                )
     except Exception as exc:
         logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
 
@@ -540,8 +548,17 @@ async def bootstrap_user(
     except Exception as exc:
         logger.warning("oauth_email_confirm_failed", user_id=str(user_id), error=str(exc)[:200])
 
-    # Welcome email once for every new account (candidate vs recruiter template via Resend).
-    if is_new_user and current_user.get("email"):
+    # Welcome email once per account (deduped in consent_log) — also backfills seeded
+    # demo users who already had a candidate/recruiter row but never received welcome.
+    if current_user.get("email"):
+        try:
+            await ensure_default_notification_prefs(db, user_id)
+        except Exception as exc:
+            logger.warning(
+                "notification_prefs_seed_failed",
+                user_id=str(user_id),
+                error=str(exc)[:200],
+            )
         background_tasks.add_task(
             _bootstrap_welcome_email,
             user_id,

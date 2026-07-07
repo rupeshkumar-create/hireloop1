@@ -121,10 +121,16 @@ async def maybe_send_signup_confirmation(
     use_html = _html_email_configured(settings)  # SMTP (free, any recipient) or Resend
     use_sendgrid = _sendgrid_usable(settings) and bool(settings.sg_template_signup_confirmation)
     if not (use_html or use_sendgrid):
+        logger.warning(
+            "signup_welcome_skipped",
+            user_id=str(user_id),
+            reason="email_unconfigured",
+        )
         return {"sent": False, "skipped": "email_unconfigured"}
 
     if db is not None:
         if await _signup_email_already_sent(db, user_id):
+            logger.info("signup_welcome_skipped", user_id=str(user_id), reason="already_sent")
             return {"sent": False, "skipped": "already_sent"}
         if not email or not full_name or not role:
             row = await db.fetchrow(
@@ -141,6 +147,7 @@ async def maybe_send_signup_confirmation(
                 role = role or row["role"]
 
     if not email:
+        logger.warning("signup_welcome_skipped", user_id=str(user_id), reason="no_email")
         return {"sent": False, "skipped": "no_email"}
 
     effective_role = role if role in ("candidate", "recruiter") else "candidate"
@@ -179,6 +186,16 @@ async def maybe_send_signup_confirmation(
             await _mark_signup_email_sent(db, user_id)
         except Exception as exc:
             logger.error("signup_email_consent_log_failed", user_id=str(user_id), error=str(exc))
+
+    if sent:
+        logger.info("signup_welcome_sent", user_id=str(user_id), role=effective_role)
+    else:
+        logger.warning(
+            "signup_welcome_failed",
+            user_id=str(user_id),
+            role=effective_role,
+            provider="html" if use_html else "sendgrid",
+        )
 
     return {"sent": bool(sent)}
 

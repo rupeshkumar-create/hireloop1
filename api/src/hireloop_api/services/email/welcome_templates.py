@@ -19,6 +19,7 @@ def _shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> str:
     <a href="{escape(cta_url)}" style="background:#b9f84c;color:#000;text-decoration:none;padding:12px 20px;border-radius:0;border:2px solid #000;font-weight:600;display:inline-block">{escape(cta_label)}</a>
   </p>
   <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.5">Hireschema — AI recruiting for India, the US &amp; the UK</p>
+  <p style="font-size:11px;color:#aaa;margin-top:8px;line-height:1.5">Manage ongoing email alerts anytime in Settings → Notifications on Hireschema.</p>
 </div>"""
 
 

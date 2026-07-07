@@ -40,6 +40,7 @@ from hireloop_api.services.linkedin_oauth import (
     extract_linkedin_display_name,
     heal_candidate_headline_from_linkedin,
 )
+from hireloop_api.services.notifications import default_notification_prefs
 from hireloop_api.services.profile_experience import (
     build_merged_education,
     build_merged_experience,
@@ -1367,18 +1368,7 @@ async def record_onboarding_consent(
         raise HTTPException(status_code=400, detail="Terms and privacy policy must be accepted")
 
     user_id = uuid.UUID(str(current_user["id"]))
-    default_on = {"email": True, "whatsapp": True}
-    prefs = {
-        "job_match_alerts": dict(default_on),
-        "intro_updates": dict(default_on),
-        "interview_reminders": dict(default_on),
-        "aarya_digest": dict(default_on),
-        "profile_views": dict(default_on),
-        "application_updates": dict(default_on),
-        "platform_updates": {"email": body.marketing_emails, "whatsapp": False},
-        # Legacy keys kept for older clients
-        "intro_status": dict(default_on),
-    }
+    prefs = default_notification_prefs(marketing_emails=body.marketing_emails)
 
     async def _rest_consent() -> dict[str, Any]:
         from hireloop_api.services import supabase_users as rest_users

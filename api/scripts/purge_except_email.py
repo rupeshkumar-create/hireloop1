@@ -326,11 +326,16 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Purge all users except one email.")
     parser.add_argument("--email", default=DEFAULT_KEEP_EMAIL, help="Account to keep")
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="Allow purge when ENVIRONMENT=production (destructive)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
-    if settings.environment == "production":
-        print("Refusing to purge: ENVIRONMENT=production", file=sys.stderr)
+    if settings.environment == "production" and not args.allow_production:
+        print("Refusing to purge: ENVIRONMENT=production (pass --allow-production)", file=sys.stderr)
         raise SystemExit(1)
 
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")

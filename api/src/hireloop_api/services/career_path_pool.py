@@ -23,6 +23,43 @@ logger = structlog.get_logger()
 POOL_MATCH_MIN_AFFINITY = 0.28
 DEFAULT_POOL_MIN_JOBS = 20
 
+# Seniority/level words appear in almost every title — they must never carry a
+# pool match on their own ("Manager - Customer Success" was linking to the
+# Engineering Manager pool purely via "manager").
+_GENERIC_TITLE_TOKENS = frozenset(
+    {
+        "manager",
+        "management",
+        "senior",
+        "sr",
+        "jr",
+        "junior",
+        "head",
+        "lead",
+        "leader",
+        "director",
+        "vp",
+        "president",
+        "chief",
+        "officer",
+        "executive",
+        "associate",
+        "assistant",
+        "principal",
+        "staff",
+        "specialist",
+        "intern",
+        "fractional",
+    }
+)
+
+
+def _meaningful_tokens(text: str | None) -> frozenset[str]:
+    """Title tokens that identify the FUNCTION, not the level."""
+    from hireloop_api.services.titles import canonical_title_tokens
+
+    return canonical_title_tokens(text) - _GENERIC_TITLE_TOKENS
+
 
 def _title_variants(title: str) -> list[str]:
     """The full title plus its slash/dash segments.
@@ -66,7 +103,12 @@ async def resolve_definition_for_title(
     for row in rows:
         candidates = [row["display_title"], *list(row["search_titles"] or [])]
         for candidate in candidates:
+            cand_meaningful = _meaningful_tokens(candidate)
             for variant in variants:
+                # A pool match must share at least one function token —
+                # level words alone ("manager", "head") don't count.
+                if not (_meaningful_tokens(variant) & cand_meaningful):
+                    continue
                 aff = title_affinity(variant, candidate)
                 if aff is not None and aff > best_score:
                     best_score = aff

@@ -97,7 +97,7 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className={cn(BTN_ICON, "h-8 w-8 text-ink-500")}
+            className={cn(BTN_ICON, "h-8 w-8")}
           >
             <X className="h-4 w-4" strokeWidth={1.5} />
           </button>

@@ -220,7 +220,7 @@ export function SettingsPanel({
       <Card>
         <CardHeader
           title="Notifications"
-          description="Choose which updates Aarya emails you about (via Resend)."
+          description="Email alerts from Hireschema (via Resend). Turn a category off to stop those emails. Your one-time welcome email is sent at signup."
         />
         <CardBody className="space-y-0.5 !pt-0">
           {NOTIFICATION_CATEGORIES.map((cat) => (
