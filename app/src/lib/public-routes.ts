@@ -5,6 +5,8 @@ const PUBLIC_PREFIXES = [
   "/auth",
   "/onboarding",
   "/voice",
+  "/privacy",
+  "/terms",
   "/p/",
   "/r/",
 ] as const;
