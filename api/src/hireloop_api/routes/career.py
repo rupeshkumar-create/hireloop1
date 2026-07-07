@@ -476,7 +476,7 @@ async def find_jobs_for_path(
             """
             SELECT c.id, c.market, c.headline, c.summary, c.current_title, c.current_company,
                    c.years_experience, c.skills, c.location_city, c.location_state,
-                   c.expected_ctc_min, c.expected_ctc_max, c.open_to_remote,
+                   c.expected_ctc_min, c.expected_ctc_max, c.remote_preference,
                    c.open_to_relocation, c.location_scope, c.prioritized_title,
                    c.looking_for
             FROM public.candidates c
