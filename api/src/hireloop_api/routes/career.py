@@ -650,7 +650,6 @@ async def download_career_path_resume(
 ) -> Response:
     from hireloop_api.services.career_path_resume import fetch_path_resume_html
     from hireloop_api.services.resume_export import (
-        ascii_download_filename,
         content_disposition_header,
         html_resume_to_docx,
     )
@@ -668,11 +667,14 @@ async def download_career_path_resume(
 
     if file_format == "docx":
         docx_bytes = html_resume_to_docx(html_fragment, title=doc_title)
-        filename = ascii_download_filename(title_base, ext="docx")
         return Response(
             content=docx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": content_disposition_header("attachment", title_base, ext="docx")},
+            headers={
+                "Content-Disposition": content_disposition_header(
+                    "attachment", title_base, ext="docx"
+                )
+            },
         )
 
     auto_print = file_format == "pdf" or (file_format == "html" and print_dialog)
@@ -685,8 +687,6 @@ async def download_career_path_resume(
     return HTMLResponse(
         content=html_doc,
         headers={
-            "Content-Disposition": content_disposition_header(
-                disposition, title_base, ext="html"
-            )
+            "Content-Disposition": content_disposition_header(disposition, title_base, ext="html")
         },
     )

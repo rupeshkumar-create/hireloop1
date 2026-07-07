@@ -5,8 +5,8 @@ from hireloop_api.services.public_profile import (
     slug_needs_anonymization,
 )
 from hireloop_api.services.public_profile_intelligence import (
-    scrub_profile_for_privacy,
     _strip_headline_company,
+    scrub_profile_for_privacy,
 )
 
 

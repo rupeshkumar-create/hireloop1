@@ -396,18 +396,21 @@ async def notify_job_match(
 
     user_id = str(row["user_id"])
     dedupe_key = f"job:{job_id}"
-    if await _already_notified(
-        db, user_id=user_id, notif_type="job_match", dedupe_key=dedupe_key
-    ):
+    if await _already_notified(db, user_id=user_id, notif_type="job_match", dedupe_key=dedupe_key):
         return
 
     app_base = _app_base(settings)
     deep_link = f"{app_base}/dashboard?job={job_id}"
-    pct = int(round(overall_score * 100))
+    pct = round(overall_score * 100)
     title = job_title
     company = company_name or "a company"
     notif_body = f"{title} at {company} — {pct}% match"
-    data = {"job_id": job_id, "deep_link": deep_link, "score": overall_score, "dedupe_key": dedupe_key}
+    data = {
+        "job_id": job_id,
+        "deep_link": deep_link,
+        "score": overall_score,
+        "dedupe_key": dedupe_key,
+    }
 
     channels = ["in_app"]
     if row["email"]:
@@ -450,7 +453,9 @@ async def notify_job_match(
         data=data,
         channels=channels,
     )
-    logger.info("job_match_notified", user_id=user_id, job_id=job_id, score=overall_score, channels=channels)
+    logger.info(
+        "job_match_notified", user_id=user_id, job_id=job_id, score=overall_score, channels=channels
+    )
 
 
 async def notify_intro_lifecycle(
@@ -473,7 +478,10 @@ async def notify_intro_lifecycle(
         uuid.UUID(recipient_user_id),
     )
     if user and user["email"] and email_template_data:
-        tpl = {**email_template_data, "full_name": email_template_data.get("full_name") or user["full_name"]}
+        tpl = {
+            **email_template_data,
+            "full_name": email_template_data.get("full_name") or user["full_name"],
+        }
         email_result = await send_category_email(
             db,
             settings,

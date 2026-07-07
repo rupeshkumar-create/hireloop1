@@ -23,7 +23,11 @@ _MAX_HISTORY = 12
 _MAX_MESSAGE_LEN = 2000
 
 _DEFAULT_CHIPS = [
-    {"id": "roles", "label": "What roles are they open to?", "message": "What roles are they open to?"},
+    {
+        "id": "roles",
+        "label": "What roles are they open to?",
+        "message": "What roles are they open to?",
+    },
     {
         "id": "summary",
         "label": "Summarize for my hiring manager",
@@ -274,7 +278,9 @@ async def stream_public_profile_message(
     else:
         try:
             async for chunk in llm.astream(messages):
-                piece = chunk.content if isinstance(chunk.content, str) else str(chunk.content or "")
+                piece = (
+                    chunk.content if isinstance(chunk.content, str) else str(chunk.content or "")
+                )
                 if not piece:
                     continue
                 reply_parts.append(piece)

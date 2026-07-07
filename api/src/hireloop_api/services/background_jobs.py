@@ -43,6 +43,7 @@ JOB_EMBED = "job_embed"
 JOB_SCORE = "job_score"
 JOB_INGEST = "job_ingest"
 LINKDAPI_ENRICH = "linkdapi_enrich"
+HM_ENRICH = "hm_enrich"
 INTERVIEW_REMINDER = "interview_reminder"
 AARYA_WEEKLY_DIGEST = "aarya_weekly_digest"
 
@@ -463,7 +464,6 @@ async def _handle_interview_reminder(settings: Settings, payload: dict[str, Any]
 
 
 async def _handle_aarya_weekly_digest(settings: Settings, payload: dict[str, Any]) -> None:
-    from datetime import UTC, datetime, timedelta
 
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.notifications import schedule_weekly_digest, send_weekly_digest

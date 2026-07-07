@@ -2393,8 +2393,10 @@ def _parse_linkedin_export(text: str) -> ParsedResume | None:
     years_experience = _estimate_years_static(work_exp)
 
     profile_headline = headline
-    if profile_headline and _looks_like_role_title(profile_headline) and not _looks_like_tagline(
+    if (
         profile_headline
+        and _looks_like_role_title(profile_headline)
+        and not _looks_like_tagline(profile_headline)
     ):
         profile_headline = None
 
@@ -2942,7 +2944,9 @@ def _infer_work_experience(
     for i, line in enumerate(lines):
         header = line.lower().strip(" :")
         if header in _SECTION_HEADERS:
-            in_education = header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
+            in_education = (
+                header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
+            )
             continue
         if linkedin_mode and exp_start is not None and i < exp_start:
             continue
@@ -3202,7 +3206,9 @@ def _infer_education(lines: list[str]) -> list[Education]:
     for line in lines:
         header = line.lower().strip(" :")
         if header in _SECTION_HEADERS:
-            in_education = header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
+            in_education = (
+                header in _LINKEDIN_EDU_MARKERS or "education" in header or "academic" in header
+            )
             continue
         if _looks_like_contact_line(line):
             continue

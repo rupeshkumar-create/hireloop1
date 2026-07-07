@@ -170,7 +170,9 @@ async def _enqueue_candidate_match_scoring(
             idempotency_key=f"match_embed_feed:{candidate_id}",
         )
     except Exception as exc:
-        logger.debug("match_score_enqueue_failed", candidate_id=str(candidate_id), error=str(exc)[:200])
+        logger.debug(
+            "match_score_enqueue_failed", candidate_id=str(candidate_id), error=str(exc)[:200]
+        )
 
 
 # ── Auth helper ───────────────────────────────────────────────────────────────

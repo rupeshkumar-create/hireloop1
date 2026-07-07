@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -17,6 +18,8 @@ from hireloop_api.services.public_profile_chat import (
     stream_public_profile_message,
 )
 from hireloop_api.services.public_role import fetch_public_role
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -57,8 +60,8 @@ async def get_public_profile(
                 candidate_user_id=owner["user_id"],
                 slug=slug.strip(),
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("public_profile_notify_failed", error=str(exc)[:200])
 
     return profile
 

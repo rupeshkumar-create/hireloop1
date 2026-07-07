@@ -28,7 +28,7 @@ def content_disposition_header(disposition: str, basename: str, *, ext: str = "h
     safe = ascii_download_filename(basename, ext=ext)
     full = f"{basename}.{ext}"
     encoded = quote(full)
-    return f'{disposition}; filename="{safe}"; filename*=UTF-8\'\'{encoded}'
+    return f"{disposition}; filename=\"{safe}\"; filename*=UTF-8''{encoded}"
 
 
 def _extract_body_html(html: str) -> str:
