@@ -26,6 +26,7 @@ import {
 import { getCachedProfile } from "@/lib/api/profile";
 import { marketByCode, type MarketCode } from "@/lib/markets";
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
+import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Draft",
@@ -203,6 +204,7 @@ export default function RecruiterRolesPage() {
                     >
                       <Kanban className="h-4 w-4" strokeWidth={1.5} />
                     </Link>
+                    <ShareRoleLink publicRoleUrl={role.public_role_url} />
                     <Link
                       href={`/recruiter/roles/${role.id}/intake`}
                       className="text-ink-400 hover:text-ink-900 shrink-0"

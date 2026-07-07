@@ -6,6 +6,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Briefcase,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
 import {
   listRecruiterCandidates,
   listRoles,
+  publishAndRequestIntro,
   type RecruiterCandidateSearchHit,
   type RoleListItem,
 } from "@/lib/api/recruiter";
@@ -35,11 +37,13 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
+  const router = useRouter();
   const location = [hit.location_city, hit.location_state].filter(Boolean).join(", ");
   const roleLine = [hit.current_title, hit.current_company].filter(Boolean).join(" @ ");
   const pipelineHref = hit.role_id ? `/recruiter/roles/${hit.role_id}/pipeline` : null;
   const skills = (hit.skills ?? []).slice(0, 6);
   const summary = hit.summary?.trim() || hit.headline?.trim() || null;
+  const canChat = Boolean(hit.role_id);
 
   return (
     <Card className="overflow-hidden">
@@ -123,6 +127,20 @@ function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
               </Button>
             </Link>
           )}
+          <Button
+            variant={canChat ? "secondary" : "ghost"}
+            size="sm"
+            disabled={!canChat}
+            title={canChat ? "Start a chat via intro request" : "Select a role to start a chat"}
+            onClick={() => {
+              if (!hit.role_id) return;
+              void publishAndRequestIntro(hit.role_id, hit.candidate_id).finally(() => {
+                router.push("/recruiter/inbox");
+              });
+            }}
+          >
+            Chat
+          </Button>
           {hit.public_profile_url ? (
             <a
               href={hit.public_profile_url}

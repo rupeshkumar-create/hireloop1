@@ -30,6 +30,7 @@ import {
 } from "@/lib/api/recruiter";
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 
 const ROLE_STATUS_TONE: Record<string, "muted" | "strong" | "accent"> = {
   draft: "muted",
@@ -434,11 +435,16 @@ export default function RecruiterDashboardPage() {
                 href={`/recruiter/roles/${role.id}/intake`}
                 className="rounded-lg border border-ink-100 bg-paper-1 px-4 py-3 hover:border-ink-200 transition-colors"
               >
-                <p className="text-small font-medium text-ink-900 truncate">{role.title}</p>
-                <p className="text-micro text-ink-500 mt-0.5">
-                  {role.pipeline_count} in pipeline
-                  {role.location_city ? ` · ${role.location_city}` : ""}
-                </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-small font-medium text-ink-900 truncate">{role.title}</p>
+                    <p className="text-micro text-ink-500 mt-0.5">
+                      {role.pipeline_count} in pipeline
+                      {role.location_city ? ` · ${role.location_city}` : ""}
+                    </p>
+                  </div>
+                  <ShareRoleLink publicRoleUrl={role.public_role_url} className="shrink-0" />
+                </div>
               </Link>
             ))}
           </div>

@@ -322,7 +322,7 @@ async def recruiter_dashboard(
 
     role_rows = await db.fetch(
         """
-        SELECT id, title, status, location_city, updated_at,
+        SELECT id, title, status, location_city, updated_at, public_slug, public_listing_enabled,
                (SELECT count(*)::int FROM public.role_pipeline p
                   WHERE p.role_id = roles.id) AS pipeline_count
         FROM public.roles
@@ -351,6 +351,10 @@ async def recruiter_dashboard(
         d["id"] = str(d["id"])
         if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
             d["updated_at"] = d["updated_at"].isoformat()
+        slug = d.get("public_slug")
+        d["public_role_url"] = (
+            public_role_path(str(slug)) if slug and d.get("public_listing_enabled") else None
+        )
         roles.append(d)
 
     return {
@@ -476,7 +480,7 @@ async def list_roles(
     rows = await db.fetch(
         """
         SELECT r.id, r.title, r.status, r.location_city, r.comp_min, r.comp_max,
-               r.version, r.created_at, r.updated_at,
+               r.version, r.created_at, r.updated_at, r.public_slug, r.public_listing_enabled,
                (r.hiring_brief IS NOT NULL) AS has_brief,
                EXISTS(
                  SELECT 1 FROM public.jobs j
@@ -498,6 +502,10 @@ async def list_roles(
             d["created_at"] = d["created_at"].isoformat()
         if d.get("updated_at") and hasattr(d["updated_at"], "isoformat"):
             d["updated_at"] = d["updated_at"].isoformat()
+        slug = d.get("public_slug")
+        d["public_role_url"] = (
+            public_role_path(str(slug)) if slug and d.get("public_listing_enabled") else None
+        )
         out.append(d)
     return out
 

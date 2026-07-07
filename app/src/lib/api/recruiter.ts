@@ -174,6 +174,7 @@ export type RoleListItem = {
   location_city: string | null;
   comp_min: number | null;
   comp_max: number | null;
+  public_role_url?: string | null;
   /** Progress signals for the "next step" hint on the roles list. */
   has_brief?: boolean;
   published?: boolean;
@@ -220,6 +221,7 @@ export type RecruiterDashboardData = {
     location_city: string | null;
     pipeline_count: number;
     updated_at?: string;
+    public_role_url?: string | null;
   }>;
 };
 
