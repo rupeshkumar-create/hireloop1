@@ -74,7 +74,13 @@ def test_prepend_test_jobs_keeps_test_roles_first() -> None:
 
 
 def test_test_jobs_disabled_in_production() -> None:
-    settings = Settings(environment="production")
+    # Production Settings enforce strong secrets — provide dummies so the
+    # test doesn't depend on the local .env (CI has none).
+    settings = Settings(
+        environment="production",
+        secret_key="x" * 40,
+        service_secret="y" * 40,
+    )
     assert _test_jobs_enabled(settings) is False
 
 
