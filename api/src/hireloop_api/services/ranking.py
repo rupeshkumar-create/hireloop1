@@ -171,6 +171,7 @@ def boost_by_saved(
     saved_jobs: list[dict],
     *,
     score_key: str = "overall_score",
+    output_key: str | None = None,
     max_boost: float = 0.12,
 ) -> list[dict]:
     """
@@ -178,18 +179,20 @@ def boost_by_saved(
     up in proportion to how much it resembles something they've already saved
     (same company / title / seniority / city signal, via `job_similarity`).
 
-    Adds `max_boost * best_similarity_to_any_saved_job` to the score (capped at
-    1.0) and records `saved_affinity` for transparency. No-op when nothing is
-    saved, so it never hurts a cold-start feed.
+    Writes `max_boost * best_similarity_to_any_saved_job` to `output_key` when
+    provided, leaving `score_key` untouched for display. Without `output_key`,
+    the historical behaviour is preserved and `score_key` is updated in-place.
+    Records `saved_affinity` for transparency. No-op when nothing is saved, so
+    it never hurts a cold-start feed.
     """
     if not saved_jobs:
         return items
     for item in items:
         affinity = max((job_similarity(item, s) for s in saved_jobs), default=0.0)
         item["saved_affinity"] = round(affinity, 4)
-        if affinity > 0:
-            base = float(item.get(score_key) or 0.0)
-            item[score_key] = round(min(1.0, base + max_boost * affinity), 4)
+        base = float(item.get(score_key) or 0.0)
+        boosted = round(min(1.0, base + max_boost * affinity), 4) if affinity > 0 else base
+        item[output_key or score_key] = boosted
     return items
 
 

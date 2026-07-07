@@ -485,7 +485,7 @@ async def get_match_feed(
     # order for pagination stability. Tiers are attached for the UI badge.
     if offset == 0:
         saved = await _fetch_saved_job_signals(db, candidate["id"])
-        boost_by_saved(result, saved)
+        boost_by_saved(result, saved, output_key="_ranking_score")
         # Short curated screens get MMR diversity; longer feeds keep SQL order
         # (newest matches first) so the sidebar can show ~50 recent roles.
         if limit <= 20:
@@ -496,7 +496,10 @@ async def get_match_feed(
             result = assemble_first_screen(
                 result,
                 screen_size=min(limit, 10),
-                fuse_signals=("overall_score", "skills_score"),
+                fuse_signals=(
+                    "_ranking_score" if saved else "overall_score",
+                    "skills_score",
+                ),
             )
         market_count = len(_market_feed_items(result))
         if market_count < 3 and test_jobs_enabled(settings):
@@ -526,6 +529,7 @@ async def get_match_feed(
     # Strip the internal cache flag before it reaches the response model.
     for item in result:
         item.pop("_rationale_cached", None)
+        item.pop("_ranking_score", None)
     # Annotate each card with the candidate's matched vs missing skills (same
     # canonical taxonomy as scoring) so the feed shows "N of M skills" at a glance.
     _annotate_skill_match(result, candidate.get("skills"))
@@ -1253,14 +1257,20 @@ async def _fetch_fallback_match_rows(
 
 
 def _serialize_fallback_match_row(
-    row: asyncpg.Record | dict, *, candidate: dict, relaxed: bool = False
+    row: asyncpg.Record | dict,
+    *,
+    candidate: dict,
+    relaxed: bool = False,
+    allow_low_score: bool = False,
 ) -> dict | None:
     row_dict = dict(row)
     job_skills = list(row_dict.get("skills_required") or [])
     cand_row = _candidate_quality_row(candidate)
     job_row = _job_quality_row(row_dict)
     score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
-    if relaxed:
+    if allow_low_score:
+        pass
+    elif relaxed:
         if float(score.get("overall") or 0.0) < 0.25:
             return None
     elif not should_persist_match(cand_row, job_row, score):

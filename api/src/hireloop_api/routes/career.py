@@ -270,6 +270,47 @@ async def _ingest_and_rescore(
             logger.error("career_find_jobs_rescore_failed", error=str(exc))
 
 
+async def _ingest_candidate_and_rescore(settings: Settings, candidate_id: str) -> None:
+    """
+    Background task: derive the freshest candidate-scoped Apify inputs from the
+    latest profile + prioritized career path, ingest, then re-score.
+    """
+    from hireloop_api.services.apify.job_ingester import JobIngester
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        if settings.apify_token:
+            ingester = JobIngester(
+                apify_token=settings.apify_token,
+                db=conn,
+                settings=settings,
+                jobs_actor=settings.apify_jobs_actor,
+            )
+            stats = await ingester.ingest_for_candidate(
+                candidate_id,
+                max_results_per_query=25,
+                time_range="6m",
+            )
+            logger.info("career_candidate_ingest_done", **stats)
+        else:
+            logger.info("career_candidate_ingest_skipped", reason="no_apify_token")
+
+        try:
+            from hireloop_api.services.embeddings import embed_pending_and_score_candidate
+
+            embedded, scored = await embed_pending_and_score_candidate(
+                conn, settings, candidate_id, limit=150
+            )
+            logger.info(
+                "career_candidate_ingest_rescored",
+                candidate_id=candidate_id,
+                embedded=embedded,
+                scored=scored,
+            )
+        except Exception as exc:
+            logger.error("career_candidate_ingest_rescore_failed", error=str(exc))
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -330,31 +371,12 @@ async def prioritize_career_path(
     try:
         from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
 
-        loc_row = await db.fetchrow(
-            """
-            SELECT location_city, location_state
-            FROM public.candidates
-            WHERE id = $1::uuid AND deleted_at IS NULL
-            """,
-            uuid.UUID(candidate_id),
-        )
-        loc_data = dict(loc_row) if loc_row else {}
-        locations = [
-            p
-            for p in [
-                loc_data.get("location_city"),
-                loc_data.get("location_state"),
-            ]
-            if p
-        ] or path.get("target_locations") or ["India"]
-        queries = path.get("target_titles") or [title]
         await enqueue_job(
             db,
             kind=CAREER_PATH_INGEST,
             payload={
                 "candidate_id": candidate_id,
-                "queries": queries,
-                "locations": locations,
+                "derive_from_candidate": True,
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
         )
@@ -391,14 +413,6 @@ async def find_jobs_for_path(
     )
     pref_data = dict(pref_row) if pref_row else {}
     remote_pref = normalize_remote_preference(pref_data.get("remote_preference"))
-    candidate_locations = [
-        p
-        for p in [
-            pref_data.get("location_city"),
-            pref_data.get("location_state"),
-        ]
-        if p
-    ]
 
     path = await CareerPathService.get_latest(db, candidate_id)
     if path is None:
@@ -616,8 +630,7 @@ async def find_jobs_for_path(
             kind=CAREER_PATH_INGEST,
             payload={
                 "candidate_id": candidate_id,
-                "queries": path_search_titles or target_titles,
-                "locations": target_locations or candidate_locations or ["India"],
+                "derive_from_candidate": True,
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
         )

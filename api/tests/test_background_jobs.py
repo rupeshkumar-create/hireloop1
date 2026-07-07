@@ -157,3 +157,39 @@ async def test_mark_failed_retries_then_dead() -> None:
         max_attempts=2,
     )
     assert db.jobs[job_id]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_career_path_ingest_derives_from_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: dict[str, str] = {}
+
+    async def _fake_candidate_ingest(settings: Settings, candidate_id: str) -> None:
+        called["candidate_id"] = candidate_id
+
+    async def _fail_raw_ingest(
+        settings: Settings,
+        candidate_id: str,
+        queries: list[str],
+        locations: list[str],
+    ) -> None:
+        raise AssertionError("raw query ingest should not run for derived candidate payload")
+
+    monkeypatch.setattr(
+        "hireloop_api.routes.career._ingest_candidate_and_rescore",
+        _fake_candidate_ingest,
+    )
+    monkeypatch.setattr(
+        "hireloop_api.routes.career._ingest_and_rescore",
+        _fail_raw_ingest,
+    )
+
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await bj._handle_career_path_ingest(
+        settings,
+        {
+            "candidate_id": "11111111-1111-1111-1111-111111111111",
+            "derive_from_candidate": True,
+        },
+    )
+
+    assert called["candidate_id"] == "11111111-1111-1111-1111-111111111111"

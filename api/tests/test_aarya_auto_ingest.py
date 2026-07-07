@@ -207,6 +207,5 @@ async def test_empty_search_with_career_path_enqueues_path_ingest_even_when_flag
     assert fired["kind"] == CAREER_PATH_INGEST
     assert fired["payload"] == {
         "candidate_id": str(_CAND_ID),
-        "queries": ["Category Manager", "Senior Category Manager"],
-        "locations": ["Bengaluru", "Karnataka"],
+        "derive_from_candidate": True,
     }

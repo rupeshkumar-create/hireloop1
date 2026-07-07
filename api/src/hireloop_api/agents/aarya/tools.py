@@ -924,22 +924,13 @@ async def job_search(
         )
 
         candidate_id = str(candidate["id"])
-        location_parts = [
-            p
-            for p in [
-                candidate_profile.get("location_city") if candidate_profile else None,
-                candidate_profile.get("location_state") if candidate_profile else None,
-            ]
-            if p
-        ]
         if target_titles:
             await enqueue_job(
                 db,
                 kind=CAREER_PATH_INGEST,
                 payload={
                     "candidate_id": candidate_id,
-                    "queries": target_titles,
-                    "locations": location_parts or ["India"],
+                    "derive_from_candidate": True,
                 },
                 idempotency_key=f"career_path_ingest:{candidate_id}",
             )

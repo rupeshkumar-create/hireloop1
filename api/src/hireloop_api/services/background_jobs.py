@@ -250,9 +250,12 @@ async def list_background_jobs(
 
 
 async def _handle_career_path_ingest(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.routes.career import _ingest_and_rescore
+    from hireloop_api.routes.career import _ingest_and_rescore, _ingest_candidate_and_rescore
 
     candidate_id = str(payload["candidate_id"])
+    if payload.get("derive_from_candidate"):
+        await _ingest_candidate_and_rescore(settings, candidate_id)
+        return
     queries = list(payload.get("queries") or [])
     locations = list(payload.get("locations") or ["India"])
     await _ingest_and_rescore(settings, candidate_id, queries, locations)

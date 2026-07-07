@@ -90,7 +90,7 @@ export function DashboardClient({
   const { toast } = useToast();
   // Post-onboarding guided flow (?kickoff=career) — read once on mount so the
   // wizard survives the URL cleanup below.
-  const [initialKickoff] = useState(
+  const [initialKickoff, setInitialKickoff] = useState(
     () =>
       searchParams?.get("kickoff") === "career" ||
       isClientOnboardingCompleteRecent(),
@@ -191,6 +191,8 @@ export function DashboardClient({
   }
 
   function handleCareerKickoffComplete(result: KickoffResult) {
+    clearClientOnboardingComplete();
+    setInitialKickoff(false);
     setKickoffMatchJobs(null);
     setKickoffMatchTitle(result.preferredTitle);
     syncDashboardUrl(activePanel);

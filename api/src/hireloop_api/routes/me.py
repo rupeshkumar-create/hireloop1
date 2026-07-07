@@ -1223,7 +1223,28 @@ async def list_saved_jobs(
 ) -> list[dict[str, Any]]:
     """Return jobs the candidate bookmarked, newest first."""
     candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        """
+        SELECT c.id, c.current_title, c.current_company, c.looking_for, c.headline, c.summary,
+               c.years_experience, c.skills,
+               c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
+               c.remote_preference, c.open_to_relocation, c.location_scope,
+               (
+                   SELECT cp.target_titles
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS target_titles,
+               (
+                   SELECT cp.prioritized_title
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS prioritized_title
+        FROM public.candidates c
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
+        """,
         uuid.UUID(str(current_user["id"])),
     )
     if not candidate:
@@ -1246,6 +1267,7 @@ async def list_saved_jobs(
             j.ctc_max,
             j.salary_currency,
             j.skills_required,
+            j.description,
             j.apply_url,
             ms.overall_score,
             ms.skills_score,
@@ -1266,7 +1288,25 @@ async def list_saved_jobs(
         """,
         candidate["id"],
     )
-    return [serialize_job_card(r) for r in rows]
+    from hireloop_api.routes.matches import _serialize_fallback_match_row
+
+    cards: list[dict[str, Any]] = []
+    candidate_dict = dict(candidate)
+    for row in rows:
+        row_dict = dict(row)
+        if row_dict.get("overall_score") is None:
+            computed = _serialize_fallback_match_row(
+                row_dict,
+                candidate=candidate_dict,
+                allow_low_score=True,
+            )
+            if computed is not None:
+                computed["salary_currency"] = row_dict.get("salary_currency")
+                cards.append(computed)
+                continue
+            row_dict["overall_score"] = 0.0
+        cards.append(serialize_job_card(row_dict))
+    return cards
 
 
 @router.get("/saved-jobs/ids")
@@ -1640,21 +1680,12 @@ async def complete_onboarding(
             idempotency_key=f"onboarding_ingest:{candidate_id}",
         )
         if looking_for:
-            locations = [
-                p
-                for p in [
-                    candidate_row.get("location_city"),
-                    candidate_row.get("location_state"),
-                ]
-                if p
-            ] or ["India"]
             await enqueue_job(
                 db,
                 kind=CAREER_PATH_INGEST,
                 payload={
                     "candidate_id": candidate_id,
-                    "queries": [looking_for],
-                    "locations": locations,
+                    "derive_from_candidate": True,
                 },
                 idempotency_key=f"onboarding_path_ingest:{candidate_id}",
             )

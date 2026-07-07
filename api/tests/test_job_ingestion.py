@@ -14,7 +14,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from hireloop_api.services.apify.job_ingester import JobIngester, derive_ingest_queries
+from hireloop_api.services.apify.job_ingester import (
+    JobIngester,
+    derive_ingest_locations,
+    derive_ingest_queries,
+)
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 
 # ── JobRecord model invariants ────────────────────────────────────────────────
@@ -329,6 +333,79 @@ def test_derive_ingest_queries_expands_fashion_and_merchandising_profiles() -> N
     assert "Fashion Buyer" in q
 
 
+def test_derive_ingest_queries_expands_go_to_market_titles_to_gtm_synonyms() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Go-to-Market Lead"],
+        current_title="GTM Lead - AI Resume Builder",
+        skills=["B2B SaaS", "Sales", "Revenue"],
+        max_queries=12,
+    )
+
+    assert q[0] == "Go-to-Market Lead"
+    assert "GTM Lead" in q
+    assert "Lead GTM" in q
+    assert "Head of GTM" in q
+    assert "GTM Manager" in q
+
+
+def test_derive_ingest_queries_expands_founder_titles() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Founder"],
+        current_title="Co-Founder",
+        skills=["Fundraising", "Product Strategy", "GTM"],
+        max_queries=12,
+    )
+
+    assert q[0] == "Founder"
+    assert "Co-Founder" in q
+    assert "Entrepreneur in Residence" in q
+    assert "Startup Founder" in q
+
+
+def test_derive_ingest_locations_expands_brooklyn_to_new_york() -> None:
+    locations = derive_ingest_locations(["Brooklyn"], None)
+
+    assert locations[0] == "New York, New York, United States"
+    assert "Brooklyn, New York, United States" in locations
+
+
+def test_derive_ingest_locations_expands_market_city_to_country_context() -> None:
+    assert derive_ingest_locations(["London"], None)[0] == "London, England, United Kingdom"
+    assert derive_ingest_locations(["Bengaluru"], None)[0] == "Bengaluru, Karnataka, India"
+    assert derive_ingest_locations(["Karnataka"], None)[0] == "Karnataka, India"
+    assert derive_ingest_locations(["Maharashtra"], None)[0] == "Maharashtra, India"
+
+
+def test_derive_ingest_queries_do_not_pollute_selected_data_path_with_operations_title() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Data Analyst"],
+        current_title="Operations Executive",
+        skills=["SQL", "Excel", "Python", "Reporting"],
+        max_queries=10,
+    )
+
+    assert q[0] == "Data Analyst"
+    assert "Data Engineer" in q
+    assert "Operations Executive" in q
+    assert "Operations Manager" not in q
+    assert "Program Manager" not in q
+
+
+def test_derive_ingest_queries_do_not_pollute_selected_customer_success_path() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Customer Success Manager"],
+        current_title="Assistant Manager",
+        skills=["Customer Support", "Communication", "Relationship Management"],
+        max_queries=10,
+    )
+
+    assert q[0] == "Customer Success Manager"
+    assert "Customer Success Associate" in q
+    assert "Client Success Manager" in q
+    assert "Assistant Manager" in q
+    assert "Operations Manager" not in q
+
+
 def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
     q = derive_ingest_queries(
         target_titles=[],
@@ -374,7 +451,7 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     assert "UX Lead" in captured["queries"]  # second target still present
     assert "UX Designer" in captured["queries"]  # current title still included
     assert "Product Designer" in captured["queries"]  # board-real adjacent expansion
-    assert captured["locations"] == ["Bengaluru", "Remote"]
+    assert captured["locations"] == ["Bengaluru, Karnataka, India", "Remote"]
 
 
 async def test_ingest_uses_google_jobs_as_only_runtime_source() -> None:

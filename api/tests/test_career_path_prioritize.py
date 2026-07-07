@@ -93,7 +93,6 @@ async def test_prioritize_path_enqueues_immediate_job_ingest(
     assert fired["kind"] == CAREER_PATH_INGEST
     assert fired["payload"] == {
         "candidate_id": str(candidate_id),
-        "queries": ["Category Manager", "Senior Category Manager"],
-        "locations": ["Bengaluru", "Karnataka"],
+        "derive_from_candidate": True,
     }
     assert fired["idempotency_key"] == f"career_path_ingest:{candidate_id}"

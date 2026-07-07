@@ -24,16 +24,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from hireloop_api.config import Settings
+from hireloop_api.markets import MARKET_LABELS, normalize_market
 
 logger = structlog.get_logger()
 
 _inflight_path_builds: set[str] = set()
 
-_SYSTEM_PROMPT = """You are Aarya, a career strategist for Indian professionals.
+_SYSTEM_PROMPT_TEMPLATE = """You are Aarya, a career strategist for professionals in {market_label}.
 
 Given a candidate's profile, design a realistic, motivating career path. Be
 specific to THIS person — never generic. All roles must be realistic for the
-Indian job market.
+{market_label} job market.
 
 Return ONLY valid JSON (no markdown, no prose) with exactly this shape:
 {
@@ -53,19 +54,38 @@ Return ONLY valid JSON (no markdown, no prose) with exactly this shape:
 
 Rules:
 - 3 to 5 steps. The first step's level is "current"; include at least one "next".
-- Infer industry from company name, title, and skills (wedding/hospitality, SaaS, retail,
-  manufacturing, etc.). target_titles MUST stay in the SAME industry and function as
-  their current role — never jump to unrelated generic titles.
+- Infer industry from company name, title, location, market, and skills
+  (wedding/hospitality, SaaS, retail, manufacturing, healthcare, finance, etc.).
+  target_titles MUST stay in the SAME industry and function as their current
+  role or the role direction they explicitly selected — never jump to unrelated
+  generic titles.
 - Hospitality/events/wedding backgrounds → use searchable titles like "Venue Operations
   Manager", "Events Operations Manager", "Wedding Operations Manager" — NOT vague
   "Operations Manager" unless their CV is explicitly general ops outside events.
 - The "next" step should be a realistic promotion from their current title at a similar
   company type (e.g. Assistant Manager at a wedding company → "Operations Manager -
   Events" or "Venue Manager", not "Software Operations Manager").
-- target_titles are roles they can apply for now or within 12 months — real Indian job
-  board titles, 3 to 6 items, including their current title and one natural step up.
+- target_titles are roles they can apply for now or within 12 months — real
+  {job_board_phrase}, 3 to 6 items, including their current title or nearest
+  equivalent and one natural step up.
+- Location matters: generate titles that make sense for {market_label}; do not
+  use India-only salary, notice-period, or title assumptions for non-IN markets.
 - Keep skills_to_build practical and tied to the gaps between steps.
 """
+
+
+def build_career_path_system_prompt(market: str | None = None) -> str:
+    m = normalize_market(market)
+    market_label = MARKET_LABELS.get(m, "India")
+    board_phrase = {
+        "IN": "Indian job-board titles",
+        "US": "US job-board titles",
+        "GB": "UK job-board titles",
+    }.get(m, f"{market_label} job-board titles")
+    return (
+        _SYSTEM_PROMPT_TEMPLATE.replace("{market_label}", market_label)
+        .replace("{job_board_phrase}", board_phrase)
+    )
 
 
 async def expand_similar_titles(
@@ -372,7 +392,7 @@ class CareerPathService:
             """
             SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
                    c.location_city, c.location_state, c.years_experience,
-                   c.skills, c.career_profile, u.full_name
+                   c.skills, c.career_profile, c.market, u.full_name
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id
             WHERE c.id = $1::uuid AND c.deleted_at IS NULL
@@ -404,7 +424,7 @@ class CareerPathService:
             },
         )
         messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
+            SystemMessage(content=build_career_path_system_prompt(profile.get("market"))),
             HumanMessage(content=_build_profile_brief(profile)),
         ]
         response = await llm.ainvoke(messages)
@@ -448,10 +468,12 @@ def _build_profile_brief(profile: dict[str, Any]) -> str:
     skills = ", ".join(profile.get("skills") or []) or "not specified"
     years = profile.get("years_experience")
     years_str = str(years) if years is not None else "unknown"
+    market = normalize_market(profile.get("market"))
     city = profile.get("location_city") or "unknown"
-    state = profile.get("location_state") or "India"
+    state = profile.get("location_state") or MARKET_LABELS.get(market, "India")
     parts = [
         f"Name: {profile.get('full_name') or 'Candidate'}",
+        f"Market: {market}",
         f"Current title: {profile.get('current_title') or 'unknown'}",
         f"Current company: {profile.get('current_company') or 'unknown'}",
         f"Years of experience: {years_str}",

@@ -706,24 +706,13 @@ async def send_message(
             from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
 
             ingest_titles = career_path_row.get("target_titles") or []
-            ingest_locations = career_path_row.get("target_locations") or []
-            if not ingest_locations:
-                ingest_locations = [
-                    p
-                    for p in [
-                        cand_prefs.get("location_city") if cand_prefs else None,
-                        cand_prefs.get("location_state") if cand_prefs else None,
-                    ]
-                    if p
-                ] or ["India"]
             if ingest_titles:
                 await enqueue_job(
                     db,
                     kind=CAREER_PATH_INGEST,
                     payload={
                         "candidate_id": candidate_id,
-                        "queries": ingest_titles,
-                        "locations": ingest_locations,
+                        "derive_from_candidate": True,
                     },
                     idempotency_key=f"career_path_ingest:{candidate_id}",
                 )

@@ -159,11 +159,13 @@ def test_boost_by_saved_lifts_similar_jobs() -> None:
             score=0.60,
         ),
     ]
-    boost_by_saved(items, saved)
+    boost_by_saved(items, saved, output_key="_ranking_score")
     bx = next(i for i in items if i["job_id"] == "x")
     by = next(i for i in items if i["job_id"] == "y")
-    assert bx["overall_score"] > 0.60 and bx["saved_affinity"] == 1.0  # boosted
-    assert by["overall_score"] == 0.60 and by["saved_affinity"] == 0.0  # untouched
+    assert bx["overall_score"] == 0.60  # displayed match percentage stays canonical
+    assert bx["_ranking_score"] > 0.60 and bx["saved_affinity"] == 1.0  # ranking boosted
+    assert by["overall_score"] == 0.60 and by["_ranking_score"] == 0.60
+    assert by["saved_affinity"] == 0.0  # untouched
 
 
 def test_boost_by_saved_is_noop_when_nothing_saved() -> None:

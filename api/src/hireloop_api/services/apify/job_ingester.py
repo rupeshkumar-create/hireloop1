@@ -17,7 +17,12 @@ import asyncpg
 import structlog
 
 from hireloop_api.config import Settings
-from hireloop_api.markets import MARKET_SCRAPE_LOCATIONS, SUPPORTED_MARKETS
+from hireloop_api.markets import (
+    MARKET_LABELS,
+    MARKET_SCRAPE_LOCATIONS,
+    SUPPORTED_MARKETS,
+    resolve_country_from_location,
+)
 from hireloop_api.services.apify.jobs_scraper import (
     DEFAULT_GOOGLE_JOBS_ACTOR,
     ApifyJobsScraper,
@@ -116,10 +121,63 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "tax": ("Tax Analyst", "Tax Consultant"),
     "audit": ("Audit Associate", "Internal Auditor"),
     # Sales / GTM
+    "gtm": (
+        "GTM Lead",
+        "Lead GTM",
+        "Head of GTM",
+        "GTM Manager",
+        "Go-to-Market Manager",
+        "Revenue Operations Manager",
+        "Growth Lead",
+    ),
+    "go-to-market": (
+        "GTM Lead",
+        "Lead GTM",
+        "Head of GTM",
+        "GTM Manager",
+        "Go-to-Market Manager",
+        "Revenue Operations Manager",
+        "Growth Lead",
+    ),
+    "go to market": (
+        "GTM Lead",
+        "Lead GTM",
+        "Head of GTM",
+        "GTM Manager",
+        "Go-to-Market Manager",
+        "Revenue Operations Manager",
+        "Growth Lead",
+    ),
+    "revenue": ("Revenue Operations Manager", "GTM Lead", "Growth Lead"),
     "sales": ("Sales Manager", "Business Development Manager", "Account Manager"),
     "business development": ("Business Development Manager", "Sales Manager"),
     "bd": ("Business Development Executive", "Business Development Manager"),
     "inside sales": ("Inside Sales Representative", "Sales Development Representative"),
+    # Founder / operator
+    "founder": (
+        "Founder",
+        "Co-Founder",
+        "Entrepreneur in Residence",
+        "Startup Founder",
+        "Founding Product Manager",
+        "Founding GTM Lead",
+    ),
+    "co-founder": (
+        "Co-Founder",
+        "Founder",
+        "Entrepreneur in Residence",
+        "Startup Founder",
+        "Founding Product Manager",
+        "Founding GTM Lead",
+    ),
+    "cofounder": (
+        "Co-Founder",
+        "Founder",
+        "Entrepreneur in Residence",
+        "Startup Founder",
+        "Founding Product Manager",
+        "Founding GTM Lead",
+    ),
     "growth designer": ("Product Designer", "Growth Manager"),
     "product design": ("Product Designer",),
     "ux": ("UX Designer", "Product Designer"),
@@ -147,20 +205,107 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _ingest_locations(settings: Settings | None, locations: list[str] | None) -> list[str]:
-    if locations:
-        return locations
-    enabled = {m.upper() for m in (settings.enabled_markets if settings else ["IN"])}
+_LOCATION_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "bengaluru": ("Bengaluru, Karnataka, India",),
+    "bangalore": ("Bengaluru, Karnataka, India",),
+    "karnataka": ("Karnataka, India",),
+    "maharashtra": ("Maharashtra, India",),
+    "telangana": ("Telangana, India",),
+    "tamil nadu": ("Tamil Nadu, India",),
+    "haryana": ("Haryana, India",),
+    "uttar pradesh": ("Uttar Pradesh, India",),
+    "brooklyn": (
+        "New York, New York, United States",
+        "Brooklyn, New York, United States",
+    ),
+    "nyc": ("New York, New York, United States",),
+    "new york city": ("New York, New York, United States",),
+    "manhattan": ("New York, New York, United States",),
+    "queens": ("New York, New York, United States",),
+    "london": ("London, England, United Kingdom",),
+    "manchester": ("Manchester, England, United Kingdom",),
+    "england": ("England, United Kingdom",),
+}
+
+
+def derive_ingest_locations(
+    locations: list[str] | None,
+    settings: Settings | None,
+    *,
+    max_locations: int = 5,
+) -> list[str]:
+    """
+    Normalize candidate-supplied search locations for the Google Jobs actor.
+
+    Candidate profiles often store neighborhoods ("Brooklyn") while Google Jobs
+    returns stronger volume for metro queries ("New York"). Keep the metro first
+    and preserve the original as a fallback run.
+    """
+    if not locations:
+        enabled = {m.upper() for m in (settings.enabled_markets if settings else ["IN"])}
+        out: list[str] = []
+        for market in SUPPORTED_MARKETS:
+            if market in enabled:
+                out.extend(MARKET_SCRAPE_LOCATIONS[market][:5])
+        return out[:max_locations] or MARKET_SCRAPE_LOCATIONS["IN"][:max_locations]
+
     out: list[str] = []
-    for market in SUPPORTED_MARKETS:
-        if market in enabled:
-            out.extend(MARKET_SCRAPE_LOCATIONS[market][:5])
-    return out or MARKET_SCRAPE_LOCATIONS["IN"]
+    seen: set[str] = set()
+
+    def _add(raw: str | None) -> None:
+        loc = (raw or "").strip()
+        if not loc:
+            return
+        key = _norm_key(loc)
+        if key not in seen:
+            seen.add(key)
+            out.append(loc)
+
+    for loc in locations:
+        low = _norm_key(loc)
+        expanded = False
+        for keyword, expansions in _LOCATION_EXPANSIONS.items():
+            if keyword in low:
+                for expanded_loc in expansions:
+                    _add(expanded_loc)
+                expanded = True
+                break
+        if not expanded:
+            market = resolve_country_from_location(loc)
+            if market:
+                city = low.split(",", 1)[0]
+                canonical = next(
+                    (
+                        candidate
+                        for candidate in MARKET_SCRAPE_LOCATIONS.get(market, [])
+                        if _norm_key(candidate).startswith(city)
+                    ),
+                    None,
+                )
+                if canonical:
+                    _add(canonical)
+                else:
+                    label = MARKET_LABELS.get(market)
+                    loc_low = loc.lower()
+                    _add(f"{loc}, {label}" if label and label.lower() not in loc_low else loc)
+            else:
+                _add(loc)
+
+    return out[:max_locations]
+
+
+def _ingest_locations(settings: Settings | None, locations: list[str] | None) -> list[str]:
+    return derive_ingest_locations(locations, settings)
+
+
+def _title_lookup_text(title: str) -> str:
+    low = (title or "").lower()
+    return f"{low} {low.replace('-', ' ')}"
 
 
 def _expand_title(title: str) -> list[str]:
     """Board-real adjacent titles for a (possibly niche) target title."""
-    low = (title or "").lower()
+    low = _title_lookup_text(title)
     extras: list[str] = []
     for keyword, adjacents in _TITLE_EXPANSIONS.items():
         if keyword in low:
@@ -183,12 +328,69 @@ def _expand_skills(skills: list[str] | None) -> list[str]:
     return extras
 
 
+def _title_function_tokens(title: str | None) -> set[str]:
+    """Role/function words used to avoid cross-function query pollution."""
+    from hireloop_api.services.titles import canonical_title_tokens
+
+    generic = {
+        "assistant",
+        "associate",
+        "executive",
+        "head",
+        "lead",
+        "leader",
+        "manager",
+        "management",
+        "senior",
+        "sr",
+        "junior",
+        "jr",
+        "director",
+        "vp",
+        "chief",
+        "officer",
+        "specialist",
+    }
+    return set(canonical_title_tokens(title) - generic)
+
+
+_COMPATIBLE_QUERY_FAMILIES: tuple[frozenset[str], ...] = (
+    frozenset({"category", "planner", "planning", "merchandiser", "merchandising", "buyer", "buying", "fashion", "retail"}),
+    frozenset({"customer", "success", "client", "support", "relationship", "account"}),
+    frozenset({"data", "analyst", "analytics", "engineer", "scientist", "reporting", "sql"}),
+    frozenset({"growth", "gtm", "gotomarket", "revenue", "sales"}),
+    frozenset({"product", "design", "designer", "ux", "ui"}),
+    frozenset({"recruitment", "recruiter", "talent", "hr", "payroll", "employee"}),
+    frozenset({"founder", "cofounder", "entrepreneur", "founding", "startup"}),
+)
+
+
+def _same_query_family(candidate_tokens: set[str], target_tokens: set[str]) -> bool:
+    return any(candidate_tokens & family and target_tokens & family for family in _COMPATIBLE_QUERY_FAMILIES)
+
+
+def _fits_selected_target(candidate_title: str, selected_targets: list[str]) -> bool:
+    """True when an adjacent query belongs to the selected career direction."""
+    if not selected_targets:
+        return True
+    candidate_tokens = _title_function_tokens(candidate_title)
+    if not candidate_tokens:
+        return False
+    for target in selected_targets:
+        target_tokens = _title_function_tokens(target)
+        if candidate_tokens & target_tokens:
+            return True
+        if _same_query_family(candidate_tokens, target_tokens):
+            return True
+    return False
+
+
 def derive_ingest_queries(
     *,
     target_titles: list[str] | None,
     current_title: str | None,
     skills: list[str] | None,
-    max_queries: int = 8,
+    max_queries: int = 10,
     expand: bool = True,
 ) -> list[str]:
     """
@@ -211,18 +413,21 @@ def derive_ingest_queries(
             seen.add(key)
             out.append(cleaned)
 
-    for title in target_titles or []:
+    selected_targets = [t for t in (target_titles or []) if (t or "").strip()]
+
+    for title in selected_targets:
         _add(title)
         if expand:
             for adjacent in _expand_title(title):
                 _add(adjacent)
     _add(current_title)
-    if current_title and expand:
+    if current_title and expand and not selected_targets:
         for adjacent in _expand_title(current_title):
             _add(adjacent)
     if expand:
         for adjacent in _expand_skills(skills):
-            _add(adjacent)
+            if _fits_selected_target(adjacent, selected_targets):
+                _add(adjacent)
     if len(out) < 2:  # thin path/title → seed from a few concrete skills
         for skill in (skills or [])[:3]:
             _add(skill)
@@ -500,9 +705,10 @@ class JobIngester:
             current_title=row["current_title"],
             skills=list(row["skills"] or []),
         )
-        locations = list(row["target_locations"] or []) or (
+        raw_locations = list(row["target_locations"] or []) or (
             [p for p in [row["location_city"], row["location_state"]] if p] or None
         )
+        locations = derive_ingest_locations(raw_locations, self._settings)
         candidate_time_range = time_range or (
             self._settings.google_jobs_candidate_time_range if self._settings else "7d"
         )
