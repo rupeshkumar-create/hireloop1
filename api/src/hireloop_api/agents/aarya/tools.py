@@ -537,9 +537,7 @@ async def _auto_ingest_for_candidate(settings: Settings, candidate_id: str) -> N
                 settings.apify_token,
                 conn,
                 settings=settings,
-                linkedin_actor=settings.apify_linkedin_jobs_actor,
-                career_site_actor=settings.apify_career_site_actor,
-                enable_career_site=settings.apify_enable_career_site_ingest,
+                jobs_actor=settings.apify_jobs_actor,
             )
             await ingester.ingest_for_candidate(candidate_id)
             embedded, scored = await embed_pending_and_score_candidate(

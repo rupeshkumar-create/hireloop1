@@ -18,17 +18,17 @@ import structlog
 
 from hireloop_api.config import Settings
 from hireloop_api.markets import MARKET_SCRAPE_LOCATIONS, SUPPORTED_MARKETS
-from hireloop_api.services.apify.fantastic_jobs_config import (
-    description_search_for_candidate,
-    merge_ingest_run_params,
+from hireloop_api.services.apify.jobs_scraper import (
+    DEFAULT_GOOGLE_JOBS_ACTOR,
+    ApifyJobsScraper,
+    JobRecord,
 )
-from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 from hireloop_api.services.job_validator import validate_job_record
 
 logger = structlog.get_logger()
 
 # A query+location scraped within this window returns a near-identical result
-# set — skip it instead of burning another Fantastic/Apify run. The nightly
+# set — skip it instead of burning another Google Jobs/Apify run. The nightly
 # cron (24h cadence) is unaffected; on-demand triggers (kickoff, empty search,
 # pool top-up) are the ones that hammered the same query repeatedly.
 INGEST_DEDUPE_HOURS = 24
@@ -236,15 +236,16 @@ class JobIngester:
         db: asyncpg.Connection,
         *,
         settings: Settings | None = None,
-        linkedin_actor: str = "apify/linkedin-jobs-scraper",
-        career_site_actor: str = "fantastic-jobs/career-site-job-listing-api",
-        enable_career_site: bool = True,
+        jobs_actor: str = DEFAULT_GOOGLE_JOBS_ACTOR,
+        linkedin_actor: str | None = None,
+        career_site_actor: str | None = None,
+        enable_career_site: bool | None = None,
     ) -> None:
         self._apify_token = apify_token
         self._settings = settings
-        self._scraper = ApifyJobsScraper(apify_token, actor=linkedin_actor)
-        self._career_site_actor = career_site_actor
-        self._enable_career_site = enable_career_site
+        # Legacy kwargs are accepted so older callers/tests do not break, but
+        # job ingestion is Google Jobs only.
+        self._scraper = ApifyJobsScraper(apify_token, actor=jobs_actor)
         self._db = db
 
     async def ingest(
@@ -275,7 +276,7 @@ class JobIngester:
         logger.info("job_ingestion_started")
         scrape_locations = _ingest_locations(self._settings, locations)
         effective_time_range = time_range or (
-            self._settings.fantastic_jobs_time_range if self._settings else "24h"
+            self._settings.google_jobs_time_range if self._settings else "24h"
         )
 
         # Recency gate: drop queries already scraped for this location inside
@@ -288,6 +289,7 @@ class JobIngester:
                     SELECT query_norm FROM public.job_ingest_runs
                     WHERE query_norm = ANY($1::text[])
                       AND location_norm = $2
+                      AND source = 'google_jobs'
                       AND last_run_at > NOW() - INTERVAL '{INGEST_DEDUPE_HOURS} hours'
                     """,
                     [_norm_key(q) for q in queries],
@@ -324,67 +326,20 @@ class JobIngester:
 
         all_records: list[JobRecord] = []
         source_stats: dict[str, dict] = {}
-        career_site_on = (
-            use_career_site if use_career_site is not None else self._enable_career_site
-        )
-
-        # Each source is independent: one being unavailable (e.g. an Apify actor
-        # whose rental/trial lapsed → RuntimeError) must not discard records the
-        # other source already produced. Per-source failures are captured in
-        # source_stats; only an ALL-sources failure raises (see below).
-
-        # ── Source A: Fantastic.jobs (career sites) ──────────────────────────
-        if career_site_on:
-            try:
-                from hireloop_api.services.apify.fantastic_jobs_scraper import (
-                    ApifyFantasticJobsScraper,
-                )
-
-                fantastic = ApifyFantasticJobsScraper(
-                    api_token=self._apify_token,
-                    actor=self._career_site_actor,
-                )
-                fj_params = merge_ingest_run_params(
-                    self._settings,
-                    title_search=queries,
-                    location_search=scrape_locations,
-                    limit=max(10, min(5000, max_results_per_query * 40)),
-                    time_range=effective_time_range,
-                    description_search=description_search,
-                )
-                run_id_fj = await fantastic.trigger_run(run_params=fj_params)
-                dataset_id_fj = await fantastic.wait_for_run(run_id_fj)
-                raw_items_fj = await fantastic.fetch_dataset(dataset_id_fj)
-                records_fj = fantastic.normalise_batch(raw_items_fj)
-                all_records.extend(records_fj)
-                source_stats["fantastic_jobs"] = {
-                    "run_id": run_id_fj,
-                    "dataset_id": dataset_id_fj,
-                    "raw_items": len(raw_items_fj),
-                    "normalised": len(records_fj),
-                }
-            except Exception as exc:
-                logger.error("job_source_failed", source="fantastic_jobs", error=str(exc))
-                source_stats["fantastic_jobs"] = _failed_source_stats(exc)
-
-        # ── Source B: LinkedIn jobs actor (disabled by default) ──────────────
-        # Off unless explicitly enabled (use_linkedin=True): the configured
-        # LinkedIn Apify actor requires a paid rental and returns 403
-        # actor-is-not-rented otherwise. Fantastic.jobs (career sites) is the
-        # active source. Re-enable here once the LinkedIn actor is rented.
-        if use_linkedin:
-            try:
-                _, records, li_stats = await self._scraper.scrape(
-                    queries=queries,
-                    locations=scrape_locations,
-                    max_results_per_query=max_results_per_query,
-                    time_range=effective_time_range,
-                )
-                all_records.extend(records)
-                source_stats["linkedin_jobs"] = li_stats
-            except Exception as exc:
-                logger.error("job_source_failed", source="linkedin_jobs", error=str(exc))
-                source_stats["linkedin_jobs"] = _failed_source_stats(exc)
+        # Single source: johnvc/Google-Jobs-Scraper. The legacy source flags are
+        # intentionally ignored so no old actor can run from stale call sites.
+        try:
+            _, records, google_stats = await self._scraper.scrape(
+                queries=queries,
+                locations=scrape_locations,
+                max_results_per_query=max_results_per_query,
+                time_range=effective_time_range,
+            )
+            all_records.extend(records)
+            source_stats["google_jobs"] = google_stats
+        except Exception as exc:
+            logger.error("job_source_failed", source="google_jobs", error=str(exc))
+            source_stats["google_jobs"] = _failed_source_stats(exc)
 
         # Fail loud, not silent: if every source we attempted errored out (e.g.
         # an Apify actor whose rental lapsed → 403), there are no records and the
@@ -405,7 +360,7 @@ class JobIngester:
         await self._ensure_companies(all_records)
 
         # Prefer whichever source actually ran for the top-level run/dataset ids.
-        primary = source_stats.get("fantastic_jobs") or source_stats.get("linkedin_jobs") or {}
+        primary = source_stats.get("google_jobs") or {}
         elapsed = (datetime.now(UTC) - start).total_seconds()
         stats = {
             "run_id": primary.get("run_id"),
@@ -437,7 +392,7 @@ class JobIngester:
                         """
                         INSERT INTO public.job_ingest_runs
                           (query_norm, location_norm, source, last_run_at, jobs_found)
-                        VALUES ($1, $2, 'apify', NOW(), $3)
+                        VALUES ($1, $2, 'google_jobs', NOW(), $3)
                         ON CONFLICT (query_norm, location_norm, source)
                         DO UPDATE SET last_run_at = NOW(), jobs_found = $3
                         """,
@@ -549,25 +504,19 @@ class JobIngester:
             [p for p in [row["location_city"], row["location_state"]] if p] or None
         )
         candidate_time_range = time_range or (
-            self._settings.fantastic_jobs_candidate_time_range if self._settings else "7d"
-        )
-        desc_search = description_search_for_candidate(
-            list(row["skills"] or []),
-            self._settings,
+            self._settings.google_jobs_candidate_time_range if self._settings else "7d"
         )
         logger.info(
             "job_ingestion_for_candidate_started",
             candidate_id=candidate_id,
             queries=queries,
             locations=locations,
-            description_search=desc_search,
         )
         return await self.ingest(
             queries=queries or None,
             locations=locations,
             max_results_per_query=max_results_per_query,
             time_range=candidate_time_range,
-            description_search=desc_search,
         )
 
     async def ingest_records(self, records: list[JobRecord]) -> dict:
@@ -731,7 +680,7 @@ class JobIngester:
     async def _ensure_companies(self, records: list[JobRecord]) -> None:
         """
         Upsert company records for scraped jobs.
-        Dedup key: domain (derived from LinkedIn URL).
+        Dedup key: normalised company name.
         """
         seen: set[str] = set()
         for rec in records:

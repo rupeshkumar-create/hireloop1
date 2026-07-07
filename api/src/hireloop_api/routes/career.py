@@ -188,14 +188,14 @@ async def _apify_reachable(settings: Settings) -> bool:
     """
     Cheap read-only check that Apify is usable for the ACTIVE job source (no run,
     no cost). Verifies both that the token is valid AND that the configured
-    career-site actor is accessible — so a missing/misconfigured/unavailable
+    Google Jobs actor is accessible — so a missing/misconfigured/unavailable
     actor surfaces as "source unavailable" instead of a silently-empty feed
     (previously this only checked the token, not the actor).
     """
     if not settings.apify_token:
         return False
     headers = {"Authorization": f"Bearer {settings.apify_token}"}
-    actor_id = (settings.apify_career_site_actor or "").replace("/", "~")
+    actor_id = (settings.apify_jobs_actor or "").replace("/", "~")
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             me = await client.get("https://api.apify.com/v2/users/me", headers=headers)
@@ -238,9 +238,7 @@ async def _ingest_and_rescore(
                 apify_token=settings.apify_token,
                 db=conn,
                 settings=settings,
-                linkedin_actor=settings.apify_linkedin_jobs_actor,
-                career_site_actor=settings.apify_career_site_actor,
-                enable_career_site=settings.apify_enable_career_site_ingest,
+                jobs_actor=settings.apify_jobs_actor,
             )
             stats = await ingester.ingest(
                 queries=queries or None,

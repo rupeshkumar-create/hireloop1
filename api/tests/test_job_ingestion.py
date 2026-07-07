@@ -5,7 +5,7 @@ These exercise the pure normalisation logic and the DB upsert path without
 needing a real Apify token, network, or Postgres connection:
 
   * Multi-market normalisation (IN / US / GB) produces supported JobRecords.
-  * Salary / location / skill / dedup-id parsing for both scrapers.
+  * Salary / location / skill / dedup-id parsing for Google Jobs payloads.
   * JobIngester._upsert_jobs insert / update / skip accounting via a fake conn.
 """
 
@@ -14,7 +14,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from hireloop_api.services.apify.fantastic_jobs_scraper import ApifyFantasticJobsScraper
 from hireloop_api.services.apify.job_ingester import JobIngester, derive_ingest_queries
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 
@@ -40,31 +39,86 @@ def test_seniority_maps_known_levels_and_drops_unknown() -> None:
     assert JobRecord(apify_job_id="x", title="t", seniority="nonsense").seniority is None
 
 
-# ── ApifyJobsScraper (LinkedIn) normalisation ─────────────────────────────────
+# ── ApifyJobsScraper (Google Jobs) input + normalisation ──────────────────────
 
 
-def _linkedin_scraper() -> ApifyJobsScraper:
+def _google_jobs_scraper() -> ApifyJobsScraper:
     return ApifyJobsScraper(api_token="test-token")
 
 
-def test_linkedin_accepts_us_location() -> None:
-    scraper = _linkedin_scraper()
+def test_google_jobs_input_uses_johnvc_schema() -> None:
+    scraper = _google_jobs_scraper()
+
+    payload = scraper._build_google_jobs_input(
+        query="Customer Success Manager",
+        location="Bengaluru, India",
+        max_results=100,
+        country="in",
+    )
+
+    assert payload == {
+        "query": "Customer Success Manager",
+        "location": "Bengaluru, India",
+        "country": "in",
+        "language": "None",
+        "google_domain": "google.com",
+        "num_results": 100,
+        "max_pagination": 0,
+        "include_lrad": False,
+        "lrad_value": "",
+        "max_delay": 1,
+        "output_file": "",
+        "cleanup_results": True,
+    }
+    assert scraper._google_country_code("GB") == "uk"
+
+
+def test_google_jobs_normalises_valid_india_job() -> None:
+    scraper = _google_jobs_scraper()
+    raw = {
+        "title": "Customer Success Manager",
+        "company_name": "ClientOS",
+        "location": "Bengaluru, Karnataka, India",
+        "description": "Own renewals, customer support, communication, and relationship management.",
+        "job_id": "google-job-123",
+        "detected_extensions": {"schedule_type": "Full-time"},
+        "apply_options": [
+            {"title": "Company site", "link": "https://clientos.example/jobs/123"}
+        ],
+    }
+
+    rec = scraper.normalise(raw)
+
+    assert rec is not None
+    assert rec.apify_job_id == "gj_google-job-123"
+    assert rec.title == "Customer Success Manager"
+    assert rec.company_name == "ClientOS"
+    assert rec.country_code == "IN"
+    assert rec.location_city == "Bengaluru"
+    assert rec.location_state == "Karnataka"
+    assert rec.employment_type == "full_time"
+    assert rec.apply_url == "https://clientos.example/jobs/123"
+    assert "customer support" in rec.skills_required
+
+
+def test_google_jobs_accepts_us_location() -> None:
+    scraper = _google_jobs_scraper()
     raw = {
         "title": "Senior Engineer",
         "location": "San Francisco, CA, USA",
-        "jobUrl": "https://www.linkedin.com/jobs/view/999",
+        "jobUrl": "https://jobs.google.com/job/google-999",
     }
     rec = scraper.normalise(raw)
     assert rec is not None
     assert rec.country_code == "US"
 
 
-def test_linkedin_accepts_india_and_parses_city_state() -> None:
-    scraper = _linkedin_scraper()
+def test_google_jobs_accepts_india_and_parses_city_state() -> None:
+    scraper = _google_jobs_scraper()
     raw = {
         "title": "Senior Backend Engineer",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/12345",
+        "jobUrl": "https://jobs.google.com/job/google-12345",
         "companyName": "Acme",
         "descriptionText": "We need a Python and Django expert. ₹20-30 LPA.",
     }
@@ -73,155 +127,62 @@ def test_linkedin_accepts_india_and_parses_city_state() -> None:
     assert rec.location_city == "Bengaluru"
     assert rec.location_state == "Karnataka"
     assert rec.country_code == "IN"
-    assert rec.apify_job_id == "li_12345"
+    assert rec.apify_job_id == "gj_google-12345"
     assert rec.company_name == "Acme"
     assert "python" in rec.skills_required
 
 
-def test_linkedin_empty_title_is_skipped() -> None:
-    scraper = _linkedin_scraper()
+def test_google_jobs_empty_title_is_skipped() -> None:
+    scraper = _google_jobs_scraper()
     assert scraper.normalise({"location": "Mumbai, India"}) is None
 
 
-def test_linkedin_dedup_id_falls_back_to_uuid_when_no_job_id() -> None:
-    scraper = _linkedin_scraper()
+def test_google_jobs_dedup_id_falls_back_to_namespaced_uuid_when_no_job_id() -> None:
+    scraper = _google_jobs_scraper()
     rec = scraper.normalise(
         {"title": "Data Scientist", "location": "Pune, India", "jobUrl": "https://x.test/no-id"}
     )
     assert rec is not None
-    # Not a LinkedIn li_/numeric id → a uuid string was generated (non-empty).
-    assert rec.apify_job_id
-    assert not rec.apify_job_id.startswith("li_")
-    uuid.UUID(rec.apify_job_id)  # parses as a valid uuid
+    assert rec.apify_job_id.startswith("gj_")
+    uuid.UUID(rec.apify_job_id.removeprefix("gj_"))  # parses as a valid uuid
 
 
-def test_linkedin_rejects_unresolved_market() -> None:
-    scraper = _linkedin_scraper()
+def test_google_jobs_uses_country_code_when_location_omits_country() -> None:
+    scraper = _google_jobs_scraper()
+    raw = {
+        "title": "Category Planner",
+        "location": "Bengaluru, Karnataka",
+        "country": "in",
+        "job_id": "country-1",
+    }
+
+    rec = scraper.normalise(raw)
+
+    assert rec is not None
+    assert rec.country_code == "IN"
+    assert rec.location_city == "Bengaluru"
+
+
+def test_google_jobs_rejects_unresolved_market() -> None:
+    scraper = _google_jobs_scraper()
     raw = {
         "title": "Engineer",
         "location": "Nairobi, Kenya",
-        "jobUrl": "https://www.linkedin.com/jobs/view/1",
+        "jobUrl": "https://jobs.google.com/job/google-1",
     }
     assert scraper.normalise(raw) is None
 
 
 def test_parse_salary_lpa_range() -> None:
-    scraper = _linkedin_scraper()
+    scraper = _google_jobs_scraper()
     assert scraper._parse_salary("Compensation: ₹20-30 LPA") == (2_000_000, 3_000_000)
     assert scraper._parse_salary("no salary mentioned") == (None, None)
 
 
-def test_extract_job_id_from_linkedin_urls() -> None:
-    scraper = _linkedin_scraper()
-    assert scraper._extract_job_id("https://www.linkedin.com/jobs/view/4567") == "li_4567"
-    assert scraper._extract_job_id("https://www.linkedin.com/jobs/?currentJobId=88") == "li_88"
+def test_extract_job_id_from_google_jobs_urls() -> None:
+    scraper = _google_jobs_scraper()
+    assert scraper._extract_job_id("https://jobs.google.com/job/google-4567") == "google-4567"
     assert scraper._extract_job_id("https://example.com/role") is None
-
-
-# ── ApifyFantasticJobsScraper normalisation ───────────────────────────────────
-
-
-def _fantastic_scraper() -> ApifyFantasticJobsScraper:
-    return ApifyFantasticJobsScraper(api_token="test-token", actor="fantastic/career")
-
-
-def test_fantastic_accepts_us_country() -> None:
-    scraper = _fantastic_scraper()
-    raw = {
-        "title": "Engineer",
-        "countries_derived": ["United States"],
-        "locations_derived": [{"city": "Austin", "country": "United States"}],
-        "url": "https://careers.example.com/jobs/1",
-    }
-    rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.country_code == "US"
-
-
-def test_fantastic_skips_when_no_country_info() -> None:
-    scraper = _fantastic_scraper()
-    raw = {"title": "Engineer", "countries_derived": [], "locations_derived": []}
-    assert scraper.normalise(raw) is None
-
-
-def test_fantastic_normalises_valid_india_job() -> None:
-    scraper = _fantastic_scraper()
-    raw = {
-        "id": "abc123",
-        "title": "Backend Engineer",
-        "countries_derived": ["India"],
-        "locations_derived": [{"city": "Hyderabad", "admin": "Telangana", "country": "India"}],
-        "ai_salary_minvalue": 2_000_000,
-        "ai_salary_maxvalue": 3_000_000,
-        "ai_salary_currency": "INR",
-        "ai_salary_unittext": "YEAR",
-        "ai_work_arrangement": "Remote",
-        "employment_type": ["Internship"],
-        "ai_key_skills": ["Python", "FastAPI"],
-        "organization": "Acme India",
-    }
-    rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.apify_job_id == "fj_abc123"
-    assert rec.location_city == "Hyderabad"
-    assert rec.country_code == "IN"
-    assert rec.is_remote is True
-    assert rec.employment_type == "internship"
-    assert rec.ctc_min == 2_000_000
-    assert rec.ctc_max == 3_000_000
-    assert rec.skills_required == ["fastapi", "python"]  # sorted(set(...))
-    assert rec.company_name == "Acme India"
-
-
-def test_fantastic_drops_non_inr_salary() -> None:
-    scraper = _fantastic_scraper()
-    raw = {
-        "id": "usd1",
-        "title": "Engineer",
-        "countries_derived": ["India"],
-        "locations_derived": [{"city": "Mumbai", "country": "India"}],
-        "ai_salary_minvalue": 100_000,
-        "ai_salary_maxvalue": 150_000,
-        "ai_salary_currency": "USD",
-        "ai_salary_unittext": "YEAR",
-    }
-    rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.ctc_min is None
-    assert rec.ctc_max is None
-
-
-def test_fantastic_keeps_usd_salary_for_us_market() -> None:
-    scraper = _fantastic_scraper()
-    raw = {
-        "id": "usd2",
-        "title": "Engineer",
-        "countries_derived": ["United States"],
-        "locations_derived": [{"city": "Austin", "country": "United States"}],
-        "ai_salary_minvalue": 100_000,
-        "ai_salary_maxvalue": 150_000,
-        "ai_salary_currency": "USD",
-        "ai_salary_unittext": "YEAR",
-        "url": "https://careers.example.com/jobs/us-2",
-    }
-    rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.country_code == "US"
-    assert rec.ctc_min == 100_000
-    assert rec.ctc_max == 150_000
-
-
-def test_fantastic_apify_id_falls_back_to_url() -> None:
-    scraper = _fantastic_scraper()
-    raw = {
-        "title": "Engineer",
-        "countries_derived": ["India"],
-        "locations_derived": [{"city": "Delhi", "country": "India"}],
-        "url": "https://acme.com/careers/eng-42",
-    }
-    rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.apify_job_id.startswith("fj_")
 
 
 # ── JobIngester._upsert_jobs accounting ───────────────────────────────────────
@@ -259,7 +220,7 @@ class _FakeConn:
         return "OK"
 
 
-def _record(job_id: str = "li_1") -> JobRecord:
+def _record(job_id: str = "gj_1") -> JobRecord:
     return JobRecord(apify_job_id=job_id, title="Engineer", location_city="Pune")
 
 
@@ -292,7 +253,7 @@ async def test_upsert_skips_cross_source_duplicate_by_apply_url() -> None:
     # or another source) must not create a duplicate row.
     conn = _FakeConn(job_exists=False, apply_url_exists=True)
     rec = JobRecord(
-        apify_job_id="li_2",
+        apify_job_id="gj_2",
         title="Engineer",
         location_city="Pune",
         apply_url="https://careers.example.com/job/123",
@@ -416,7 +377,52 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     assert captured["locations"] == ["Bengaluru", "Remote"]
 
 
-# ── source health / fail-loud (HIR: fantastic-only + loud failures) ───────────
+async def test_ingest_uses_google_jobs_as_only_runtime_source() -> None:
+    class _Conn:
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            return []
+
+    class _Scraper:
+        async def scrape(self, **kwargs: object) -> tuple[list[dict], list[JobRecord], dict]:
+            return (
+                [{"title": "Customer Success Manager"}],
+                [
+                    JobRecord(
+                        apify_job_id="gj_1",
+                        title="Customer Success Manager",
+                        country_code="IN",
+                        source="google_jobs",
+                    )
+                ],
+                {
+                    "run_id": "run-1",
+                    "dataset_id": "dataset-1",
+                    "raw_items": 1,
+                    "normalised": 1,
+                },
+            )
+
+    ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
+    ing._scraper = _Scraper()  # type: ignore[assignment]
+
+    async def _fake_upsert(records: list[JobRecord]) -> tuple[int, int, int]:
+        assert records[0].apify_job_id == "gj_1"
+        return 1, 0, 0
+
+    async def _fake_companies(records: list[JobRecord]) -> None:
+        assert records[0].source == "google_jobs"
+
+    ing._upsert_jobs = _fake_upsert  # type: ignore[method-assign]
+    ing._ensure_companies = _fake_companies  # type: ignore[method-assign]
+
+    stats = await ing.ingest(queries=["Customer Success Manager"], locations=["India"])
+
+    assert set(stats["sources"]) == {"google_jobs"}
+    assert stats["run_id"] == "run-1"
+    assert stats["inserted"] == 1
+
+
+# ── source health / fail-loud (Google Jobs only) ──────────────────────────────
 
 
 def test_all_sources_failed_detection() -> None:
@@ -425,17 +431,17 @@ def test_all_sources_failed_detection() -> None:
         _source_errors,
     )
 
-    ok = {"fantastic_jobs": {"raw_items": 20, "normalised": 20}}
+    ok = {"google_jobs": {"raw_items": 20, "normalised": 20}}
     one_bad = {
-        "fantastic_jobs": {"raw_items": 20, "normalised": 20},
-        "linkedin_jobs": {"error": "403 actor-is-not-rented", "raw_items": 0, "normalised": 0},
+        "google_jobs": {"raw_items": 20, "normalised": 20},
+        "legacy_source": {"error": "disabled", "raw_items": 0, "normalised": 0},
     }
-    all_bad = {"fantastic_jobs": {"error": "boom", "raw_items": 0, "normalised": 0}}
+    all_bad = {"google_jobs": {"error": "boom", "raw_items": 0, "normalised": 0}}
 
     # A healthy run is not "all failed"; a partial failure is degraded but usable.
     assert _all_sources_failed(ok) is False
     assert _all_sources_failed(one_bad) is False
-    assert _source_errors(one_bad) == {"linkedin_jobs": "403 actor-is-not-rented"}
+    assert _source_errors(one_bad) == {"legacy_source": "disabled"}
     # Every attempted source down → must signal a hard failure (caller raises).
     assert _all_sources_failed(all_bad) is True
     assert _all_sources_failed({}) is False  # nothing attempted != failure

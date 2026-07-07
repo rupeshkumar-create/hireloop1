@@ -102,14 +102,20 @@ class Settings(BaseSettings):
 
     # ── Apify ─────────────────────────────────────────────────────────────────
     apify_token: str = ""
-    # Enable the Fantastic.jobs Career Site Job Listing actor (IN/US/GB).
-    apify_enable_career_site_ingest: bool = True
-    apify_linkedin_jobs_actor: str = "bebity/linkedin-jobs-scraper"
-    apify_career_site_actor: str = "fantastic-jobs/career-site-job-listing-api"
+    # Job ingestion uses only johnvc/Google-Jobs-Scraper.
+    apify_jobs_actor: str = "johnvc/Google-Jobs-Scraper"
+    google_jobs_time_range: str = "24h"
+    google_jobs_candidate_time_range: str = "7d"
+    # Legacy env names kept for deploy compatibility; ignored by JobIngester.
+    apify_enable_career_site_ingest: bool = False
+    apify_linkedin_jobs_actor: str = "johnvc/Google-Jobs-Scraper"
+    apify_career_site_actor: str = "johnvc/Google-Jobs-Scraper"
     # No-cookie LinkedIn profile actor for candidate onboarding (R16).
     apify_linkedin_profile_actor: str = "dev_fusion/linkedin-profile-scraper"
 
-    # ── Fantastic.jobs actor filters (career-site-job-listing-api) ────────────
+    # ── Legacy Fantastic.jobs env names ───────────────────────────────────────
+    # Retained only so existing production env vars do not fail settings parsing.
+    # Job ingestion ignores these and calls johnvc/Google-Jobs-Scraper instead.
     fantastic_jobs_time_range: str = "24h"
     fantastic_jobs_candidate_time_range: str = "7d"
     fantastic_jobs_remove_agency: bool = True
@@ -124,7 +130,7 @@ class Settings(BaseSettings):
     fantastic_jobs_max_description_search_terms: int = 3
     fantastic_jobs_org_employees_min: int = 0
     fantastic_jobs_org_employees_max: int = 0
-    # Comma-separated lists — see fantastic_jobs_config.py / Apify input schema
+    # Comma-separated lists retained for legacy env compatibility.
     fantastic_jobs_title_exclusions: list[str] = ["Intern:*", "Trainee:*", "Apprentice:*"]
     fantastic_jobs_location_exclusions: list[str] = []
     fantastic_jobs_description_exclusions: list[str] = []

@@ -18,7 +18,7 @@ def test_sample_records_are_valid_jobs() -> None:
     assert len(recs) == len(SAMPLE_RAW_ITEMS) >= 10
     assert all(r.country_code in ("IN", "US", "GB") for r in recs)
     assert all(r.title for r in recs)
-    assert all(r.apify_job_id.startswith("li_") for r in recs)  # dedup ids from URL
+    assert all(r.apify_job_id.startswith("gj_gj_sample_") for r in recs)
     # Skill extraction populated most roles (the matching signal).
     assert sum(1 for r in recs if r.skills_required) >= 8
     # Salary parsing pulled INR bands off the descriptions for most roles.

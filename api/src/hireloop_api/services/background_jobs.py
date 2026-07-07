@@ -422,15 +422,13 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
             apify_token=settings.apify_token,
             db=conn,
             settings=settings,
-            linkedin_actor=settings.apify_linkedin_jobs_actor,
-            career_site_actor=settings.apify_career_site_actor,
-            enable_career_site=settings.apify_enable_career_site_ingest,
+            jobs_actor=settings.apify_jobs_actor,
         )
         await ingester.ingest(
             queries=payload.get("queries"),
             locations=payload.get("locations"),
             max_results_per_query=int(payload.get("max_results_per_query") or 50),
-            time_range=str(payload.get("time_range") or settings.fantastic_jobs_time_range),
+            time_range=str(payload.get("time_range") or settings.google_jobs_time_range),
         )
 
 

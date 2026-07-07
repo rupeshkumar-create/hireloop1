@@ -337,7 +337,7 @@ async def get_match_feed(
             f"""
             SELECT count(*)::int
             FROM public.jobs j
-            WHERE j.source = 'apify'
+            WHERE j.source = 'google_jobs'
               AND j.is_active = TRUE
               AND j.deleted_at IS NULL
               AND {_ACTIVE_JOB_EXPIRY_SQL}
@@ -365,7 +365,7 @@ async def get_match_feed(
             WHERE j.is_active = TRUE
               AND j.deleted_at IS NULL
               AND je.job_id IS NULL
-              AND j.source IN ('apify', 'fantastic_jobs', 'ats')
+              AND j.source IN ('google_jobs', 'ats')
             """
         )
         if int(unembedded or 0) > 0:

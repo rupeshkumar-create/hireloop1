@@ -2,8 +2,8 @@
 Sample India jobs for testing the ingestion → matching → feed pipeline WITHOUT a
 paid Apify token.
 
-`SAMPLE_RAW_ITEMS` are shaped exactly like the raw items the LinkedIn jobs actor
-returns, so they flow through the *real* `ApifyJobsScraper.normalise` path —
+`SAMPLE_RAW_ITEMS` are shaped like Google Jobs actor items, so they flow through
+the *real* `ApifyJobsScraper.normalise` path —
 exercising location geo-lock, salary parsing, skill extraction, and dedup-id
 generation just like production. `sample_job_records()` returns the normalised
 `JobRecord`s; `JobIngester.ingest_sample()` upserts them via the same code path
@@ -17,15 +17,14 @@ from __future__ import annotations
 
 from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 
-# Realistic, varied India tech roles. Descriptions embed real skills + an INR LPA
-# band so skill extraction and salary parsing have something to bite on. jobUrls
-# use the LinkedIn /jobs/view/<id> shape so dedup ids come out as li_<id>.
+# Realistic, varied India roles. Descriptions embed real skills + an INR LPA
+# band so skill extraction and salary parsing have something to bite on.
 SAMPLE_RAW_ITEMS: list[dict] = [
     {
         "title": "Senior Backend Engineer",
         "companyName": "Razorpay",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000001",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000001",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -37,7 +36,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Frontend Engineer",
         "companyName": "Zerodha",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000002",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000002",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -49,7 +48,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Data Scientist",
         "companyName": "Swiggy",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000003",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000003",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -61,7 +60,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "DevOps Engineer",
         "companyName": "Flipkart",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000004",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000004",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -73,7 +72,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Full Stack Engineer",
         "companyName": "Meesho",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000005",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000005",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -85,7 +84,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Backend Engineer (Java)",
         "companyName": "Paytm",
         "location": "Noida, Uttar Pradesh, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000006",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000006",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -96,7 +95,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Machine Learning Engineer",
         "companyName": "Ola",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000007",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000007",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -108,7 +107,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Android Engineer",
         "companyName": "PhonePe",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000008",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000008",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -120,7 +119,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Data Engineer",
         "companyName": "Zomato",
         "location": "Gurugram, Haryana, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000009",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000009",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -131,7 +130,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Product Manager",
         "companyName": "CRED",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000010",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000010",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -143,7 +142,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Senior Backend Engineer (Remote)",
         "companyName": "Postman",
         "location": "Remote, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000011",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000011",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -155,7 +154,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "QA Automation Engineer",
         "companyName": "Freshworks",
         "location": "Chennai, Tamil Nadu, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000012",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000012",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": ("Own test automation in Python and Selenium with CI/CD. ₹15-25 LPA."),
@@ -164,7 +163,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Growth Marketing Manager",
         "companyName": "Dunzo",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000013",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000013",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -176,7 +175,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Senior Product Manager",
         "companyName": "Flipkart",
         "location": "Bengaluru, Karnataka, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000014",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000014",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -188,7 +187,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "AI Engineer",
         "companyName": "Microsoft India",
         "location": "Hyderabad, Telangana, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000015",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000015",
         "seniorityLevel": "Senior",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -200,7 +199,7 @@ SAMPLE_RAW_ITEMS: list[dict] = [
         "title": "Content Marketing Lead",
         "companyName": "Zoho",
         "location": "Chennai, Tamil Nadu, India",
-        "jobUrl": "https://www.linkedin.com/jobs/view/3950000016",
+        "jobUrl": "https://jobs.google.com/job/gj_sample_3950000016",
         "seniorityLevel": "Mid-Senior level",
         "employmentType": "Full-time",
         "descriptionText": (
@@ -212,6 +211,6 @@ SAMPLE_RAW_ITEMS: list[dict] = [
 
 
 def sample_job_records() -> list[JobRecord]:
-    """Normalise the sample raw items through the real LinkedIn scraper path."""
+    """Normalise the sample raw items through the real Google Jobs path."""
     scraper = ApifyJobsScraper(api_token="sample")
     return scraper.normalise_batch(SAMPLE_RAW_ITEMS)

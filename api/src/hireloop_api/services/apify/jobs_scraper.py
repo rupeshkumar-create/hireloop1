@@ -1,9 +1,8 @@
 """
-Apify LinkedIn Jobs Scraper service.
+Apify Google Jobs Scraper service.
 
-Supported actors (no-cookie, complies with R16 §3):
-  - apify/linkedin-jobs-scraper     (URL-based input: startUrls)
-  - bebity/linkedin-jobs-scraper    (title+location input schema)
+Active actor:
+  - johnvc/Google-Jobs-Scraper
 
 India geo-lock replaced by per-market scoping (IN / US / GB).
 
@@ -22,7 +21,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 import httpx
 import structlog
@@ -62,7 +61,7 @@ class JobRecord(BaseModel):
     ctc_max: int | None = None
     skills_required: list[str] = []
     apply_url: str | None = None
-    source: str = "apify"
+    source: str = "google_jobs"
     expires_at: datetime | None = None
     raw_data: dict = {}
 
@@ -116,7 +115,8 @@ class JobRecord(BaseModel):
 
 # ── Apify client ──────────────────────────────────────────────────────────────
 
-DEFAULT_LINKEDIN_JOBS_ACTOR = "bebity/linkedin-jobs-scraper"
+DEFAULT_GOOGLE_JOBS_ACTOR = "johnvc/Google-Jobs-Scraper"
+DEFAULT_LINKEDIN_JOBS_ACTOR = DEFAULT_GOOGLE_JOBS_ACTOR
 APIFY_API_BASE = "https://api.apify.com/v2"
 
 # Back-compat alias — prefer MARKET_SCRAPE_LOCATIONS from markets.py
@@ -143,7 +143,7 @@ SEARCH_QUERIES = [
 
 
 class ApifyJobsScraper:
-    def __init__(self, api_token: str, *, actor: str = DEFAULT_LINKEDIN_JOBS_ACTOR) -> None:
+    def __init__(self, api_token: str, *, actor: str = DEFAULT_GOOGLE_JOBS_ACTOR) -> None:
         self._token = api_token
         self._actor = actor
 
@@ -154,23 +154,6 @@ class ApifyJobsScraper:
     def _actor_path(actor: str) -> str:
         """Apify API expects `username~actor-name` in URLs (store uses `username/actor-name`)."""
         return actor.replace("/", "~") if "/" in actor else actor
-
-    @staticmethod
-    def _linkedin_tpr(time_range: str) -> str:
-        """Map a friendly time range ("24h", "7d", "30d") to LinkedIn's `r<seconds>` filter."""
-        mapping = {
-            "1h": "r3600",
-            "24h": "r86400",
-            "7d": "r604800",
-            "30d": "r2592000",
-        }
-        return mapping.get(time_range.lower().strip(), "r86400")
-
-    def _actor_kind(self) -> Literal["start_urls", "title_location"]:
-        actor = (self._actor or "").lower()
-        if actor.endswith(("bebity/linkedin-jobs-scraper", "bebity~linkedin-jobs-scraper")):
-            return "title_location"
-        return "start_urls"
 
     @staticmethod
     def _coerce_market_location(loc: str, market: str) -> str:
@@ -203,120 +186,84 @@ class ApifyJobsScraper:
         time_range: str = "24h",
     ) -> tuple[list[dict[str, Any]], list[JobRecord], dict[str, Any]]:
         """
-        Run the configured LinkedIn jobs actor and return (raw_items, records, stats).
+        Run the configured Google Jobs actor and return (raw_items, records, stats).
 
-        For URL-based actors we can scrape many queries x locations in one run.
-        For title/location schema actors (bebity) we run multiple small runs and
-        concatenate the datasets, then normalise in one pass.
+        johnvc/Google-Jobs-Scraper accepts one query/location per run, so we run
+        bounded query x location pairs and concatenate the datasets.
         """
-        if self._actor_kind() == "title_location":
-            # Keep default cost bounded: 5 queries x 1 location (India) x rows.
-            defaulted_queries = queries is None
-            defaulted_locations = locations is None
+        q_list = (queries or SEARCH_QUERIES)[:10]
+        loc_list = (locations or ["India"])[:5]
+        rows = max(10, min(1000, max_results_per_query))
 
-            q_list = queries or SEARCH_QUERIES
-            if defaulted_queries:
-                q_list = SEARCH_QUERIES[:5]
+        run_ids: list[str] = []
+        dataset_ids: list[str] = []
+        all_items: list[dict[str, Any]] = []
 
-            loc_list = locations or ["India"]
-            if defaulted_locations:
-                loc_list = ["India"]
+        for q in q_list:
+            for loc in loc_list:
+                market = resolve_country_from_location(loc) or "IN"
+                run_id = await self._trigger_run_google_jobs(
+                    query=q,
+                    location=self._coerce_market_location(loc, market),
+                    max_results=rows,
+                    country=self._google_country_code(market),
+                )
+                dataset_id = await self.wait_for_run(run_id)
+                items = await self.fetch_dataset(dataset_id, limit=rows)
+                run_ids.append(run_id)
+                dataset_ids.append(dataset_id)
+                all_items.extend(items)
 
-            q_list = q_list[:10]
-            loc_list = loc_list[:5]
-
-            rows = max(10, min(1000, max_results_per_query))
-
-            run_ids: list[str] = []
-            dataset_ids: list[str] = []
-            all_items: list[dict[str, Any]] = []
-
-            for q in q_list:
-                for loc in loc_list:
-                    market = resolve_country_from_location(loc) or "IN"
-                    run_id = await self._trigger_run_title_location(
-                        title=q,
-                        location=self._coerce_market_location(loc, market),
-                        rows=rows,
-                        time_range=time_range,
-                    )
-                    dataset_id = await self.wait_for_run(run_id)
-                    items = await self.fetch_dataset(dataset_id, limit=rows)
-                    run_ids.append(run_id)
-                    dataset_ids.append(dataset_id)
-                    all_items.extend(items)
-
-            records = self.normalise_batch(all_items)
-            stats = {
-                "actor": self._actor,
-                "run_id": run_ids[0] if run_ids else None,
-                "dataset_id": dataset_ids[0] if dataset_ids else None,
-                "run_ids": run_ids,
-                "dataset_ids": dataset_ids,
-                "raw_items": len(all_items),
-                "normalised": len(records),
-            }
-            return all_items, records, stats
-
-        # Default URL-based actor
-        run_id = await self._trigger_run_start_urls(
-            queries=queries,
-            locations=locations,
-            max_results_per_query=max_results_per_query,
-            time_range=time_range,
-        )
-        dataset_id = await self.wait_for_run(run_id)
-        items = await self.fetch_dataset(dataset_id)
-        records = self.normalise_batch(items)
+        records = self.normalise_batch(all_items)
         stats = {
             "actor": self._actor,
-            "run_id": run_id,
-            "dataset_id": dataset_id,
-            "raw_items": len(items),
+            "run_id": run_ids[0] if run_ids else None,
+            "dataset_id": dataset_ids[0] if dataset_ids else None,
+            "run_ids": run_ids,
+            "dataset_ids": dataset_ids,
+            "raw_items": len(all_items),
             "normalised": len(records),
         }
-        return items, records, stats
+        return all_items, records, stats
 
-    async def _trigger_run_start_urls(
-        self,
-        queries: list[str] | None = None,
-        locations: list[str] | None = None,
-        max_results_per_query: int = 25,
-        time_range: str = "24h",
-    ) -> str:
-        """
-        Trigger a LinkedIn Jobs scraper run.
-        Returns the run_id for polling.
-        max_results_per_query x len(queries) x len(locations) = total items.
-        Default: 25 x 15 queries x 11 locations = up to 4,125 items per run.
-        Cost: ~$2.06 per full run (~₹172).
-        """
-        queries = queries or SEARCH_QUERIES
-        locations = locations or INDIA_LOCATIONS
-
-        # Build search URL list (LinkedIn Jobs search format)
-        # f_TPR = "posted within" filter; nightly uses 24h, on-demand widens to 7d
-        tpr = self._linkedin_tpr(time_range)
-        base = "https://www.linkedin.com/jobs/search/"
-        search_urls = []
-        for q in queries:
-            for loc in locations:
-                # LinkedIn Jobs search URL with India filter
-                encoded_q = q.replace(" ", "%20")
-                encoded_loc = loc.replace(",", "%2C").replace(" ", "%20")
-                search_urls.append(
-                    f"{base}?keywords={encoded_q}&location={encoded_loc}&f_TPR={tpr}"
-                )
-
-        input_data = {
-            "startUrls": [{"url": url} for url in search_urls],
-            "maxResults": max_results_per_query,
-            "scrapeCompany": False,  # We enrich companies separately in P12
-            "proxy": {
-                "useApifyProxy": True,
-                "apifyProxyGroups": ["RESIDENTIAL"],  # residential IPs — avoids blocks
-            },
+    @staticmethod
+    def _build_google_jobs_input(
+        *,
+        query: str,
+        location: str | None,
+        max_results: int,
+        country: str = "in",
+    ) -> dict[str, Any]:
+        return {
+            "query": query,
+            "location": location or "",
+            "country": country or "None",
+            "language": "None",
+            "google_domain": "google.com",
+            "num_results": max(10, min(int(max_results), 1000)),
+            "max_pagination": 0,
+            "include_lrad": False,
+            "lrad_value": "",
+            "max_delay": 1,
+            "output_file": "",
+            "cleanup_results": True,
         }
+
+    @staticmethod
+    def _google_country_code(market: str) -> str:
+        """Map internal ISO-ish market codes to johnvc/Google-Jobs-Scraper country values."""
+        return {"IN": "in", "US": "us", "GB": "uk"}.get(market.upper(), "None")
+
+    async def _trigger_run_google_jobs(
+        self, *, query: str, location: str | None, max_results: int, country: str
+    ) -> str:
+        """Trigger johnvc/Google-Jobs-Scraper for one query/location pair."""
+        input_data = self._build_google_jobs_input(
+            query=query,
+            location=location,
+            max_results=max_results,
+            country=country,
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -330,39 +277,13 @@ class ApifyJobsScraper:
             raise RuntimeError(f"Apify run trigger failed: {resp.status_code}")
 
         run_id = resp.json()["data"]["id"]
-        logger.info("apify_run_triggered", run_id=run_id, url_count=len(search_urls))
-        return run_id
-
-    async def _trigger_run_title_location(
-        self, *, title: str, location: str, rows: int, time_range: str = "24h"
-    ) -> str:
-        """
-        Trigger a run for title/location schema actors (e.g. bebity/linkedin-jobs-scraper).
-        """
-        input_data = {
-            "title": title,
-            "location": location,
-            "rows": max(10, min(int(rows), 1000)),
-            "publishedAt": self._linkedin_tpr(time_range),
-            "proxy": {
-                "useApifyProxy": True,
-                "apifyProxyGroups": ["RESIDENTIAL"],
-            },
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{APIFY_API_BASE}/acts/{self._actor_path(self._actor)}/runs",
-                headers=self._headers(),
-                json=input_data,
-            )
-
-        if resp.status_code not in (200, 201):
-            logger.error("apify_run_trigger_failed", status=resp.status_code, body=resp.text[:200])
-            raise RuntimeError(f"Apify run trigger failed: {resp.status_code}")
-
-        run_id = resp.json()["data"]["id"]
-        logger.info("apify_run_triggered", run_id=run_id, title=title, location=location, rows=rows)
+        logger.info(
+            "apify_google_jobs_run_triggered",
+            run_id=run_id,
+            query=query,
+            location=location,
+            max_results=max_results,
+        )
         return run_id
 
     async def wait_for_run(self, run_id: str, poll_interval: int = 10, max_wait: int = 600) -> str:
@@ -417,7 +338,7 @@ class ApifyJobsScraper:
 
     def normalise(self, raw: dict[str, Any]) -> JobRecord | None:
         """
-        Map one Apify LinkedIn Jobs item → JobRecord.
+        Map one johnvc/Google-Jobs-Scraper item → JobRecord.
         Returns None if market cannot be resolved or required fields are missing.
         """
         title = (
@@ -435,27 +356,40 @@ class ApifyJobsScraper:
             or ""
         )
         location_raw = str(location_raw).strip()
-        market = self._resolve_market(location_raw, title)
+        country_raw = str(raw.get("country") or raw.get("country_code") or "").strip()
+        market = self._resolve_market(location_raw, title, country_raw)
         if not market:
             return None
 
         city, state = self._parse_location(location_raw, market)
 
-        # Build a stable dedup key from job URL or ID
+        # Build a stable dedup key from Google job id, apply URL, or share link.
+        apply_options = raw.get("apply_options") or raw.get("applyOptions") or []
+        apply_url_from_options = None
+        if isinstance(apply_options, list):
+            for opt in apply_options:
+                if isinstance(opt, dict) and opt.get("link"):
+                    apply_url_from_options = str(opt["link"])
+                    break
         job_url = (
-            raw.get("jobUrl")
+            apply_url_from_options
+            or raw.get("jobUrl")
             or raw.get("applyUrl")
             or raw.get("apply_url")
             or raw.get("job_url")
             or raw.get("url")
+            or raw.get("share_link")
             or raw.get("link")
             or ""
         )
         job_url = str(job_url)
         stable_id = (
-            self._extract_job_id(job_url) or raw.get("jobId") or raw.get("id") or raw.get("job_id")
+            raw.get("job_id")
+            or raw.get("jobId")
+            or raw.get("id")
+            or self._extract_job_id(job_url)
         )
-        apify_job_id = str(stable_id) if stable_id else str(uuid.uuid4())
+        apify_job_id = f"gj_{stable_id}" if stable_id else f"gj_{uuid.uuid4()}"
 
         # Parse salary from description if available
         ctc_min, ctc_max = self._parse_salary(
@@ -482,6 +416,7 @@ class ApifyJobsScraper:
             or raw.get("contractType")
             or raw.get("jobType")
             or raw.get("employment_type")
+            or (raw.get("detected_extensions") or {}).get("schedule_type")
             or "full_time"
         )
 
@@ -521,6 +456,7 @@ class ApifyJobsScraper:
                 ctc_max=ctc_max,
                 skills_required=skills,
                 apply_url=(job_url or None),
+                source="google_jobs",
                 raw_data={k: v for k, v in raw.items() if k not in ("description",)},
             )
         except Exception as exc:
@@ -543,8 +479,23 @@ class ApifyJobsScraper:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_market(location_raw: str, title: str) -> str | None:
-        market = resolve_country_from_location(location_raw) or resolve_country_from_location(title)
+    def _resolve_market(location_raw: str, title: str, country_raw: str = "") -> str | None:
+        country_map = {
+            "in": "IN",
+            "india": "IN",
+            "us": "US",
+            "usa": "US",
+            "united states": "US",
+            "uk": "GB",
+            "gb": "GB",
+            "united kingdom": "GB",
+        }
+        country_market = country_map.get(country_raw.lower())
+        market = (
+            country_market
+            or resolve_country_from_location(location_raw)
+            or resolve_country_from_location(title)
+        )
         if market and market in SUPPORTED_MARKETS:
             return market
         return None
@@ -592,13 +543,16 @@ class ApifyJobsScraper:
 
     @staticmethod
     def _extract_job_id(url: str) -> str | None:
-        """Extract LinkedIn job ID from URL for deduplication."""
+        """Extract a stable job id from known job URL formats for deduplication."""
         match = re.search(r"/jobs/view/(\d+)", url)
         if match:
             return f"li_{match.group(1)}"
         match = re.search(r"currentJobId=(\d+)", url)
         if match:
             return f"li_{match.group(1)}"
+        match = re.search(r"/job/([^/?#]+)", url)
+        if match:
+            return match.group(1)
         return None
 
     @staticmethod
@@ -694,6 +648,28 @@ class ApifyJobsScraper:
         "analytics",
         "tableau",
         "power bi",
+        "customer success",
+        "customer support",
+        "client success",
+        "relationship management",
+        "communication",
+        "renewals",
+        "operations",
+        "merchandising",
+        "fashion buying",
+        "retail planning",
+        "category management",
+        "recruitment",
+        "talent acquisition",
+        "payroll",
+        "employee relations",
+        "finance",
+        "accounting",
+        "digital marketing",
+        "seo",
+        "social media",
+        "sales",
+        "business development",
     }
 
     def _extract_skills(self, text: str) -> list[str]:

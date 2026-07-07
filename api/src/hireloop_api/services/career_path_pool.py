@@ -304,9 +304,7 @@ async def ingest_pool(
                 apify_token=settings.apify_token,
                 db=conn,
                 settings=settings,
-                linkedin_actor=settings.apify_linkedin_jobs_actor,
-                career_site_actor=settings.apify_career_site_actor,
-                enable_career_site=settings.apify_enable_career_site_ingest,
+                jobs_actor=settings.apify_jobs_actor,
             )
             ingest_stats = await ingester.ingest(
                 queries=queries,
