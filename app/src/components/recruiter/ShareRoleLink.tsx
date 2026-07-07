@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Copy } from "@/components/brand/icons";
-import { Button, useToast } from "@/components/ui";
+import { Copy, ExternalLink } from "@/components/brand/icons";
+import { useToast } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 type ShareRoleLinkProps = {
   publicRoleUrl: string | null | undefined;
@@ -22,6 +23,11 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
 
   if (!publicRoleUrl) return null;
 
+  const iconBtn =
+    "hs-role-link inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent " +
+    "text-ink-500 hover:text-ink-900 hover:bg-ink-50 transition-colors duration-fast " +
+    "active:scale-95 disabled:opacity-60 disabled:pointer-events-none";
+
   async function copyLink() {
     setCopying(true);
     try {
@@ -36,33 +42,35 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
   }
 
   return (
-    <div className={className}>
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          loading={copying}
-          leftIcon={<Copy className="h-3.5 w-3.5" strokeWidth={1.5} />}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            void copyLink();
-          }}
-        >
-          Copy link
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.open(publicRoleUrl, "_blank", "noopener,noreferrer");
-          }}
-        >
-          View live
-        </Button>
-      </div>
+    <div className={cn("flex items-center gap-1", className)}>
+      <button
+        type="button"
+        className={iconBtn}
+        disabled={copying}
+        aria-label="Copy public role link"
+        title="Copy link"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void copyLink();
+        }}
+      >
+        <Copy className="h-4 w-4" strokeWidth={1.5} />
+      </button>
+
+      <button
+        type="button"
+        className={iconBtn}
+        aria-label="Open public role page"
+        title="View live"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(publicRoleUrl, "_blank", "noopener,noreferrer");
+        }}
+      >
+        <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
+      </button>
     </div>
   );
 }
