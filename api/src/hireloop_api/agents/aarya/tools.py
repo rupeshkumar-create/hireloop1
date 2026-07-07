@@ -863,25 +863,50 @@ async def job_search(
         duration_ms,
     )
 
-    # When nothing matched, optionally warm the index with a career-path-scoped
-    # scrape so the candidate's NEXT search has live openings (opt-in via
-    # AUTO_INGEST_ON_EMPTY_SEARCH; needs an Apify token; spends credits).
-    if (
-        not results
-        and settings is not None
-        and settings.auto_ingest_on_empty_search
-        and settings.apify_token
-        and candidate is not None
-    ):
-        from hireloop_api.services.background_jobs import AARYA_AUTO_INGEST, enqueue_job
-
-        await enqueue_job(
-            db,
-            kind=AARYA_AUTO_INGEST,
-            payload={"candidate_id": str(candidate["id"])},
-            idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
+    # When nothing matched, warm the index so the candidate's NEXT search has
+    # live openings. Career-path users get a path-scoped ingest regardless of
+    # the old generic auto-ingest flag; generic fallbacks still respect the flag
+    # to avoid broad Apify spend.
+    if not results and settings is not None and settings.apify_token and candidate is not None:
+        from hireloop_api.services.background_jobs import (
+            AARYA_AUTO_INGEST,
+            CAREER_PATH_INGEST,
+            enqueue_job,
         )
-        logger.info("aarya_auto_ingest_enqueued", candidate_id=str(candidate["id"]))
+
+        candidate_id = str(candidate["id"])
+        location_parts = [
+            p
+            for p in [
+                candidate_profile.get("location_city") if candidate_profile else None,
+                candidate_profile.get("location_state") if candidate_profile else None,
+            ]
+            if p
+        ]
+        if target_titles:
+            await enqueue_job(
+                db,
+                kind=CAREER_PATH_INGEST,
+                payload={
+                    "candidate_id": candidate_id,
+                    "queries": target_titles,
+                    "locations": location_parts or ["India"],
+                },
+                idempotency_key=f"career_path_ingest:{candidate_id}",
+            )
+            logger.info(
+                "aarya_path_ingest_enqueued",
+                candidate_id=candidate_id,
+                queries=target_titles,
+            )
+        elif settings.auto_ingest_on_empty_search:
+            await enqueue_job(
+                db,
+                kind=AARYA_AUTO_INGEST,
+                payload={"candidate_id": candidate_id},
+                idempotency_key=f"aarya_auto_ingest:{candidate_id}",
+            )
+            logger.info("aarya_auto_ingest_enqueued", candidate_id=candidate_id)
 
     return {
         "count": len(results),

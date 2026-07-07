@@ -320,6 +320,44 @@ async def prioritize_career_path(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if path is None:
         raise HTTPException(status_code=404, detail="Generate your career path first.")
+
+    try:
+        from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
+
+        loc_row = await db.fetchrow(
+            """
+            SELECT location_city, location_state
+            FROM public.candidates
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            uuid.UUID(candidate_id),
+        )
+        loc_data = dict(loc_row) if loc_row else {}
+        locations = [
+            p
+            for p in [
+                loc_data.get("location_city"),
+                loc_data.get("location_state"),
+            ]
+            if p
+        ] or path.get("target_locations") or ["India"]
+        queries = path.get("target_titles") or [title]
+        await enqueue_job(
+            db,
+            kind=CAREER_PATH_INGEST,
+            payload={
+                "candidate_id": candidate_id,
+                "queries": queries,
+                "locations": locations,
+            },
+            idempotency_key=f"career_path_ingest:{candidate_id}",
+        )
+    except Exception as exc:
+        logger.warning(
+            "career_path_prioritize_ingest_enqueue_failed",
+            candidate_id=candidate_id,
+            error=str(exc)[:200],
+        )
     return {"path": path}
 
 

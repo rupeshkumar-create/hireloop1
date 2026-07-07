@@ -597,7 +597,7 @@ async def send_message(
         career_path_prioritized = (career_path_row or {}).get("prioritized_title") or None
         cand_prefs = await db.fetchrow(
             """
-            SELECT current_title, looking_for
+            SELECT current_title, looking_for, location_city, location_state
             FROM public.candidates
             WHERE id = $1::uuid AND deleted_at IS NULL
             """,
@@ -707,6 +707,15 @@ async def send_message(
 
             ingest_titles = career_path_row.get("target_titles") or []
             ingest_locations = career_path_row.get("target_locations") or []
+            if not ingest_locations:
+                ingest_locations = [
+                    p
+                    for p in [
+                        cand_prefs.get("location_city") if cand_prefs else None,
+                        cand_prefs.get("location_state") if cand_prefs else None,
+                    ]
+                    if p
+                ] or ["India"]
             if ingest_titles:
                 await enqueue_job(
                     db,
@@ -790,10 +799,13 @@ async def send_message(
                     "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
                 )
         else:
-            # Only promise a background pull when auto-ingest will actually run
-            # (flag on + Apify token present) — otherwise the copy overpromises.
-            will_auto_ingest = bool(settings.auto_ingest_on_empty_search and settings.apify_token)
-            if will_auto_ingest:
+            # Only promise a background pull when a path/generic ingest can
+            # actually run; otherwise the copy overpromises.
+            will_background_ingest = bool(
+                settings.apify_token
+                and (career_path_row is not None or settings.auto_ingest_on_empty_search)
+            )
+            if will_background_ingest:
                 deterministic_job_reply = (
                     f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
                     "but I couldn’t find live matches yet. "

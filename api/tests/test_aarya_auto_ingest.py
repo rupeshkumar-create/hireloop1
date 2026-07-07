@@ -13,6 +13,7 @@ import pytest
 
 from hireloop_api.agents.aarya import tools
 from hireloop_api.config import Settings
+from hireloop_api.services.background_jobs import CAREER_PATH_INGEST
 
 _USER_ID = str(uuid.uuid4())
 _CAND_ID = uuid.uuid4()
@@ -143,3 +144,69 @@ async def test_no_auto_ingest_without_settings(monkeypatch: pytest.MonkeyPatch) 
 def test_auto_ingest_flag_defaults_off() -> None:
     s = Settings(_env_file=None, environment="development")  # type: ignore[call-arg]
     assert s.auto_ingest_on_empty_search is False
+
+
+async def test_empty_search_with_career_path_enqueues_path_ingest_even_when_flag_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fired: dict[str, object] = {}
+
+    class _PathDb(_EmptyDB):
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "FROM public.career_paths" in query:
+                return {
+                    "id": uuid.uuid4(),
+                    "current_role": "Category Planner",
+                    "summary": "Move into category leadership",
+                    "steps": [],
+                    "target_titles": ["Category Manager", "Senior Category Manager"],
+                    "target_locations": ["Bengaluru"],
+                    "model": "test",
+                    "prioritized_title": "Category Manager",
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            return {
+                "id": _CAND_ID,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "Category Planner",
+                "current_company": "Target",
+                "full_name": "Candidate",
+                "headline": "Category planner",
+                "summary": "Retail category planning",
+                "years_experience": 5,
+                "skills": ["merchandising", "e-commerce"],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": False,
+                "location_scope": "city",
+            }
+
+    async def _spy_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        fired["kind"] = kwargs.get("kind")
+        fired["payload"] = kwargs.get("payload")
+        return uuid.uuid4()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.background_jobs.enqueue_job",
+        _spy_enqueue,
+    )
+
+    out = await tools.job_search(
+        _PathDb(),  # type: ignore[arg-type]
+        _USER_ID,
+        str(uuid.uuid4()),
+        "show me jobs",
+        settings=_settings(auto_ingest_on_empty_search=False),
+    )
+
+    assert out["count"] == 0
+    assert fired["kind"] == CAREER_PATH_INGEST
+    assert fired["payload"] == {
+        "candidate_id": str(_CAND_ID),
+        "queries": ["Category Manager", "Senior Category Manager"],
+        "locations": ["Bengaluru", "Karnataka"],
+    }
