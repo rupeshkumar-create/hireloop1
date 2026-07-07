@@ -174,6 +174,105 @@ async def test_job_search_does_not_block_on_unprioritized_career_path() -> None:
     assert out["matches"][0]["title"] == "Head of GTM - Staffing SaaS"
 
 
+async def test_job_search_broadens_to_profile_fit_when_exact_title_and_city_are_empty() -> None:
+    cand_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+
+    class _DB:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "COALESCE(NULLIF(c.market" in query:
+                return {"market": "IN"}
+            if "FROM public.career_paths" in query:
+                return {
+                    "id": uuid.uuid4(),
+                    "current_role": "Assistant Manager",
+                    "summary": "Customer-facing team lead",
+                    "steps": [{"title": "Customer Success Manager"}],
+                    "target_titles": ["Assistant Manager"],
+                    "target_locations": ["Bengaluru"],
+                    "model": "test",
+                    "prioritized_title": "Assistant Manager",
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            return {
+                "id": cand_id,
+                "remote_preference": "any",
+                "market": "IN",
+                "current_title": "Assistant Manager",
+                "current_company": "The Wedding Company",
+                "full_name": "Candidate",
+                "headline": "Customer success and relationship management",
+                "summary": "Client consultation, customer support, call quality monitoring.",
+                "years_experience": 4,
+                "skills": [
+                    "Communication",
+                    "Customer Success",
+                    "client consultation",
+                    "relationship management",
+                    "call quality monitoring",
+                    "Customer Support",
+                ],
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "expected_ctc_min": None,
+                "expected_ctc_max": None,
+                "open_to_relocation": True,
+                "location_scope": "country",
+            }
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            if "FROM public.match_scores" in query:
+                return []
+            if "FROM public.jobs" not in query:
+                return []
+            # Exact query and token fallbacks should miss because this role does
+            # not contain "Assistant Manager"; the broad profile fallback should
+            # still surface it from the visible market pool.
+            if "j.title ILIKE '%' || $1::text || '%'" in query:
+                return []
+            if "EXISTS (" in query:
+                return []
+            return [
+                {
+                    "id": job_id,
+                    "title": "Customer Success Manager",
+                    "location_city": "Mumbai",
+                    "location_state": "Maharashtra",
+                    "is_remote": True,
+                    "ctc_min": None,
+                    "ctc_max": None,
+                    "skills_required": [
+                        "Customer Success",
+                        "Customer Support",
+                        "Communication",
+                    ],
+                    "employment_type": "full_time",
+                    "seniority": "mid",
+                    "apply_url": "https://example.test/customer-success",
+                    "company_name": "ClientOS",
+                    "logo_url": None,
+                    "description": "Own customer relationships, support quality, and retention.",
+                    "overall_score": None,
+                }
+            ]
+
+        async def execute(self, query: str, *args: object) -> str:
+            return "INSERT 0 1"
+
+    out = await job_search(
+        _DB(),  # type: ignore[arg-type]
+        str(uuid.uuid4()),
+        "sess",
+        "Assistant Manager",
+        location_city="Bengaluru",
+    )
+
+    assert len(out["matches"]) == 1
+    assert out["matches"][0]["title"] == "Customer Success Manager"
+    assert len(out["job_cards"]) == 1
+
+
 async def test_job_search_drops_dental_sales_for_staffing_saas_gtm_candidate() -> None:
     cand_id = uuid.uuid4()
 

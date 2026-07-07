@@ -810,6 +810,57 @@ async def job_search(
             lenient=True,
         )
 
+    # Step 3: exact title/city can still be too brittle for generalist titles
+    # ("Assistant Manager", "Senior Executive") or sparse city feeds. Pull a
+    # broader visible market pool, score it against the CV, and keep the best
+    # profile-fit roles so Aarya always has cards before narrating a dry feed.
+    if not rows:
+        vis_profile = job_visible_for_market_sql(market_param="$4")
+        broad_limit = max(fetch_limit * 5, 50)
+        profile_rows = await db.fetch(
+            f"""
+            SELECT j.id, j.title, j.location_city, j.location_state,
+                   j.is_remote, j.ctc_min, j.ctc_max, j.skills_required,
+                   j.employment_type, j.seniority, j.apply_url, j.description,
+                   co.name AS company_name, co.logo_url,
+                   NULL::real AS overall_score
+            FROM public.jobs j
+            LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.is_active = TRUE
+              AND {vis_profile}
+              AND j.deleted_at IS NULL
+              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              {remote_clause}
+              {company_exclude}
+              AND ($2::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $2::integer)
+            ORDER BY
+              CASE
+                WHEN $1::text IS NOT NULL
+                 AND j.location_city ILIKE '%' || $1::text || '%'
+                THEN 0
+                ELSE 1
+              END,
+              j.scraped_at DESC
+            LIMIT $3::integer
+            """,
+            location_city,
+            ctc_min,
+            broad_limit,
+            market,
+        )
+        rows = _quality_filter_job_rows(
+            profile_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+        )
+        if not rows:
+            rows = _quality_filter_job_rows(
+                profile_rows,
+                candidate=candidate_profile,
+                target_titles=target_titles,
+                lenient=True,
+            )
+
     if rows:
         rows = exclude_job_rows(
             [dict(r) for r in rows],

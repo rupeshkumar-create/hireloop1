@@ -61,6 +61,65 @@ def _all_sources_failed(source_stats: dict[str, dict]) -> bool:
 # nothing. Map their keywords to board-real adjacent titles so the scrape still
 # pulls relevant openings. Keyword (substring, lower-cased) → adjacent titles.
 _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    # Generalist / operations titles
+    "assistant manager": (
+        "Operations Manager",
+        "Customer Success Manager",
+        "Customer Support Manager",
+        "Team Lead",
+    ),
+    "senior executive": ("Assistant Manager", "Team Lead", "Operations Executive"),
+    "executive": ("Operations Executive", "Customer Support Executive"),
+    "operations": ("Operations Manager", "Operations Executive", "Program Manager"),
+    "admin": ("Administration Manager", "Operations Executive"),
+    "office": ("Office Administrator", "Administration Manager"),
+    # Customer-facing roles
+    "customer success": (
+        "Customer Success Manager",
+        "Customer Success Associate",
+        "Client Success Manager",
+    ),
+    "customer support": (
+        "Customer Support Executive",
+        "Customer Support Manager",
+        "Support Manager",
+    ),
+    "client success": ("Client Success Manager", "Customer Success Manager"),
+    "client consultation": ("Client Success Manager", "Relationship Manager"),
+    "relationship": ("Relationship Manager", "Account Manager", "Client Success Manager"),
+    "account manager": ("Account Manager", "Key Account Manager"),
+    "call quality": ("Quality Analyst", "Customer Support Quality Analyst"),
+    "quality monitoring": ("Quality Analyst", "Customer Support Quality Analyst"),
+    # Fashion / retail / merchandising
+    "category planner": ("Category Manager", "Merchandiser", "Retail Planner"),
+    "category": ("Category Manager", "Category Planner"),
+    "merchandising": ("Merchandiser", "Merchandising Manager", "Category Manager"),
+    "merchandiser": ("Merchandiser", "Merchandising Manager"),
+    "fashion": ("Fashion Buyer", "Fashion Merchandiser", "Category Manager"),
+    "buying": ("Buyer", "Fashion Buyer", "Category Manager"),
+    "buyer": ("Buyer", "Category Manager"),
+    "retail": ("Retail Manager", "Store Manager", "Category Manager"),
+    "store": ("Store Manager", "Retail Manager"),
+    "inventory": ("Inventory Planner", "Supply Planner", "Merchandiser"),
+    # HR / people
+    "recruitment": ("Recruiter", "Talent Acquisition Specialist", "HR Executive"),
+    "recruiter": ("Recruiter", "Talent Acquisition Specialist"),
+    "talent acquisition": ("Talent Acquisition Specialist", "Recruiter"),
+    "payroll": ("Payroll Executive", "HR Executive"),
+    "employee relations": ("HR Executive", "HR Business Partner"),
+    "human resources": ("HR Executive", "HR Manager", "HR Business Partner"),
+    "hr": ("HR Executive", "HR Manager", "Talent Acquisition Specialist"),
+    # Finance / accounting
+    "finance": ("Finance Executive", "Financial Analyst", "Finance Manager"),
+    "accounting": ("Accountant", "Accounts Executive", "Finance Executive"),
+    "accounts": ("Accounts Executive", "Accountant"),
+    "tax": ("Tax Analyst", "Tax Consultant"),
+    "audit": ("Audit Associate", "Internal Auditor"),
+    # Sales / GTM
+    "sales": ("Sales Manager", "Business Development Manager", "Account Manager"),
+    "business development": ("Business Development Manager", "Sales Manager"),
+    "bd": ("Business Development Executive", "Business Development Manager"),
+    "inside sales": ("Inside Sales Representative", "Sales Development Representative"),
     "growth designer": ("Product Designer", "Growth Manager"),
     "product design": ("Product Designer",),
     "ux": ("UX Designer", "Product Designer"),
@@ -73,7 +132,17 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "frontend": ("Frontend Engineer",),
     "backend": ("Backend Engineer",),
     "data": ("Data Analyst", "Data Engineer"),
+    "it": ("IT Support Engineer", "System Administrator", "Network Engineer"),
+    "information technology": ("IT Support Engineer", "System Administrator"),
+    "system administrator": ("System Administrator", "IT Administrator"),
+    "network": ("Network Engineer", "System Administrator"),
+    "support engineer": ("Technical Support Engineer", "IT Support Engineer"),
     "marketing": ("Marketing Manager", "Performance Marketing Manager"),
+    "digital marketing": ("Digital Marketing Manager", "Performance Marketing Manager"),
+    "seo": ("SEO Specialist", "Digital Marketing Manager"),
+    "social media": ("Social Media Manager", "Digital Marketing Manager"),
+    "content": ("Content Marketing Manager", "Content Writer"),
+    "brand": ("Brand Manager", "Marketing Manager"),
     "product manager": ("Product Manager",),
 }
 
@@ -96,6 +165,21 @@ def _expand_title(title: str) -> list[str]:
     for keyword, adjacents in _TITLE_EXPANSIONS.items():
         if keyword in low:
             extras.extend(adjacents)
+    return extras
+
+
+def _expand_skills(skills: list[str] | None) -> list[str]:
+    """Board-real search titles inferred from resume skills/domain signals."""
+    text = " ".join(str(skill or "") for skill in (skills or [])).lower()
+    extras: list[str] = []
+    seen: set[str] = set()
+    for keyword, adjacents in _TITLE_EXPANSIONS.items():
+        if keyword in text:
+            for adjacent in adjacents:
+                key = adjacent.lower()
+                if key not in seen:
+                    seen.add(key)
+                    extras.append(adjacent)
     return extras
 
 
@@ -135,6 +219,9 @@ def derive_ingest_queries(
     _add(current_title)
     if current_title and expand:
         for adjacent in _expand_title(current_title):
+            _add(adjacent)
+    if expand:
+        for adjacent in _expand_skills(skills):
             _add(adjacent)
     if len(out) < 2:  # thin path/title → seed from a few concrete skills
         for skill in (skills or [])[:3]:

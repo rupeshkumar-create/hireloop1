@@ -342,6 +342,44 @@ def test_derive_ingest_queries_expands_niche_titles() -> None:
     assert "Growth Manager" in q
 
 
+def test_derive_ingest_queries_expands_generalist_customer_success_titles() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Assistant Manager"],
+        current_title=None,
+        skills=["Customer Success", "Customer Support", "Communication"],
+    )
+
+    assert q[0] == "Assistant Manager"
+    assert "Customer Success Manager" in q
+    assert "Customer Support Manager" in q
+    assert "Operations Manager" in q
+
+
+def test_derive_ingest_queries_expands_fashion_and_merchandising_profiles() -> None:
+    q = derive_ingest_queries(
+        target_titles=["Category Planner"],
+        current_title=None,
+        skills=["Fashion Buying", "Merchandising", "Retail Planning"],
+    )
+
+    assert q[0] == "Category Planner"
+    assert "Category Manager" in q
+    assert "Merchandiser" in q
+    assert "Fashion Buyer" in q
+
+
+def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
+    q = derive_ingest_queries(
+        target_titles=[],
+        current_title="Executive",
+        skills=["Recruitment", "Payroll", "Employee Relations"],
+    )
+
+    assert q[0] == "Executive"
+    assert "HR Executive" in q
+    assert "Talent Acquisition Specialist" in q
+
+
 async def test_ingest_for_candidate_scopes_to_career_path() -> None:
     class _Conn:
         async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
