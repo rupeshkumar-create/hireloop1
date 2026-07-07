@@ -11,13 +11,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Building2, MapPin, Briefcase } from "@/components/brand/icons";
+import {
+  ArrowRight,
+  Building2,
+  MapPin,
+  Briefcase,
+  LinkIcon,
+} from "@/components/brand/icons";
 import { NityaFace } from "@/components/nitya/NityaFace";
 import { Button, Field, Input } from "@/components/ui";
 import { fetchAuthMe } from "@/lib/api/auth";
 import {
   createRole,
   fetchRecruiterProfile,
+  importRoleFromUrl,
   updateRecruiterProfile,
 } from "@/lib/api/recruiter";
 
@@ -26,6 +33,9 @@ export function RecruiterOnboardingFlow() {
   const [companyName, setCompanyName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [roleCity, setRoleCity] = useState("");
+  const [mode, setMode] = useState<"form" | "import">("form");
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +67,22 @@ export function RecruiterOnboardingFlow() {
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
   }, [router]);
+
+  async function handleImportFromUrl() {
+    const url = importUrl.trim();
+    if (!url || importing || saving) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const res = await importRoleFromUrl(url);
+      if (res.title) setRoleTitle(res.title);
+      if (res.location_city) setRoleCity(res.location_city);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   async function finish() {
     if (saving) return;
@@ -112,6 +138,32 @@ export function RecruiterOnboardingFlow() {
         </div>
 
         <div className="space-y-4 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={mode === "form" ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => {
+                setError(null);
+                setMode("form");
+              }}
+            >
+              Fill form
+            </Button>
+            <Button
+              type="button"
+              variant={mode === "import" ? "primary" : "secondary"}
+              size="sm"
+              leftIcon={<LinkIcon className="h-4 w-4" strokeWidth={1.5} />}
+              onClick={() => {
+                setError(null);
+                setMode("import");
+              }}
+            >
+              Import job link
+            </Button>
+          </div>
+
           <Field
             label={
               <span className="flex items-center gap-2">
@@ -127,6 +179,40 @@ export function RecruiterOnboardingFlow() {
               autoFocus
             />
           </Field>
+
+          {mode === "import" && (
+            <Field
+              label={
+                <span className="flex items-center gap-2">
+                  <LinkIcon className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                  Job link
+                </span>
+              }
+            >
+              <div className="flex items-center gap-2">
+                <Input
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  placeholder="Paste a job post link (LinkedIn, company careers, etc.)"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleImportFromUrl();
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  loading={importing}
+                  onClick={() => void handleImportFromUrl()}
+                >
+                  Import
+                </Button>
+              </div>
+              <p className="text-micro text-ink-400 mt-1">
+                We&apos;ll auto-fill the role title (and city if available). You can edit it below.
+              </p>
+            </Field>
+          )}
 
           <Field
             label={
