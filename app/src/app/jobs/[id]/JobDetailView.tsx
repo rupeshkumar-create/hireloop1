@@ -28,12 +28,10 @@ import {
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
 import { recordJobApplication } from "@/lib/api/job-applications";
-import { prepareApplicationKit } from "@/lib/api/applicationKit";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import { AppShell } from "@/components/layout/AppShell";
 import { Avatar, Badge, Button, ScoreDot, useToast } from "@/components/ui";
-import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 
 const SENIORITY_LABELS: Record<string, string> = {
   intern: "Intern",
@@ -149,12 +147,6 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   const [introSent, setIntroSent] = useState(false);
   const [applied, setApplied] = useState(false);
   const [kitPreparing, setKitPreparing] = useState(false);
-  const [kitPreview, setKitPreview] = useState<{
-    resumeId: string | null;
-    jobId: string;
-    jobTitle: string | null;
-    initialTab: "resume" | "cover_letter" | "interview_prep";
-  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,32 +186,22 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
     router.push(`/dashboard?${params.toString()}`);
   };
 
-  // Assets-first flow: generate the full AI application kit (tailored resume,
-  // cover letter, interview prep) BEFORE the intro, then tee up the warm intro
-  // once the candidate is genuinely ready to be introduced.
+  // Assets-first flow is chat-mediated: Aarya generates and renders the kit in
+  // the dashboard thread, where the candidate can preview/download every asset.
   const handlePrepare = async () => {
     if (!job) return;
     if (kitPreparing) return;
     setKitPreparing(true);
     try {
       setSaved(true);
-      void saveJob(job.job_id).catch(() => undefined);
-      const kit = await prepareApplicationKit(job.job_id);
-      const resumeId = kit.resume?.resume_id ?? null;
-      const initialTab = resumeId
-        ? "resume"
-        : kit.cover_letter
-          ? "cover_letter"
-          : "interview_prep";
-      setKitPreview({
-        resumeId,
-        jobId: job.job_id,
-        jobTitle: job.title ?? null,
-        initialTab,
-      });
+      await saveJob(job.job_id).catch(() => undefined);
+      const params = new URLSearchParams();
+      params.set("kit_job_id", job.job_id);
+      if (job.title) params.set("kit_title", job.title);
+      if (job.company_name) params.set("kit_company", job.company_name);
+      router.push(`/dashboard?${params.toString()}`);
     } catch (e) {
-      toast.error((e as Error).message || "Couldn't prepare application kit");
-    } finally {
+      toast.error((e as Error).message || "Couldn't open Aarya chat");
       setKitPreparing(false);
     }
   };
@@ -262,8 +244,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   };
 
   return (
-    <>
-      <AppShell
+    <AppShell
         title="Job details"
         width="form"
         action={
@@ -305,16 +286,6 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
           />
         )}
       </AppShell>
-
-      <ResumePreviewModal
-        open={!!kitPreview}
-        onClose={() => setKitPreview(null)}
-        resumeId={kitPreview?.resumeId ?? null}
-        jobId={kitPreview?.jobId ?? null}
-        jobTitle={kitPreview?.jobTitle ?? undefined}
-        initialTab={kitPreview?.initialTab}
-      />
-    </>
   );
 }
 
@@ -549,10 +520,10 @@ function JobDetailBody({
           }
           className="w-full"
         >
-          {kitPreparing ? "Preparing application kit…" : "Prepare application kit"}
+          {kitPreparing ? "Opening Aarya chat…" : "Prepare application kit"}
         </Button>
         <p className="text-micro text-ink-400 text-center">
-          Aarya tailors your resume, cover letter & interview prep — then sets up the intro.
+          Aarya will generate your resume, cover letter & interview prep in chat.
         </p>
 
         <div className="flex items-center gap-2 pt-1">

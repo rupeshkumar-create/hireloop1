@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { getApplicationKitForJob, prepareApplicationKit } from "@/lib/api/applicationKit";
+import { useRouter } from "next/navigation";
+import { getApplicationKitForJob } from "@/lib/api/applicationKit";
 import type { MatchedJob } from "@/lib/api/matches";
 import { saveJob } from "@/lib/api/saved-jobs";
 import {
@@ -28,6 +29,7 @@ export type UseJobCardAssetsOptions = {
 };
 
 export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
+  const router = useRouter();
   const { toast } = useToast();
   const [kitByJob, setKitByJob] = useState<Record<string, AssetStatus>>({});
   const [roadmapByJob, setRoadmapByJob] = useState<Record<string, AssetStatus>>({});
@@ -72,25 +74,17 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
         // Must finish save BEFORE prepare — inactive/off-market jobs are only
         // eligible for kits when a saved_jobs row exists.
         await saveJob(job.job_id).catch(() => undefined);
-        const kit = await prepareApplicationKit(job.job_id);
-        const resumeId = kit.resume?.resume_id ?? null;
-        if (resumeId) {
-          setResumeIdByJob((s) => ({ ...s, [job.job_id]: resumeId }));
-        }
-        setKitByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-        setPreview({
-          jobId: job.job_id,
-          jobTitle: job.title,
-          resumeId,
-          tab: resumeId ? "resume" : kit.cover_letter ? "cover_letter" : "interview_prep",
-        });
-        options.onKitReady?.(job);
+        const params = new URLSearchParams();
+        params.set("kit_job_id", job.job_id);
+        if (job.title) params.set("kit_title", job.title);
+        if (job.company_name) params.set("kit_company", job.company_name);
+        router.push(`/dashboard?${params.toString()}`);
       } catch (err) {
         setKitByJob((s) => ({ ...s, [job.job_id]: "error" }));
-        toast.error((err as Error).message ?? "Couldn't prepare application kit");
+        toast.error((err as Error).message ?? "Couldn't open Aarya chat");
       }
     },
-    [kitByJob, openKitPreview, options, toast]
+    [kitByJob, openKitPreview, options, router, toast]
   );
 
   const handleLearningRoadmap = useCallback(

@@ -106,6 +106,7 @@ export function DashboardClient({
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
   const [introWatch, setIntroWatch] = useState<{ jobId: string; nonce: number } | null>(null);
   const [handledIntroParam] = useState(() => ({ handled: false }));
+  const [handledKitParam] = useState(() => ({ handled: false }));
   const [sendToChatRef] = useState(() => ({ fn: (_text: string) => Date.now() }));
   // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
   // never has to click "Find jobs" to see them there.
@@ -133,6 +134,34 @@ export function DashboardClient({
     const q = params.toString();
     router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
   }, [router, searchParams, handledIntroParam, sendToChatRef]);
+
+  // Deep-link from job cards/detail pages into chat-mediated application-kit
+  // generation. Example: /dashboard?kit_job_id=...&kit_title=...&kit_company=...
+  useEffect(() => {
+    if (handledKitParam.handled) return;
+    const jobId = searchParams?.get("kit_job_id")?.trim();
+    if (!jobId) return;
+    handledKitParam.handled = true;
+
+    const title = searchParams?.get("kit_title")?.trim() || "this role";
+    const company = searchParams?.get("kit_company")?.trim() || "this company";
+    setSavedJobIds((prev) => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+    void saveJob(jobId).catch(() => undefined);
+    sendToChatRef.fn(
+      `Prepare my application kit for the "${title}" role at ${company} (job ID: ${jobId}). Generate the tailored resume, cover letter, and interview prep, then show me the preview and download options here.`,
+    );
+
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("kit_job_id");
+    params.delete("kit_title");
+    params.delete("kit_company");
+    const q = params.toString();
+    router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
+  }, [router, searchParams, handledKitParam, sendToChatRef]);
 
   useEffect(() => {
     router.prefetch("/resumes");

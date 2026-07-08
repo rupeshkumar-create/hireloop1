@@ -71,6 +71,10 @@ from hireloop_api.services.tool_cache import clear_session_tool_cache
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/chat", tags=["chat"])
+_JOB_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
 
 # Live status labels streamed to the chat UI while tools run (R7).
 _TEXT_TOOL_STATUS_LABELS: dict[str, str] = {
@@ -158,6 +162,44 @@ def _agent_message_text(content: object) -> str:
                     parts.append(str(block["text"]))
         return "".join(parts)
     return str(content) if content else ""
+
+
+def _extract_application_kit_job_ids(text: str) -> list[str]:
+    """Return explicit job UUIDs from an application-kit request, preserving order."""
+    return list(dict.fromkeys(match.group(0).lower() for match in _JOB_UUID_RE.finditer(text)))[:3]
+
+
+def _build_application_kit_reply(result: dict) -> str:
+    """Compact deterministic reply after preparing application-kit assets."""
+    kits = result.get("kits") if isinstance(result, dict) else None
+    errors = result.get("errors") if isinstance(result, dict) else None
+    ready = kits if isinstance(kits, list) else []
+    failed = errors if isinstance(errors, list) else []
+
+    if ready:
+        first = ready[0] if isinstance(ready[0], dict) else {}
+        job = first.get("job") if isinstance(first.get("job"), dict) else {}
+        title = str(job.get("title") or "the role")
+        company = str(job.get("company_name") or "the company")
+        count_text = (
+            f"Your application kit is ready for **{title}** at **{company}**."
+            if len(ready) == 1
+            else f"I prepared {len(ready)} application kits."
+        )
+        tail = (
+            "\n\nI added the cards below so you can preview and download the tailored resume, "
+            "cover letter, and interview prep from here."
+        )
+        if failed:
+            tail += "\n\nA few roles could not be prepared; try those again in a moment."
+        return count_text + tail
+
+    if failed:
+        first_error = failed[0] if isinstance(failed[0], dict) else {}
+        message = str(first_error.get("error") or "the kit could not be prepared")
+        return f"I couldn't prepare that application kit yet: {message}. Please try again in a moment."
+
+    return "I couldn't prepare that application kit yet. Please try again in a moment."
 
 
 def _looks_incomplete_profile_reply(text: str) -> bool:
@@ -824,6 +866,11 @@ async def send_message(
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
     deterministic_job_reply: str | None = None
+    application_kit_job_ids = (
+        _extract_application_kit_job_ids(body.content)
+        if user_intent == "job_application"
+        else []
+    )
     if search_title is not None and user_intent == "job_search":
         location_text = f" in {search_city}" if search_city else ""
         if prefetched_jobs:
@@ -877,6 +924,39 @@ async def send_message(
             )
             if include_prefetch and prefetched_jobs:
                 yield sse_jobs(prefetched_jobs)
+            if application_kit_job_ids:
+                yield sse_status(
+                    tool_status_label("prepare_application_kit", voice_mode=voice_mode),
+                    spoken_filler=(
+                        tool_status_spoken_filler("prepare_application_kit")
+                        if voice_mode
+                        else None
+                    ),
+                    eta_sec=tool_status_eta("prepare_application_kit"),
+                    hinglish_hint=hinglish,
+                )
+                async with pool.acquire() as db:
+                    result = await aarya_tools.prepare_application_kit(
+                        db,
+                        str(current_user["id"]),
+                        conversation_id,
+                        settings,
+                        job_ids=application_kit_job_ids,
+                    )
+                full_response = _build_application_kit_reply(result)
+                yield sse_text(full_response)
+                try:
+                    await _persist_assistant_reply(
+                        settings, conversation_id, full_response, title_hint
+                    )
+                except Exception as save_exc:
+                    logger.error(
+                        "assistant_message_save_failed",
+                        error=str(save_exc),
+                        conversation_id=conversation_id,
+                    )
+                yield sse_done()
+                return
             if deterministic_job_reply:
                 full_response = deterministic_job_reply
                 yield sse_text(deterministic_job_reply)

@@ -5,14 +5,17 @@ import { useState } from "react";
 import {
   Briefcase,
   Copy,
+  Download,
   Eye,
   FileText,
   GraduationCap,
   Check,
 } from "@/components/brand/icons";
 import type { ApplicationKit } from "@/lib/api/applicationKit";
+import { downloadTailoredResume } from "@/lib/api/tailored";
 import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { RichMarkdown } from "@/components/ui/RichMarkdown";
+import { useToast } from "@/components/ui";
 import { BTN_PRIMARY, BTN_GHOST } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +50,47 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+function filenamePart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "application-kit";
+}
+
+function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function DownloadTextButton({
+  text,
+  filename,
+  label,
+}: {
+  text: string;
+  filename: string;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => downloadTextFile(filename, text)}
+      className="inline-flex items-center gap-1 text-micro font-medium text-ink-600 hover:text-ink-900"
+    >
+      <Download className="h-3 w-3" />
+      {label}
+    </button>
+  );
+}
+
 function PreviewButton({
   label,
   disabled,
@@ -74,7 +118,9 @@ function PreviewButton({
 }
 
 export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
+  const { toast } = useToast();
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [downloadingResumeId, setDownloadingResumeId] = useState<string | null>(null);
 
   if (!kits.length) return null;
 
@@ -91,6 +137,7 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
           const resumeId = kit.resume.resume_id;
           const resumeReady =
             kit.resume.status === "ready" && Boolean(resumeId);
+          const filenameBase = filenamePart(`${title}-${company}`);
 
           const openPreview = (tab: PreviewState["tab"]) => {
             setPreview({
@@ -101,6 +148,18 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
               coverLetter: kit.cover_letter,
               interviewPrep: kit.interview_prep,
             });
+          };
+
+          const downloadResume = async () => {
+            if (!resumeId || downloadingResumeId) return;
+            setDownloadingResumeId(resumeId);
+            try {
+              await downloadTailoredResume(resumeId);
+            } catch {
+              toast.error("Couldn't open the resume for download");
+            } finally {
+              setDownloadingResumeId(null);
+            }
           };
 
           return (
@@ -124,6 +183,25 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
                   disabled={!resumeReady}
                   onClick={() => openPreview("resume")}
                 />
+
+                <button
+                  type="button"
+                  disabled={!resumeReady || downloadingResumeId === resumeId}
+                  onClick={() => void downloadResume()}
+                  className={cn(
+                    BTN_GHOST,
+                    "flex items-center gap-2 px-3 py-2 text-left text-small",
+                    (!resumeReady || downloadingResumeId === resumeId) &&
+                      "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  <Download className="h-4 w-4 shrink-0 text-accent" />
+                  <span>
+                    {downloadingResumeId === resumeId
+                      ? "Preparing download…"
+                      : "Download resume"}
+                  </span>
+                </button>
 
                 <PreviewButton
                   label="Preview cover letter"
@@ -149,6 +227,11 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
                         <Eye className="h-3 w-3" />
                         Full preview
                       </button>
+                      <DownloadTextButton
+                        text={kit.interview_prep}
+                        filename={`${filenameBase}-interview-prep.md`}
+                        label="Download prep"
+                      />
                       <CopyButton text={kit.interview_prep} label="Copy prep" />
                     </div>
                   </div>
@@ -177,8 +260,13 @@ export function ApplicationKitCards({ kits }: ApplicationKitCardsProps) {
               </div>
 
               {kit.cover_letter && (
-                <div className="flex items-center gap-2 text-micro text-ink-500">
+                <div className="flex flex-wrap items-center gap-3 text-micro text-ink-500">
                   <FileText className="h-3.5 w-3.5 shrink-0" />
+                  <DownloadTextButton
+                    text={kit.cover_letter}
+                    filename={`${filenameBase}-cover-letter.md`}
+                    label="Download cover letter"
+                  />
                   <CopyButton text={kit.cover_letter} label="Copy cover letter" />
                 </div>
               )}
