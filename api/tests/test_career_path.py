@@ -4,6 +4,7 @@ from hireloop_api.services.career_path import (
     _build_profile_brief,
     _profile_ready_for_path,
     build_career_path_system_prompt,
+    path_from_career_intelligence,
 )
 
 
@@ -66,3 +67,36 @@ def test_profile_brief_includes_market_and_full_location() -> None:
 
     assert "Market: GB" in brief
     assert "Location: London, England" in brief
+
+
+def test_path_from_career_intelligence_orders_by_feasibility() -> None:
+    profile = {
+        "current_title": "Category Team Lead",
+        "skills": ["Customer Success", "Leadership"],
+    }
+    intelligence = {
+        "mobility": {
+            "adjacent_roles": [
+                {
+                    "role": "CX Operations Manager",
+                    "feasibility_score": 80,
+                    "time_required": "3-6 months",
+                    "skill_gap": ["Budget ownership"],
+                },
+                {
+                    "role": "Customer Success Manager",
+                    "feasibility_score": 85,
+                    "time_required": "0-3 months",
+                    "skill_gap": ["CRM proficiency"],
+                },
+            ]
+        }
+    }
+
+    path = path_from_career_intelligence(profile, intelligence)
+
+    assert path is not None
+    assert path["target_titles"][0] == "Customer Success Manager"
+    next_steps = [s for s in path["steps"] if s["level"] == "next"]
+    assert next_steps[0]["title"] == "Customer Success Manager"
+    assert "85% fit" in (next_steps[0]["rationale"] or "")

@@ -6,6 +6,7 @@ import type { PanelId } from "@/lib/dashboard/panel-types";
 export type TopNavProps = {
   activePanel: PanelId | null;
   onTogglePanel: (id: PanelId) => void;
+  onOpenChat?: () => void;
   pendingIntros: boolean;
   showAdminLink: boolean;
   onSignOut: () => void;
@@ -16,6 +17,7 @@ export type TopNavProps = {
 export function TopNav({
   activePanel,
   onTogglePanel,
+  onOpenChat,
   pendingIntros,
   showAdminLink,
   onSignOut,
@@ -25,6 +27,7 @@ export function TopNav({
     <CandidateSidebar
       activePanel={activePanel}
       onTogglePanel={onTogglePanel}
+      onOpenChat={onOpenChat}
       pendingIntros={pendingIntros}
       showAdminLink={showAdminLink}
       onSignOut={onSignOut}

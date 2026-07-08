@@ -5,6 +5,7 @@ import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
 import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
+import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { JobsQueueStatusBar } from "@/components/jobs/JobsQueueStatusBar";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
 import { cn } from "@/lib/utils";
@@ -109,6 +110,18 @@ export function JobsPanel({
             </span>
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => selectTab("applied")}
+          className={cn(
+            "px-3 py-2 text-small font-medium border-b-2 -mb-px transition-colors duration-fast",
+            tab === "applied"
+              ? "border-ink-900 text-ink-900"
+              : "border-transparent text-ink-400 hover:text-ink-700",
+          )}
+        >
+          Applied
+        </button>
       </div>
 
       <div key={tab} className="flex-1 min-h-0 overflow-hidden animate-fade-in">
@@ -124,9 +137,10 @@ export function JobsPanel({
             onAskAarya={onAskAarya}
             seedJobs={kickoffJobs}
             seedTitle={kickoffTitle}
+            compact
             className="h-full p-5"
           />
-        ) : (
+        ) : tab === "saved" ? (
           <SavedJobsPanel
             conversationId={conversationId}
             onRequestIntro={onRequestIntro}
@@ -136,6 +150,8 @@ export function JobsPanel({
             onKitsReadyCountChange={setKitsReadyCount}
             className="h-full flex flex-col"
           />
+        ) : (
+          <JobTrackerPanel className="h-full p-5" />
         )}
       </div>
 

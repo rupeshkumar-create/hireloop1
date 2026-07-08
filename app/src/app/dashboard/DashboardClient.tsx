@@ -1,20 +1,9 @@
 "use client";
 
 /**
- * DashboardClient — Aarya home.
+ * DashboardClient — candidate home (minimal shell).
  *
- * Layout:
- *
- *   ┌──────────────────────────────────────────────────────┐
- *   │ [H]  Home  Jobs  Profile  Inbox  Coaching   Help  ⎋  │  ← top nav pills
- *   ├───────────────────────────┬──────────────────────────┤
- *   │  Preview panel (LEFT)     │  Chat (RIGHT)            │
- *   │  ← opens when pill active │  always visible          │
- *   │  [X] closes panel         │                          │
- *   └───────────────────────────┴──────────────────────────┘
- *
- * Top nav pills toggle their preview panel open/closed.
- * Chat is ALWAYS visible on the RIGHT — the preview panel opens on the LEFT.
+ *   Chat (default, full width) · optional left drawer: Matches | Intros | Profile
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -30,18 +19,14 @@ import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
 import { cn } from "@/lib/utils";
-import { CoachingPanel } from "@/components/dashboard/CoachingPanel";
-import { HomePanel } from "@/components/dashboard/HomePanel";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
 import { SettingsPanel } from "@/components/dashboard/SettingsPanel";
-import { CareerPathPanel } from "@/components/jobs/CareerPathPanel";
-import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { TopNav } from "@/components/dashboard/TopNav";
 import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import { ChatPeekStrip } from "@/components/dashboard/ChatPeekStrip";
-import { type JobsTab, type PanelId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
+import { type JobsTab, type PanelId, type ProfileTabId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
 import { useToast } from "@/components/ui";
 import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
 
@@ -72,6 +57,7 @@ interface DashboardClientProps {
   showProfileBoosters?: boolean;
   initialVoiceDeepDive?: boolean;
   initialJobsTab?: JobsTab;
+  initialProfileTab?: ProfileTabId;
   showAdminLink?: boolean;
 }
 
@@ -86,6 +72,7 @@ export function DashboardClient({
   showProfileBoosters = false,
   initialVoiceDeepDive = false,
   initialJobsTab,
+  initialProfileTab,
   showAdminLink = false,
 }: DashboardClientProps) {
   const router = useRouter();
@@ -180,8 +167,7 @@ export function DashboardClient({
     router.prefetch("/resumes");
     router.prefetch("/intros");
     router.prefetch("/dashboard?panel=jobs");
-    router.prefetch("/dashboard?panel=career_path");
-    router.prefetch("/dashboard?panel=tracker");
+    router.prefetch("/dashboard?panel=profile&profile_tab=intelligence");
     router.prefetch("/dashboard?panel=settings");
 
     let cancelled = false;
@@ -234,7 +220,11 @@ export function DashboardClient({
     });
   }, []);
 
-  function syncDashboardUrl(panel: PanelId | null, jobsTab?: JobsTab) {
+  function syncDashboardUrl(
+    panel: PanelId | null,
+    jobsTab?: JobsTab,
+    profileTab?: ProfileTabId,
+  ) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.delete("kickoff");
     if (panel) params.set("panel", panel);
@@ -244,13 +234,26 @@ export function DashboardClient({
     } else {
       params.delete("tab");
     }
+    if (panel === "profile" && profileTab && profileTab !== "overview") {
+      params.set("profile_tab", profileTab);
+    } else {
+      params.delete("profile_tab");
+    }
     const q = params.toString();
     router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
   }
 
-  function openPanel(id: PanelId | null, jobsTab?: JobsTab) {
+  function openPanel(
+    id: PanelId | null,
+    jobsTab?: JobsTab,
+    profileTab?: ProfileTabId,
+  ) {
     setActivePanel(id);
-    syncDashboardUrl(id, jobsTab);
+    syncDashboardUrl(id, jobsTab, profileTab);
+  }
+
+  function openChat() {
+    openPanel(null);
   }
 
   function sendToChat(text: string): number {
@@ -307,10 +310,10 @@ export function DashboardClient({
     handleSavedChange(job.job_id, true);
     void recordJobApplication(job.job_id)
       .then(() => {
-        toast.success(`Marked as applied — tracked in Job tracker`);
+        toast.success(`Marked as applied — see Applied tab in Matches`);
       })
       .catch(() => {
-        toast.error("Couldn't log application — try again from Job tracker");
+        toast.error("Couldn't log application — try again from Matches → Applied");
       });
   }
 
@@ -362,6 +365,7 @@ export function DashboardClient({
       <TopNav
         activePanel={activePanel}
         onTogglePanel={togglePanel}
+        onOpenChat={openChat}
         pendingIntros={pendingIntros}
         showAdminLink={showAdminLink}
         onSignOut={() => void handleSignOut()}
@@ -394,25 +398,17 @@ export function DashboardClient({
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto">
-              {activePanel === "home" && (
-                <HomePanel
-                  candidateName={candidateName}
-                  showProfileBoosters={showProfileBoosters}
-                  hasResume={hasResume}
-                  hasVoiceSession={hasVoiceSession}
-                  canApply={canApplyOrIntro}
-                  onProfileBoosted={handleProfileBoosted}
-                  onSendToChat={sendToChat}
-                  onOpenPanel={openPanel}
-                />
-              )}
               {activePanel === "inbox" && (
                 <div className="h-full min-h-0 overflow-hidden">
                   <IntrosInboxPanel />
                 </div>
               )}
               {activePanel === "profile" && (
-                <ProfilePanel onSendToChat={sendToChat} onOpenPanel={openPanel} />
+                <ProfilePanel
+                  initialTab={initialProfileTab}
+                  onSendToChat={sendToChat}
+                  onOpenPanel={openPanel}
+                />
               )}
               {activePanel === "jobs" && (
                 <JobsPanel
@@ -437,18 +433,6 @@ export function DashboardClient({
                   pendingIntros={pendingIntros}
                 />
               )}
-              {activePanel === "career_path" && (
-                <CareerPathPanel
-                  conversationId={activeConvoId ?? undefined}
-                  onRequestIntro={handleRequestIntro}
-                  onDirectApply={handleDirectApply}
-                  savedJobIds={savedJobIds}
-                  onSavedChange={handleSavedChange}
-                  className="h-full"
-                />
-              )}
-              {activePanel === "tracker" && <JobTrackerPanel className="h-full" />}
-              {activePanel === "coaching" && <CoachingPanel onSendToChat={sendToChat} />}
               {activePanel === "settings" && (
                 <SettingsPanel
                   onEditProfile={() => openPanel("profile")}
@@ -489,10 +473,14 @@ export function DashboardClient({
       </div>
 
       {activePanel && (
-        <ChatPeekStrip onOpenChat={() => openPanel(null)} />
+        <ChatPeekStrip onOpenChat={openChat} />
       )}
 
-      <CandidateMobileNav activePanel={activePanel} onTogglePanel={togglePanel} />
+      <CandidateMobileNav
+        activePanel={activePanel}
+        onTogglePanel={togglePanel}
+        onOpenChat={openChat}
+      />
     </div>
   );
 }

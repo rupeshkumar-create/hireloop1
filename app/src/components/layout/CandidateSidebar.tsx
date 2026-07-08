@@ -1,8 +1,7 @@
 "use client";
 
 /**
- * CandidateSidebar — single left rail for dashboard + standalone pages.
- * Dashboard: panel toggles. Other routes: links back to dashboard panels.
+ * CandidateSidebar — minimal left rail: Chat · Matches · Intros · Profile.
  */
 
 import Link from "next/link";
@@ -16,13 +15,9 @@ import { HireschemaLogoMark } from "@/components/brand/HireschemaLogo";
 import { cn } from "@/lib/utils";
 
 const PANEL_HREF: Record<PanelId, string> = {
-  home: "/dashboard?panel=home",
   inbox: "/dashboard?panel=inbox",
   profile: "/dashboard?panel=profile",
   jobs: "/dashboard?panel=jobs",
-  career_path: "/dashboard?panel=career_path",
-  tracker: "/dashboard?panel=tracker",
-  coaching: "/dashboard?panel=coaching",
   settings: "/dashboard?panel=settings",
 };
 
@@ -36,13 +31,13 @@ function activePanelFromPath(pathname: string | null): PanelId | null {
   ) {
     return "jobs";
   }
-  if (pathname.startsWith("/mock-interview")) return "coaching";
   return null;
 }
 
 export type CandidateSidebarProps = {
   activePanel?: PanelId | null;
   onTogglePanel?: (id: PanelId) => void;
+  onOpenChat?: () => void;
   pendingIntros?: boolean;
   showAdminLink?: boolean;
   onSignOut?: () => void;
@@ -52,6 +47,7 @@ export type CandidateSidebarProps = {
 export function CandidateSidebar({
   activePanel = null,
   onTogglePanel,
+  onOpenChat,
   pendingIntros = false,
   showAdminLink = false,
   onSignOut,
@@ -60,6 +56,7 @@ export function CandidateSidebar({
   const pathname = usePathname();
   const linkMode = !onTogglePanel;
   const resolvedPanel = linkMode ? activePanelFromPath(pathname) : activePanel;
+  const chatActive = !resolvedPanel;
   const settingsActive = linkMode
     ? pathname === "/settings" || pathname?.includes("panel=settings")
     : activePanel === "settings";
@@ -86,14 +83,16 @@ export function CandidateSidebar({
 
       <nav className="flex flex-1 flex-col items-center gap-1">
         {RAIL_ITEMS.map((item) => {
-          const isActive = resolvedPanel === item.id;
-          const showDot = item.id === "inbox" && pendingIntros;
+          const isChat = item.panel === null;
+          const isActive = isChat ? chatActive : resolvedPanel === item.panel;
+          const showDot = item.panel === "inbox" && pendingIntros;
 
           if (linkMode) {
+            const href = isChat ? "/dashboard" : PANEL_HREF[item.panel as PanelId];
             return (
               <Link
                 key={item.id}
-                href={PANEL_HREF[item.id]}
+                href={href}
                 title={item.label}
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
@@ -112,7 +111,10 @@ export function CandidateSidebar({
               key={item.id}
               type="button"
               aria-pressed={isActive}
-              onClick={() => onTogglePanel?.(item.id)}
+              onClick={() => {
+                if (isChat) onOpenChat?.();
+                else if (item.panel) onTogglePanel?.(item.panel);
+              }}
               title={item.label}
               aria-label={item.label}
               className={railClass(isActive)}

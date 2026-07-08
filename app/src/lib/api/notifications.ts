@@ -64,7 +64,7 @@ export function resolveNotificationHref(n: AppNotification): string | null {
     return "/dashboard?panel=inbox";
   }
   if (n.type === "interview_reminder" || n.type === "interview_booked") {
-    return "/dashboard?panel=coaching";
+    return "/mock-interview";
   }
   if (n.type === "profile_viewed") {
     return "/dashboard?panel=profile";

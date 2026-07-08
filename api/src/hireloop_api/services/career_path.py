@@ -269,6 +269,21 @@ class CareerPathService:
                 "Add your experience or skills first — there isn't enough yet to map career paths."
             )
 
+        intel_path = path_from_career_intelligence(
+            profile,
+            profile.get("career_intelligence") or {},
+        )
+        if intel_path:
+            target_locations = _derive_locations(profile)
+            async with pool.acquire() as db:
+                return await CareerPathService._save(
+                    db,
+                    candidate_id,
+                    intel_path,
+                    target_locations,
+                    "career_intelligence",
+                )
+
         model = settings.openrouter_primary_model
         parsed: dict[str, Any] | None = None
 
@@ -404,7 +419,8 @@ class CareerPathService:
             """
             SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
                    c.location_city, c.location_state, c.years_experience,
-                   c.skills, c.career_profile, c.market, u.full_name
+                   c.skills, c.career_profile, c.career_intelligence, c.market,
+                   u.full_name
             FROM public.candidates c
             JOIN public.users u ON u.id = c.user_id
             WHERE c.id = $1::uuid AND c.deleted_at IS NULL
@@ -416,6 +432,13 @@ class CareerPathService:
         data = dict(row)
         data["id"] = str(data["id"])
         data["skills"] = list(data.get("skills") or [])
+        raw_intel = data.get("career_intelligence")
+        if isinstance(raw_intel, str):
+            try:
+                raw_intel = json.loads(raw_intel)
+            except json.JSONDecodeError:
+                raw_intel = {}
+        data["career_intelligence"] = raw_intel if isinstance(raw_intel, dict) else {}
         return data
 
     @staticmethod
@@ -568,6 +591,115 @@ def _fallback_path(profile: dict[str, Any]) -> dict[str, Any]:
                 "skills_to_build": [],
             },
         ],
+        "target_titles": target_titles,
+    }
+
+
+def path_from_career_intelligence(
+    profile: dict[str, Any],
+    intelligence: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Build a kickoff career path from Intelligence mobility.adjacent_roles.
+
+    Keeps chat path picker aligned with the Profile → Intelligence tab.
+    Returns None when intelligence has no adjacent roles to use.
+    """
+    mobility = intelligence.get("mobility")
+    if not isinstance(mobility, dict):
+        return None
+    adjacent_raw = mobility.get("adjacent_roles")
+    if not isinstance(adjacent_raw, list) or not adjacent_raw:
+        return None
+
+    ranked: list[dict[str, Any]] = []
+    for item in adjacent_raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        if not role:
+            continue
+        ranked.append(item)
+
+    if not ranked:
+        return None
+
+    ranked.sort(
+        key=lambda row: int(row.get("feasibility_score") or 0),
+        reverse=True,
+    )
+
+    current = (profile.get("current_title") or "Professional").strip()
+    skills = list(profile.get("skills") or [])
+
+    steps: list[dict[str, Any]] = [
+        {
+            "title": current,
+            "level": "current",
+            "timeframe": "now",
+            "rationale": "Where you are today, based on your profile.",
+            "skills_to_build": skills[:4],
+        }
+    ]
+    target_titles: list[str] = []
+    seen_titles: set[str] = set()
+
+    def _add_title(raw: str) -> None:
+        t = raw.strip()
+        key = t.lower()
+        if t and key not in seen_titles:
+            seen_titles.add(key)
+            target_titles.append(t)
+
+    for idx, item in enumerate(ranked[:3]):
+        role = str(item.get("role")).strip()
+        _add_title(role)
+        score = item.get("feasibility_score")
+        timeframe = str(item.get("time_required") or "").strip() or "6-12 months"
+        gaps = item.get("skill_gap") if isinstance(item.get("skill_gap"), list) else []
+        gap_labels = [str(g).strip() for g in gaps if str(g).strip()][:3]
+        rationale_parts: list[str] = []
+        if score is not None:
+            rationale_parts.append(f"{int(score)}% fit")
+        if gap_labels:
+            rationale_parts.append(f"Skills to build: {', '.join(gap_labels)}")
+        rationale = (
+            " · ".join(rationale_parts)
+            if rationale_parts
+            else "Adjacent role from your Intelligence profile."
+        )
+        steps.append(
+            {
+                "title": role,
+                "level": "next" if idx == 0 else "future",
+                "timeframe": timeframe,
+                "rationale": rationale,
+                "skills_to_build": gap_labels,
+            }
+        )
+
+    for item in ranked[3:6]:
+        _add_title(str(item.get("role") or ""))
+
+    top = ranked[0]
+    top_role = str(top.get("role")).strip()
+    top_score = top.get("feasibility_score")
+    prediction = intelligence.get("prediction")
+    summary: str | None = None
+    if isinstance(prediction, dict):
+        likely = prediction.get("most_likely_next_role")
+        if isinstance(likely, dict) and likely.get("outcome"):
+            summary = str(likely["outcome"]).strip()
+    if not summary:
+        score_label = f" ({int(top_score)}% fit)" if top_score is not None else ""
+        summary = (
+            f"Your Intelligence profile ranks {top_role}{score_label} as the strongest "
+            "adjacent move, with related paths ordered by feasibility."
+        )
+
+    return {
+        "current_role": current,
+        "summary": summary,
+        "steps": steps,
         "target_titles": target_titles,
     }
 

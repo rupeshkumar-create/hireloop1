@@ -215,7 +215,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
     setApplied(true);
     setSaved(true);
     void recordJobApplication(job.job_id)
-      .then(() => toast.success("Marked as applied — tracked in Job tracker"))
+      .then(() => toast.success("Marked as applied — see Matches → Applied"))
       .catch(() => toast.error("Couldn't log application"));
     if (job.apply_url) {
       window.open(job.apply_url, "_blank", "noopener,noreferrer");

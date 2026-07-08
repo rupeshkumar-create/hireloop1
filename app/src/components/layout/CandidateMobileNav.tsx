@@ -16,20 +16,18 @@ import { Modal } from "@/components/ui/Modal";
 import type { PanelId } from "@/lib/dashboard/panel-types";
 import { cn } from "@/lib/utils";
 
-const PANEL_BY_NAV: Partial<Record<CandidateNavId, PanelId>> = {
-  home: "home",
+const PANEL_BY_NAV: Partial<Record<CandidateNavId, PanelId | "chat">> = {
+  chat: "chat",
   matches: "jobs",
-  career_path: "career_path",
-  tracker: "tracker",
   intros: "inbox",
   profile: "profile",
-  coaching: "coaching",
   settings: "settings",
 };
 
 type CandidateMobileNavProps = {
   activePanel?: PanelId | null;
   onTogglePanel?: (id: PanelId) => void;
+  onOpenChat?: () => void;
 };
 
 const tabClass = (active: boolean) =>
@@ -42,14 +40,36 @@ function NavTab({
   item,
   active,
   onPanelToggle,
+  onOpenChat,
 }: {
   item: CandidateNavItem;
   active: boolean;
   onPanelToggle?: (id: PanelId) => void;
+  onOpenChat?: () => void;
 }) {
   const panelId = PANEL_BY_NAV[item.id];
 
-  if (onPanelToggle && panelId) {
+  if (item.id === "chat" && onOpenChat) {
+    return (
+      <button
+        type="button"
+        onClick={onOpenChat}
+        aria-current={active ? "page" : undefined}
+        aria-label={item.label}
+        className={tabClass(active)}
+      >
+        {active && (
+          <span className="absolute top-1 h-1 w-6 rounded-full bg-accent" aria-hidden />
+        )}
+        <item.Icon className="h-5 w-5 shrink-0" strokeWidth={1.5} />
+        <span className="text-[10px] font-medium truncate max-w-full px-0.5 leading-tight">
+          {item.label}
+        </span>
+      </button>
+    );
+  }
+
+  if (onPanelToggle && panelId && panelId !== "chat") {
     return (
       <button
         type="button"
@@ -90,17 +110,25 @@ function NavTab({
 export function CandidateMobileNav({
   activePanel,
   onTogglePanel,
+  onOpenChat,
 }: CandidateMobileNavProps) {
   const pathname = usePathname();
   const { canSwitch } = useDualRoleAccess();
   const [moreOpen, setMoreOpen] = useState(false);
-  const dashboardMode = Boolean(onTogglePanel);
+  const dashboardMode = Boolean(onTogglePanel || onOpenChat);
 
   function isItemActive(item: CandidateNavItem) {
+    if (item.id === "chat") {
+      return dashboardMode ? activePanel === null : pathname === "/dashboard" && !pathname.includes("panel=");
+    }
     if (dashboardMode && item.id in PANEL_BY_NAV) {
-      return activePanel === PANEL_BY_NAV[item.id as keyof typeof PANEL_BY_NAV];
+      const panel = PANEL_BY_NAV[item.id as keyof typeof PANEL_BY_NAV];
+      if (panel && panel !== "chat") return activePanel === panel;
     }
     const base = item.href.split("?")[0];
+    if (pathname === base && item.href.includes("?")) {
+      return pathname.includes(item.href.split("?")[1] ?? "");
+    }
     if (pathname === base) return true;
     return item.match?.some((m) => pathname?.startsWith(m)) ?? false;
   }
@@ -119,6 +147,7 @@ export function CandidateMobileNav({
             item={item}
             active={isItemActive(item)}
             onPanelToggle={dashboardMode ? onTogglePanel : undefined}
+            onOpenChat={dashboardMode ? onOpenChat : undefined}
           />
         ))}
 
@@ -143,7 +172,7 @@ export function CandidateMobileNav({
             const panelId = PANEL_BY_NAV[item.id];
             const active = isItemActive(item);
 
-            if (dashboardMode && panelId && onTogglePanel) {
+            if (dashboardMode && panelId && panelId !== "chat" && onTogglePanel) {
               return (
                 <li key={item.id}>
                   <button

@@ -135,7 +135,7 @@ function SetupChecklist({
       hint: "Optional: compare directions after you see starter roles.",
       done: careerPathDone,
       cta: "View paths",
-      panel: "career_path" as PanelId,
+      panel: "profile" as PanelId,
     },
     {
       id: "google",

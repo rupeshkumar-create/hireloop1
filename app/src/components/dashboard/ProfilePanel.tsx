@@ -31,7 +31,7 @@ import { ResumeUpload } from "@/components/resume/ResumeUpload";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST, BTN_ROW } from "@/lib/button-classes";
-import type { PanelId } from "@/lib/dashboard/panel-types";
+import type { PanelId, ProfileTabId } from "@/lib/dashboard/panel-types";
 import {
   Badge,
   Button,
@@ -43,7 +43,7 @@ import {
   useToast,
 } from "@/components/ui";
 
-type ProfileTab = "overview" | "experience" | "intelligence" | "preferences";
+type ProfileTab = ProfileTabId;
 
 function ProfileSkeleton() {
   return (
@@ -78,14 +78,21 @@ function ProfileSkeleton() {
 export function ProfilePanel({
   onSendToChat,
   onOpenPanel,
+  initialTab,
 }: {
   /** Forwarded to Career Intelligence so its insights can trigger Aarya actions. */
   onSendToChat?: (message: string) => void;
   onOpenPanel?: (id: PanelId) => void;
+  initialTab?: ProfileTab;
 } = {}) {
   const { toast } = useToast();
 
-  const [tab, setTab] = useState<ProfileTab>("overview");
+  const [tab, setTab] = useState<ProfileTab>(initialTab ?? "overview");
+
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
+
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [experience, setExperience] = useState<WorkExperience[]>([]);
   const [education, setEducation] = useState<Education[]>([]);

@@ -1,30 +1,18 @@
 /**
- * Unified candidate navigation — panel links for dashboard + mobile nav.
+ * Unified candidate navigation — minimal shell: Chat · Matches · Intros · Profile.
  */
 
 import {
   Briefcase,
-  GraduationCap,
-  Home,
   Inbox,
-  Kanban,
-  Route,
+  MessageCircle,
   User,
   FileText,
   Settings,
   type LucideIcon,
 } from "@/components/brand/icons";
 
-export type CandidateNavId =
-  | "home"
-  | "matches"
-  | "career_path"
-  | "tracker"
-  | "intros"
-  | "profile"
-  | "coaching"
-  | "resumes"
-  | "settings";
+export type CandidateNavId = "chat" | "matches" | "intros" | "profile" | "resumes" | "settings";
 
 export type CandidateNavItem = {
   id: CandidateNavId;
@@ -35,9 +23,9 @@ export type CandidateNavItem = {
   match?: string[];
 };
 
-/** Canonical candidate nav order (DESIGN.md §6 unified shell). */
+/** Primary dashboard destinations (desktop rail + mobile bottom bar). */
 export const CANDIDATE_NAV: CandidateNavItem[] = [
-  { id: "home", label: "Home", href: "/dashboard", Icon: Home },
+  { id: "chat", label: "Chat", href: "/dashboard", Icon: MessageCircle },
   {
     id: "matches",
     label: "Matches",
@@ -45,20 +33,6 @@ export const CANDIDATE_NAV: CandidateNavItem[] = [
     panel: "jobs",
     Icon: Briefcase,
     match: ["/matches", "/jobs"],
-  },
-  {
-    id: "career_path",
-    label: "Career path",
-    href: "/dashboard?panel=career_path",
-    panel: "career_path",
-    Icon: Route,
-  },
-  {
-    id: "tracker",
-    label: "Job tracker",
-    href: "/dashboard?panel=tracker",
-    panel: "tracker",
-    Icon: Kanban,
   },
   {
     id: "intros",
@@ -75,29 +49,18 @@ export const CANDIDATE_NAV: CandidateNavItem[] = [
     panel: "profile",
     Icon: User,
   },
-  {
-    id: "coaching",
-    label: "Coaching",
-    href: "/mock-interview",
-    panel: "coaching",
-    Icon: GraduationCap,
-  },
+];
+
+export const CANDIDATE_MOBILE_PRIMARY_NAV: CandidateNavItem[] = CANDIDATE_NAV;
+
+/** Secondary links (mobile More sheet + profile shortcuts). */
+export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
   {
     id: "resumes",
     label: "Resumes",
     href: "/resumes",
     Icon: FileText,
   },
-];
-
-/** Mobile bottom bar — four primary tabs (More sheet for the rest). */
-export const CANDIDATE_MOBILE_PRIMARY_NAV: CandidateNavItem[] = CANDIDATE_NAV.filter((n) =>
-  ["home", "matches", "intros", "profile"].includes(n.id),
-);
-
-/** Items shown in the mobile More sheet. */
-export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
-  ...CANDIDATE_NAV.filter((n) => ["career_path", "tracker", "resumes"].includes(n.id)),
   {
     id: "settings",
     label: "Settings",
@@ -108,7 +71,7 @@ export const CANDIDATE_MOBILE_MORE_NAV: CandidateNavItem[] = [
   },
 ];
 
-/** @deprecated Use CANDIDATE_MOBILE_PRIMARY_NAV + MORE */
+/** @deprecated Use CANDIDATE_MOBILE_PRIMARY_NAV */
 export const CANDIDATE_MOBILE_NAV: CandidateNavItem[] = [
   ...CANDIDATE_MOBILE_PRIMARY_NAV,
   ...CANDIDATE_MOBILE_MORE_NAV,

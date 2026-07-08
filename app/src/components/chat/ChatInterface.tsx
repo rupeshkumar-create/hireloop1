@@ -45,7 +45,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Route,
-  BookOpen,
   Briefcase,
   Check,
   ChevronRight,
@@ -130,15 +129,9 @@ import {
 import {
   clearCareerKickoffProgress,
   hasCareerKickoffDone,
-  hasCareerKickoffInProgress,
-  clearCareerKickoffDone,
   markCareerKickoffDone,
 } from "@/lib/auth/career-kickoff";
-import {
-  clearClientOnboardingComplete,
-  isClientOnboardingCompleteRecent,
-} from "@/lib/auth/onboarding-complete";
-import { fetchCareerPath } from "@/lib/api/career";
+import { clearClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import {
   approveIntroSend,
   fetchIntroDetail,
@@ -285,7 +278,7 @@ export function ChatInterface({
   const [kickoffActive, setKickoffActive] = useState(
     () => initialKickoff && !hasCareerKickoffDone(),
   );
-  const kickoffAutoCheckedRef = useRef(false);
+  const kickoffPromptQueuedRef = useRef(false);
   const [input, setInput]             = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming]  = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -327,6 +320,8 @@ export function ChatInterface({
   const hinglishActiveRef = useRef(false);
   /** Live reply-mode for stream TTS — updated synchronously on toggle. */
   const voiceRepliesEnabledRef = useRef(true);
+  /** Sync lock — isStreaming state alone cannot block a second send in the same tick. */
+  const sendInFlightRef = useRef(false);
 
   // When the user requests an intro from a job card, surface the contact + drafted email
   // inline in chat (polls /intros until the new row appears, then polls detail).
@@ -541,47 +536,13 @@ export function ChatInterface({
     if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
   }, [initialVoiceDeepDive]);
 
-  // Post-onboarding: start guided flow when URL says so, onboarding just finished,
-  // or the candidate has not picked a career path yet (first dashboard visit).
+  // Explicit ?kickoff=career only — career direction lives in Profile → Intelligence.
   useEffect(() => {
-    if (historyLoading) return;
     if (!authUserId) return;
     if (kickoffActive && hasCareerKickoffDone(authUserId)) {
       setKickoffActive(false);
-      return;
     }
-    if (kickoffAutoCheckedRef.current) return;
-
-    if (kickoffActive) {
-      kickoffAutoCheckedRef.current = true;
-      return;
-    }
-
-    kickoffAutoCheckedRef.current = true;
-
-    let cancelled = false;
-    void (async () => {
-      if (hasCareerKickoffDone(authUserId)) return;
-      if (hasCareerKickoffInProgress(authUserId)) {
-        if (!cancelled) setKickoffActive(true);
-        return;
-      }
-      if (initialKickoff || isClientOnboardingCompleteRecent()) {
-        if (!cancelled) setKickoffActive(true);
-        return;
-      }
-
-      const path = await fetchCareerPath().catch(() => null);
-      if (cancelled) return;
-      if (!path?.prioritized_title && messages.length === 0) {
-        setKickoffActive(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authUserId, historyLoading, initialKickoff, kickoffActive, messages.length]);
+  }, [authUserId, kickoffActive]);
 
   useEffect(() => {
     voiceRepliesEnabledRef.current = replyMode === "voice";
@@ -856,7 +817,8 @@ export function ChatInterface({
 
   const sendMessage = useCallback(
     async (text: string, options: SendOptions = {}) => {
-      if (!text.trim() || isStreaming) return;
+      if (!text.trim() || isStreaming || sendInFlightRef.current) return;
+      sendInFlightRef.current = true;
 
       interruptSpeech();
       if (isRecording) await cancelRecording();
@@ -1049,6 +1011,9 @@ export function ChatInterface({
           streamJobsRef.current = dedupeJobs(streamResult.jobs);
         }
 
+        if (!accumulated.trim() && streamResult.text.trim()) {
+          accumulated = streamResult.text;
+        }
         if (!streamFinalized && accumulated.trim()) {
           finalize(streamResult.jobs);
         }
@@ -1080,6 +1045,7 @@ export function ChatInterface({
           }
         }
       } finally {
+        sendInFlightRef.current = false;
         setIsStreaming(false);
         setThinkingStatus(null);
         abortRef.current = null;
@@ -1132,7 +1098,7 @@ export function ChatInterface({
       onSavedChange?.(job.job_id, true);
       void recordJobApplication(job.job_id).catch(() => undefined);
       appendSystemNote(
-        `Marked **${job.title}** at ${job.company_name ?? "this company"} as applied — see Job tracker for status.`
+        `Marked **${job.title}** at ${job.company_name ?? "this company"} as applied — see Matches → Applied.`
       );
     },
     [onSavedChange, appendSystemNote]
@@ -1210,9 +1176,20 @@ export function ChatInterface({
   useEffect(() => {
     if (!injectedMessage) return;
     if (injectedMessage.nonce === lastInjectedNonce.current) return;
+    // Survive React Strict Mode remounts (ref resets; sessionStorage does not).
+    const nonceKey = authUserId
+      ? `hireloop_chat_injected_nonce_${authUserId}`
+      : "hireloop_chat_injected_nonce";
+    try {
+      const stored = sessionStorage.getItem(nonceKey);
+      if (stored === String(injectedMessage.nonce)) return;
+      sessionStorage.setItem(nonceKey, String(injectedMessage.nonce));
+    } catch {
+      /* private mode */
+    }
     lastInjectedNonce.current = injectedMessage.nonce;
     void sendMessage(injectedMessage.text);
-  }, [injectedMessage, sendMessage]);
+  }, [injectedMessage, sendMessage, authUserId]);
 
   // ── Deterministic application-kit requests from dashboard/job deep links ───
   // Stabilize onSavedChange via ref. Depend only on the request nonce so parent
@@ -1377,18 +1354,13 @@ export function ChatInterface({
         }
 
         setIsUploading(false);
-        // A new CV can materially change the search direction, so restart the
-        // guided path once for this deliberate upload.
-        clearCareerKickoffDone(authUserId ?? undefined);
-        clearCareerKickoffProgress();
-        setKickoffActive(true);
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: "assistant" as const,
             content:
-              "Resume received. Let’s do a quick 3-step setup: (1) review what I extracted, (2) pick your preferred career path, (3) confirm — then I’ll start pulling jobs.",
+              "Resume received. Open **Profile → Intelligence** to confirm your target role, then ask me to find matching jobs.",
             content_type: "text" as const,
             created_at: new Date().toISOString(),
           },
@@ -1433,6 +1405,8 @@ export function ChatInterface({
   );
 
   const handleKickoffComplete = useCallback((result: KickoffResult) => {
+    if (kickoffPromptQueuedRef.current) return;
+    kickoffPromptQueuedRef.current = true;
     markCareerKickoffDone(authUserId ?? undefined);
     clearClientOnboardingComplete();
     setKickoffActive(false);
@@ -1451,6 +1425,13 @@ export function ChatInterface({
 
   const isEmpty = messages.length === 0 && !streamingContent && !historyLoading;
   const showKickoff = kickoffActive;
+  const lastAssistantContent =
+    messages.length > 0 && messages[messages.length - 1].role === "assistant"
+      ? messages[messages.length - 1].content
+      : null;
+  /** Hide the streaming bubble once finalize has committed the same text. */
+  const showStreamingBubble =
+    Boolean(streamingContent) && streamingContent !== lastAssistantContent;
   /** True while Aarya is thinking / running tools before any visible draft text. */
   const isAwaitingDraft = isStreaming && !streamingContent.trim();
   const composerInputDisabled =
@@ -1538,7 +1519,7 @@ export function ChatInterface({
             );
           })}
 
-          {streamingContent && (
+          {showStreamingBubble && (
             <MessageBubble
               message={{
                 id: "streaming",
@@ -1961,10 +1942,7 @@ function buildFindJobsMessage(profile: MyProfileData | null): string {
  * the candidate goals that used to live in onboarding; surfacing them here makes
  * the goal the first thing Aarya asks, and each chip seeds the right prompt.
  */
-function buildSmartStarterCards(
-  findJobsMessage: string,
-  includeCareerPaths: boolean,
-): ActionCardDef[] {
+function buildSmartStarterCards(findJobsMessage: string): ActionCardDef[] {
   const cards: ActionCardDef[] = [
     {
       Icon: Search,
@@ -1974,21 +1952,14 @@ function buildSmartStarterCards(
       message: findJobsMessage,
       primary: true,
     },
-    includeCareerPaths
-      ? {
-          Icon: Route,
-          title: "Explore career paths",
-          description: "Pick one direction to prioritise",
-          kind: "career_paths",
-        }
-      : {
-          Icon: BookOpen,
-          title: "Improve my resume",
-          description: "Tailored fixes before you apply",
-          kind: "message",
-          message:
-            "Review my resume and profile and tell me the most impactful improvements to rank higher in matches.",
-        },
+    {
+      Icon: Route,
+      title: "Set my career direction",
+      description: "Pick a target role from Intelligence",
+      kind: "message",
+      message:
+        "Help me choose my top target role from my career intelligence, prioritize it, and find matching jobs.",
+    },
     {
       Icon: Briefcase,
       title: "Score a job I found",
@@ -2040,15 +2011,7 @@ function EmptyState({
 
   const findJobsMessage = buildFindJobsMessage(profile);
 
-  // Meaningful pre-selection: at low profile completeness the highest-value next
-  // step is closing profile gaps (better matches downstream), not browsing yet.
-  const profileSparse =
-    !c ||
-    c.profile_complete === false ||
-    !c.current_title?.trim() ||
-    (c.skills ?? []).filter((s) => s.trim()).length < 3;
-
-  const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage, !profileSparse);
+  const cards: ActionCardDef[] = buildSmartStarterCards(findJobsMessage);
   if (intentGreeting && cards[0]?.kind === "message") {
     cards[0] = {
       ...cards[0],

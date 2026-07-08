@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
-import { VALID_JOBS_TABS, VALID_PANELS, LEGACY_JOBS_TAB_PANEL, type JobsTab, type PanelId } from "@/lib/dashboard/panel-types";
+import { VALID_JOBS_TABS, VALID_PANELS, VALID_PROFILE_TABS, LEGACY_PANEL_REDIRECT, LEGACY_JOBS_TAB_REDIRECT, type JobsTab, type PanelId, type ProfileTabId } from "@/lib/dashboard/panel-types";
 import { sanitizeDisplayName } from "@/lib/auth/display-name";
 import { isOnboardingCompleteOnServer } from "@/lib/auth/server-onboarding";
 import { canApplyOrIntro, shouldShowProfileBoosters } from "@/lib/profile/readiness";
@@ -72,19 +72,37 @@ export default async function DashboardPage({
   const panelValue = Array.isArray(panelRaw) ? panelRaw[0] : panelRaw;
   const tabRaw = sp.tab;
   const tabValue = Array.isArray(tabRaw) ? tabRaw[0] : tabRaw;
+  const profileTabRaw = sp.profile_tab;
+  const profileTabValue = Array.isArray(profileTabRaw) ? profileTabRaw[0] : profileTabRaw;
 
-  let initialPanel = VALID_PANELS.includes(panelValue as PanelId)
-    ? (panelValue as PanelId)
-    : undefined;
+  let initialPanel: PanelId | undefined;
+  let initialJobsTab: JobsTab | undefined;
+  let initialProfileTab: ProfileTabId | undefined;
 
-  // Legacy ?tab=path|tracker under Matches → dedicated sidebar panels.
-  if (tabValue && tabValue in LEGACY_JOBS_TAB_PANEL) {
-    initialPanel = LEGACY_JOBS_TAB_PANEL[tabValue];
+  if (panelValue && LEGACY_PANEL_REDIRECT[panelValue]) {
+    const leg = LEGACY_PANEL_REDIRECT[panelValue];
+    if (leg.panel) initialPanel = leg.panel;
+    if (leg.jobsTab) initialJobsTab = leg.jobsTab;
+    if (leg.profileTab) initialProfileTab = leg.profileTab;
+  } else if (panelValue && VALID_PANELS.includes(panelValue as PanelId)) {
+    initialPanel = panelValue as PanelId;
   }
 
-  const initialJobsTab = VALID_JOBS_TABS.includes(tabValue as JobsTab)
-    ? (tabValue as JobsTab)
-    : undefined;
+  if (tabValue && LEGACY_JOBS_TAB_REDIRECT[tabValue]) {
+    const leg = LEGACY_JOBS_TAB_REDIRECT[tabValue];
+    if (leg.panel) initialPanel = leg.panel;
+    if (leg.jobsTab) initialJobsTab = leg.jobsTab;
+    if (leg.profileTab) initialProfileTab = leg.profileTab;
+  } else if (tabValue && VALID_JOBS_TABS.includes(tabValue as JobsTab)) {
+    initialJobsTab = tabValue as JobsTab;
+  }
+
+  if (
+    profileTabValue &&
+    VALID_PROFILE_TABS.includes(profileTabValue as ProfileTabId)
+  ) {
+    initialProfileTab = profileTabValue as ProfileTabId;
+  }
 
   const voiceRaw = sp.voice;
   const voiceParam = Array.isArray(voiceRaw) ? voiceRaw[0] : voiceRaw;
@@ -270,6 +288,7 @@ export default async function DashboardPage({
       showProfileBoosters={showProfileBoosters}
       initialVoiceDeepDive={initialVoiceDeepDive}
       initialJobsTab={initialJobsTab}
+      initialProfileTab={initialProfileTab}
       showAdminLink={canSeeAdmin}
     />
   );

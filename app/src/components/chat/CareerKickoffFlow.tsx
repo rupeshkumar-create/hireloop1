@@ -16,8 +16,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Sparkles } from "@/components/brand/icons";
 import {
   fetchCareerPath,
+  fetchCareerIntelligence,
   generateCareerPath,
   prioritizeCareerPath,
+  type CareerIntelligence,
   type CareerPath,
 } from "@/lib/api/career";
 import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
@@ -48,6 +50,40 @@ export type KickoffResult = {
   prompt: string;
 };
 
+/** Build kickoff options from Intelligence mobility (same order as Profile tab). */
+function buildOptionsFromIntelligence(
+  intelligence: CareerIntelligence | null | undefined,
+): PathOption[] {
+  const adjacent = intelligence?.mobility?.adjacent_roles ?? [];
+  if (adjacent.length === 0) return [];
+
+  const ranked = [...adjacent]
+    .filter((row) => row.role?.trim())
+    .sort(
+      (a, b) =>
+        (b.feasibility_score ?? 0) - (a.feasibility_score ?? 0),
+    )
+    .slice(0, MAX_OPTIONS);
+
+  return ranked.map((row) => {
+    const gaps = (row.skill_gap ?? []).filter(Boolean).slice(0, 3);
+    const parts: string[] = [];
+    if (row.feasibility_score != null) {
+      parts.push(`${row.feasibility_score}% fit`);
+    }
+    if (row.time_required?.trim()) {
+      parts.push(`≈ ${row.time_required.trim()}`);
+    }
+    if (gaps.length > 0) {
+      parts.push(`Skills to build: ${gaps.join(", ")}`);
+    }
+    return {
+      title: row.role.trim(),
+      rationale: parts.join(" · ") || "Adjacent role from your Intelligence profile",
+    };
+  });
+}
+
 /** Build up to 3 distinct options from path steps (next/future) + target titles. */
 function buildOptions(path: CareerPath, currentTitle?: string | null): PathOption[] {
   const options: PathOption[] = [];
@@ -68,6 +104,26 @@ function buildOptions(path: CareerPath, currentTitle?: string | null): PathOptio
   }
   for (const t of path.target_titles) push(t, null);
   return options;
+}
+
+function resolveKickoffOptions(
+  intelligence: CareerIntelligence | null | undefined,
+  path: CareerPath | null | undefined,
+  currentTitle?: string | null,
+): PathOption[] {
+  const fromIntel = buildOptionsFromIntelligence(intelligence);
+  if (fromIntel.length > 0) return fromIntel;
+  return path ? buildOptions(path, currentTitle) : [];
+}
+
+function defaultPreferredTitle(
+  options: PathOption[],
+  savedPick?: string,
+  prioritizedTitle?: string | null,
+): string {
+  if (savedPick?.trim()) return savedPick.trim();
+  if (prioritizedTitle?.trim()) return prioritizedTitle.trim();
+  return options[0]?.title ?? "";
 }
 
 function buildRoleSearchPrompt(profile: MyProfileData | null, title: string): string {
@@ -193,28 +249,30 @@ export function CareerKickoffFlow({
     let cancelled = false;
     (async () => {
       try {
-        const [p, path, saved] = await Promise.all([
+        const [p, path, intelligence, saved] = await Promise.all([
           fetchMyProfile().catch(() => null),
           fetchCareerPath().catch(() => null),
+          fetchCareerIntelligence().catch(() => null),
           Promise.resolve(readCareerKickoffProgress(userId ?? undefined)),
         ]);
         if (cancelled) return;
         setProfile(p);
 
         const currentTitle = p?.candidate?.current_title ?? null;
-        const pathOptions = path ? buildOptions(path, currentTitle) : [];
-        const defaultPick =
-          saved?.selected[0] ??
-          path?.prioritized_title ??
-          pathOptions.find((o) =>
-            currentTitle ? o.title.toLowerCase() === currentTitle.toLowerCase() : false,
-          )?.title ??
-          pathOptions[0]?.title ??
-          "";
+        const kickoffOptions = resolveKickoffOptions(intelligence, path, currentTitle);
+        const intelTop = buildOptionsFromIntelligence(intelligence)[0]?.title ?? "";
+        const pathMismatch =
+          Boolean(path?.prioritized_title && intelTop) &&
+          path!.prioritized_title!.toLowerCase() !== intelTop.toLowerCase();
+        const defaultPick = defaultPreferredTitle(
+          kickoffOptions,
+          saved?.selected[0],
+          pathMismatch ? null : path?.prioritized_title,
+        );
 
-        if (path?.prioritized_title) {
+        if (path?.prioritized_title && !pathMismatch) {
           const pick = path.prioritized_title;
-          const opts = saved?.options.length ? saved.options : pathOptions;
+          const opts = saved?.options.length ? saved.options : kickoffOptions;
           setOptions(opts.length ? opts : [{ title: pick, rationale: null }]);
           setSelected([pick]);
           setStep("review");
@@ -223,7 +281,7 @@ export function CareerKickoffFlow({
         }
 
         if (saved?.step === "review" && saved.selected[0]) {
-          setOptions(saved.options);
+          setOptions(saved.options.length ? saved.options : kickoffOptions);
           setSelected(saved.selected);
           setStep("review");
           return;
@@ -231,17 +289,19 @@ export function CareerKickoffFlow({
 
         if (saved?.step === "paths" && saved.options.length > 0) {
           setOptions(saved.options);
-          setSelected(saved.selected.length > 0 ? saved.selected : [saved.options[0].title]);
+          setSelected(
+            saved.selected.length > 0 ? saved.selected : [saved.options[0].title],
+          );
           setStep("paths");
           return;
         }
 
-        if (pathOptions.length > 0) {
-          const pick = defaultPick || pathOptions[0].title;
-          setOptions(pathOptions);
+        if (kickoffOptions.length > 0) {
+          const pick = defaultPick || kickoffOptions[0].title;
+          setOptions(kickoffOptions);
           setSelected(pick ? [pick] : []);
           setStep("paths");
-          persistProgress("paths", pick ? [pick] : [], pathOptions);
+          persistProgress("paths", pick ? [pick] : [], kickoffOptions);
           return;
         }
 
@@ -318,15 +378,15 @@ export function CareerKickoffFlow({
     setStep("paths_loading");
     try {
       const path = await generateCareerPath();
-      const opts = buildOptions(path, profile?.candidate?.current_title);
+      const intelligence = await fetchCareerIntelligence().catch(() => null);
+      const opts = resolveKickoffOptions(
+        intelligence,
+        path,
+        profile?.candidate?.current_title,
+      );
       setOptions(opts);
-      const defaultPick =
-        opts.find((o) =>
-          profile?.candidate?.current_title
-            ? o.title.toLowerCase() === profile.candidate.current_title.toLowerCase()
-            : false,
-        ) ?? opts[0];
-      const pick = defaultPick ? [defaultPick.title] : [];
+      const pickTitle = defaultPreferredTitle(opts);
+      const pick = pickTitle ? [pickTitle] : [];
       setSelected(pick);
       persistProgress("paths", pick, opts);
       archiveStepOnce({
@@ -467,11 +527,10 @@ export function CareerKickoffFlow({
       {step === "paths" && (
         <>
           <p className="text-small text-ink-800 leading-relaxed">
-            Based on your CV, these are the strongest career paths for you.
-            Pick <span className="font-medium">one preferred path</span> (or type
-            your own) — I&apos;ll automatically search similar titles too, like
-            &ldquo;Growth Head&rdquo; and &ldquo;VP Growth&rdquo; for &ldquo;Head
-            of Growth&rdquo;.
+            These paths match your Intelligence profile — same order and fit
+            scores as the Profile tab. Pick{" "}
+            <span className="font-medium">one preferred path</span> (or type your
+            own) — I&apos;ll automatically search similar titles too.
           </p>
           <div className="space-y-1.5">
             {options.map((opt) => {

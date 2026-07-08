@@ -47,6 +47,8 @@ interface MatchFeedProps {
   onAskAarya?: () => void;
   seedJobs?: MatchedJob[] | null;
   seedTitle?: string | null;
+  /** Sidebar drawer: flat list, no filters/tiers/pagination. */
+  compact?: boolean;
   className?: string;
 }
 
@@ -118,8 +120,10 @@ export function MatchFeed({
   onAskAarya,
   seedJobs,
   seedTitle,
+  compact = false,
   className,
 }: MatchFeedProps) {
+  const pageSize = compact ? 12 : PAGE_SIZE;
   const initialJobs = getCachedMatchFeed(DEFAULT_MATCH_FEED_FILTERS);
   const [jobs, setJobs] = useState<MatchedJob[]>(initialJobs ?? []);
   const [totalCount, setTotalCount] = useState<number | null>(
@@ -128,7 +132,9 @@ export function MatchFeed({
   const [loading, setLoading] = useState(initialJobs === null && !seedJobs?.length);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState((initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE);
+  const [hasMore, setHasMore] = useState(
+    compact ? false : (initialJobs?.length ?? PAGE_SIZE) === PAGE_SIZE,
+  );
   const [offset, setOffset] = useState(initialJobs?.length ?? 0);
   const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
 
@@ -158,14 +164,14 @@ export function MatchFeed({
       try {
         const filters: MatchFeedFilters = {
           min_score: scoreFloor,
-          limit: PAGE_SIZE,
+          limit: pageSize,
           offset: currentOffset,
         };
 
         const cached = isFirst ? getCachedMatchFeed(filters) : null;
         if (cached) {
           setJobs(applyLocalFilters(cached, { remoteOnly, seniority }));
-          setHasMore(cached.length === PAGE_SIZE);
+          setHasMore(compact ? false : cached.length === pageSize);
           setOffset(currentOffset + cached.length);
           setLoading(false);
           // Refresh in the background without blocking the sidebar.
@@ -173,7 +179,7 @@ export function MatchFeed({
             .then((rawData) => {
               const data = applyLocalFilters(rawData, { remoteOnly, seniority });
               setJobs(data);
-              setHasMore(rawData.length === PAGE_SIZE);
+              setHasMore(compact ? false : rawData.length === pageSize);
               setOffset(rawData.length);
               if (data.length > 0) setEmptyRefreshCount(0);
             })
@@ -196,14 +202,14 @@ export function MatchFeed({
 
         setJobs((prev) => (isFirst ? data : [...prev, ...data]));
         if (isFirst && data.length > 0) setEmptyRefreshCount(0);
-        setHasMore(rawData.length === PAGE_SIZE);
+        setHasMore(compact ? false : rawData.length === pageSize);
         setOffset(currentOffset + rawData.length);
       } catch (err) {
         const hasBlockingData =
           isFirst &&
           getCachedMatchFeed({
             min_score: minScore,
-            limit: PAGE_SIZE,
+            limit: pageSize,
             offset: currentOffset,
           }) !== null;
 
@@ -215,7 +221,7 @@ export function MatchFeed({
         setLoadingMore(false);
       }
     },
-    [minScore, remoteOnly, seniority, offset]
+    [minScore, remoteOnly, seniority, offset, compact, pageSize]
   );
 
   useEffect(() => {
@@ -282,7 +288,8 @@ export function MatchFeed({
   // Hide headers when the only section is the untiered "More" bucket (e.g. the
   // backend didn't curate this page) — a lone "More matches" header reads oddly.
   const showHeaders =
-    sections.length > 1 || (sections.length === 1 && sections[0].key !== MORE_SECTION.key);
+    !compact &&
+    (sections.length > 1 || (sections.length === 1 && sections[0].key !== MORE_SECTION.key));
   const hasLocalFilters = remoteOnly || Boolean(seniority);
   const countLabel = (() => {
     if (loading && visibleCount === 0) return "";
@@ -297,6 +304,9 @@ export function MatchFeed({
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
+      {compact && countLabel ? (
+        <p className="text-micro text-ink-500 mb-3 shrink-0">{countLabel}</p>
+      ) : null}
       {matchSourceBadge === "linkedin" && (
         <p className="text-micro text-ink-500 mb-3 shrink-0">
           <span className="inline-flex items-center rounded-full bg-ink-100 px-2 py-0.5 font-medium text-ink-700">
@@ -305,7 +315,7 @@ export function MatchFeed({
           {" "}— upload a CV to sharpen scores.
         </p>
       )}
-      {seedJobs?.length ? (
+      {seedJobs?.length && !compact ? (
         <p className="text-micro text-ink-500 mb-3 shrink-0">
           <span className="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 font-medium text-ink-800">
             From Aarya
@@ -316,8 +326,9 @@ export function MatchFeed({
             : "Including the roles Aarya just found in chat."}
         </p>
       ) : null}
-      {/* ── Filter bar (collapsed behind a toggle) ─────────────────────── */}
-      {(() => {
+      {/* ── Filter bar (full feed only) ─────────────────────────────── */}
+      {!compact &&
+      (() => {
         const activeFilterCount =
           (remoteOnly ? 1 : 0) +
           (seniority ? 1 : 0) +
@@ -478,7 +489,7 @@ export function MatchFeed({
             </div>
           ))}
 
-        {!loading && !error && hasMore && jobs.length > 0 && !seedJobs?.length && (
+        {!loading && !error && hasMore && jobs.length > 0 && !seedJobs?.length && !compact && (
           <div className="pt-2">
             <Button
               variant="ghost"
