@@ -113,6 +113,7 @@ class ImportRoleUrlRequest(BaseModel):
 class ImportRoleUrlResponse(BaseModel):
     title: str | None = None
     jd_text: str | None = None
+    company_name: str | None = None
     comp_min_lpa: int | None = None
     comp_max_lpa: int | None = None
     location_city: str | None = None
@@ -528,6 +529,7 @@ async def import_role_from_url(
 
     jd_text = (imported.get("jd_text") or "").strip()
     title = (imported.get("title") or "").strip() or None
+    company_name = (imported.get("company_name") or "").strip() or None
     extraction: dict[str, Any] | None = None
 
     comp_min_lpa: int | None = None
@@ -544,6 +546,7 @@ async def import_role_from_url(
             settings=settings,
         )
         title = extraction.get("title") or title
+        company_name = extraction.get("company_name") or company_name
         if extraction.get("comp_min_lpa") is not None:
             comp_min_lpa = int(extraction["comp_min_lpa"])
         elif extraction.get("comp_min"):
@@ -576,6 +579,7 @@ async def import_role_from_url(
     return {
         "title": title,
         "jd_text": jd_text,
+        "company_name": company_name,
         "comp_min_lpa": comp_min_lpa,
         "comp_max_lpa": comp_max_lpa,
         "location_city": location_city,
@@ -599,8 +603,9 @@ async def create_role(
 ) -> dict:
     recruiter = current_user["recruiter"]
     company_id = body.company_id or recruiter.get("company_id")
+    imported_company = (body.company_name or "").strip() or None
     if not company_id:
-        company_name = (body.company_name or "").strip() or "My Company"
+        company_name = imported_company or "My Company"
         company_id = await db.fetchval(
             """
             INSERT INTO public.companies (name, country_code)
@@ -613,6 +618,18 @@ async def create_role(
             "UPDATE public.recruiters SET company_id = $2, updated_at = NOW() WHERE id = $1",
             recruiter["id"],
             company_id,
+        )
+    elif imported_company:
+        # Prefer an imported/real company name over the placeholder "My Company".
+        await db.execute(
+            """
+            UPDATE public.companies
+            SET name = $2, updated_at = NOW()
+            WHERE id = $1
+              AND (name IS NULL OR btrim(name) = '' OR lower(btrim(name)) = 'my company')
+            """,
+            company_id,
+            imported_company,
         )
 
     title = body.title.strip()

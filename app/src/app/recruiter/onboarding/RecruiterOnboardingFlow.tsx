@@ -39,6 +39,7 @@ export function RecruiterOnboardingFlow() {
   const [companyName, setCompanyName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [roleCity, setRoleCity] = useState("");
+  const [importedJd, setImportedJd] = useState<string | null>(null);
   const [mode, setMode] = useState<"form" | "import">("form");
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -89,6 +90,12 @@ export function RecruiterOnboardingFlow() {
       const res = await importRoleFromUrl(url);
       if (res.title) setRoleTitle(res.title);
       if (res.location_city) setRoleCity(res.location_city);
+      if (res.company_name && !companyName.trim()) {
+        setCompanyName(res.company_name);
+      }
+      if (res.jd_text && res.jd_text.trim().length >= 40) {
+        setImportedJd(res.jd_text.trim());
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -115,7 +122,9 @@ export function RecruiterOnboardingFlow() {
       });
       const created = await createRole({
         title: roleTitle.trim().slice(0, 120),
+        company_name: companyName.trim() || undefined,
         location_city: roleCity.trim() || undefined,
+        jd_text: importedJd,
       });
       const returnTo = readPostAuthRedirect(searchParams);
       if (returnTo?.startsWith("/p/")) {
@@ -123,8 +132,15 @@ export function RecruiterOnboardingFlow() {
         router.push(returnTo);
         return;
       }
+      if (!created.role_id) {
+        router.push("/recruiter");
+        return;
+      }
+      // Imported JD (≥40 chars) skips intake — same rule as /recruiter/roles/new.
       router.push(
-        created.role_id ? `/recruiter/roles/${created.role_id}/intake` : "/recruiter",
+        created.skip_intake || (importedJd && importedJd.length >= 40)
+          ? `/recruiter/roles/${created.role_id}/brief`
+          : `/recruiter/roles/${created.role_id}/intake`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -225,7 +241,8 @@ export function RecruiterOnboardingFlow() {
                 </Button>
               </div>
               <p className="text-micro text-ink-400 mt-1">
-                We&apos;ll auto-fill the role title (and city if available). You can edit it below.
+                We&apos;ll auto-fill company, title, city, and JD when the page is public.
+                You can edit anything below.
               </p>
             </Field>
           )}

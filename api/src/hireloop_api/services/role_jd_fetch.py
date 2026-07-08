@@ -1,13 +1,15 @@
 """
 Fetch job posting content from a public URL for recruiter role import.
 
-Supports Greenhouse + Lever JSON APIs and generic HTML pages (httpx).
+Supports Greenhouse + Lever JSON APIs and generic HTML pages (httpx),
+including JSON-LD JobPosting blocks when present.
 """
 
 from __future__ import annotations
 
 import html
 import ipaddress
+import json
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -33,7 +35,20 @@ _OG_DESC_RE = re.compile(
     r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
     re.I,
 )
-_H1_RE = re.compile(r"<h1[^>]*>([^<]+)</h1>", re.I)
+_OG_SITE_RE = re.compile(
+    r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)["\']',
+    re.I,
+)
+_META_NAME_RE = re.compile(
+    r'<meta[^>]+name=["\'](?:author|application-name|twitter:data1)["\'][^>]+'
+    r'content=["\']([^"\']+)["\']',
+    re.I,
+)
+_JSON_LD_RE = re.compile(
+    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.I | re.S,
+)
+_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.I | re.S)
 _GREENHOUSE_JOB_RE = re.compile(
     r"greenhouse\.io/(?:[^/]+/)?jobs/(\d+)",
     re.I,
@@ -113,9 +128,157 @@ def _title_from_html(raw_html: str) -> str | None:
     for pattern in (_OG_TITLE_RE, _TITLE_RE, _H1_RE):
         match = pattern.search(raw_html)
         if match:
-            title = html.unescape(match.group(1)).strip()
+            title = _TAG_RE.sub(" ", html.unescape(match.group(1)))
+            title = re.sub(r"\s+", " ", title).strip()
             if title and len(title) > 2:
                 return title
+    return None
+
+
+def _company_hint_from_html(raw_html: str) -> str | None:
+    for pattern in (_OG_SITE_RE, _META_NAME_RE):
+        match = pattern.search(raw_html)
+        if match:
+            name = html.unescape(match.group(1)).strip()
+            if name and len(name) > 1 and name.lower() not in {"careers", "jobs", "linkedin"}:
+                return name[:120]
+    return None
+
+
+def _humanize_slug(slug: str) -> str:
+    cleaned = re.sub(r"[-_]+", " ", (slug or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    return cleaned.title()
+
+
+def _location_from_value(value: Any) -> tuple[str | None, str | None]:
+    """Normalise JobPosting / ATS location blobs into city + optional region."""
+    if value is None:
+        return None, None
+    if isinstance(value, list):
+        for item in value:
+            city, state = _location_from_value(item)
+            if city:
+                return city, state
+        return None, None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None, None
+        # "Bengaluru, Karnataka, India" → city=Bengaluru, state=Karnataka
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        if not parts:
+            return None, None
+        city = parts[0]
+        state = parts[1] if len(parts) > 1 else None
+        return city[:120], (state[:80] if state else None)
+    if isinstance(value, dict):
+        if "address" in value:
+            return _location_from_value(value.get("address"))
+        city = (
+            value.get("addressLocality")
+            or value.get("city")
+            or value.get("name")
+            or value.get("addressRegion")
+        )
+        state = value.get("addressRegion") or value.get("state")
+        if isinstance(city, str) and city.strip():
+            city_s = city.strip()
+            # If name is already "City, Region", split it.
+            if "," in city_s and not (isinstance(state, str) and state.strip()):
+                return _location_from_value(city_s)
+            state_s = state.strip() if isinstance(state, str) and state.strip() else None
+            return city_s[:120], (state_s[:80] if state_s else None)
+        return _location_from_value(value.get("addressCountry"))
+    return None, None
+
+
+def _org_name(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:120]
+    if isinstance(value, dict):
+        name = value.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()[:120]
+    if isinstance(value, list):
+        for item in value:
+            name = _org_name(item)
+            if name:
+                return name
+    return None
+
+
+def _walk_json_ld(node: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    if isinstance(node, list):
+        for item in node:
+            found.extend(_walk_json_ld(item))
+        return found
+    if not isinstance(node, dict):
+        return found
+    types = node.get("@type")
+    type_list = types if isinstance(types, list) else ([types] if types else [])
+    type_names = {str(t).lower() for t in type_list}
+    if "jobposting" in type_names:
+        found.append(node)
+    graph = node.get("@graph")
+    if graph is not None:
+        found.extend(_walk_json_ld(graph))
+    return found
+
+
+def _parse_json_ld_job_posting(raw_html: str) -> dict[str, Any] | None:
+    """Extract JobPosting fields from application/ld+json blocks."""
+    best: dict[str, Any] | None = None
+    for match in _JSON_LD_RE.finditer(raw_html):
+        raw = html.unescape(match.group(1)).strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        for posting in _walk_json_ld(payload):
+            title = posting.get("title") or posting.get("name")
+            description = posting.get("description")
+            company = _org_name(
+                posting.get("hiringOrganization") or posting.get("hiringOrganizationName")
+            )
+            city, state = _location_from_value(
+                posting.get("jobLocation") or posting.get("jobLocationType")
+            )
+            remote_policy = None
+            loc_type = str(posting.get("jobLocationType") or "").lower()
+            if "telecommute" in loc_type or "remote" in loc_type:
+                remote_policy = "remote"
+            desc_text = ""
+            if isinstance(description, str):
+                desc_text = (
+                    _html_to_text(description) if "<" in description else description.strip()
+                )
+            title_text = title.strip() if isinstance(title, str) else None
+            score = (
+                (2 if title_text else 0)
+                + (4 if len(desc_text) >= 40 else 0)
+                + (1 if company else 0)
+                + (1 if city else 0)
+            )
+            candidate = {
+                "title": title_text,
+                "jd_text": desc_text or None,
+                "company_name": company,
+                "location_city": city,
+                "location_state": state,
+                "remote_policy": remote_policy,
+                "_score": score,
+            }
+            if best is None or score > int(best.get("_score") or 0):
+                best = candidate
+    if best:
+        best.pop("_score", None)
+        return best
     return None
 
 
@@ -158,6 +321,16 @@ async def _import_greenhouse(
     content = _clean_html(data.get("content")) or ""
     location = data.get("location") or {}
     location_name = location.get("name") if isinstance(location, dict) else str(location or "")
+    city, state = _location_from_value(location_name)
+    company_name = (data.get("company_name") or "").strip() or None
+    if not company_name:
+        try:
+            board_meta = await _fetch_json(
+                client, f"https://boards-api.greenhouse.io/v1/boards/{board}"
+            )
+            company_name = (board_meta.get("name") or "").strip() or None
+        except Exception:
+            company_name = _humanize_slug(board) or None
     jd_parts = [p for p in (title, location_name, content) if p]
     jd_text = "\n\n".join(jd_parts).strip()
     if len(jd_text) < 40:
@@ -168,7 +341,9 @@ async def _import_greenhouse(
     return {
         "title": title or None,
         "jd_text": jd_text,
-        "location_city": location_name or None,
+        "company_name": company_name,
+        "location_city": city,
+        "location_state": state,
         "source_url": source_url,
         "source_type": "greenhouse",
         "warnings": [],
@@ -207,15 +382,22 @@ async def _import_lever(
             warnings=["Try pasting the JD manually if the page is gated."],
         )
     location = data.get("categories", {}) if isinstance(data.get("categories"), dict) else {}
-    location_city = (location.get("location") or location.get("team") or "").strip() or None
+    location_raw = (location.get("location") or "").strip() or None
+    city, state = _location_from_value(location_raw)
+    if not city:
+        team = (location.get("team") or "").strip()
+        city = team or None
     workplace = (location.get("commitment") or "").lower()
     remote_policy = None
     if "remote" in workplace:
         remote_policy = "remote"
+    company_name = (data.get("company") or "").strip() or _humanize_slug(company) or None
     return {
         "title": title or None,
         "jd_text": jd_text,
-        "location_city": location_city,
+        "company_name": company_name,
+        "location_city": city,
+        "location_state": state,
         "remote_policy": remote_policy,
         "source_url": source_url,
         "source_type": "lever",
@@ -249,13 +431,21 @@ async def _import_html(
             warnings=["Supported: career pages, Greenhouse, Lever, and most public JD links."],
         )
     raw = resp.text[:2_000_000]
-    title = _title_from_html(raw)
-    body = _html_to_text(raw)
-    og_desc = _OG_DESC_RE.search(raw)
-    if og_desc:
-        desc = html.unescape(og_desc.group(1)).strip()
-        if desc and desc not in body[:200]:
-            body = f"{desc}\n\n{body}" if body else desc
+    json_ld = _parse_json_ld_job_posting(raw)
+    title = (json_ld or {}).get("title") or _title_from_html(raw)
+    company_name = (json_ld or {}).get("company_name") or _company_hint_from_html(raw)
+    location_city = (json_ld or {}).get("location_city")
+    location_state = (json_ld or {}).get("location_state")
+    remote_policy = (json_ld or {}).get("remote_policy")
+
+    body = ((json_ld or {}).get("jd_text") or "").strip()
+    if not body or len(body) < 40:
+        body = _html_to_text(raw)
+        og_desc = _OG_DESC_RE.search(raw)
+        if og_desc:
+            desc = html.unescape(og_desc.group(1)).strip()
+            if desc and desc not in body[:200]:
+                body = f"{desc}\n\n{body}" if body else desc
     if not body or len(body) < 40:
         raise RoleImportError(
             "Could not extract enough job text from this page.",
@@ -268,9 +458,43 @@ async def _import_html(
     if len(body) > 12000:
         body = body[:12000].rsplit(" ", 1)[0] + "…"
         warnings.append("Imported text was trimmed — review before publishing.")
+    if not location_city:
+        # Light regex city sniff so HTML imports still fill City when JSON-LD is absent.
+        for c in (
+            "Bengaluru",
+            "Bangalore",
+            "Mumbai",
+            "Hyderabad",
+            "Delhi",
+            "Gurugram",
+            "Gurgaon",
+            "Noida",
+            "Pune",
+            "Chennai",
+            "Kolkata",
+            "London",
+            "New York",
+            "San Francisco",
+            "Seattle",
+            "Austin",
+            "Toronto",
+            "Singapore",
+            "Dubai",
+        ):
+            if re.search(rf"\b{re.escape(c)}\b", body, re.I):
+                location_city = (
+                    "Bengaluru" if c == "Bangalore" else ("Gurugram" if c == "Gurgaon" else c)
+                )
+                break
+    if not remote_policy and re.search(r"\bremote\b|\bwfh\b|work from home", body, re.I):
+        remote_policy = "remote"
     return {
         "title": title,
         "jd_text": body,
+        "company_name": company_name,
+        "location_city": location_city,
+        "location_state": location_state,
+        "remote_policy": remote_policy,
         "source_url": source_url,
         "source_type": "html",
         "warnings": warnings,
@@ -285,12 +509,14 @@ async def fetch_role_from_url(
     """
     Fetch and normalise a job posting from a public URL.
 
-    Returns dict with title, jd_text, optional location_city/remote_policy,
+    Returns dict with title, jd_text, optional company_name/location_*/remote_policy,
     source_url, source_type, warnings.
     """
     source_url = _validate_public_url(url)
     headers = {
-        "User-Agent": "HireschemaRoleImport/1.0 (+https://hireschema.com)",
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; HireschemaRoleImport/1.1; +https://hireschema.com)"
+        ),
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
     }
     timeout = httpx.Timeout(timeout_seconds)

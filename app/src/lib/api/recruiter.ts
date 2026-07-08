@@ -43,6 +43,7 @@ export type RecruiterRole = {
 export type CreateRolePayload = {
   title: string;
   jd_text?: string | null;
+  company_name?: string | null;
   duplicate_from_role_id?: string | null;
   comp_min_lpa?: number | null;
   comp_max_lpa?: number | null;
@@ -64,6 +65,7 @@ export type CreateRoleResponse = {
 export type ImportRoleUrlResponse = {
   title: string | null;
   jd_text: string | null;
+  company_name: string | null;
   comp_min_lpa: number | null;
   comp_max_lpa: number | null;
   location_city: string | null;
