@@ -312,18 +312,30 @@ export function RecruiterIntrosInboxPanel({
 export function useRecruiterInboxRealtime(onChange: () => void) {
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase
-      .channel("intro_requests:recruiter_panel")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "intro_requests" },
-        () => {
-          onChange();
-        },
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    async function subscribe() {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) await supabase.realtime.setAuth(token);
+      if (cancelled) return;
+      channel = supabase
+        .channel("intro_requests:recruiter_panel")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "intro_requests" },
+          () => {
+            onChange();
+          },
+        )
+        .subscribe();
+    }
+
+    void subscribe();
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
     };
   }, [onChange]);
 }

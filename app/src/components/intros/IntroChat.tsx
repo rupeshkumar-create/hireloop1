@@ -8,7 +8,7 @@
  * selects which auth-scoped API to hit.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send } from "@/components/brand/icons";
 import {
   fetchIntroThread,
@@ -20,6 +20,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui";
 import { ChatBubble } from "@/components/ux";
 import { cn } from "@/lib/utils";
+
+const POLL_FALLBACK_MS = 4_000;
 
 export function IntroChat({
   introId,
@@ -40,21 +42,54 @@ export function IntroChat({
   const endRef = useRef<HTMLDivElement>(null);
   // Viewer's own side, used to flag incoming realtime rows as mine/theirs.
   const youRef = useRef<IntroChatSide>(side);
+  const realtimeOkRef = useRef(false);
+  const lastSeenCountRef = useRef(0);
 
-  function appendUnique(msg: IntroMessage) {
-    setMessages((prev) =>
-      prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
-    );
-  }
+  const appendUnique = useCallback((msg: IntroMessage) => {
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === msg.id)) return prev;
+      return [...prev, msg];
+    });
+  }, []);
+
+  const mergeThread = useCallback((incoming: IntroMessage[], nextCanChat: boolean, you: IntroChatSide) => {
+    youRef.current = you;
+    setCanChat(nextCanChat);
+    setMessages((prev) => {
+      if (prev.length === 0) return incoming;
+      const byId = new Map(prev.map((m) => [m.id, m]));
+      for (const m of incoming) byId.set(m.id, m);
+      return Array.from(byId.values()).sort((a, b) =>
+        a.created_at.localeCompare(b.created_at),
+      );
+    });
+  }, []);
+
+  const refreshThread = useCallback(async () => {
+    try {
+      const t = await fetchIntroThread(introId, side);
+      mergeThread(t.messages, t.can_chat, t.you);
+      lastSeenCountRef.current = t.messages.length;
+      setError(null);
+    } catch (e: unknown) {
+      // Keep the open thread usable; only surface hard failures on first load.
+      if (lastSeenCountRef.current === 0) {
+        setError(e instanceof Error ? e.message : "Couldn't load chat");
+      }
+    }
+  }, [introId, mergeThread, side]);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
+    realtimeOkRef.current = false;
+    lastSeenCountRef.current = 0;
     fetchIntroThread(introId, side)
       .then((t) => {
         if (cancelled) return;
-        setMessages(t.messages);
-        setCanChat(t.can_chat);
-        youRef.current = t.you;
+        mergeThread(t.messages, t.can_chat, t.you);
+        lastSeenCountRef.current = t.messages.length;
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load chat");
@@ -65,43 +100,74 @@ export function IntroChat({
     return () => {
       cancelled = true;
     };
-  }, [introId, side]);
+  }, [introId, mergeThread, side]);
 
-  // Live-stream new messages from the other party (RLS scopes this to parties).
+  // Live-stream new messages (Realtime) + quiet poll fallback if the channel
+  // never reaches SUBSCRIBED (common when RLS/auth JWT is stale).
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase
-      .channel(`intro_messages:${introId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "intro_messages",
-          filter: `intro_request_id=eq.${introId}`,
-        },
-        (payload) => {
-          const r = payload.new as {
-            id: string;
-            sender_type: IntroChatSide;
-            body: string;
-            created_at: string;
-          };
-          appendUnique({
-            id: r.id,
-            sender_type: r.sender_type,
-            body: r.body,
-            created_at: r.created_at,
-            mine: r.sender_type === youRef.current,
-          });
-        }
-      )
-      .subscribe();
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    async function subscribe() {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) {
+        await supabase.realtime.setAuth(token);
+      }
+      if (cancelled) return;
+
+      channel = supabase
+        .channel(`intro_messages:${introId}:${side}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "intro_messages",
+            filter: `intro_request_id=eq.${introId}`,
+          },
+          (payload) => {
+            const r = payload.new as {
+              id: string;
+              sender_type: IntroChatSide;
+              body: string;
+              created_at: string;
+            };
+            appendUnique({
+              id: r.id,
+              sender_type: r.sender_type,
+              body: r.body,
+              created_at: r.created_at,
+              mine: r.sender_type === youRef.current,
+            });
+          },
+        )
+        .subscribe((status) => {
+          realtimeOkRef.current = status === "SUBSCRIBED";
+        });
+    }
+
+    void subscribe();
+
+    const pollId = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      // Quiet safety net: if Realtime never subscribed (RLS/JWT), pull via API.
+      if (!realtimeOkRef.current) void refreshThread();
+    }, POLL_FALLBACK_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshThread();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      window.clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVisible);
+      if (channel) void supabase.removeChannel(channel);
     };
-  }, [introId]);
+  }, [appendUnique, introId, refreshThread, side]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -114,7 +180,7 @@ export function IntroChat({
     setError(null);
     try {
       const msg = await sendIntroMessage(introId, side, body);
-      appendUnique(msg); // realtime will echo the same id — deduped
+      appendUnique(msg); // realtime/poll may echo the same id — deduped
       setDraft("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't send");
