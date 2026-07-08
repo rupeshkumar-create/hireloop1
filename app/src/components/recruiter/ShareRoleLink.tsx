@@ -22,14 +22,13 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
   const [copying, setCopying] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
 
-  if (!publicRoleUrl) return null;
-
   const iconBtn =
     "hs-role-link inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent " +
     "text-ink-500 hover:text-ink-900 hover:bg-ink-50 transition-colors duration-fast " +
     "active:scale-95 disabled:opacity-60 disabled:pointer-events-none";
 
-  const publicUrl = absolutePublicUrl(publicRoleUrl);
+  const hasUrl = Boolean(publicRoleUrl);
+  const publicUrl = hasUrl ? absolutePublicUrl(publicRoleUrl as string) : "";
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -41,6 +40,8 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
     document.addEventListener("click", onDocClick);
     return () => document.removeEventListener("click", onDocClick);
   }, []);
+
+  if (!hasUrl) return null;
 
   async function copyLink() {
     setCopying(true);
@@ -109,7 +110,7 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          window.open(publicRoleUrl, "_blank", "noopener,noreferrer");
+          window.open(publicUrl, "_blank", "noopener,noreferrer");
         }}
       >
         <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
@@ -148,7 +149,7 @@ export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) 
             type="button"
             className="w-full px-3 py-2 text-small text-ink-800 hover:bg-ink-50 rounded-md text-left"
             onClick={() => {
-              window.open(publicRoleUrl, "_blank", "noopener,noreferrer");
+              window.open(publicUrl, "_blank", "noopener,noreferrer");
               if (detailsRef.current) detailsRef.current.open = false;
             }}
           >

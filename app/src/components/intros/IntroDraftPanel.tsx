@@ -39,19 +39,23 @@ export function IntroDraftPanel({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setError(null);
-    try {
-      setDetail(await fetchIntroDetail(introId));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchIntroDetail(introId)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setError((e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [introId]);
 
   async function handleSend() {

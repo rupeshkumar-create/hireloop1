@@ -105,9 +105,34 @@ export function DashboardClient({
   const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
   const [introWatch, setIntroWatch] = useState<{ jobId: string; nonce: number } | null>(null);
+  const [handledIntroParam] = useState(() => ({ handled: false }));
+  const [sendToChatRef] = useState(() => ({ fn: (_text: string) => Date.now() }));
   // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
   // never has to click "Find jobs" to see them there.
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
+
+  // Allow deep-linking into an intro request from places like /jobs/[id].
+  // Example: /dashboard?intro_job_id=...&intro_title=...&intro_company=...
+  useEffect(() => {
+    if (handledIntroParam.handled) return;
+    const jobId = searchParams?.get("intro_job_id")?.trim();
+    if (!jobId) return;
+    handledIntroParam.handled = true;
+
+    const title = searchParams?.get("intro_title")?.trim() || "this role";
+    const company = searchParams?.get("intro_company")?.trim() || "this company";
+    const nonce = sendToChatRef.fn(
+      `I'd like to request an intro for the "${title}" role at ${company} (job ID: ${jobId}).`,
+    );
+    setIntroWatch({ jobId, nonce });
+
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("intro_job_id");
+    params.delete("intro_title");
+    params.delete("intro_company");
+    const q = params.toString();
+    router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
+  }, [router, searchParams, handledIntroParam, sendToChatRef]);
 
   useEffect(() => {
     router.prefetch("/resumes");
@@ -192,6 +217,9 @@ export function DashboardClient({
     setInjected({ text, nonce });
     return nonce;
   }
+
+  // Keep a stable function ref for effects (avoids exhaustive-deps churn).
+  sendToChatRef.fn = sendToChat;
 
   function handleCareerKickoffComplete(result: KickoffResult) {
     clearClientOnboardingComplete();

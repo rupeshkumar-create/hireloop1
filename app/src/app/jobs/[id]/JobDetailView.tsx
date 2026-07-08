@@ -28,10 +28,12 @@ import {
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
 import { recordJobApplication } from "@/lib/api/job-applications";
+import { prepareApplicationKit } from "@/lib/api/applicationKit";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import { AppShell } from "@/components/layout/AppShell";
 import { Avatar, Badge, Button, ScoreDot, useToast } from "@/components/ui";
+import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 
 const SENIORITY_LABELS: Record<string, string> = {
   intern: "Intern",
@@ -146,7 +148,13 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   const [saving, setSaving] = useState(false);
   const [introSent, setIntroSent] = useState(false);
   const [applied, setApplied] = useState(false);
-  const [prepStarted, setPrepStarted] = useState(false);
+  const [kitPreparing, setKitPreparing] = useState(false);
+  const [kitPreview, setKitPreview] = useState<{
+    resumeId: string | null;
+    jobId: string;
+    jobTitle: string | null;
+    initialTab: "resume" | "cover_letter" | "interview_prep";
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,24 +187,41 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
     setIntroSent(true);
     setSaved(true);
     void saveJob(job.job_id).catch(() => undefined);
-    const msg = `I'd like to request an intro for the "${job.title}" role at ${
-      job.company_name ?? "this company"
-    } (job ID: ${job.job_id}).`;
-    router.push(`/dashboard?init=${encodeURIComponent(msg)}`);
+    const params = new URLSearchParams();
+    params.set("intro_job_id", job.job_id);
+    if (job.title) params.set("intro_title", job.title);
+    if (job.company_name) params.set("intro_company", job.company_name);
+    router.push(`/dashboard?${params.toString()}`);
   };
 
   // Assets-first flow: generate the full AI application kit (tailored resume,
   // cover letter, interview prep) BEFORE the intro, then tee up the warm intro
   // once the candidate is genuinely ready to be introduced.
-  const handlePrepare = () => {
+  const handlePrepare = async () => {
     if (!job) return;
-    setPrepStarted(true);
-    const msg =
-      `Prepare my full application kit for the "${job.title}" role at ${
-        job.company_name ?? "this company"
-      } (job ID: ${job.job_id}) — a tailored resume, a cover letter, and interview prep. ` +
-      `Once everything's ready, walk me through it and then help me request a warm intro.`;
-    router.push(`/dashboard?init=${encodeURIComponent(msg)}`);
+    if (kitPreparing) return;
+    setKitPreparing(true);
+    try {
+      setSaved(true);
+      void saveJob(job.job_id).catch(() => undefined);
+      const kit = await prepareApplicationKit(job.job_id);
+      const resumeId = kit.resume?.resume_id ?? null;
+      const initialTab = resumeId
+        ? "resume"
+        : kit.cover_letter
+          ? "cover_letter"
+          : "interview_prep";
+      setKitPreview({
+        resumeId,
+        jobId: job.job_id,
+        jobTitle: job.title ?? null,
+        initialTab,
+      });
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't prepare application kit");
+    } finally {
+      setKitPreparing(false);
+    }
   };
 
   const handleApply = () => {
@@ -237,48 +262,59 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   };
 
   return (
-    <AppShell
-      title="Job details"
-      width="form"
-      action={
-        <Link
-          href="/dashboard?panel=jobs"
-          className="inline-flex items-center gap-1.5 text-small text-ink-500 hover:text-ink-900 transition-colors duration-fast"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Back to jobs
-        </Link>
-      }
-    >
-      {loading ? (
-        <JobDetailSkeleton />
-      ) : error || !job ? (
-        <div className="rounded-xl border border-ink-100 bg-paper-1 px-6 py-12 text-center">
-          <p className="text-body text-ink-700">
-            {error ?? "This job couldn't be found."}
-          </p>
+    <>
+      <AppShell
+        title="Job details"
+        width="form"
+        action={
           <Link
             href="/dashboard?panel=jobs"
-            className="mt-4 inline-block text-small font-medium text-accent hover:underline"
+            className="inline-flex items-center gap-1.5 text-small text-ink-500 hover:text-ink-900 transition-colors duration-fast"
           >
-            ← Back to your matches
+            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
+            Back to jobs
           </Link>
-        </div>
-      ) : (
-        <JobDetailBody
-          job={job}
-          saved={saved}
-          saving={saving}
-          introSent={introSent}
-          applied={applied}
-          prepStarted={prepStarted}
-          onPrepare={handlePrepare}
-          onRequestIntro={handleRequestIntro}
-          onApply={handleApply}
-          onSaveToggle={() => void handleSaveToggle()}
-        />
-      )}
-    </AppShell>
+        }
+      >
+        {loading ? (
+          <JobDetailSkeleton />
+        ) : error || !job ? (
+          <div className="rounded-xl border border-ink-100 bg-paper-1 px-6 py-12 text-center">
+            <p className="text-body text-ink-700">
+              {error ?? "This job couldn't be found."}
+            </p>
+            <Link
+              href="/dashboard?panel=jobs"
+              className="mt-4 inline-block text-small font-medium text-accent hover:underline"
+            >
+              ← Back to your matches
+            </Link>
+          </div>
+        ) : (
+          <JobDetailBody
+            job={job}
+            saved={saved}
+            saving={saving}
+            introSent={introSent}
+            applied={applied}
+            kitPreparing={kitPreparing}
+            onPrepare={handlePrepare}
+            onRequestIntro={handleRequestIntro}
+            onApply={handleApply}
+            onSaveToggle={() => void handleSaveToggle()}
+          />
+        )}
+      </AppShell>
+
+      <ResumePreviewModal
+        open={!!kitPreview}
+        onClose={() => setKitPreview(null)}
+        resumeId={kitPreview?.resumeId ?? null}
+        jobId={kitPreview?.jobId ?? null}
+        jobTitle={kitPreview?.jobTitle ?? undefined}
+        initialTab={kitPreview?.initialTab}
+      />
+    </>
   );
 }
 
@@ -290,7 +326,7 @@ function JobDetailBody({
   saving,
   introSent,
   applied,
-  prepStarted,
+  kitPreparing,
   onPrepare,
   onRequestIntro,
   onApply,
@@ -301,7 +337,7 @@ function JobDetailBody({
   saving: boolean;
   introSent: boolean;
   applied: boolean;
-  prepStarted: boolean;
+  kitPreparing: boolean;
   onPrepare: () => void;
   onRequestIntro: () => void;
   onApply: () => void;
@@ -501,20 +537,19 @@ function JobDetailBody({
       {/* Actions — assets first (prepare the AI kit), then the warm intro. */}
       <div className="space-y-2 pt-4 border-t border-ink-100">
         <Button
-          variant={prepStarted ? "secondary" : "primary"}
+          variant={kitPreparing ? "secondary" : "primary"}
           size="md"
           onClick={onPrepare}
-          disabled={prepStarted}
+          disabled={kitPreparing}
+          loading={kitPreparing}
           leftIcon={
-            prepStarted ? (
-              <Check className="h-4 w-4" strokeWidth={2} />
-            ) : (
+            !kitPreparing ? (
               <Sparkles className="h-4 w-4" strokeWidth={1.5} />
-            )
+            ) : undefined
           }
           className="w-full"
         >
-          {prepStarted ? "Opening chat…" : "Prepare application"}
+          {kitPreparing ? "Preparing application kit…" : "Prepare application kit"}
         </Button>
         <p className="text-micro text-ink-400 text-center">
           Aarya tailors your resume, cover letter & interview prep — then sets up the intro.

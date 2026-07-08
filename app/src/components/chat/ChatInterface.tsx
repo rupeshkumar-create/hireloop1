@@ -1846,8 +1846,8 @@ function buildSmartStarterCards(
   const cards: ActionCardDef[] = [
     {
       Icon: Search,
-      title: "Find a new role",
-      description: "Your top-ranked matches, best first",
+      title: "Get my top matches",
+      description: "Best-fit roles first, ranked for you",
       kind: "message",
       message: findJobsMessage,
       primary: true,
@@ -1855,8 +1855,8 @@ function buildSmartStarterCards(
     includeCareerPaths
       ? {
           Icon: Route,
-          title: "View top 3 career paths",
-          description: "Pick a direction, then see matching roles",
+          title: "Explore career paths",
+          description: "Pick one direction to prioritise",
           kind: "career_paths",
         }
       : {
@@ -1869,8 +1869,8 @@ function buildSmartStarterCards(
         },
     {
       Icon: Briefcase,
-      title: "Discuss a job I saw",
-      description: "Paste a role and I'll score your fit",
+      title: "Score a job I found",
+      description: "Paste the JD link/text — I’ll score your fit",
       kind: "message",
       message:
         "I saw a job I'm interested in. Help me evaluate how well it fits my profile.",
@@ -1930,7 +1930,7 @@ function EmptyState({
   if (intentGreeting && cards[0]?.kind === "message") {
     cards[0] = {
       ...cards[0],
-      title: "Show my top matches",
+      title: "Get my top matches",
       description: "Ranked by fit to your profile",
       primary: true,
     };

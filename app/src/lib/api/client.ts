@@ -17,8 +17,13 @@ export async function apiFetch<T>(
     },
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? `API ${res.status}`);
+    // Prefer JSON error detail (FastAPI), but gracefully fall back to plain text.
+    const body = await res
+      .json()
+      .catch(async () => ({ detail: (await res.text().catch(() => "")) || res.statusText }));
+    const detail = (body as { detail?: string }).detail;
+    const message = detail?.trim() || res.statusText || `API ${res.status}`;
+    throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

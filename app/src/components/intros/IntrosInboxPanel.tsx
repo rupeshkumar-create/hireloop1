@@ -7,7 +7,6 @@
 import { useEffect, useState } from "react";
 import {
   Building2,
-  CheckCircle,
   Clock,
   MessageCircle,
   XCircle,

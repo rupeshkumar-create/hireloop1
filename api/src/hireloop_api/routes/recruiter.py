@@ -904,33 +904,53 @@ async def nitya_chat_message(
 ) -> dict:
     """Nitya intake message — may emit hiring brief JSON."""
     recruiter = current_user["recruiter"]
-    role = await db.fetchrow(
-        """
-        SELECT id, company_id, title, jd_text, hiring_brief, candidate_pitch,
-               comp_min, comp_max, location_city, location_state, remote_policy,
-               must_haves, nice_to_haves, jd_structured
-        FROM public.roles WHERE id = $1 AND recruiter_id = $2
-        """,
-        role_id,
-        recruiter["id"],
-    )
+    try:
+        role = await db.fetchrow(
+            """
+            SELECT id, company_id, title, jd_text, hiring_brief, candidate_pitch,
+                   comp_min, comp_max, location_city, location_state, remote_policy,
+                   must_haves, nice_to_haves, jd_structured
+            FROM public.roles WHERE id = $1 AND recruiter_id = $2
+            """,
+            role_id,
+            recruiter["id"],
+        )
+    except Exception as exc:
+        logger.exception("nitya_chat_role_fetch_failed", role_id=str(role_id), error=str(exc)[:300])
+        raise HTTPException(
+            status_code=502,
+            detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+        ) from exc
     if not role:
         raise HTTPException(404, "Role not found")
 
-    conv_id = await ensure_nitya_conversation(
-        db,
-        recruiter_id=recruiter["id"],
-        role_id=role_id,
-        title=role["title"] or "Role",
-    )
-    history_rows = await db.fetch(
-        """
-        SELECT role, content FROM public.messages
-        WHERE conversation_id = $1::uuid
-        ORDER BY created_at ASC
-        """,
-        conv_id,
-    )
+    try:
+        conv_id = await ensure_nitya_conversation(
+            db,
+            recruiter_id=recruiter["id"],
+            role_id=role_id,
+            title=role["title"] or "Role",
+        )
+        history_rows = await db.fetch(
+            """
+            SELECT role, content FROM public.messages
+            WHERE conversation_id = $1::uuid
+            ORDER BY created_at ASC
+            """,
+            conv_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "nitya_chat_history_fetch_failed",
+            role_id=str(role_id),
+            error=str(exc)[:300],
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+        ) from exc
     history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
     recruiter_turn_count = sum(1 for h in history if h["role"] == "user")
 
@@ -1060,7 +1080,9 @@ async def nitya_chat_message(
                 recruiter_turn_count=0,
             )
         except Exception as exc:
-            logger.exception("nitya_chat_bootstrap_failed", role_id=str(role_id), error=str(exc)[:300])
+            logger.exception(
+                "nitya_chat_bootstrap_failed", role_id=str(role_id), error=str(exc)[:300]
+            )
             raise HTTPException(
                 status_code=502,
                 detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
@@ -1176,7 +1198,9 @@ async def nitya_chat_message(
                     candidate_count=len(candidates),
                 )
             except Exception as exc:
-                logger.exception("nitya_post_brief_chat_failed", role_id=str(role_id), error=str(exc)[:300])
+                logger.exception(
+                    "nitya_post_brief_chat_failed", role_id=str(role_id), error=str(exc)[:300]
+                )
                 raise HTTPException(
                     status_code=502,
                     detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
@@ -1212,7 +1236,9 @@ async def nitya_chat_message(
                     recruiter_turn_count=recruiter_turn_count,
                 )
             except Exception as exc:
-                logger.exception("nitya_chat_turn_failed", role_id=str(role_id), error=str(exc)[:300])
+                logger.exception(
+                    "nitya_chat_turn_failed", role_id=str(role_id), error=str(exc)[:300]
+                )
                 raise HTTPException(
                     status_code=502,
                     detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
@@ -1357,29 +1383,49 @@ async def get_nitya_chat_history(
 ) -> dict:
     """Persisted Nitya conversation for a role."""
     recruiter = current_user["recruiter"]
-    role = await db.fetchrow(
-        "SELECT id, title, hiring_brief FROM public.roles WHERE id = $1 AND recruiter_id = $2",
-        role_id,
-        recruiter["id"],
-    )
+    try:
+        role = await db.fetchrow(
+            "SELECT id, title, hiring_brief FROM public.roles WHERE id = $1 AND recruiter_id = $2",
+            role_id,
+            recruiter["id"],
+        )
+    except Exception as exc:
+        logger.exception(
+            "nitya_chat_history_role_fetch_failed", role_id=str(role_id), error=str(exc)[:300]
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+        ) from exc
     if not role:
         raise HTTPException(404, "Role not found")
 
-    conv_id = await ensure_nitya_conversation(
-        db,
-        recruiter_id=recruiter["id"],
-        role_id=role_id,
-        title=role["title"] or "Role",
-    )
-    rows = await db.fetch(
-        """
-        SELECT role, content, created_at
-        FROM public.messages
-        WHERE conversation_id = $1::uuid
-        ORDER BY created_at ASC
-        """,
-        conv_id,
-    )
+    try:
+        conv_id = await ensure_nitya_conversation(
+            db,
+            recruiter_id=recruiter["id"],
+            role_id=role_id,
+            title=role["title"] or "Role",
+        )
+        rows = await db.fetch(
+            """
+            SELECT role, content, created_at
+            FROM public.messages
+            WHERE conversation_id = $1::uuid
+            ORDER BY created_at ASC
+            """,
+            conv_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "nitya_chat_history_fetch_failed", role_id=str(role_id), error=str(exc)[:300]
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+        ) from exc
     messages = [
         {
             "role": r["role"],
@@ -1390,8 +1436,17 @@ async def get_nitya_chat_history(
         }
         for r in rows
     ]
-    candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
-    published = await is_role_published(db, role_id=role_id)
+    try:
+        candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
+        published = await is_role_published(db, role_id=role_id)
+    except Exception as exc:
+        logger.exception(
+            "nitya_chat_history_extras_failed", role_id=str(role_id), error=str(exc)[:300]
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+        ) from exc
     return {
         "conversation_id": str(conv_id),
         "messages": messages,

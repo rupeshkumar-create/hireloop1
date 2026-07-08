@@ -7,7 +7,7 @@ REQUIRED for all HM outreach (R9):
 
 Flow:
   1. Candidate connects Gmail in onboarding (OAuth 2.0, scope: gmail.send)
-  2. Tokens stored in public.gmail_tokens (encrypted at rest)
+  2. Tokens stored in public.gmail_tokens, app-encrypted (token_crypto)
   3. Nitya drafts email, shows candidate a preview
   4. Candidate approves → GmailOAuthService.send_intro_email() fires
 
@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 import asyncpg
 import httpx
 import structlog
+
+from hireloop_api.services.token_crypto import decrypt_token, encrypt_token
 
 logger = structlog.get_logger()
 
@@ -79,9 +81,9 @@ class GmailOAuthService:
 
         seconds_left = (expires_at - now).total_seconds()
         if seconds_left < 60:
-            return await self._refresh_token(candidate_id, row["refresh_token"])
+            return await self._refresh_token(candidate_id, decrypt_token(row["refresh_token"]))
 
-        return row["access_token"]
+        return decrypt_token(row["access_token"])
 
     async def _refresh_token(self, candidate_id: str, refresh_token: str) -> str | None:
         """Exchange a refresh token for a new access token. Returns new access token or None."""
@@ -109,7 +111,7 @@ class GmailOAuthService:
                 SET access_token = $1, token_expiry = $2, updated_at = NOW()
                 WHERE candidate_id = $3::uuid
                 """,
-                new_token,
+                encrypt_token(new_token),
                 new_expiry,
                 candidate_id,
             )
@@ -240,8 +242,8 @@ class GmailOAuthService:
                     updated_at    = NOW()
                 """,
                 candidate_id,
-                access_token,
-                refresh_token,
+                encrypt_token(access_token),
+                encrypt_token(refresh_token),
                 expiry,
                 gmail_email,
                 scopes,

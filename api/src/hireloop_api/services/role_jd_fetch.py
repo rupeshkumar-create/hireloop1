@@ -56,6 +56,19 @@ class RoleImportError(Exception):
         self.warnings = warnings or []
 
 
+def _addr_is_blocked(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Block any non-public address. is_link_local covers the cloud metadata
+    IP (169.254.169.254); reserved/multicast/unspecified close the rest."""
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
 def _validate_public_url(url: str) -> str:
     parsed = urlparse(url.strip())
     if parsed.scheme not in ("http", "https"):
@@ -68,11 +81,25 @@ def _validate_public_url(url: str) -> str:
     if host == "0.0.0.0":  # noqa: S104
         raise RoleImportError("Local URLs cannot be imported.")
     try:
+        # Literal IP in the URL — check directly.
         addr = ipaddress.ip_address(host)
-        if addr.is_private or addr.is_loopback or addr.is_link_local:
+        if _addr_is_blocked(addr):
             raise RoleImportError("Private network URLs cannot be imported.")
     except ValueError:
-        pass
+        # Hostname — resolve and block if ANY resolved address is internal.
+        # Closes DNS rebinding (evil.com → 127.0.0.1 / 169.254.169.254).
+        import socket
+
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except OSError as exc:
+            raise RoleImportError("Could not resolve that URL.") from exc
+        for info in infos:
+            try:
+                if _addr_is_blocked(ipaddress.ip_address(info[4][0])):
+                    raise RoleImportError("Private network URLs cannot be imported.")
+            except ValueError:
+                continue
     return url.strip()
 
 
@@ -201,7 +228,19 @@ async def _import_html(
     *,
     source_url: str,
 ) -> dict[str, Any]:
-    resp = await client.get(source_url, follow_redirects=True)
+    # Follow redirects MANUALLY, re-validating each hop — auto-follow would let
+    # a public URL 302 to an internal target and bypass the pre-flight check.
+    url = source_url
+    resp = None
+    for _hop in range(5):
+        _validate_public_url(url)
+        resp = await client.get(url, follow_redirects=False)
+        if resp.is_redirect and resp.headers.get("location"):
+            url = str(resp.url.join(resp.headers["location"]))
+            continue
+        break
+    if resp is None:
+        raise RoleImportError("Could not fetch that URL.")
     resp.raise_for_status()
     content_type = (resp.headers.get("content-type") or "").lower()
     if "html" not in content_type and not resp.text.strip().startswith("<"):

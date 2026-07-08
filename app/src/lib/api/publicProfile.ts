@@ -1,5 +1,5 @@
 import { consumeSSEStream } from "@/lib/chat/sse";
-import type { ChatChip, ChatStreamCallbacks } from "@/lib/chat/types";
+import type { ChatStreamCallbacks } from "@/lib/chat/types";
 import { getApiBaseUrl } from "@/lib/api/base-url";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 
