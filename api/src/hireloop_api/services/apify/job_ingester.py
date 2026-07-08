@@ -20,7 +20,6 @@ import structlog
 
 from hireloop_api.config import Settings
 from hireloop_api.markets import (
-    MARKET_LABELS,
     MARKET_SCRAPE_LOCATIONS,
     SUPPORTED_MARKETS,
     resolve_country_from_location,
