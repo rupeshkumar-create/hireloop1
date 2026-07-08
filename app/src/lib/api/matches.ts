@@ -69,6 +69,9 @@ const _matchFeedInFlight = new Map<string, Promise<MatchedJob[]>>();
 const _matchFeedCountCache = new Map<string, number>();
 const _matchFeedCountInFlight = new Map<string, Promise<number>>();
 
+/** Browser-only event to notify already-mounted MatchFeed components. */
+export const MATCH_FEED_INVALIDATE_EVENT = "hireloop:match-feed-invalidated";
+
 function matchFeedCacheKey(filters: MatchFeedFilters = {}): string {
   return JSON.stringify({
     min_score: filters.min_score ?? null,
@@ -98,6 +101,12 @@ export function invalidateMatchFeedCache(): void {
   _matchFeedInFlight.clear();
   _matchFeedCountCache.clear();
   _matchFeedCountInFlight.clear();
+
+  // If the sidebar is already mounted, it needs an explicit signal to re-fetch
+  // (cache invalidation alone doesn't affect React state).
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(MATCH_FEED_INVALIDATE_EVENT));
+  }
 }
 
 /** Default filters shared by Home stat card and Jobs → Matches tab. */

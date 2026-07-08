@@ -67,7 +67,11 @@ Rules:
   Events" or "Venue Manager", not "Software Operations Manager").
 - target_titles are roles they can apply for now or within 12 months — real
   {job_board_phrase}, 3 to 6 items, including their current title or nearest
-  equivalent and one natural step up.
+  equivalent and one natural step up. These strings are sent VERBATIM to Google
+  Jobs via Apify — each one MUST be a title people actually post (e.g.
+  "Customer Success Manager", "Backend Engineer"). NEVER invent keyword soup,
+  skill names, soft skills, or marketing phrases ("Upselling", "Python",
+  "Communication skills", "Helping recruiters hire faster").
 - Do NOT emit bare generic titles like "Team Lead", "Manager", or "Operations
   Manager" unless the function/domain is included. Use "Implementation Team Lead",
   "Customer Success Team Lead", "CX Operations Manager", "Category Manager", etc.
@@ -125,8 +129,10 @@ async def expand_similar_titles(
 
     prompt = (
         "List 4-6 alternative job titles that mean the same role as "
-        f'"{title}" on Indian job boards. Real, searchable titles only — no '
-        "explanations. Return ONLY a JSON array of strings."
+        f'"{title}" on major job boards (India/US/UK). Return ONLY real, '
+        "searchable posted titles people hire for (e.g. 'Customer Success "
+        "Manager', 'Backend Engineer'). Never skills, keywords, soft skills, "
+        "or marketing phrases. Return ONLY a JSON array of strings."
     )
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -137,7 +143,10 @@ async def expand_similar_titles(
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": settings.openrouter_fallback_model
+                    # Title expansion is high-volume — use the fast/credit-efficient
+                    # model (Gemini Flash by default), not the primary chat model.
+                    "model": settings.openrouter_fast_model
+                    or settings.openrouter_fallback_model
                     or settings.openrouter_primary_model,
                     "temperature": 0,
                     "max_tokens": 200,
@@ -620,6 +629,49 @@ def _clean_steps(raw: object) -> list[dict[str, Any]]:
     return cleaned
 
 
+def _looks_like_board_title(title: str) -> bool:
+    """Drop LLM inventions that are not usable Google Jobs search queries."""
+    t = title.strip()
+    if not t or len(t) > 80:
+        return False
+    words = t.split()
+    if len(words) < 1:
+        return False
+    low = t.lower()
+    banned = (
+        "upselling",
+        "cross-selling",
+        "communication skills",
+        "soft skills",
+        "helping ",
+        "passionate",
+        "results-driven",
+    )
+    if any(b in low for b in banned):
+        return False
+    # Single-token skills/keywords ("python", "sql", "figma") are not job titles.
+    if len(words) == 1 and low not in {"founder", "recruiter", "designer", "analyst", "engineer"}:
+        roleish = (
+            "manager",
+            "lead",
+            "director",
+            "head",
+            "engineer",
+            "analyst",
+            "specialist",
+            "executive",
+            "associate",
+            "officer",
+            "designer",
+            "recruiter",
+            "consultant",
+            "founder",
+        )
+        if low not in roleish and not any(low.endswith(r) for r in roleish):
+            return False
+    return True
+
+
 def _clean_titles(raw: object) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -628,7 +680,7 @@ def _clean_titles(raw: object) -> list[str]:
     for item in raw:
         title = str(item).strip()
         key = title.lower()
-        if title and key not in seen:
+        if title and key not in seen and _looks_like_board_title(title):
             seen.add(key)
             out.append(title[:120])
         if len(out) >= 6:

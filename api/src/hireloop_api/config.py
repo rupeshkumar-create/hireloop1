@@ -52,14 +52,16 @@ class Settings(BaseSettings):
     # ── OpenRouter ────────────────────────────────────────────────────────────
     openrouter_api_key: str = ""
     # Primary: strong reasoning/tool-use model for Aarya chat, resume tailor,
-    # mock interview, Nitya intro emails. MUST be a valid OpenRouter model ID
-    # (https://openrouter.ai/models) — override via OPENROUTER_PRIMARY_MODEL.
-    openrouter_primary_model: str = "anthropic/claude-opus-4.7"
-    # Fallback: fast + cheap for quick/utility turns and tool-result summaries.
-    openrouter_fallback_model: str = "anthropic/claude-haiku-4.5"
-    # Fast lane: cheap/low-latency model for short, high-volume utility calls
-    # (match-feed rationales, classification) where the strong model is overkill.
-    openrouter_fast_model: str = "anthropic/claude-haiku-4.5"
+    # mock interview, Nitya intro emails, career paths. Prefer Sonnet over Opus —
+    # same class of quality for role planning / matching, far fewer credits.
+    # MUST be a valid OpenRouter model ID (https://openrouter.ai/models).
+    openrouter_primary_model: str = "anthropic/claude-sonnet-4.6"
+    # Fallback: popular, credit-efficient Google model for resume parse / title
+    # expansion / utility turns when primary is unavailable or rate-limited.
+    openrouter_fallback_model: str = "google/gemini-2.5-flash"
+    # Fast lane: same Gemini Flash for short, high-volume utility calls
+    # (match-feed rationales, classification) where Sonnet is overkill.
+    openrouter_fast_model: str = "google/gemini-2.5-flash"
     # Free fallback router. OpenRouter filters for requested capabilities (tools,
     # max_tokens, etc.) and routes to currently available free models.
     openrouter_free_model: str = "openrouter/free"

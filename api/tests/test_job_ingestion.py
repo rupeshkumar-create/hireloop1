@@ -285,22 +285,42 @@ def test_derive_ingest_queries_prefers_target_titles() -> None:
     assert "UX Designer" in q  # current title still included
 
 
-def test_derive_ingest_queries_falls_back_to_skills_when_thin() -> None:
+def test_derive_ingest_queries_never_sends_raw_skills_to_apify() -> None:
+    # Bare skill tokens ("python") burn Apify runs and return 0 Google Jobs hits.
+    # Only board-real job titles may leave derive_ingest_queries.
     q = derive_ingest_queries(
         target_titles=[], current_title=None, skills=["python", "react", "sql", "go"]
     )
-    assert q == ["python", "react", "sql"]  # no titles → top 3 skills
+    assert q == []
+    assert all(" " in title or title.lower() in {"founder", "recruiter"} for title in q)
 
 
 def test_derive_ingest_queries_dedupes_and_caps() -> None:
     q = derive_ingest_queries(
-        target_titles=["UX Lead", "ux lead", "A", "B", "C", "D", "E", "F"],
+        target_titles=[
+            "UX Lead",
+            "ux lead",
+            "Product Designer",
+            "Design Manager",
+            "Senior UX Designer",
+            "UI Designer",
+            "Visual Designer",
+            "Brand Designer",
+        ],
         current_title="UX Lead",
         skills=[],
         expand=False,  # isolate dedup/cap behaviour from adjacent-title expansion
         max_queries=6,
     )
-    assert q == ["UX Lead", "A", "B", "C", "D", "E"]  # case-insensitive dedup + cap 6
+    # Case-insensitive dedup + cap 6; single-letter / junk titles never appear.
+    assert q == [
+        "UX Lead",
+        "Product Designer",
+        "Design Manager",
+        "Senior UX Designer",
+        "UI Designer",
+        "Visual Designer",
+    ]
 
 
 def test_derive_ingest_queries_expands_niche_titles() -> None:
@@ -453,9 +473,21 @@ def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
         skills=["Recruitment", "Payroll", "Employee Relations"],
     )
 
-    assert q[0] == "Executive"
+    # Bare "Executive" is too generic for Google Jobs — skill domains expand to
+    # board-real HR titles instead.
+    assert "Executive" not in q
     assert "HR Executive" in q
     assert "Talent Acquisition Specialist" in q
+    # No raw skill tokens like "Recruitment" / "Payroll".
+    assert "Recruitment" not in q
+    assert "Payroll" not in q
+    assert "Employee Relations" not in q
+    assert all(
+        " " in title
+        or title.lower()
+        in {"founder", "recruiter", "designer", "analyst", "engineer"}
+        for title in q
+    )
 
 
 async def test_ingest_for_candidate_scopes_to_career_path() -> None:

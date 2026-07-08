@@ -188,6 +188,15 @@ def build_title_query_variants(
         key = cleaned.lower()
         if not cleaned or key in seen:
             return
+        # Single-token skills ("python", "figma") are not Google Jobs queries.
+        if " " not in cleaned and key not in {
+            "founder",
+            "recruiter",
+            "designer",
+            "analyst",
+            "engineer",
+        }:
+            return
         seen.add(key)
         rank = per_title_counts.get(source_title, 0)
         variants.append(
@@ -315,7 +324,35 @@ def _skills_from_resume(parsed_data: dict[str, Any]) -> list[Any]:
 
 def _clean_title_like_text(value: Any) -> str:
     text = _text(value)
+    if not text:
+        return ""
     low = text.lower()
+    # Headlines / soft-skill blobs are not Google Jobs queries.
+    if len(text) > 80 or text.count("|") >= 2:
+        return ""
+    junk_markers = (
+        "helping ",
+        "passionate",
+        "results-driven",
+        "detail-oriented",
+        "looking for",
+        "open to",
+        "seeking ",
+    )
+    if any(marker in low for marker in junk_markers) and not any(
+        role in low
+        for role in (
+            "manager",
+            "engineer",
+            "designer",
+            "analyst",
+            "lead",
+            "director",
+            "head",
+            "specialist",
+        )
+    ):
+        return ""
     for suffix in (" roles in ", " jobs in ", " positions in "):
         if suffix in low:
             return text[: low.index(suffix)].strip()

@@ -119,6 +119,20 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "account manager": ("Account Manager", "Key Account Manager"),
     "call quality": ("Quality Analyst", "Customer Support Quality Analyst"),
     "quality monitoring": ("Quality Analyst", "Customer Support Quality Analyst"),
+    # Community / hospitality operations (common India hospitality titles)
+    "community associate": (
+        "Community Manager",
+        "Community Associate",
+        "Guest Relations Executive",
+        "Front Office Executive",
+    ),
+    "community manager": (
+        "Community Manager",
+        "Resident Manager",
+        "Guest Relations Manager",
+    ),
+    "industrial trainee": ("Management Trainee", "Operations Executive", "Graduate Trainee"),
+    "management trainee": ("Management Trainee", "Operations Executive", "Graduate Trainee"),
     # Fashion / retail / merchandising
     "category planner": ("Category Manager", "Merchandiser", "Retail Planner"),
     "category": ("Category Manager", "Category Planner"),
@@ -468,6 +482,61 @@ def _fits_selected_target(candidate_title: str, selected_targets: list[str]) -> 
     return False
 
 
+def _looks_like_searchable_job_title(query: str | None) -> bool:
+    """Reject bare skills/keywords that burn Apify credits and return 0 jobs.
+
+    Google Jobs expects role titles ("Customer Success Manager"), not resume
+    fragments ("Upselling", "python", "Communication"). Heuristic is
+    conservative: keep known expansions + multi-word role-ish phrases.
+    """
+    cleaned = (query or "").strip()
+    if not cleaned or _is_generic_search_title(cleaned):
+        return False
+    # Already in our board-real adjacent list → always searchable.
+    known_adjacents = {t.lower() for adjacents in _TITLE_EXPANSIONS.values() for t in adjacents}
+    if cleaned.lower() in known_adjacents:
+        return True
+    words = cleaned.split()
+    if len(words) == 1:
+        # Single token is almost always a skill ("python", "react", "sql").
+        return False
+    if len(cleaned) > 80:
+        return False
+    # Drop obvious skill / soft-skill blobs even if multi-word.
+    low = cleaned.lower()
+    skillish = (
+        "skills",
+        "communication",
+        "upselling",
+        "cross-selling",
+        "microsoft office",
+        "ms office",
+        "excel",
+        "powerpoint",
+        "google sheets",
+    )
+    if any(marker == low or marker in low for marker in skillish) and len(words) <= 3:
+        # Allow through if it still looks like a role ("Communication Manager").
+        role_markers = (
+            "manager",
+            "lead",
+            "director",
+            "head",
+            "engineer",
+            "analyst",
+            "specialist",
+            "executive",
+            "associate",
+            "officer",
+            "designer",
+            "recruiter",
+            "consultant",
+        )
+        if not any(m in low for m in role_markers):
+            return False
+    return True
+
+
 def derive_ingest_queries(
     *,
     target_titles: list[str] | None,
@@ -480,11 +549,11 @@ def derive_ingest_queries(
     Pick the search queries for a candidate-scoped scrape.
 
     Prefers the candidate's **career-path target titles** (where they want to go),
-    then their current title, then top skills. With `expand=True`, each title also
-    contributes board-real **adjacent titles** (e.g. "Growth Designer" →
-    "Product Designer", "Growth Manager") so niche/hybrid roles still return live
-    openings instead of an empty index. Original titles come first (highest
-    intent); deduplicated (case-insensitive), order-preserving, capped.
+    then their current title. With `expand=True`, each title also contributes
+    board-real **adjacent titles** (e.g. "Growth Designer" → "Product Designer",
+    "Growth Manager") and skill-domain expansions mapped to real job titles —
+    never raw skill keywords. Original titles come first (highest intent);
+    deduplicated (case-insensitive), order-preserving, capped.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -492,9 +561,12 @@ def derive_ingest_queries(
     def _add(q: str | None) -> None:
         cleaned = (q or "").strip()
         key = cleaned.lower()
-        if cleaned and key not in seen:
-            seen.add(key)
-            out.append(cleaned)
+        if not cleaned or key in seen:
+            return
+        if not _looks_like_searchable_job_title(cleaned):
+            return
+        seen.add(key)
+        out.append(cleaned)
 
     selected_targets = [
         t for t in (target_titles or []) if (t or "").strip() and not _is_generic_search_title(t)
@@ -513,9 +585,8 @@ def derive_ingest_queries(
         for adjacent in _expand_skills(skills):
             if _fits_selected_target(adjacent, selected_targets):
                 _add(adjacent)
-    if len(out) < 2:  # thin path/title → seed from a few concrete skills
-        for skill in (skills or [])[:3]:
-            _add(skill)
+    # Never seed Apify with raw skill tokens — they return empty Google Jobs
+    # results and waste actor runs. Thin profiles rely on title expansions above.
     return out[:max_queries]
 
 
