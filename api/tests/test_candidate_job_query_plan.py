@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from hireloop_api.services.apify.candidate_job_query_plan import build_candidate_job_ingest_plan
+from hireloop_api.services.apify.candidate_job_query_plan import (
+    build_candidate_job_ingest_plan,
+    build_title_query_variants,
+)
 from hireloop_api.services.candidate_intelligence import (
     CandidateActivityFacts,
     CandidateGoals,
@@ -76,6 +79,8 @@ def test_candidate_job_ingest_plan_uses_path_memory_goals_and_resume() -> None:
     assert plan.diagnostics.title_sources["career_path"] == ["Head of Growth", "Growth Lead"]
     assert "memory" in plan.diagnostics.title_sources
     assert plan.diagnostics.source_inventory["resume"] is True
+    assert plan.title_variants[0].query == "Head of Growth"
+    assert plan.title_variants[0].source_title == "Head of Growth"
 
 
 def test_candidate_job_ingest_plan_falls_back_without_career_path() -> None:
@@ -90,3 +95,18 @@ def test_candidate_job_ingest_plan_falls_back_without_career_path() -> None:
     assert "Growth Lead" in plan.title_inputs
     assert "Senior Growth Manager" in plan.title_inputs
     assert plan.raw_locations == ["Remote", "Bengaluru", "Karnataka"]
+
+
+def test_title_query_variants_expand_product_design_head_synonyms() -> None:
+    variants = build_title_query_variants(["Product Design Head"], max_variants_per_title=6)
+
+    assert [variant.query for variant in variants[:6]] == [
+        "Product Design Head",
+        "Head of Design",
+        "Design Head",
+        "Design Lead",
+        "Lead Product Designer",
+        "Product Design Manager",
+    ]
+    assert all(variant.source_title == "Product Design Head" for variant in variants[:6])
+    assert variants[0].rank == 0

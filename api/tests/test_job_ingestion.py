@@ -15,7 +15,10 @@ import uuid
 from datetime import UTC, datetime
 
 from hireloop_api.services.apify import job_ingester as job_ingester_module
-from hireloop_api.services.apify.candidate_job_query_plan import CandidateJobIngestPlan
+from hireloop_api.services.apify.candidate_job_query_plan import (
+    CandidateJobIngestPlan,
+    CandidateJobTitleVariant,
+)
 from hireloop_api.services.apify.job_ingester import (
     JobIngester,
     derive_ingest_locations,
@@ -464,7 +467,7 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
                 "target_locations": ["Bengaluru", "Remote"],
             }
 
-    captured: dict = {}
+    calls: list[dict] = []
     ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
 
     async def _fake_ingest(
@@ -475,18 +478,19 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
         time_range,
         description_search=None,
     ):
-        captured["queries"] = queries
-        captured["locations"] = locations
+        calls.append({"queries": queries, "locations": locations})
         return {"inserted": 0}
 
     ing.ingest = _fake_ingest  # type: ignore[method-assign]
     await ing.ingest_for_candidate("11111111-1111-1111-1111-111111111111")
 
-    assert captured["queries"][0] == "Senior Product Designer"  # career-path target leads
-    assert "UX Lead" in captured["queries"]  # second target still present
-    assert "UX Designer" in captured["queries"]  # current title still included
-    assert "Product Designer" in captured["queries"]  # board-real adjacent expansion
-    assert captured["locations"] == ["Bengaluru, Karnataka, India", "Remote"]
+    assert [call["queries"][0] for call in calls][:4] == [
+        "Senior Product Designer",
+        "Product Designer",
+        "UX Lead",
+        "UX Designer",
+    ]
+    assert all(call["locations"] == ["Bengaluru, Karnataka, India", "Remote"] for call in calls)
 
 
 async def test_ingest_for_candidate_uses_candidate_intelligence_plan(monkeypatch) -> None:
@@ -527,7 +531,7 @@ async def test_ingest_for_candidate_uses_candidate_intelligence_plan(monkeypatch
         raising=False,
     )
 
-    captured: dict = {}
+    calls: list[dict] = []
     ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
 
     async def _fake_ingest(
@@ -538,17 +542,107 @@ async def test_ingest_for_candidate_uses_candidate_intelligence_plan(monkeypatch
         time_range,
         description_search=None,
     ):
-        captured["queries"] = queries
-        captured["locations"] = locations
+        calls.append({"queries": queries, "locations": locations})
         return {"inserted": 0}
 
     ing.ingest = _fake_ingest  # type: ignore[method-assign]
     await ing.ingest_for_candidate("11111111-1111-1111-1111-111111111111")
 
-    assert captured["queries"][0] == "Head of Growth"
-    assert "Lifecycle Marketing Lead" in captured["queries"]
-    assert "Legacy Target" not in captured["queries"]
-    assert captured["locations"] == ["Remote", "Bengaluru, Karnataka, India"]
+    searched = [call["queries"][0] for call in calls]
+    assert searched[0] == "Head of Growth"
+    assert "Lifecycle Marketing Lead" in searched
+    assert "Legacy Target" not in searched
+    assert all(call["locations"] == ["Remote", "Bengaluru, Karnataka, India"] for call in calls)
+
+
+async def test_ingest_for_candidate_runs_title_variants_as_separate_searches(
+    monkeypatch,
+) -> None:
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            return {}
+
+    async def _fake_load_candidate_intelligence(db: object, candidate_id: object) -> object:
+        return {"candidate_id": str(candidate_id)}
+
+    def _fake_build_plan(snapshot: object) -> CandidateJobIngestPlan:
+        return CandidateJobIngestPlan(
+            candidate_id="11111111-1111-1111-1111-111111111111",
+            market="IN",
+            remote_preference="any",
+            title_inputs=["Product Design Head"],
+            current_title="Product Design Head",
+            skills=["Figma"],
+            raw_locations=["Bengaluru"],
+            title_variants=[
+                CandidateJobTitleVariant(
+                    query="Product Design Head",
+                    source_title="Product Design Head",
+                    rank=0,
+                ),
+                CandidateJobTitleVariant(
+                    query="Head of Design",
+                    source_title="Product Design Head",
+                    rank=1,
+                ),
+                CandidateJobTitleVariant(
+                    query="Design Head",
+                    source_title="Product Design Head",
+                    rank=2,
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(
+        job_ingester_module,
+        "load_candidate_intelligence",
+        _fake_load_candidate_intelligence,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        job_ingester_module,
+        "build_candidate_job_ingest_plan",
+        _fake_build_plan,
+        raising=False,
+    )
+
+    calls: list[dict] = []
+    ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
+
+    async def _fake_ingest(
+        *,
+        queries,
+        locations,
+        max_results_per_query,
+        time_range,
+        description_search=None,
+    ):
+        calls.append({"queries": queries, "locations": locations, "time_range": time_range})
+        return {
+            "inserted": 1,
+            "updated": 2,
+            "skipped": 0,
+            "raw_items": 5,
+            "normalised": 3,
+            "sources": {"google_jobs": {"run_ids": [f"run-{len(calls)}"]}},
+            "ok": True,
+            "degraded": False,
+            "errors": {},
+        }
+
+    ing.ingest = _fake_ingest  # type: ignore[method-assign]
+    stats = await ing.ingest_for_candidate("11111111-1111-1111-1111-111111111111")
+
+    assert [call["queries"] for call in calls] == [
+        ["Product Design Head"],
+        ["Head of Design"],
+        ["Design Head"],
+    ]
+    assert all(call["locations"] == ["Bengaluru, Karnataka, India"] for call in calls)
+    assert stats["inserted"] == 3
+    assert stats["updated"] == 6
+    assert stats["raw_items"] == 15
+    assert stats["variant_runs"][1]["query"] == "Head of Design"
 
 
 async def test_ingest_uses_google_jobs_as_only_runtime_source() -> None:

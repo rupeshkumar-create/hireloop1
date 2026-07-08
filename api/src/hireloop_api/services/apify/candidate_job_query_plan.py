@@ -24,6 +24,15 @@ class CandidateJobIngestDiagnostics(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class CandidateJobTitleVariant(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    query: str
+    source_title: str
+    rank: int = 0
+    reason: str = "exact"
+
+
 class CandidateJobIngestPlan(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -31,6 +40,7 @@ class CandidateJobIngestPlan(BaseModel):
     market: str
     remote_preference: str
     title_inputs: list[str] = Field(default_factory=list)
+    title_variants: list[CandidateJobTitleVariant] = Field(default_factory=list)
     current_title: str | None = None
     skills: list[str] = Field(default_factory=list)
     raw_locations: list[str] = Field(default_factory=list)
@@ -139,6 +149,10 @@ def build_candidate_job_ingest_plan(
         market=snapshot.identity.market,
         remote_preference=snapshot.preferences.remote_preference,
         title_inputs=title_inputs[:max_title_inputs],
+        title_variants=build_title_query_variants(
+            title_inputs[:max_title_inputs],
+            max_variants_per_title=5,
+        ),
         current_title=snapshot.profile.current_title,
         skills=skills[:max_skills],
         raw_locations=raw_locations,
@@ -150,6 +164,107 @@ def build_candidate_job_ingest_plan(
             notes=notes,
         ),
     )
+
+
+def build_title_query_variants(
+    titles: list[str],
+    *,
+    max_variants_per_title: int = 5,
+    max_total: int = 24,
+) -> list[CandidateJobTitleVariant]:
+    """Expand preferred titles into board-search variants while preserving rank."""
+    variants: list[CandidateJobTitleVariant] = []
+    seen: set[str] = set()
+    source_titles = _unique_nonempty(titles)
+
+    per_title_counts: dict[str, int] = {}
+
+    def add_variant(source_title: str, query: str, reason: str) -> None:
+        if len(variants) >= max_total:
+            return
+        if per_title_counts.get(source_title, 0) >= max_variants_per_title:
+            return
+        cleaned = _clean_title_like_text(query)
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            return
+        seen.add(key)
+        rank = per_title_counts.get(source_title, 0)
+        variants.append(
+            CandidateJobTitleVariant(
+                query=cleaned,
+                source_title=source_title,
+                rank=rank,
+                reason=reason,
+            )
+        )
+        per_title_counts[source_title] = rank + 1
+
+    for source_title in source_titles:
+        add_variant(source_title, source_title, "exact")
+
+    for source_title in source_titles:
+        for query in _role_title_synonyms(source_title):
+            add_variant(source_title, query, "synonym")
+            if len(variants) >= max_total:
+                break
+        if len(variants) >= max_total:
+            break
+
+    return variants
+
+
+def _role_title_synonyms(title: str) -> list[str]:
+    low = _text(title).lower()
+    variants: list[str] = []
+
+    def add(*values: str) -> None:
+        variants.extend(values)
+
+    designish = any(token in low for token in ("design", "designer", "ux", "ui"))
+    productish = "product" in low
+    headish = any(token in low for token in ("head", "director", "chief", "vp"))
+    leadish = "lead" in low or "manager" in low
+    if designish and productish and headish:
+        add(
+            "Head of Design",
+            "Design Head",
+            "Design Lead",
+            "Lead Product Designer",
+            "Product Design Manager",
+            "Product Design Lead",
+            "UX Design Lead",
+        )
+    elif designish and headish:
+        add(
+            "Head of Design",
+            "Design Head",
+            "Design Director",
+            "Design Lead",
+            "Lead Designer",
+            "Product Design Manager",
+        )
+    elif designish and leadish:
+        add(
+            "Design Lead",
+            "Lead Product Designer",
+            "Product Design Manager",
+            "Product Designer",
+            "UX Designer",
+        )
+    elif designish:
+        add("Product Designer", "UX Designer", "UI/UX Designer", "Visual Designer")
+
+    if "product manager" in low or (productish and "manager" in low):
+        add("Product Manager", "Senior Product Manager", "Product Lead", "Group Product Manager")
+    if "growth" in low:
+        add("Head of Growth", "Growth Lead", "Growth Manager", "Lifecycle Marketing Lead")
+    if "gtm" in low or "go to market" in low or "go-to-market" in low:
+        add("Head of GTM", "GTM Lead", "Go-to-Market Manager", "Revenue Operations Manager")
+    if "customer success" in low:
+        add("Customer Success Manager", "Client Success Manager", "Customer Success Lead")
+
+    return _unique_nonempty(variants)
 
 
 def _titles_from_memory(career_facts: dict[str, Any]) -> list[Any]:
@@ -212,6 +327,18 @@ def _clean_title_like_text(value: Any) -> str:
 
 def _text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _unique_nonempty(values: list[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
 
 
 def _append_unique(target: list[str], value: str) -> bool:

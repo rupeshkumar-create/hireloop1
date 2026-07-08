@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import asyncpg
 import structlog
@@ -23,7 +25,11 @@ from hireloop_api.markets import (
     SUPPORTED_MARKETS,
     resolve_country_from_location,
 )
-from hireloop_api.services.apify.candidate_job_query_plan import build_candidate_job_ingest_plan
+from hireloop_api.services.apify.candidate_job_query_plan import (
+    CandidateJobTitleVariant,
+    build_candidate_job_ingest_plan,
+    build_title_query_variants,
+)
 from hireloop_api.services.apify.jobs_scraper import (
     DEFAULT_GOOGLE_JOBS_ACTOR,
     ApifyJobsScraper,
@@ -33,6 +39,7 @@ from hireloop_api.services.candidate_intelligence import load_candidate_intellig
 from hireloop_api.services.job_validator import validate_job_record
 
 logger = structlog.get_logger()
+IngestProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 # A query+location scraped within this window returns a near-identical result
 # set — skip it instead of burning another Google Jobs/Apify run. The nightly
@@ -502,6 +509,81 @@ def derive_ingest_queries(
     return out[:max_queries]
 
 
+async def _emit_ingest_progress(
+    callback: IngestProgressCallback | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    await callback(event)
+
+
+def _empty_candidate_ingest_stats() -> dict[str, Any]:
+    return {
+        "run_id": None,
+        "dataset_id": None,
+        "raw_items": 0,
+        "normalised": 0,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "elapsed_seconds": 0.0,
+        "sources": {},
+        "ok": True,
+        "degraded": False,
+        "errors": {},
+        "variant_runs": [],
+    }
+
+
+def _merge_candidate_ingest_stats(
+    aggregate: dict[str, Any],
+    *,
+    variant: CandidateJobTitleVariant,
+    stats: dict[str, Any],
+) -> None:
+    for key in ("raw_items", "normalised", "inserted", "updated", "skipped"):
+        aggregate[key] = int(aggregate.get(key) or 0) + int(stats.get(key) or 0)
+    aggregate["elapsed_seconds"] = round(
+        float(aggregate.get("elapsed_seconds") or 0.0) + float(stats.get("elapsed_seconds") or 0.0),
+        1,
+    )
+    aggregate["ok"] = bool(aggregate.get("ok", True)) and bool(stats.get("ok", True))
+    aggregate["degraded"] = bool(aggregate.get("degraded")) or bool(stats.get("degraded"))
+    aggregate["errors"].update(stats.get("errors") or {})
+    if stats.get("run_id") and not aggregate.get("run_id"):
+        aggregate["run_id"] = stats["run_id"]
+    if stats.get("dataset_id") and not aggregate.get("dataset_id"):
+        aggregate["dataset_id"] = stats["dataset_id"]
+    for source, source_stats in (stats.get("sources") or {}).items():
+        target = aggregate["sources"].setdefault(source, {})
+        for count_key in ("raw_items", "normalised"):
+            target[count_key] = int(target.get(count_key) or 0) + int(
+                source_stats.get(count_key) or 0
+            )
+        for list_key in ("run_ids", "dataset_ids"):
+            target[list_key] = [
+                *target.get(list_key, []),
+                *list(source_stats.get(list_key) or []),
+            ]
+        for meta_key in ("actor", "run_id", "dataset_id"):
+            if source_stats.get(meta_key) and not target.get(meta_key):
+                target[meta_key] = source_stats[meta_key]
+    aggregate["variant_runs"].append(
+        {
+            "query": variant.query,
+            "source_title": variant.source_title,
+            "rank": variant.rank,
+            "inserted": int(stats.get("inserted") or 0),
+            "updated": int(stats.get("updated") or 0),
+            "skipped": int(stats.get("skipped") or 0),
+            "raw_items": int(stats.get("raw_items") or 0),
+            "normalised": int(stats.get("normalised") or 0),
+            "ok": bool(stats.get("ok", True)),
+        }
+    )
+
+
 class JobIngester:
     def __init__(
         self,
@@ -711,6 +793,8 @@ class JobIngester:
         *,
         max_results_per_query: int = 20,
         time_range: str = "7d",
+        max_variant_runs: int = 5,
+        progress_callback: IngestProgressCallback | None = None,
     ) -> dict:
         """
         Scrape jobs scoped to ONE candidate's career path — their target titles
@@ -731,11 +815,7 @@ class JobIngester:
 
         if snapshot is not None:
             plan = build_candidate_job_ingest_plan(snapshot)
-            queries = derive_ingest_queries(
-                target_titles=plan.title_inputs,
-                current_title=plan.current_title,
-                skills=plan.skills,
-            )
+            variants = plan.title_variants or build_title_query_variants(plan.title_inputs)
             locations = derive_ingest_locations(plan.raw_locations or None, self._settings)
             candidate_time_range = time_range or (
                 self._settings.google_jobs_candidate_time_range if self._settings else "7d"
@@ -743,16 +823,19 @@ class JobIngester:
             logger.info(
                 "job_ingestion_for_candidate_started",
                 candidate_id=candidate_id,
-                queries=queries,
+                queries=[variant.query for variant in variants],
                 locations=locations,
                 planner="candidate_intelligence",
                 planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
             )
-            return await self.ingest(
-                queries=queries or None,
+            return await self._ingest_candidate_title_variants(
+                variants=variants,
                 locations=locations,
                 max_results_per_query=max_results_per_query,
                 time_range=candidate_time_range,
+                max_variant_runs=max_variant_runs,
+                progress_callback=progress_callback,
+                planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
             )
 
         row = await self._db.fetchrow(
@@ -809,6 +892,7 @@ class JobIngester:
             current_title=row["current_title"],
             skills=list(row["skills"] or []),
         )
+        variants = build_title_query_variants(queries)
         raw_locations = list(row["target_locations"] or []) or (
             [p for p in [row["location_city"], row["location_state"]] if p] or None
         )
@@ -822,12 +906,90 @@ class JobIngester:
             queries=queries,
             locations=locations,
         )
-        return await self.ingest(
-            queries=queries or None,
+        return await self._ingest_candidate_title_variants(
+            variants=variants,
             locations=locations,
             max_results_per_query=max_results_per_query,
             time_range=candidate_time_range,
+            max_variant_runs=max_variant_runs,
+            progress_callback=progress_callback,
         )
+
+    async def _ingest_candidate_title_variants(
+        self,
+        *,
+        variants: list[CandidateJobTitleVariant],
+        locations: list[str],
+        max_results_per_query: int,
+        time_range: str,
+        max_variant_runs: int,
+        progress_callback: IngestProgressCallback | None = None,
+        planner_diagnostics: dict[str, Any] | None = None,
+    ) -> dict:
+        selected = variants[: max(1, max_variant_runs)]
+        if not selected:
+            return await self.ingest(
+                queries=None,
+                locations=locations,
+                max_results_per_query=max_results_per_query,
+                time_range=time_range,
+            )
+
+        await _emit_ingest_progress(
+            progress_callback,
+            {
+                "phase": "queued",
+                "total": len(selected),
+                "queries": [variant.query for variant in selected],
+            },
+        )
+        aggregate = _empty_candidate_ingest_stats()
+        aggregate["planner_diagnostics"] = planner_diagnostics or {}
+        aggregate["variant_queries"] = [variant.query for variant in selected]
+
+        for index, variant in enumerate(selected, start=1):
+            await _emit_ingest_progress(
+                progress_callback,
+                {
+                    "phase": "searching",
+                    "query": variant.query,
+                    "source_title": variant.source_title,
+                    "step": index,
+                    "total": len(selected),
+                },
+            )
+            stats = await self.ingest(
+                queries=[variant.query],
+                locations=locations,
+                max_results_per_query=max_results_per_query,
+                time_range=time_range,
+            )
+            _merge_candidate_ingest_stats(aggregate, variant=variant, stats=stats)
+            await _emit_ingest_progress(
+                progress_callback,
+                {
+                    "phase": "stored",
+                    "query": variant.query,
+                    "source_title": variant.source_title,
+                    "step": index,
+                    "total": len(selected),
+                    "inserted": int(stats.get("inserted") or 0),
+                    "updated": int(stats.get("updated") or 0),
+                    "raw_items": int(stats.get("raw_items") or 0),
+                },
+            )
+
+        await _emit_ingest_progress(
+            progress_callback,
+            {
+                "phase": "completed",
+                "total": len(selected),
+                "inserted": aggregate["inserted"],
+                "updated": aggregate["updated"],
+                "raw_items": aggregate["raw_items"],
+            },
+        )
+        return aggregate
 
     async def ingest_records(self, records: list[JobRecord]) -> dict:
         """

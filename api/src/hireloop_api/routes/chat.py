@@ -1051,6 +1051,8 @@ async def get_actions(
         ):
             latest_application_kits = raw_result["kits"]
             item["application_kits"] = latest_application_kits
+        if r["action_type"] == "job_ingest_progress" and isinstance(raw_result, dict):
+            item["progress"] = raw_result
         action_items.append(item)
 
     turn_rows = [r for r in rows if last_user_at is None or r["created_at"] >= last_user_at]

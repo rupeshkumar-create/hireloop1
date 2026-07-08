@@ -531,7 +531,34 @@ async def update_profile(
 _BG_TASKS: set[asyncio.Task] = set()
 
 
-async def _auto_ingest_for_candidate(settings: Settings, candidate_id: str) -> None:
+async def _write_auto_ingest_progress(
+    db: asyncpg.Connection,
+    *,
+    user_id: str | None,
+    session_id: str | None,
+    phase: str,
+    result: dict[str, Any],
+) -> None:
+    if not user_id or not session_id:
+        return
+    await _write_action(
+        db,
+        "aarya",
+        user_id,
+        session_id,
+        "job_ingest_progress",
+        {"phase": phase},
+        result,
+    )
+
+
+async def _auto_ingest_for_candidate(
+    settings: Settings,
+    candidate_id: str,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """Background: career-path scrape → embed new jobs → score for this candidate."""
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.apify.job_ingester import JobIngester
@@ -546,9 +573,35 @@ async def _auto_ingest_for_candidate(settings: Settings, candidate_id: str) -> N
                 settings=settings,
                 jobs_actor=settings.apify_jobs_actor,
             )
-            await ingester.ingest_for_candidate(candidate_id)
+
+            async def _progress(event: dict[str, Any]) -> None:
+                await _write_auto_ingest_progress(
+                    conn,
+                    user_id=user_id,
+                    session_id=session_id,
+                    phase=str(event.get("phase") or "progress"),
+                    result=event,
+                )
+
+            stats = await ingester.ingest_for_candidate(
+                candidate_id,
+                progress_callback=_progress,
+            )
             embedded, scored = await embed_pending_and_score_candidate(
                 conn, settings, candidate_id, limit=500
+            )
+            await _write_auto_ingest_progress(
+                conn,
+                user_id=user_id,
+                session_id=session_id,
+                phase="scored",
+                result={
+                    "phase": "scored",
+                    "embedded": embedded,
+                    "scored": scored,
+                    "inserted": int(stats.get("inserted") or 0),
+                    "updated": int(stats.get("updated") or 0),
+                },
             )
         logger.info(
             "aarya_auto_ingest_done",
@@ -972,7 +1025,11 @@ async def job_search(
             await enqueue_job(
                 db,
                 kind=AARYA_AUTO_INGEST,
-                payload={"candidate_id": candidate_id},
+                payload={
+                    "candidate_id": candidate_id,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                },
                 idempotency_key=f"aarya_auto_ingest:{candidate_id}",
             )
             logger.info("aarya_auto_ingest_enqueued", candidate_id=candidate_id)

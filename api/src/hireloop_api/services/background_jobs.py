@@ -276,7 +276,12 @@ async def _handle_aarya_auto_ingest(settings: Settings, payload: dict[str, Any])
     from hireloop_api.agents.aarya.tools import _auto_ingest_for_candidate
 
     candidate_id = str(payload["candidate_id"])
-    await _auto_ingest_for_candidate(settings, candidate_id)
+    await _auto_ingest_for_candidate(
+        settings,
+        candidate_id,
+        user_id=str(payload["user_id"]) if payload.get("user_id") else None,
+        session_id=str(payload["session_id"]) if payload.get("session_id") else None,
+    )
 
 
 async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]) -> None:
