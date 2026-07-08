@@ -39,6 +39,7 @@ export type AgentAction = {
   type: string;
   at: string;
   jobs?: MatchedJob[];
+  progress?: Record<string, unknown>;
 };
 
 /** Map a raw agent action_type to a human label + icon for the timeline. */
@@ -52,6 +53,8 @@ export function actionMeta(type: string): { label: string; Icon: LucideIcon } {
       return { label: "Updated your profile", Icon: CheckCircle };
     case "job_search":
       return { label: "Searching live roles in your market", Icon: Search };
+    case "job_ingest_progress":
+      return { label: "Pulling live openings from LinkedIn", Icon: Search };
     case "build_career_path":
       return { label: "Building your career path", Icon: Target };
     case "get_match_score":

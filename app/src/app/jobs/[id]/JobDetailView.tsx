@@ -27,6 +27,7 @@ import {
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
 import { recordJobApplication } from "@/lib/api/job-applications";
+import { BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import { AppShell } from "@/components/layout/AppShell";
@@ -568,7 +569,7 @@ function JobDetailBody({
             aria-label={saved ? "Remove from saved" : "Save job"}
             aria-pressed={saved}
             title={saved ? "Saved" : "Save job"}
-            className={cn("shrink-0 px-3", saved && "text-accent")}
+            className={cn("shrink-0 px-3", saved && BTN_CHIP_ACTIVE)}
             leftIcon={
               saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />

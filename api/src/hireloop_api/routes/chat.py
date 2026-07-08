@@ -435,6 +435,8 @@ async def _enqueue_live_job_ingest_for_search(
     candidate_id: str,
     search_title: str,
     location_city: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Queue a live Apify-backed pull for the user's explicit job-search title."""
     from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
@@ -450,6 +452,10 @@ async def _enqueue_live_job_ingest_for_search(
     }
     if location_city:
         payload["locations"] = [location_city]
+    if user_id:
+        payload["user_id"] = user_id
+    if session_id:
+        payload["session_id"] = session_id
     await enqueue_job(
         db,
         kind=CAREER_PATH_INGEST,
@@ -772,6 +778,8 @@ async def send_message(
                         candidate_id=candidate_id,
                         search_title=search_title,
                         location_city=city,
+                        user_id=str(current_user["id"]),
+                        session_id=conversation_id,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -804,11 +812,10 @@ async def send_message(
                     error=str(exc)[:200],
                 )
 
-        if wants_jobs and not prefetched_jobs and career_path_row:
+        if wants_jobs and not prefetched_jobs and settings.apify_token:
             from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
 
-            ingest_titles = career_path_row.get("target_titles") or []
-            if ingest_titles:
+            try:
                 await enqueue_job(
                     db,
                     kind=CAREER_PATH_INGEST,
@@ -816,8 +823,25 @@ async def send_message(
                         "candidate_id": candidate_id,
                         "derive_from_candidate": True,
                         "force_refresh": True,
+                        "user_id": str(current_user["id"]),
+                        "session_id": conversation_id,
+                        **(
+                            {"requested_titles": [search_title]}
+                            if search_title and search_title.strip()
+                            else {}
+                        ),
                     },
-                    idempotency_key=f"career_path_ingest:{candidate_id}",
+                    idempotency_key=(
+                        _job_ingest_search_key(candidate_id, search_title)
+                        if search_title and search_title.strip()
+                        else f"career_path_ingest:{candidate_id}"
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "pre_turn_career_ingest_enqueue_failed",
+                    candidate_id=candidate_id,
+                    error=str(exc)[:200],
                 )
 
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
@@ -877,6 +901,7 @@ async def send_message(
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
     deterministic_job_reply: str | None = None
+    background_ingest_pending = False
     application_kit_job_ids = (
         _extract_application_kit_job_ids(body.content)
         if user_intent == "job_application"
@@ -898,10 +923,8 @@ async def send_message(
         else:
             # Only promise a background pull when a path/generic ingest can
             # actually run; otherwise the copy overpromises.
-            will_background_ingest = bool(
-                settings.apify_token
-                and (career_path_row is not None or settings.auto_ingest_on_empty_search)
-            )
+            will_background_ingest = bool(settings.apify_token)
+            background_ingest_pending = will_background_ingest
             if will_background_ingest:
                 deterministic_job_reply = (
                     f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
@@ -933,6 +956,30 @@ async def send_message(
                 eta_sec=3,
                 hinglish_hint=hinglish,
             )
+            if user_intent == "job_search":
+                if include_prefetch and prefetched_jobs:
+                    yield sse_status(
+                        "Ranking your best matches…",
+                        eta_sec=5,
+                        hinglish_hint=hinglish,
+                    )
+                elif background_ingest_pending:
+                    yield sse_status(
+                        "Pulling live openings from LinkedIn — scoring your matches next…",
+                        spoken_filler=(
+                            "I'm pulling live openings now — this can take a minute."
+                            if voice_mode
+                            else None
+                        ),
+                        eta_sec=90,
+                        hinglish_hint=hinglish,
+                    )
+                else:
+                    yield sse_status(
+                        "Searching roles in your market…",
+                        eta_sec=15,
+                        hinglish_hint=hinglish,
+                    )
             if include_prefetch and prefetched_jobs:
                 yield sse_jobs(prefetched_jobs)
             if application_kit_job_ids:

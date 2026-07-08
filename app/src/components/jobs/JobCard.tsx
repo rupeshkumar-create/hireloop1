@@ -29,6 +29,7 @@ import {
   Loader2,
   Send,
 } from "@/components/brand/icons";
+import { BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import type { MatchedJob } from "@/lib/api/matches";
@@ -494,7 +495,7 @@ export function JobCard({
           aria-label={isSaved ? "Remove from saved" : "Save job"}
           aria-pressed={isSaved}
           title={isSaved ? "Saved" : "Save job"}
-          className={cn("shrink-0 px-2 ml-auto", isSaved && "text-accent")}
+          className={cn("shrink-0 px-2 ml-auto", isSaved && BTN_CHIP_ACTIVE)}
           leftIcon={
             <Heart
               className="h-3.5 w-3.5"

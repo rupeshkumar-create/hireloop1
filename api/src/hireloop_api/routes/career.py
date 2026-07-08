@@ -280,15 +280,27 @@ async def _ingest_candidate_and_rescore(
     requested_titles: list[str] | None = None,
     requested_locations: list[str] | None = None,
     force_refresh: bool = False,
+    user_id: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """
     Background task: derive the freshest candidate-scoped Apify inputs from the
     latest profile + prioritized career path, ingest, then re-score.
     """
+    from hireloop_api.agents.aarya.tools import _write_auto_ingest_progress
     from hireloop_api.services.apify.job_ingester import JobIngester
 
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
+        if user_id and session_id:
+            await _write_auto_ingest_progress(
+                conn,
+                user_id=user_id,
+                session_id=session_id,
+                phase="queued",
+                result={"phase": "queued", "requested_titles": requested_titles or []},
+            )
+
         if settings.apify_token:
             ingester = JobIngester(
                 apify_token=settings.apify_token,
@@ -296,6 +308,18 @@ async def _ingest_candidate_and_rescore(
                 settings=settings,
                 jobs_actor=settings.apify_jobs_actor,
             )
+
+            async def _progress(event: dict[str, object]) -> None:
+                if not user_id or not session_id:
+                    return
+                await _write_auto_ingest_progress(
+                    conn,
+                    user_id=user_id,
+                    session_id=session_id,
+                    phase=str(event.get("phase") or "progress"),
+                    result=dict(event),
+                )
+
             stats = await ingester.ingest_for_candidate(
                 candidate_id,
                 max_results_per_query=25,
@@ -303,6 +327,7 @@ async def _ingest_candidate_and_rescore(
                 requested_titles=requested_titles,
                 requested_locations=requested_locations,
                 force_refresh=force_refresh,
+                progress_callback=_progress,
             )
             logger.info("career_candidate_ingest_done", **stats)
         else:
@@ -311,9 +336,48 @@ async def _ingest_candidate_and_rescore(
         try:
             from hireloop_api.services.embeddings import embed_pending_and_score_candidate
 
+            if user_id and session_id:
+                await _write_auto_ingest_progress(
+                    conn,
+                    user_id=user_id,
+                    session_id=session_id,
+                    phase="scoring",
+                    result={"phase": "scoring"},
+                )
             embedded, scored = await embed_pending_and_score_candidate(
                 conn, settings, candidate_id, limit=150
             )
+            if user_id and session_id:
+                await _write_auto_ingest_progress(
+                    conn,
+                    user_id=user_id,
+                    session_id=session_id,
+                    phase="scored",
+                    result={
+                        "phase": "scored",
+                        "embedded": embedded,
+                        "scored": scored,
+                    },
+                )
+                if scored > 0:
+                    try:
+                        from hireloop_api.agents.aarya import tools as aarya_tools
+
+                        query = (requested_titles or [""])[0]
+                        await aarya_tools.job_search(
+                            conn,
+                            user_id,
+                            session_id,
+                            query_text=query,
+                            settings=settings,
+                            limit=10,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "post_ingest_job_search_failed",
+                            candidate_id=candidate_id,
+                            error=str(exc)[:200],
+                        )
             logger.info(
                 "career_candidate_ingest_rescored",
                 candidate_id=candidate_id,

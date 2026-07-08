@@ -6,7 +6,11 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Sparkles, type LucideIcon } from "@/components/brand/icons";
+import { FileText, Search, Sparkles, type LucideIcon } from "@/components/brand/icons";
+import {
+  JOB_DISCOVERY_FALLBACK_LABELS,
+  ingestProgressLabel,
+} from "@/lib/chat/jobDiscovery";
 import { cn } from "@/lib/utils";
 import { actionMeta, type AgentAction } from "./ActivityTimeline";
 
@@ -17,7 +21,7 @@ type AgentThinkingIndicatorProps = {
   /** Current total from the actions poll. */
   actionCount?: number;
   className?: string;
-  variant?: "thinking" | "processing";
+  variant?: "thinking" | "processing" | "jobDiscovery";
   /** Fixed label (skips rotation). */
   label?: string;
 };
@@ -38,11 +42,24 @@ const PROCESSING_PHASES: Phase[] = [
   { label: "Updating your profile", Icon: Sparkles },
 ];
 
+function jobDiscoveryPhases(): Phase[] {
+  return JOB_DISCOVERY_FALLBACK_LABELS.map((label) => ({
+    label,
+    Icon: Search,
+  }));
+}
+
 function phaseFromLiveAction(actions: AgentAction[]): Phase | null {
   const newest = actions[0];
   if (!newest?.type) return null;
   const then = new Date(newest.at).getTime();
   if (Number.isNaN(then) || Date.now() - then > 60_000) return null;
+  if (newest.type === "job_ingest_progress") {
+    const live = ingestProgressLabel(newest.progress);
+    if (live) {
+      return { label: stripTrailingEllipsis(live), Icon: Search };
+    }
+  }
   const { label, Icon } = actionMeta(newest.type);
   return { label: label.replace(/…$/, ""), Icon };
 }
@@ -78,13 +95,18 @@ export function AgentThinkingIndicator({
 }: AgentThinkingIndicatorProps) {
   const [phaseIndex, setPhaseIndex] = useState(0);
 
-  const phases = variant === "processing" ? PROCESSING_PHASES : THINKING_PHASES;
+  const phases =
+    variant === "processing"
+      ? PROCESSING_PHASES
+      : variant === "jobDiscovery"
+        ? jobDiscoveryPhases()
+        : THINKING_PHASES;
 
   const livePhase = useMemo(() => {
     if (label) {
       return {
         label: stripTrailingEllipsis(label),
-        Icon: variant === "processing" ? FileText : Sparkles,
+        Icon: variant === "processing" ? FileText : Search,
       };
     }
     if (actionCount > actionBaseline && actions.length > 0) {

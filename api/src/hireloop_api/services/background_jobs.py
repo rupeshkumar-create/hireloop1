@@ -307,6 +307,8 @@ async def _handle_career_path_ingest(settings: Settings, payload: dict[str, Any]
             requested_titles=[str(t) for t in list(payload.get("requested_titles") or [])],
             requested_locations=[str(loc) for loc in locations],
             force_refresh=force_refresh,
+            user_id=str(payload["user_id"]) if payload.get("user_id") else None,
+            session_id=str(payload["session_id"]) if payload.get("session_id") else None,
         )
         return
     queries = list(payload.get("queries") or [])

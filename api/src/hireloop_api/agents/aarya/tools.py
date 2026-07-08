@@ -636,6 +636,22 @@ async def _auto_ingest_for_candidate(
                     "updated": int(stats.get("updated") or 0),
                 },
             )
+            if user_id and session_id and scored > 0:
+                try:
+                    await job_search(
+                        conn,
+                        user_id,
+                        session_id,
+                        query_text="",
+                        settings=settings,
+                        limit=10,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "aarya_auto_ingest_job_search_failed",
+                        candidate_id=candidate_id,
+                        error=str(exc)[:200],
+                    )
         logger.info(
             "aarya_auto_ingest_done",
             candidate_id=candidate_id,
@@ -1077,6 +1093,8 @@ async def job_search(
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
                     "force_refresh": True,
+                    "user_id": user_id,
+                    "session_id": session_id,
                 },
                 idempotency_key=f"career_path_ingest:{candidate_id}",
             )
@@ -1093,6 +1111,8 @@ async def job_search(
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
                     "force_refresh": True,
+                    "user_id": user_id,
+                    "session_id": session_id,
                 },
                 idempotency_key=f"career_path_ingest:{candidate_id}",
             )

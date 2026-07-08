@@ -100,6 +100,13 @@ import {
 import { preconnectVoicePipeline } from "@/lib/voice/preconnect";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageIntent";
+import {
+  JOB_DISCOVERY_POLL_MS,
+  JOB_DISCOVERY_TIMEOUT_MS,
+  JOB_DISCOVERY_FALLBACK_LABELS,
+  ingestProgressLabel,
+  shouldWatchForJobDiscovery,
+} from "@/lib/chat/jobDiscovery";
 import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
@@ -290,6 +297,8 @@ export function ChatInterface({
     ApplicationKit[]
   >([]);
   const [thinkingStatus, setThinkingStatus] = useState<string | null>(null);
+  const [jobDiscoveryActive, setJobDiscoveryActive] = useState(false);
+  const [jobDiscoveryLabel, setJobDiscoveryLabel] = useState<string | null>(null);
   const [warmup, setWarmup] = useState<ChatWarmupSnapshot | null>(
     () => getChatWarmupSnapshot()
   );
@@ -323,6 +332,8 @@ export function ChatInterface({
   /** Sync lock — isStreaming state alone cannot block a second send in the same tick. */
   const sendInFlightRef = useRef(false);
   const isStreamingRef = useRef(false);
+  const jobDiscoveryStartedAtRef = useRef<number | null>(null);
+  const jobDiscoveryActiveRef = useRef(false);
 
   // When the user requests an intro from a job card, surface the contact + drafted email
   // inline in chat (polls /intros until the new row appears, then polls detail).
@@ -610,6 +621,10 @@ export function ChatInterface({
     isStreamingRef.current = isStreaming;
   }, [isStreaming]);
 
+  useEffect(() => {
+    jobDiscoveryActiveRef.current = jobDiscoveryActive;
+  }, [jobDiscoveryActive]);
+
   // Every job surfaced in chat is accumulated here (deduped) and mirrored to the
   // parent so the Matches sidebar reflects chat results without a "Find jobs" click.
   const allChatJobsRef = useRef<MatchedJob[]>([]);
@@ -690,12 +705,36 @@ export function ChatInterface({
     [onSavedChange]
   );
 
+  const finishJobDiscovery = useCallback(
+    (jobs: MatchedJob[]) => {
+      if (!jobs.length) return;
+      attachJobsToCurrentTurnAssistant(jobs);
+      setJobDiscoveryActive(false);
+      setJobDiscoveryLabel(null);
+      jobDiscoveryStartedAtRef.current = null;
+      invalidateMatchFeedCache();
+    },
+    [attachJobsToCurrentTurnAssistant],
+  );
+
+  const applyIngestProgress = useCallback((progress: Record<string, unknown>) => {
+    const live = ingestProgressLabel(progress);
+    if (live) setJobDiscoveryLabel(live);
+  }, []);
+
   // Realtime agent_actions (R7) — instant timeline during streaming.
   useAgentActionsRealtime(sessionId, authUserId, {
     enabled: Boolean(sessionId && authUserId),
     onActions: (live) => setActions(live),
     onTurnCount: (count) => setActionCount(count),
-    onJobs: (jobs) => attachJobsToCurrentTurnAssistant(jobs),
+    onJobs: (jobs) => {
+      if (jobDiscoveryActiveRef.current) {
+        finishJobDiscovery(jobs);
+        return;
+      }
+      attachJobsToCurrentTurnAssistant(jobs);
+    },
+    onIngestProgress: applyIngestProgress,
     onApplicationKits: (kits) => attachApplicationKitsToLastAssistant(kits),
   });
 
@@ -722,7 +761,12 @@ export function ChatInterface({
         } = await res.json();
         const turnCount = data.turn_count ?? data.count;
         setActionCount(turnCount);
-        if (Array.isArray(data.actions)) setActions(data.actions);
+        if (Array.isArray(data.actions)) {
+          setActions(data.actions);
+          const ingest = data.actions.find((a) => a.type === "job_ingest_progress");
+          const live = ingestProgressLabel(ingest?.progress);
+          if (live) setJobDiscoveryLabel(live);
+        }
         if (Array.isArray(data.jobs) && data.jobs.length > 0) {
           attachJobsToCurrentTurnAssistant(data.jobs);
         }
@@ -772,6 +816,64 @@ export function ChatInterface({
     attachJobsToCurrentTurnAssistant,
     attachApplicationKitsToLastAssistant,
   ]);
+
+  // After a job search with no cards yet, poll until Apify ingest + scoring land.
+  useEffect(() => {
+    if (!jobDiscoveryActive || !sessionId) return;
+    if (jobDiscoveryStartedAtRef.current === null) {
+      jobDiscoveryStartedAtRef.current = Date.now();
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (cancelled || inFlight || document.visibilityState !== "visible") return;
+      const started = jobDiscoveryStartedAtRef.current ?? Date.now();
+      if (Date.now() - started > JOB_DISCOVERY_TIMEOUT_MS) {
+        setJobDiscoveryActive(false);
+        setJobDiscoveryLabel(null);
+        jobDiscoveryStartedAtRef.current = null;
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const res = await apiAuthFetch(
+          `/api/v1/chat/sessions/${sessionId}/actions`
+        );
+        if (!res.ok) return;
+        const data: {
+          turn_count?: number;
+          count?: number;
+          actions?: AgentAction[];
+          jobs?: MatchedJob[];
+        } = await res.json();
+        const turnCount = data.turn_count ?? data.count;
+        if (typeof turnCount === "number") setActionCount(turnCount);
+        if (Array.isArray(data.actions)) {
+          setActions(data.actions);
+          const ingest = data.actions.find((a) => a.type === "job_ingest_progress");
+          const live = ingestProgressLabel(ingest?.progress);
+          if (live) setJobDiscoveryLabel(live);
+        }
+        if (Array.isArray(data.jobs) && data.jobs.length > 0) {
+          finishJobDiscovery(data.jobs);
+        }
+      } catch {
+        /* silent */
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const id = window.setInterval(poll, JOB_DISCOVERY_POLL_MS);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [jobDiscoveryActive, sessionId, finishJobDiscovery]);
 
   const appendSystemNote = useCallback((content: string) => {
     setMessages((prev) => [
@@ -857,6 +959,9 @@ export function ChatInterface({
       setStreamingApplicationKits([]);
       streamingApplicationKitsRef.current = [];
       streamJobsRef.current = [];
+      setJobDiscoveryActive(false);
+      setJobDiscoveryLabel(null);
+      jobDiscoveryStartedAtRef.current = null;
       setThinkingStatus("Thinking…");
       const trimmedIntent = text.trim();
       if (isJobSearchIntent(trimmedIntent)) {
@@ -1130,6 +1235,15 @@ export function ChatInterface({
               hinglish: hinglishActiveRef.current,
             });
           }
+        }
+
+        if (
+          lastUserTurnRef.current?.expectJobCards &&
+          shouldWatchForJobDiscovery(streamJobsRef.current.length, true)
+        ) {
+          setJobDiscoveryActive(true);
+          setJobDiscoveryLabel(JOB_DISCOVERY_FALLBACK_LABELS[0]);
+          jobDiscoveryStartedAtRef.current = Date.now();
         }
       }
     },
@@ -1509,6 +1623,8 @@ export function ChatInterface({
       isUploading,
       streamRecovery,
       showProfileFlow,
+      jobDiscoveryActive,
+      jobDiscoveryLabel,
     ],
     [
       messages.length,
@@ -1519,6 +1635,8 @@ export function ChatInterface({
       isUploading,
       streamRecovery,
       showProfileFlow,
+      jobDiscoveryActive,
+      jobDiscoveryLabel,
     ],
   );
 
@@ -1618,6 +1736,16 @@ export function ChatInterface({
               actionBaseline={turnActionBaseline}
               actionCount={actionCount}
               label={thinkingStatus ?? undefined}
+            />
+          )}
+
+          {jobDiscoveryActive && !isStreaming && (
+            <AgentThinkingIndicator
+              variant="jobDiscovery"
+              actions={actions}
+              actionBaseline={turnActionBaseline}
+              actionCount={actionCount}
+              label={jobDiscoveryLabel ?? undefined}
             />
           )}
 

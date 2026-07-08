@@ -15,6 +15,7 @@ type RealtimePayload = {
   onActions?: (actions: AgentAction[]) => void;
   onTurnCount?: (count: number) => void;
   onJobs?: (jobs: MatchedJob[]) => void;
+  onIngestProgress?: (progress: Record<string, unknown>) => void;
   onApplicationKits?: (kits: ApplicationKit[]) => void;
   enabled?: boolean;
 };
@@ -75,6 +76,10 @@ export function useAgentActionsRealtime(
             const jobs = result.jobs as MatchedJob[];
             action.jobs = jobs;
             callbacksRef.current.onJobs?.(jobs);
+          }
+          if (row.action_type === "job_ingest_progress" && result) {
+            action.progress = result;
+            callbacksRef.current.onIngestProgress?.(result);
           }
           if (row.action_type === "prepare_application_kit" && result?.kits) {
             const kits = result.kits as ApplicationKit[];
