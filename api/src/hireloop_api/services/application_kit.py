@@ -580,6 +580,10 @@ async def run_application_kit_job(settings: Settings, candidate_id: str, job_id:
         )
     if result.get("error"):
         raise RuntimeError(str(result["error"]))
+    resume = result.get("resume") if isinstance(result.get("resume"), dict) else {}
+    if not resume.get("resume_id"):
+        status = str(resume.get("status") or "unavailable")
+        raise RuntimeError(f"Application kit finished without a tailored resume ({status}).")
 
 
 async def prepare_application_kits(

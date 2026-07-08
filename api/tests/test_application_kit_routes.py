@@ -169,8 +169,28 @@ async def test_status_reports_processing_for_active_background_job() -> None:
     assert out["background_job"]["id"] == str(db.active_job_id)
 
 
-async def test_status_returns_ready_kit_after_active_job_finishes() -> None:
+async def test_status_incomplete_kit_without_resume_is_missing_not_ready() -> None:
     db = _ExistingMissingResumeDb()
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    # Cover/prep alone must not stop polling as "ready" — resume is required.
+    assert out["status"] == "missing"
+    assert out["saved"] is True
+
+
+async def test_status_returns_ready_only_when_tailored_resume_exists() -> None:
+    class _ReadyDb(_ExistingMissingResumeDb):
+        def _kit_row(self) -> dict[str, object]:
+            row = super()._kit_row()
+            row["tailored_resume_id"] = uuid.uuid4()
+            return row
+
+    db = _ReadyDb()
 
     out = await application_kits.get_application_kit_status_for_job(
         str(db.job_id),
@@ -180,7 +200,45 @@ async def test_status_returns_ready_kit_after_active_job_finishes() -> None:
 
     assert out["status"] == "ready"
     assert out["saved"] is True
+    assert out["kit"]["tailored_resume_id"] is not None
     assert out["kit"]["cover_letter"] == "Dear Hiring Team..."
+
+
+async def test_status_reports_failed_when_job_completed_without_resume() -> None:
+    class _CompletedIncompleteDb(_ExistingMissingResumeDb):
+        def __init__(self) -> None:
+            super().__init__()
+            self.completed_job_id = uuid.uuid4()
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "FROM public.candidates" in query:
+                return {"id": self.candidate_id}
+            if "FROM public.background_jobs" in query:
+                now = datetime.now(UTC)
+                return {
+                    "id": self.completed_job_id,
+                    "status": "completed",
+                    "last_error": None,
+                    "attempts": 1,
+                    "max_attempts": 3,
+                    "created_at": now,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            if "FROM public.job_application_kits" in query:
+                return self._kit_row()
+            return None
+
+    db = _CompletedIncompleteDb()
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "failed"
+    assert "resume" in out["message"].lower()
 
 
 async def test_status_reports_failed_background_job_without_assets() -> None:
