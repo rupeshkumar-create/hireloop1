@@ -41,6 +41,31 @@ def _serialize_kit(row: asyncpg.Record) -> dict:
     }
 
 
+def _application_kit_job_key(candidate_id: uuid.UUID, job_id: uuid.UUID) -> str:
+    return f"application_kit:{candidate_id}:{job_id}"
+
+
+async def _active_application_kit_job_id(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> uuid.UUID | None:
+    job = await db.fetchval(
+        """
+        SELECT id FROM public.background_jobs
+        WHERE idempotency_key = $1
+          AND kind = $2
+          AND status IN ('pending', 'running')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        _application_kit_job_key(candidate_id, job_id),
+        background_jobs.APPLICATION_KIT,
+    )
+    return uuid.UUID(str(job)) if job else None
+
+
 @router.get("")
 async def list_application_kits(
     current_user: dict = Depends(get_phone_verified_user),
@@ -95,6 +120,12 @@ async def get_application_kit_for_job(
     )
     if not row:
         raise HTTPException(status_code=404, detail="No application kit for this job yet")
+    if not row["tailored_resume_id"] and await _active_application_kit_job_id(
+        db,
+        candidate_id=cid,
+        job_id=job_uuid,
+    ):
+        raise HTTPException(status_code=404, detail="Application kit is still preparing")
     return {"kit": _serialize_kit(row)}
 
 
@@ -126,7 +157,25 @@ async def prepare_application_kit_for_job(
         job_uuid,
     )
     if existing:
-        return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}
+        if existing["tailored_resume_id"]:
+            return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}
+        # Older kits, or kits created while resume generation was unavailable,
+        # can have cover assets but no tailored resume. Queue the same durable
+        # generator instead of reporting the incomplete kit as ready.
+        background_job_id = await background_jobs.enqueue_job(
+            db,
+            kind=background_jobs.APPLICATION_KIT,
+            payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
+            idempotency_key=_application_kit_job_key(cid, job_uuid),
+            max_attempts=3,
+        )
+        return {
+            "status": "processing",
+            "saved": True,
+            "job_id": str(job_uuid),
+            "background_job_id": str(background_job_id),
+            "message": "Preparing your tailored resume.",
+        }
 
     job = await db.fetchrow(
         """
@@ -153,7 +202,7 @@ async def prepare_application_kit_for_job(
             db,
             kind=background_jobs.APPLICATION_KIT,
             payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
-            idempotency_key=f"application_kit:{cid}:{job_uuid}",
+            idempotency_key=_application_kit_job_key(cid, job_uuid),
             max_attempts=3,
         )
     except Exception as exc:
