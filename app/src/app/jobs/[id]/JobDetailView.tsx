@@ -7,8 +7,7 @@
  * match breakdown, required skills, Aarya's take) but as a focused standalone
  * page so it can be deep-linked and opened in its own tab.
  *
- *   - Request intro → hops to the chat with a pre-filled message (intro creation
- *     is conversation-mediated via Aarya).
+ *   - Request intro → hops to the chat with a pre-filled message.
  *   - Apply → opens the employer's native apply URL.
  *   - Save → toggles the saved-jobs list.
  */
