@@ -449,7 +449,7 @@ async def get_match_feed(
             await enqueue_job(
                 db,
                 kind=AARYA_AUTO_INGEST,
-                payload={"candidate_id": str(candidate["id"])},
+                payload={"candidate_id": str(candidate["id"]), "force_refresh": True},
                 idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
             )
 

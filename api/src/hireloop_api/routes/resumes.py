@@ -794,7 +794,7 @@ async def apply_to_profile(
     await enqueue_job(
         db,
         kind=AARYA_AUTO_INGEST,
-        payload={"candidate_id": candidate_id},
+        payload={"candidate_id": candidate_id, "force_refresh": True},
         idempotency_key=f"aarya_auto_ingest:{candidate_id}",
     )
 

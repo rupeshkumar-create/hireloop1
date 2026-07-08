@@ -1676,7 +1676,7 @@ async def complete_onboarding(
         await enqueue_job(
             db,
             kind=AARYA_AUTO_INGEST,
-            payload={"candidate_id": candidate_id},
+            payload={"candidate_id": candidate_id, "force_refresh": True},
             idempotency_key=f"onboarding_ingest:{candidate_id}",
         )
         if looking_for:
@@ -1686,6 +1686,8 @@ async def complete_onboarding(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
+                    "requested_titles": [looking_for],
+                    "force_refresh": True,
                 },
                 idempotency_key=f"onboarding_path_ingest:{candidate_id}",
             )

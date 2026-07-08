@@ -558,6 +558,7 @@ async def _auto_ingest_for_candidate(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
+    force_refresh: bool = False,
 ) -> None:
     """Background: career-path scrape → embed new jobs → score for this candidate."""
     from hireloop_api.deps import get_db_pool
@@ -586,6 +587,7 @@ async def _auto_ingest_for_candidate(
             stats = await ingester.ingest_for_candidate(
                 candidate_id,
                 progress_callback=_progress,
+                force_refresh=force_refresh,
             )
             embedded, scored = await embed_pending_and_score_candidate(
                 conn, settings, candidate_id, limit=500
@@ -1013,6 +1015,7 @@ async def job_search(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
+                    "force_refresh": True,
                 },
                 idempotency_key=f"career_path_ingest:{candidate_id}",
             )
@@ -1029,6 +1032,7 @@ async def job_search(
                     "candidate_id": candidate_id,
                     "user_id": user_id,
                     "session_id": session_id,
+                    "force_refresh": True,
                 },
                 idempotency_key=f"aarya_auto_ingest:{candidate_id}",
             )

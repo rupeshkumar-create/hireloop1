@@ -192,6 +192,6 @@ async def test_apply_resume_enqueues_candidate_specific_job_ingest(
 
     assert (
         AARYA_AUTO_INGEST,
-        {"candidate_id": str(db.candidate_id)},
+        {"candidate_id": str(db.candidate_id), "force_refresh": True},
         f"aarya_auto_ingest:{db.candidate_id}",
     ) in enqueued

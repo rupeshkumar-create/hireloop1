@@ -15,6 +15,24 @@ export type JobApplicationKit = {
   updated_at: string;
 };
 
+type PrepareApplicationKitResponse =
+  | ApplicationKit
+  | {
+      status: "processing";
+      saved: boolean;
+      job_id: string;
+      background_job_id?: string;
+      message?: string;
+    }
+  | {
+      status: "ready";
+      saved: boolean;
+      kit: JobApplicationKit;
+    };
+
+const APPLICATION_KIT_POLL_ATTEMPTS = 45;
+const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
+
 /**
  * Fetch the saved application kit (cover letter + interview prep) for a job.
  * Returns null when none exists yet (404), so callers can render gracefully.
@@ -29,6 +47,75 @@ export async function getApplicationKitForJob(
   return data.kit;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isApplicationKit(value: PrepareApplicationKitResponse): value is ApplicationKit {
+  return "cover_letter" in value && "interview_prep" in value && "job" in value;
+}
+
+function kitRowToApplicationKit(kit: JobApplicationKit): ApplicationKit {
+  const job: MatchedJob = {
+    job_id: kit.job_id,
+    title: kit.job_title ?? "Saved job",
+    company_name: kit.company_name,
+    location_city: null,
+    location_state: null,
+    is_remote: false,
+    seniority: null,
+    employment_type: null,
+    ctc_min: null,
+    ctc_max: null,
+    salary_currency: null,
+    skills_required: [],
+    apply_url: null,
+    overall_score: 0,
+    skills_score: null,
+    experience_score: null,
+    location_score: null,
+    ctc_score: null,
+    explanation: null,
+    computed_at: kit.updated_at,
+    action_state: "kit_ready",
+    action_label: "Kit ready",
+  };
+
+  return {
+    kit_id: kit.id,
+    saved: true,
+    job,
+    apply_url: null,
+    cover_letter: kit.cover_letter,
+    interview_prep: kit.interview_prep,
+    resume: {
+      resume_id: kit.tailored_resume_id,
+      status: kit.tailored_resume_id ? "ready" : "unavailable",
+      download_path: kit.tailored_resume_id
+        ? `/api/v1/tailored-resumes/tailored/${kit.tailored_resume_id}/download`
+        : null,
+    },
+    mock_interview: {
+      mock_interview_id: kit.mock_interview_id,
+      path: kit.mock_interview_id ? `/mock-interview/${kit.mock_interview_id}` : null,
+    },
+  };
+}
+
+async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
+  for (let attempt = 0; attempt < APPLICATION_KIT_POLL_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(APPLICATION_KIT_POLL_INTERVAL_MS);
+    }
+    const kit = await getApplicationKitForJob(jobId);
+    if (kit) {
+      return kitRowToApplicationKit(kit);
+    }
+  }
+
+  throw new Error("Your application kit is still preparing. Please try again in a moment.");
+}
+
 /** Generate full application kit (resume + cover letter + interview prep) for a job. */
 export async function prepareApplicationKit(jobId: string): Promise<ApplicationKit> {
   const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
@@ -41,7 +128,14 @@ export async function prepareApplicationKit(jobId: string): Promise<ApplicationK
     const detail = (body as { detail?: string }).detail;
     throw new Error(detail?.trim() || `Kit prepare failed: ${res.status}`);
   }
-  return res.json() as Promise<ApplicationKit>;
+  const data = (await res.json()) as PrepareApplicationKitResponse;
+  if (isApplicationKit(data)) {
+    return data;
+  }
+  if (data.status === "ready") {
+    return kitRowToApplicationKit(data.kit);
+  }
+  return pollApplicationKit(jobId);
 }
 
 export type ApplicationKitResume = {
@@ -51,8 +145,8 @@ export type ApplicationKitResume = {
 };
 
 export type ApplicationKitMockInterview = {
-  mock_interview_id: string;
-  path: string;
+  mock_interview_id: string | null;
+  path: string | null;
 };
 
 export type ApplicationKit = {

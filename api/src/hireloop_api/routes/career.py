@@ -219,6 +219,8 @@ async def _ingest_and_rescore(
     candidate_id: str,
     queries: list[str],
     locations: list[str],
+    *,
+    force_refresh: bool = False,
 ) -> None:
     """
     Background task: scrape fresh jobs for the path's roles, then re-score the
@@ -249,6 +251,7 @@ async def _ingest_and_rescore(
                 # on-demand career pulls use the widest window (6m) — recall
                 # matters more than freshness for these. (Nightly cron stays 24h.)
                 time_range="6m",
+                force_refresh=force_refresh,
             )
             logger.info("career_find_jobs_ingest_done", **stats)
         else:
@@ -270,7 +273,14 @@ async def _ingest_and_rescore(
             logger.error("career_find_jobs_rescore_failed", error=str(exc))
 
 
-async def _ingest_candidate_and_rescore(settings: Settings, candidate_id: str) -> None:
+async def _ingest_candidate_and_rescore(
+    settings: Settings,
+    candidate_id: str,
+    *,
+    requested_titles: list[str] | None = None,
+    requested_locations: list[str] | None = None,
+    force_refresh: bool = False,
+) -> None:
     """
     Background task: derive the freshest candidate-scoped Apify inputs from the
     latest profile + prioritized career path, ingest, then re-score.
@@ -290,6 +300,9 @@ async def _ingest_candidate_and_rescore(settings: Settings, candidate_id: str) -
                 candidate_id,
                 max_results_per_query=25,
                 time_range="6m",
+                requested_titles=requested_titles,
+                requested_locations=requested_locations,
+                force_refresh=force_refresh,
             )
             logger.info("career_candidate_ingest_done", **stats)
         else:
@@ -377,6 +390,8 @@ async def prioritize_career_path(
             payload={
                 "candidate_id": candidate_id,
                 "derive_from_candidate": True,
+                "requested_titles": [title],
+                "force_refresh": True,
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
         )
@@ -631,6 +646,7 @@ async def find_jobs_for_path(
             payload={
                 "candidate_id": candidate_id,
                 "derive_from_candidate": True,
+                "force_refresh": True,
             },
             idempotency_key=f"career_path_ingest:{candidate_id}",
         )

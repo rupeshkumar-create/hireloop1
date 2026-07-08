@@ -243,7 +243,7 @@ class ApifyJobsScraper:
             "num_results": max(10, min(int(max_results), 1000)),
             "max_pagination": 0,
             "include_lrad": False,
-            "lrad_value": "",
+            "lrad_value": "0",
             "max_delay": 1,
             "output_file": "",
             "cleanup_results": True,

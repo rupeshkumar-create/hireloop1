@@ -394,6 +394,51 @@ async def prepare_application_kit(
     if not candidate:
         return {"error": "Candidate not found"}
 
+    return await _prepare_application_kit_for_candidate_row(
+        db,
+        candidate=candidate,
+        job_id=job_id,
+        settings=settings,
+    )
+
+
+async def prepare_application_kit_for_candidate(
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+    job_id: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Candidate-id entrypoint for durable background application-kit jobs."""
+    candidate = await db.fetchrow(
+        """
+        SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
+               c.skills, c.years_experience, c.tailored_resume_enabled,
+               u.full_name, u.email
+        FROM public.candidates c
+        JOIN public.users u ON u.id = c.user_id
+        WHERE c.id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        candidate_id,
+    )
+    if not candidate:
+        return {"error": "Candidate not found"}
+
+    return await _prepare_application_kit_for_candidate_row(
+        db,
+        candidate=candidate,
+        job_id=job_id,
+        settings=settings,
+    )
+
+
+async def _prepare_application_kit_for_candidate_row(
+    db: asyncpg.Connection,
+    *,
+    candidate: asyncpg.Record,
+    job_id: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Shared generation path once the candidate row has been loaded."""
     candidate_id = candidate["id"]
     market = await fetch_candidate_market(db, candidate["id"])
     vis = job_visible_for_market_sql(market_param="$2")
@@ -515,6 +560,22 @@ async def prepare_application_kit(
         "resume": resume,
         "mock_interview": mock,
     }
+
+
+async def run_application_kit_job(settings: Settings, candidate_id: str, job_id: str) -> None:
+    """Background worker entrypoint for one candidate/job application kit."""
+    from hireloop_api.deps import get_db_pool
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        result = await prepare_application_kit_for_candidate(
+            db,
+            uuid.UUID(candidate_id),
+            job_id,
+            settings,
+        )
+    if result.get("error"):
+        raise RuntimeError(str(result["error"]))
 
 
 async def prepare_application_kits(

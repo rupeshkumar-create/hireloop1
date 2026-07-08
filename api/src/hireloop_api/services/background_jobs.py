@@ -36,6 +36,7 @@ PROFILE_COMPLETENESS = "profile_completeness"
 TAILORED_RESUME = "tailored_resume"
 CAREER_PATH_RESUMES = "career_path_resumes"
 LEARNING_ROADMAP = "learning_roadmap"
+APPLICATION_KIT = "application_kit"
 MATCH_EMBED_ALL = "match_embed_all"
 MATCH_RECOMPUTE_ALL = "match_recompute_all"
 MATCH_EMBED_CANDIDATE = "match_embed_candidate"
@@ -253,12 +254,25 @@ async def _handle_career_path_ingest(settings: Settings, payload: dict[str, Any]
     from hireloop_api.routes.career import _ingest_and_rescore, _ingest_candidate_and_rescore
 
     candidate_id = str(payload["candidate_id"])
+    force_refresh = bool(payload.get("force_refresh"))
+    locations = list(payload.get("locations") or [])
     if payload.get("derive_from_candidate"):
-        await _ingest_candidate_and_rescore(settings, candidate_id)
+        await _ingest_candidate_and_rescore(
+            settings,
+            candidate_id,
+            requested_titles=[str(t) for t in list(payload.get("requested_titles") or [])],
+            requested_locations=[str(loc) for loc in locations],
+            force_refresh=force_refresh,
+        )
         return
     queries = list(payload.get("queries") or [])
-    locations = list(payload.get("locations") or ["India"])
-    await _ingest_and_rescore(settings, candidate_id, queries, locations)
+    await _ingest_and_rescore(
+        settings,
+        candidate_id,
+        [str(query) for query in queries],
+        [str(loc) for loc in (locations or ["India"])],
+        force_refresh=force_refresh,
+    )
 
 
 async def _handle_pool_ingest(settings: Settings, payload: dict[str, Any]) -> None:
@@ -281,6 +295,7 @@ async def _handle_aarya_auto_ingest(settings: Settings, payload: dict[str, Any])
         candidate_id,
         user_id=str(payload["user_id"]) if payload.get("user_id") else None,
         session_id=str(payload["session_id"]) if payload.get("session_id") else None,
+        force_refresh=bool(payload.get("force_refresh")),
     )
 
 
@@ -364,6 +379,16 @@ async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) 
     )
 
 
+async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.services.application_kit import run_application_kit_job
+
+    await run_application_kit_job(
+        settings,
+        str(payload["candidate_id"]),
+        str(payload["job_id"]),
+    )
+
+
 async def _handle_match_embed_all(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.embeddings import EmbeddingService
@@ -437,6 +462,7 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
             locations=payload.get("locations"),
             max_results_per_query=int(payload.get("max_results_per_query") or 50),
             time_range=str(payload.get("time_range") or settings.google_jobs_time_range),
+            force_refresh=bool(payload.get("force_refresh")),
         )
 
 
@@ -510,6 +536,7 @@ _HANDLERS: dict[str, Handler] = {
     TAILORED_RESUME: _handle_tailored_resume,
     CAREER_PATH_RESUMES: _handle_career_path_resumes,
     LEARNING_ROADMAP: _handle_learning_roadmap,
+    APPLICATION_KIT: _handle_application_kit,
     MATCH_EMBED_ALL: _handle_match_embed_all,
     MATCH_RECOMPUTE_ALL: _handle_match_recompute_all,
     MATCH_EMBED_CANDIDATE: _handle_match_embed_candidate,

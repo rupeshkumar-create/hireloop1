@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
-from hireloop_api.services.application_kit import prepare_application_kit
+from hireloop_api.services import background_jobs
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/application-kits", tags=["application-kits"])
@@ -105,20 +105,73 @@ async def prepare_application_kit_for_job(
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Generate resume, cover letter, and interview prep for one saved/matched job."""
+    """Queue resume, cover letter, and interview prep generation for one job."""
     try:
-        result = await prepare_application_kit(db, current_user["id"], job_id, settings)
+        job_uuid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid job ID") from exc
+
+    cid = await _candidate_id(db, current_user["id"])
+    existing = await db.fetchrow(
+        """
+        SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
+               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
+               j.title AS job_title, co.name AS company_name
+        FROM public.job_application_kits k
+        JOIN public.jobs j ON j.id = k.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE k.candidate_id = $1::uuid AND k.job_id = $2::uuid
+        """,
+        cid,
+        job_uuid,
+    )
+    if existing:
+        return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}
+
+    job = await db.fetchrow(
+        """
+        SELECT id FROM public.jobs
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        """,
+        job_uuid,
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    await db.execute(
+        """
+        INSERT INTO public.saved_jobs (candidate_id, job_id)
+        VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT (candidate_id, job_id) DO NOTHING
+        """,
+        cid,
+        job_uuid,
+    )
+
+    try:
+        background_job_id = await background_jobs.enqueue_job(
+            db,
+            kind=background_jobs.APPLICATION_KIT,
+            payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
+            idempotency_key=f"application_kit:{cid}:{job_uuid}",
+            max_attempts=3,
+        )
     except Exception as exc:
         logger.exception(
-            "application_kit_prepare_failed",
+            "application_kit_enqueue_failed",
             job_id=job_id,
             user_id=str(current_user.get("id")),
             error=str(exc)[:300],
         )
         raise HTTPException(
             status_code=502,
-            detail="Couldn't prepare the application kit. Please try again in a moment.",
+            detail="Couldn't start the application kit. Please try again in a moment.",
         ) from exc
-    if result.get("error"):
-        raise HTTPException(status_code=404, detail=str(result["error"]))
-    return result
+
+    return {
+        "status": "processing",
+        "saved": True,
+        "job_id": str(job_uuid),
+        "background_job_id": str(background_job_id),
+        "message": "Preparing your resume, cover letter, and interview prep.",
+    }

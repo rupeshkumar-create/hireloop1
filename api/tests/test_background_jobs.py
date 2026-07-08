@@ -161,10 +161,20 @@ async def test_mark_failed_retries_then_dead() -> None:
 
 @pytest.mark.asyncio
 async def test_career_path_ingest_derives_from_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: dict[str, str] = {}
+    called: dict[str, object] = {}
 
-    async def _fake_candidate_ingest(settings: Settings, candidate_id: str) -> None:
+    async def _fake_candidate_ingest(
+        settings: Settings,
+        candidate_id: str,
+        *,
+        force_refresh: bool = False,
+        requested_titles: list[str] | None = None,
+        requested_locations: list[str] | None = None,
+    ) -> None:
         called["candidate_id"] = candidate_id
+        called["force_refresh"] = force_refresh
+        called["requested_titles"] = requested_titles
+        called["requested_locations"] = requested_locations
 
     async def _fail_raw_ingest(
         settings: Settings,
@@ -189,7 +199,44 @@ async def test_career_path_ingest_derives_from_candidate(monkeypatch: pytest.Mon
         {
             "candidate_id": "11111111-1111-1111-1111-111111111111",
             "derive_from_candidate": True,
+            "force_refresh": True,
+            "requested_titles": ["UI/UX Designer"],
+            "locations": ["Bengaluru"],
         },
     )
 
     assert called["candidate_id"] == "11111111-1111-1111-1111-111111111111"
+    assert called["force_refresh"] is True
+    assert called["requested_titles"] == ["UI/UX Designer"]
+    assert called["requested_locations"] == ["Bengaluru"]
+
+
+@pytest.mark.asyncio
+async def test_application_kit_handler_runs_candidate_job_generator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: dict[str, object] = {}
+
+    async def _fake_run(settings: Settings, candidate_id: str, job_id: str) -> None:
+        called["candidate_id"] = candidate_id
+        called["job_id"] = job_id
+
+    monkeypatch.setattr(
+        "hireloop_api.services.application_kit.run_application_kit_job",
+        _fake_run,
+    )
+
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await bj._handle_application_kit(
+        settings,
+        {
+            "candidate_id": "11111111-1111-1111-1111-111111111111",
+            "job_id": "22222222-2222-2222-2222-222222222222",
+        },
+    )
+
+    assert called == {
+        "candidate_id": "11111111-1111-1111-1111-111111111111",
+        "job_id": "22222222-2222-2222-2222-222222222222",
+    }
+    assert bj.APPLICATION_KIT == "application_kit"

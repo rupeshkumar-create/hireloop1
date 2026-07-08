@@ -14,6 +14,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from hireloop_api.services.apify import job_ingester as job_ingester_module
 from hireloop_api.services.apify.candidate_job_query_plan import (
     CandidateJobIngestPlan,
@@ -74,7 +76,7 @@ def test_google_jobs_input_uses_johnvc_schema() -> None:
         "num_results": 100,
         "max_pagination": 0,
         "include_lrad": False,
-        "lrad_value": "",
+        "lrad_value": "0",
         "max_delay": 1,
         "output_file": "",
         "cleanup_results": True,
@@ -688,6 +690,105 @@ async def test_ingest_uses_google_jobs_as_only_runtime_source() -> None:
     assert set(stats["sources"]) == {"google_jobs"}
     assert stats["run_id"] == "run-1"
     assert stats["inserted"] == 1
+
+
+async def test_ingest_force_refresh_bypasses_recent_query_dedupe() -> None:
+    class _Conn:
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            return [{"query_norm": "product designer"}]
+
+    class _Scraper:
+        def __init__(self) -> None:
+            self.called = False
+
+        async def scrape(self, **kwargs: object) -> tuple[list[dict], list[JobRecord], dict]:
+            self.called = True
+            assert kwargs["queries"] == ["Product Designer"]
+            return (
+                [{"title": "Product Designer"}],
+                [
+                    JobRecord(
+                        apify_job_id="gj_product_designer",
+                        title="Product Designer",
+                        country_code="IN",
+                        source="google_jobs",
+                    )
+                ],
+                {
+                    "run_id": "run-force",
+                    "dataset_id": "dataset-force",
+                    "raw_items": 1,
+                    "normalised": 1,
+                },
+            )
+
+    ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
+    scraper = _Scraper()
+    ing._scraper = scraper  # type: ignore[assignment]
+
+    async def _fake_upsert(records: list[JobRecord]) -> tuple[int, int, int]:
+        return 1, 0, 0
+
+    async def _fake_companies(records: list[JobRecord]) -> None:
+        return None
+
+    ing._upsert_jobs = _fake_upsert  # type: ignore[method-assign]
+    ing._ensure_companies = _fake_companies  # type: ignore[method-assign]
+
+    stats = await ing.ingest(
+        queries=["Product Designer"],
+        locations=["Bengaluru, India"],
+        force_refresh=True,
+    )
+
+    assert scraper.called is True
+    assert stats["run_id"] == "run-force"
+    assert stats["inserted"] == 1
+
+
+async def test_ingest_for_candidate_prioritizes_requested_titles_and_force_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            return {
+                "current_title": "Head of Design",
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "skills": ["Figma"],
+                "looking_for": "Head of Design",
+                "prioritized_title": "Head of Design",
+                "target_titles": ["Head of Design"],
+                "target_locations": ["Bengaluru"],
+            }
+
+    captured: dict[str, object] = {}
+    ing = JobIngester(apify_token="test-token", db=_Conn())  # type: ignore[arg-type]
+
+    async def _fake_candidate_intelligence(db: object, candidate_id: str) -> object | None:
+        return None
+
+    async def _fake_variant_ingest(**kwargs: object) -> dict[str, object]:
+        variants = kwargs["variants"]
+        captured["queries"] = [v.query for v in variants]  # type: ignore[attr-defined]
+        captured["force_refresh"] = kwargs.get("force_refresh")
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "hireloop_api.services.apify.job_ingester.load_candidate_intelligence",
+        _fake_candidate_intelligence,
+    )
+    ing._ingest_candidate_title_variants = _fake_variant_ingest  # type: ignore[method-assign]
+
+    await ing.ingest_for_candidate(
+        "11111111-1111-1111-1111-111111111111",
+        requested_titles=["UI/UX Designer"],
+        force_refresh=True,
+    )
+
+    assert captured["queries"][0] == "UI/UX Designer"  # type: ignore[index]
+    assert "Head of Design" in captured["queries"]  # type: ignore[operator]
+    assert captured["force_refresh"] is True
 
 
 # ── source health / fail-loud (Google Jobs only) ──────────────────────────────

@@ -371,6 +371,40 @@ async def _prefetch_top_jobs(
     return dedupe_jobs([serialize_job_card(dict(r)) for r in rows])
 
 
+def _job_ingest_search_key(candidate_id: str, search_title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", search_title.lower()).strip("-") or "profile"
+    return f"career_path_ingest:{candidate_id}:{slug[:80]}"
+
+
+async def _enqueue_live_job_ingest_for_search(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: str,
+    search_title: str,
+    location_city: str | None = None,
+) -> None:
+    """Queue a live Apify-backed pull for the user's explicit job-search title."""
+    from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
+
+    title = search_title.strip()
+    if not title:
+        return
+    payload: dict[str, object] = {
+        "candidate_id": candidate_id,
+        "derive_from_candidate": True,
+        "requested_titles": [title],
+        "force_refresh": True,
+    }
+    if location_city:
+        payload["locations"] = [location_city]
+    await enqueue_job(
+        db,
+        kind=CAREER_PATH_INGEST,
+        payload=payload,
+        idempotency_key=_job_ingest_search_key(candidate_id, title),
+    )
+
+
 @router.get("/warmup")
 async def chat_warmup(
     include_jobs: bool = Query(default=False),
@@ -678,6 +712,21 @@ async def send_message(
         if search_title is not None:
             _, city = extract_find_role_and_city(body.content)
             search_city = city
+            if settings.apify_token:
+                try:
+                    await _enqueue_live_job_ingest_for_search(
+                        db,
+                        candidate_id=candidate_id,
+                        search_title=search_title,
+                        location_city=city,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "pre_turn_live_job_ingest_enqueue_failed",
+                        candidate_id=candidate_id,
+                        search_title=search_title,
+                        error=str(exc)[:200],
+                    )
             try:
                 js_kwargs: dict[str, object] = {
                     "query_text": search_title,
@@ -713,6 +762,7 @@ async def send_message(
                     payload={
                         "candidate_id": candidate_id,
                         "derive_from_candidate": True,
+                        "force_refresh": True,
                     },
                     idempotency_key=f"career_path_ingest:{candidate_id}",
                 )

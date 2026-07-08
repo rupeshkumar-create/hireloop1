@@ -94,5 +94,7 @@ async def test_prioritize_path_enqueues_immediate_job_ingest(
     assert fired["payload"] == {
         "candidate_id": str(candidate_id),
         "derive_from_candidate": True,
+        "requested_titles": ["Category Manager"],
+        "force_refresh": True,
     }
     assert fired["idempotency_key"] == f"career_path_ingest:{candidate_id}"

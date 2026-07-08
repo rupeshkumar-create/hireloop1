@@ -584,6 +584,27 @@ def _merge_candidate_ingest_stats(
     )
 
 
+def _prepend_requested_title_variants(
+    requested_titles: list[str] | None,
+    variants: list[CandidateJobTitleVariant],
+) -> list[CandidateJobTitleVariant]:
+    """Put explicit chat/onboarding titles before profile-derived title variants."""
+    out: list[CandidateJobTitleVariant] = []
+    seen: set[str] = set()
+
+    def _add(variant: CandidateJobTitleVariant) -> None:
+        key = _norm_key(variant.query)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(variant)
+
+    for variant in build_title_query_variants(requested_titles or []):
+        _add(variant)
+    for variant in variants:
+        _add(variant)
+    return out
+
+
 class JobIngester:
     def __init__(
         self,
@@ -613,6 +634,7 @@ class JobIngester:
         use_career_site: bool | None = None,
         use_linkedin: bool = False,
         description_search: list[str] | None = None,
+        force_refresh: bool = False,
     ) -> dict:
         """
         Full ingestion pipeline:
@@ -637,7 +659,7 @@ class JobIngester:
         # Recency gate: drop queries already scraped for this location inside
         # the dedupe window; if nothing is left, skip the run entirely.
         loc_key = _norm_key(scrape_locations[0] if scrape_locations else "")
-        if queries:
+        if queries and not force_refresh:
             try:
                 recent_rows = await self._db.fetch(
                     f"""
@@ -734,6 +756,7 @@ class JobIngester:
             "ok": not errors,
             "degraded": bool(errors),
             "errors": errors,
+            "force_refresh": force_refresh,
         }
         # Record the run so the dedupe gate can skip identical queries for the
         # next INGEST_DEDUPE_HOURS. Best-effort.
@@ -795,6 +818,9 @@ class JobIngester:
         time_range: str = "7d",
         max_variant_runs: int = 5,
         progress_callback: IngestProgressCallback | None = None,
+        requested_titles: list[str] | None = None,
+        requested_locations: list[str] | None = None,
+        force_refresh: bool = False,
     ) -> dict:
         """
         Scrape jobs scoped to ONE candidate's career path — their target titles
@@ -816,7 +842,11 @@ class JobIngester:
         if snapshot is not None:
             plan = build_candidate_job_ingest_plan(snapshot)
             variants = plan.title_variants or build_title_query_variants(plan.title_inputs)
-            locations = derive_ingest_locations(plan.raw_locations or None, self._settings)
+            variants = _prepend_requested_title_variants(requested_titles, variants)
+            locations = derive_ingest_locations(
+                requested_locations or plan.raw_locations or None,
+                self._settings,
+            )
             candidate_time_range = time_range or (
                 self._settings.google_jobs_candidate_time_range if self._settings else "7d"
             )
@@ -836,6 +866,7 @@ class JobIngester:
                 max_variant_runs=max_variant_runs,
                 progress_callback=progress_callback,
                 planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
+                force_refresh=force_refresh,
             )
 
         row = await self._db.fetchrow(
@@ -882,6 +913,8 @@ class JobIngester:
             seen_titles.add(key)
             search_titles.append(title)
 
+        for title in requested_titles or []:
+            _add_title(title)
         _add_title(row.get("prioritized_title"))
         _add_title(row.get("looking_for"))
         for title in list(row["target_titles"] or []):
@@ -893,7 +926,7 @@ class JobIngester:
             skills=list(row["skills"] or []),
         )
         variants = build_title_query_variants(queries)
-        raw_locations = list(row["target_locations"] or []) or (
+        raw_locations = requested_locations or list(row["target_locations"] or []) or (
             [p for p in [row["location_city"], row["location_state"]] if p] or None
         )
         locations = derive_ingest_locations(raw_locations, self._settings)
@@ -913,6 +946,7 @@ class JobIngester:
             time_range=candidate_time_range,
             max_variant_runs=max_variant_runs,
             progress_callback=progress_callback,
+            force_refresh=force_refresh,
         )
 
     async def _ingest_candidate_title_variants(
@@ -925,6 +959,7 @@ class JobIngester:
         max_variant_runs: int,
         progress_callback: IngestProgressCallback | None = None,
         planner_diagnostics: dict[str, Any] | None = None,
+        force_refresh: bool = False,
     ) -> dict:
         selected = variants[: max(1, max_variant_runs)]
         if not selected:
@@ -933,6 +968,7 @@ class JobIngester:
                 locations=locations,
                 max_results_per_query=max_results_per_query,
                 time_range=time_range,
+                force_refresh=force_refresh,
             )
 
         await _emit_ingest_progress(
