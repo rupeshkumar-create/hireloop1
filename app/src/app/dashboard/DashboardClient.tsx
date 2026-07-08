@@ -59,6 +59,7 @@ const ChatInterface = dynamic(
 );
 
 type IntroWatch = { jobId: string; nonce: number; introId?: string };
+type KitRequest = { jobId: string; title: string; company: string; nonce: number };
 
 interface DashboardClientProps {
   conversationId?: string;
@@ -107,6 +108,7 @@ export function DashboardClient({
   const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
   const [introWatch, setIntroWatch] = useState<IntroWatch | null>(null);
+  const [kitRequest, setKitRequest] = useState<KitRequest | null>(null);
   const [handledIntroParam] = useState(() => ({ handled: false }));
   const [handledKitParam] = useState(() => ({ handled: false }));
   const [sendToChatRef] = useState(() => ({ fn: (_text: string) => Date.now() }));
@@ -164,9 +166,7 @@ export function DashboardClient({
       return next;
     });
     void saveJob(jobId).catch(() => undefined);
-    sendToChatRef.fn(
-      `Prepare my application kit for the "${title}" role at ${company} (job ID: ${jobId}). Generate the tailored resume, cover letter, and interview prep, then show me the preview and download options here.`,
-    );
+    setKitRequest({ jobId, title, company, nonce: Date.now() });
 
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.delete("kit_job_id");
@@ -473,6 +473,7 @@ export function DashboardClient({
             initialVoiceDeepDive={initialVoiceDeepDive}
             initialKickoff={initialKickoff}
             injectedMessage={injected}
+            applicationKitRequest={kitRequest}
             introWatch={introWatch}
             className="h-full"
             onSessionCreated={(id) => setActiveConvoId(id)}

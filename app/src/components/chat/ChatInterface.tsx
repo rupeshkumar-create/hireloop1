@@ -70,7 +70,7 @@ import {
   warmupChatContext,
   type ChatWarmupSnapshot,
 } from "@/lib/chat/warmup";
-import type { ApplicationKit } from "@/lib/api/applicationKit";
+import { prepareApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
 import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
@@ -222,6 +222,13 @@ interface ChatInterfaceProps {
    * prompts re-trigger; we only send when the nonce changes.
    */
   injectedMessage?: { text: string; nonce: number } | null;
+  /** Programmatically prepare an application kit and render the finished cards in chat. */
+  applicationKitRequest?: {
+    jobId: string;
+    title: string;
+    company: string;
+    nonce: number;
+  } | null;
   /** When set, watch for the intro request for this job and show the draft inline in chat. */
   introWatch?: { jobId: string; nonce: number; introId?: string } | null;
   savedJobIds?: Set<string>;
@@ -266,6 +273,7 @@ export function ChatInterface({
   initialVoiceDeepDive = false,
   initialKickoff = false,
   injectedMessage,
+  applicationKitRequest = null,
   introWatch = null,
   savedJobIds = new Set(),
   onSavedChange,
@@ -1198,6 +1206,74 @@ export function ChatInterface({
     lastInjectedNonce.current = injectedMessage.nonce;
     void sendMessage(injectedMessage.text);
   }, [injectedMessage, sendMessage]);
+
+  // ── Deterministic application-kit requests from dashboard/job deep links ───
+  const lastKitRequestNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!applicationKitRequest?.jobId || !applicationKitRequest.nonce) return;
+    if (applicationKitRequest.nonce === lastKitRequestNonce.current) return;
+    lastKitRequestNonce.current = applicationKitRequest.nonce;
+
+    let cancelled = false;
+    const { jobId, title, company, nonce } = applicationKitRequest;
+    const userMessageId = `kit-request-user-${jobId}-${nonce}`;
+    const assistantMessageId = `kit-request-assistant-${jobId}-${nonce}`;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: userMessageId,
+        role: "user",
+        content: `Prepare my application kit for the "${title}" role at ${company}.`,
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        content:
+          "I’m preparing your application kit now — tailored resume, cover letter, and interview prep. I’ll show preview and download options here as soon as it’s ready.",
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    void prepareApplicationKit(jobId)
+      .then((kit) => {
+        if (cancelled) return;
+        if (kit.saved && kit.job?.job_id) onSavedChange?.(kit.job.job_id, true);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? {
+                  ...m,
+                  content:
+                    "Your application kit is ready — preview or download the tailored resume, cover letter, and interview prep below.",
+                  applicationKits: [kit],
+                }
+              : m,
+          ),
+        );
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : "Please try again.";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? {
+                  ...m,
+                  content: `I couldn’t finish the application kit yet. ${message}`,
+                }
+              : m,
+          ),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationKitRequest, onSavedChange]);
 
   // ── Resume upload ────────────────────────────────────────────────────────
 
