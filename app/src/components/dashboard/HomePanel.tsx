@@ -20,6 +20,8 @@ import {
   fetchMyProfile,
   getCachedProfile,
   invalidateProfileCache,
+  publishPublicProfile,
+  updateMyProfile,
   updateProfileVisibility,
   type CandidateVisibility,
   type MyProfileData,
@@ -244,6 +246,8 @@ export function HomePanel({
   const [intelArchetype, setIntelArchetype] = useState<string | null>(null);
   const [intelNextRole, setIntelNextRole] = useState<string | null>(null);
   const [intelCompleteness, setIntelCompleteness] = useState<number | null>(null);
+  const [publishingPublic, setPublishingPublic] = useState(false);
+  const [togglingPublic, setTogglingPublic] = useState(false);
 
   const resolvedName =
     sanitizeDisplayName(profileData?.user?.full_name) ??
@@ -275,6 +279,71 @@ export function HomePanel({
       })
       .catch(() => {});
   }, []);
+
+  const publicEnabled = Boolean(profileData?.candidate?.public_profile_enabled);
+  const publicPath = profileData?.candidate?.public_profile_url ?? null;
+
+  const publicUrl =
+    typeof window !== "undefined" && publicPath
+      ? `${window.location.origin}${publicPath}`
+      : publicPath;
+
+  async function handleCopyPublicLink() {
+    if (!publicUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      toast.success("Public link copied");
+    } catch {
+      toast.error("Couldn't copy — please copy the link manually");
+    }
+  }
+
+  async function handleGoLive() {
+    if (publishingPublic) return;
+    setPublishingPublic(true);
+    try {
+      const res = await publishPublicProfile();
+      setProfileData((prev) =>
+        prev?.candidate
+          ? {
+              ...prev,
+              candidate: {
+                ...prev.candidate,
+                public_profile_enabled: true,
+                public_profile_url: res.public_profile_url,
+                public_slug: res.slug,
+              },
+            }
+          : prev,
+      );
+      toast.success("Your public profile is live");
+    } catch (err) {
+      toast.error((err as Error).message ?? "Couldn't publish your public profile");
+    } finally {
+      setPublishingPublic(false);
+    }
+  }
+
+  async function handleTurnOff() {
+    if (togglingPublic) return;
+    setTogglingPublic(true);
+    try {
+      await updateMyProfile({ public_profile_enabled: false });
+      setProfileData((prev) =>
+        prev?.candidate
+          ? {
+              ...prev,
+              candidate: { ...prev.candidate, public_profile_enabled: false },
+            }
+          : prev,
+      );
+      toast.success("Public profile turned off");
+    } catch (err) {
+      toast.error((err as Error).message ?? "Couldn't turn off public profile");
+    } finally {
+      setTogglingPublic(false);
+    }
+  }
 
   async function selectVisibility(next: CandidateVisibility) {
     if (next === visibility || savingVis) return;
@@ -344,6 +413,78 @@ export function HomePanel({
         intelCompleteness={intelCompleteness}
         onOpenPanel={onOpenPanel}
       />
+
+      <FadeUp>
+        <Card>
+          <CardBody className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-small font-semibold text-ink-900">Your public candidate link</p>
+                <p className="text-micro text-ink-500 mt-0.5">
+                  Share this with hiring managers or recruiters. You can turn it on/off anytime.
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-micro font-semibold",
+                  publicEnabled
+                    ? "border-accent/40 bg-accent/15 text-accent"
+                    : "border-ink-200 bg-paper-0 text-ink-500",
+                )}
+              >
+                {publicEnabled ? "Live" : "Off"}
+              </span>
+            </div>
+
+            {publicEnabled && publicUrl ? (
+              <div className="rounded-lg border border-ink-100 bg-paper-0 px-3 py-2">
+                <p className="text-micro text-ink-500">Link</p>
+                <p className="text-small font-medium text-ink-900 break-all">{publicUrl}</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-ink-100 bg-paper-0 px-3 py-2">
+                <p className="text-small text-ink-700">
+                  Turn on your public link to share a recruiter-friendly overview.
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {publicEnabled ? (
+                <>
+                  <Button variant="secondary" size="sm" onClick={() => void handleCopyPublicLink()}>
+                    Copy link
+                  </Button>
+                  <Link
+                    href={publicPath ?? "/dashboard"}
+                    target="_blank"
+                    className="inline-flex items-center rounded-full border border-ink-200 bg-paper-0 px-3 py-1 text-micro font-medium text-ink-700 hover:border-ink-300 hover:bg-ink-50 transition-colors"
+                  >
+                    Open
+                  </Link>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    loading={togglingPublic}
+                    onClick={() => void handleTurnOff()}
+                  >
+                    Turn off
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={publishingPublic}
+                  onClick={() => void handleGoLive()}
+                >
+                  Go live
+                </Button>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </FadeUp>
 
       <RoleSwitchButton
         to="recruiter"
