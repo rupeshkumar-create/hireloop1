@@ -322,6 +322,7 @@ export function ChatInterface({
   const voiceRepliesEnabledRef = useRef(true);
   /** Sync lock — isStreaming state alone cannot block a second send in the same tick. */
   const sendInFlightRef = useRef(false);
+  const isStreamingRef = useRef(false);
 
   // When the user requests an intro from a job card, surface the contact + drafted email
   // inline in chat (polls /intros until the new row appears, then polls detail).
@@ -605,6 +606,10 @@ export function ChatInterface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
   // Every job surfaced in chat is accumulated here (deduped) and mirrored to the
   // parent so the Matches sidebar reflects chat results without a "Find jobs" click.
   const allChatJobsRef = useRef<MatchedJob[]>([]);
@@ -619,25 +624,39 @@ export function ChatInterface({
     [onJobsFound],
   );
 
-  const attachJobsToLastAssistant = useCallback((jobs: MatchedJob[]) => {
+  const attachJobsToCurrentTurnAssistant = useCallback((jobs: MatchedJob[]) => {
     const unique = dedupeJobs(jobs);
     if (!unique.length) return;
+    // During SSE, finalize() owns the assistant bubble + job cards for this turn.
+    if (isStreamingRef.current) return;
     reportChatJobs(unique);
     setMessages((prev) => {
-      let lastIdx = -1;
+      let lastUserIdx = -1;
       for (let i = prev.length - 1; i >= 0; i -= 1) {
-        if (prev[i].role === "assistant") {
-          lastIdx = i;
+        if (prev[i].role === "user") {
+          lastUserIdx = i;
           break;
         }
       }
-      if (lastIdx === -1) return prev;
-      const last = prev[lastIdx];
-      if (last.jobs?.length) return prev;
+      if (lastUserIdx === -1) return prev;
 
-      // Structured job_search results from the API are authoritative — attach
-      // without guessing from prose (Aarya often lists matches without "roles found").
-      return prev.map((m, i) => (i === lastIdx ? { ...m, jobs: unique } : m));
+      // Only the assistant for the latest user turn — never a prior bubble.
+      let targetIdx = -1;
+      for (let i = lastUserIdx + 1; i < prev.length; i += 1) {
+        if (prev[i].role === "assistant") {
+          targetIdx = i;
+          break;
+        }
+      }
+      // Still streaming: finalize() will attach streamJobsRef.
+      if (targetIdx === -1) return prev;
+
+      const target = prev[targetIdx];
+      if (target.jobs?.length) return prev;
+
+      return prev.map((m, i) =>
+        i === targetIdx ? { ...m, jobs: unique } : m
+      );
     });
   }, [reportChatJobs]);
 
@@ -676,7 +695,7 @@ export function ChatInterface({
     enabled: Boolean(sessionId && authUserId),
     onActions: (live) => setActions(live),
     onTurnCount: (count) => setActionCount(count),
-    onJobs: (jobs) => attachJobsToLastAssistant(jobs),
+    onJobs: (jobs) => attachJobsToCurrentTurnAssistant(jobs),
     onApplicationKits: (kits) => attachApplicationKitsToLastAssistant(kits),
   });
 
@@ -705,7 +724,7 @@ export function ChatInterface({
         setActionCount(turnCount);
         if (Array.isArray(data.actions)) setActions(data.actions);
         if (Array.isArray(data.jobs) && data.jobs.length > 0) {
-          attachJobsToLastAssistant(data.jobs);
+          attachJobsToCurrentTurnAssistant(data.jobs);
         }
         if (Array.isArray(data.application_kits) && data.application_kits.length > 0) {
           attachApplicationKitsToLastAssistant(data.application_kits);
@@ -720,7 +739,7 @@ export function ChatInterface({
     return () => window.clearInterval(id);
   }, [
     sessionId,
-    attachJobsToLastAssistant,
+    attachJobsToCurrentTurnAssistant,
     attachApplicationKitsToLastAssistant,
     isStreaming,
   ]);
@@ -739,7 +758,7 @@ export function ChatInterface({
           application_kits?: ApplicationKit[];
         } = await res.json();
         if (Array.isArray(data.jobs) && data.jobs.length > 0) {
-          attachJobsToLastAssistant(data.jobs);
+          attachJobsToCurrentTurnAssistant(data.jobs);
         }
         if (Array.isArray(data.application_kits) && data.application_kits.length > 0) {
           attachApplicationKitsToLastAssistant(data.application_kits);
@@ -750,7 +769,7 @@ export function ChatInterface({
   }, [
     isStreaming,
     sessionId,
-    attachJobsToLastAssistant,
+    attachJobsToCurrentTurnAssistant,
     attachApplicationKitsToLastAssistant,
   ]);
 
@@ -889,18 +908,52 @@ export function ChatInterface({
             : streamJobsRef.current.length > 0
               ? dedupeJobs(streamJobsRef.current)
               : undefined;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: accumulated,
-            content_type: "text",
-            created_at: new Date().toISOString(),
-            applicationKits: kitsForMessage,
-            jobs,
-          },
-        ]);
+        setMessages((prev) => {
+          let lastUserIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i -= 1) {
+            if (prev[i].role === "user") {
+              lastUserIdx = i;
+              break;
+            }
+          }
+          const existingTurnAssistant =
+            lastUserIdx >= 0
+              ? prev
+                  .slice(lastUserIdx + 1)
+                  .find(
+                    (m) =>
+                      m.role === "assistant" &&
+                      m.content.trim() === accumulated.trim()
+                  )
+              : undefined;
+          if (existingTurnAssistant) {
+            if (jobs && jobs.length > 0 && !existingTurnAssistant.jobs?.length) {
+              return prev.map((m) =>
+                m.id === existingTurnAssistant.id
+                  ? {
+                      ...m,
+                      jobs,
+                      applicationKits:
+                        kitsForMessage ?? m.applicationKits,
+                    }
+                  : m
+              );
+            }
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: accumulated,
+              content_type: "text",
+              created_at: new Date().toISOString(),
+              applicationKits: kitsForMessage,
+              jobs,
+            },
+          ];
+        });
         setStreamingContent("");
         setStreamingApplicationKits([]);
         streamingApplicationKitsRef.current = [];
@@ -937,7 +990,8 @@ export function ChatInterface({
                 ...streamJobsRef.current,
                 ...jobs,
               ]);
-              attachJobsToLastAssistant(jobs);
+              // Job cards render on finalize for this turn — attaching during
+              // SSE/realtime used to pin cards on the previous assistant bubble.
               if (
                 shouldSpeakReply &&
                 !jobsAnnouncedRef.current &&
@@ -1086,7 +1140,7 @@ export function ChatInterface({
       speakFiller,
       onSessionCreated,
       actionCount,
-      attachJobsToLastAssistant,
+      attachJobsToCurrentTurnAssistant,
       interruptSpeech,
       cancelRecording,
       authUserId,

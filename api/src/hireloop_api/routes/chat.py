@@ -359,6 +359,17 @@ async def _persist_assistant_reply(
     """Save the assistant turn on a fresh pooled connection (avoids stale stream conn)."""
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
+        last_row = await conn.fetchrow(
+            """
+            SELECT content FROM public.messages
+            WHERE conversation_id = $1::uuid AND role = 'assistant'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            coerce_uuid(conversation_id),
+        )
+        if last_row and (last_row["content"] or "").strip() == full_response.strip():
+            return
         await conn.execute(
             """
             INSERT INTO public.messages (id, conversation_id, role, content, content_type)
