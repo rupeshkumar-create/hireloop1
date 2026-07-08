@@ -571,10 +571,13 @@ class ResumeParserService:
         regex_result = cls.parse_from_text(text)
 
         openrouter_key = getattr(settings, "openrouter_api_key", "") if settings else ""
+        # Prefer primary (Sonnet) with Gemini Flash as the hard-coded last-resort
+        # default so local/dev without env still hits a popular, credit-efficient model.
+        _default_primary = "anthropic/claude-sonnet-4.6"
         model = (
-            getattr(settings, "openrouter_primary_model", "") or "anthropic/claude-opus-4.7"
+            getattr(settings, "openrouter_primary_model", "") or _default_primary
             if settings
-            else "anthropic/claude-opus-4.7"
+            else _default_primary
         )
 
         best: ParsedResume | None = None

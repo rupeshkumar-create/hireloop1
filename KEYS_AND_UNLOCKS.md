@@ -42,8 +42,9 @@ are empty or `change-me`.
 
 ```
 OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_PRIMARY_MODEL=anthropic/claude-opus-4.7      # reasoning / tools
-OPENROUTER_FALLBACK_MODEL=anthropic/claude-haiku-4.5    # fast / voice / summaries
+OPENROUTER_PRIMARY_MODEL=anthropic/claude-sonnet-4.6    # reasoning / tools / career paths
+OPENROUTER_FALLBACK_MODEL=google/gemini-2.5-flash       # resume parse / title expand
+OPENROUTER_FAST_MODEL=google/gemini-2.5-flash           # high-volume utility turns
 MATCH_RATIONALE_ENABLED=false   # ⚙️ on = per-card "why you fit" (extra LLM calls)
 AUTO_INGEST_ON_EMPTY_SEARCH=false  # ⚙️ on = scrape when a search returns nothing (spends Apify)
 ```

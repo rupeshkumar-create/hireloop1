@@ -107,17 +107,23 @@ def test_profile_post_tool_uses_primary_model() -> None:
 
 def test_default_models_are_valid_openrouter_ids() -> None:
     # Regression guard: `claude-haiku-latest` was NOT a valid OpenRouter model ID
-    # and 400'd on every fast-routed turn. Pin the known-good defaults.
+    # and 400'd on every fast-routed turn. Defaults are Sonnet + Gemini Flash —
+    # popular models that do role planning well without burning Opus credits.
     from hireloop_api.config import Settings
 
     s = Settings(_env_file=None, environment="development")  # type: ignore[call-arg]
-    assert s.openrouter_primary_model == "anthropic/claude-opus-4.7"
-    assert s.openrouter_fallback_model == "anthropic/claude-haiku-4.5"
+    assert s.openrouter_primary_model == "anthropic/claude-sonnet-4.6"
+    assert s.openrouter_fallback_model == "google/gemini-2.5-flash"
+    assert s.openrouter_fast_model == "google/gemini-2.5-flash"
     assert s.openrouter_free_model == "openrouter/free"
     assert s.openrouter_chat_max_tokens <= 700
     assert s.openrouter_low_credit_max_tokens <= 256
-    for model in (s.openrouter_primary_model, s.openrouter_fallback_model):
-        assert model.startswith("anthropic/")
+    for model in (
+        s.openrouter_primary_model,
+        s.openrouter_fallback_model,
+        s.openrouter_fast_model,
+    ):
+        assert "/" in model  # provider/model OpenRouter IDs
         assert "latest" not in model  # the one that broke (claude-haiku-latest)
 
 

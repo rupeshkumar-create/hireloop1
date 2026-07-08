@@ -21,6 +21,7 @@ import {
   fetchMatchFeedCount,
   getCachedMatchFeed,
   getCachedMatchFeedCount,
+  MATCH_FEED_INVALIDATE_EVENT,
   MATCH_FEED_PAGE_SIZE,
   MATCH_FEED_RELEVANCE_FLOOR,
   type MatchedJob,
@@ -238,6 +239,28 @@ export function MatchFeed({
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minScore, remoteOnly, seniority]);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      // Resume upload and profile edits invalidate the match feed cache, but
+      // React state must be explicitly reset so the sidebar doesn't get stuck
+      // showing zero matches.
+      setError(null);
+      setJobs([]);
+      setOffset(0);
+      setHasMore(true);
+      setEmptyRefreshCount(0);
+      void fetchMatchFeedCount({ min_score: minScore }, { force: true })
+        .then((total) => setTotalCount(total))
+        .catch(() => setTotalCount(null));
+      void load(true);
+    };
+
+    if (typeof window === "undefined") return;
+    window.addEventListener(MATCH_FEED_INVALIDATE_EVENT, onInvalidate);
+    return () =>
+      window.removeEventListener(MATCH_FEED_INVALIDATE_EVENT, onInvalidate);
+  }, [load]);
 
   useEffect(() => {
     if (loading || error || jobs.length > 0 || emptyRefreshCount >= 5) return;
