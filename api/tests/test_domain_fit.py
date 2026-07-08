@@ -70,6 +70,12 @@ def test_commercial_function_overlap_counts_generic_overlap_still_penalised() ->
     assert generic_title_overlap_penalty("Director of Sales", "Head of Growth") == 1.0
     # A truly generic, NON-commercial single-word overlap is still down-ranked.
     assert generic_title_overlap_penalty("Operations Manager", "Project Manager") < 1.0
+    # Exact / contained Ops Manager titles must NOT be crushed — that left the
+    # Jobs feed empty for centre-ops candidates despite Apify inserts.
+    assert generic_title_overlap_penalty("Operations Manager", "Operations Manager") == 1.0
+    assert (
+        generic_title_overlap_penalty("Senior Operations Manager", "Operations Manager") == 1.0
+    )
 
 
 def test_saas_gtm_vs_accor_hotel_score_is_low() -> None:

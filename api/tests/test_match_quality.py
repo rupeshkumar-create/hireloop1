@@ -83,6 +83,28 @@ def test_very_weak_overall_not_persisted_even_when_aligned() -> None:
     )
 
 
+def test_path_aligned_ops_manager_persists_at_skill_sparse_band() -> None:
+    # Exact Ops Manager title with a junk single-skill profile scores ~0.19–0.21
+    # before the resume skill merge lands; must still persist.
+    assert (
+        should_persist_match(
+            _cand(
+                current_title="Operations Manager",
+                skills=["Brand Partnerships"],
+                target_titles=["Senior Operations Manager – Flex Spaces"],
+            ),
+            _job(
+                title="Operations Manager",
+                company_name="WeWork",
+                description="coworking centre operations",
+                skills_required=["operations management", "vendor management"],
+            ),
+            {"overall": 0.19},
+        )
+        is True
+    )
+
+
 def test_weak_overall_not_persisted_when_off_path() -> None:
     off_path = _job(
         title="Staff Accountant",

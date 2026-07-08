@@ -403,7 +403,21 @@ def _build_profile_updates_from_resume(
             while parts and parts[0].lower() in name_tokens:
                 parts.pop(0)
             v = " ".join(parts).strip()
-        return v or None
+        if not v:
+            return None
+        # Alias metro variants so matches don't score as 0.2 "far city"
+        # (Bangalore Urban vs Bengaluru was wiping Ops Manager matches).
+        aliases = {
+            "bangalore": "Bengaluru",
+            "bangalore urban": "Bengaluru",
+            "bengalooru": "Bengaluru",
+            "gurgaon": "Gurugram",
+            "bombay": "Mumbai",
+            "madras": "Chennai",
+            "calcutta": "Kolkata",
+            "new delhi": "Delhi",
+        }
+        return aliases.get(v.lower(), v)
 
     def _normalize_skills(raw_skills: list[str] | None) -> list[str]:
         from hireloop_api.services.skills import display_skill

@@ -141,6 +141,48 @@ def resolve_location_scope(scope: str | None, *, open_to_relocation: bool = Fals
     return "country" if open_to_relocation else "city"
 
 
+# Resume parsers often emit "Bangalore Urban"; JDs say "Bengaluru". Treat as one city.
+_CITY_ALIASES = {
+    "bangalore": "bengaluru",
+    "bangalore urban": "bengaluru",
+    "bengalooru": "bengaluru",
+    "bombay": "mumbai",
+    "madras": "chennai",
+    "calcutta": "kolkata",
+    "gurgaon": "gurugram",
+    "new delhi": "delhi",
+    "ncr": "delhi",
+}
+
+# Scrapers sometimes put a state name in location_city (no city). Match on state.
+_STATE_AS_CITY = frozenset(
+    {
+        "karnataka",
+        "maharashtra",
+        "tamil nadu",
+        "telangana",
+        "delhi",
+        "ncr",
+        "haryana",
+        "uttar pradesh",
+        "gujarat",
+        "rajasthan",
+        "west bengal",
+        "kerala",
+        "punjab",
+        "madhya pradesh",
+        "andhra pradesh",
+    }
+)
+
+
+def _normalize_city_token(city: str | None) -> str:
+    raw = (city or "").lower().strip()
+    if not raw:
+        return ""
+    return _CITY_ALIASES.get(raw, raw)
+
+
 def _location_score(
     candidate_city: str | None,
     candidate_state: str | None,
@@ -160,8 +202,8 @@ def _location_score(
         return 0.7  # location unknown — neutral
 
     scope = resolve_location_scope(location_scope, open_to_relocation=candidate_open_to_relocation)
-    c_city = (candidate_city or "").lower().strip()
-    j_city = (job_city or "").lower().strip()
+    c_city = _normalize_city_token(candidate_city)
+    j_city = _normalize_city_token(job_city)
     c_state = (candidate_state or "").lower().strip()
     j_state = (job_state or "").lower().strip()
 
@@ -172,6 +214,11 @@ def _location_score(
     # (kept just below 1.0 so a same-city match still edges ahead).
     if scope in ("country", "global"):
         return 0.9
+    # Scrapers often put "Karnataka" in location_city with no city — treat as state.
+    if j_city in _STATE_AS_CITY and c_state and j_city == c_state:
+        return 0.7
+    if c_city in _STATE_AS_CITY and j_state and c_city == j_state:
+        return 0.7
     # Same state ranks well for city/state scope.
     if c_state and j_state and c_state == j_state:
         return 0.7
@@ -303,9 +350,25 @@ def _semantic_lift(base: float, sim: float, lo: float, hi: float, alpha: float) 
     return round(base + (1.0 - base) * _calibrate_cosine(sim, lo, hi) * alpha, 4)
 
 
-def _blend_skills(embedding_sim: float | None, lexical: float | None) -> float:
+def _blend_skills(
+    embedding_sim: float | None,
+    lexical: float | None,
+    *,
+    candidate_skill_count: int = 0,
+    title_aff: float | None = None,
+) -> float:
     """Resolve the skills dimension from whatever signals exist (never a blind 0.5).
-    Lexical coverage is the backbone; calibrated embedding cosine lifts it."""
+    Lexical coverage is the backbone; calibrated embedding cosine lifts it.
+
+    Zero lexical overlap is treated as *missing* skills (neutral 0.5) when:
+      - the profile is skill-sparse (≤2 skills), or
+      - title affinity is strong (≥0.5) and embeddings aren't available yet
+    Otherwise a single junk label / non-overlapping JD phrasing zeroes the
+    40% skills weight and erases exact title matches (Ops Manager → Ops Manager).
+    """
+    if lexical is not None and lexical <= 0.0 and embedding_sim is None:
+        if candidate_skill_count <= 2 or (title_aff or 0.0) >= 0.5:
+            lexical = None
     if embedding_sim is not None and lexical is not None:
         return _semantic_lift(lexical, embedding_sim, _SKILLS_COS_LO, _SKILLS_COS_HI, _SKILLS_LIFT)
     if lexical is not None:
@@ -531,7 +594,12 @@ def _assemble_score(
     ]
     title_aff = _best_title_affinity(job_row["title"], candidate_titles)
 
-    skills_sim = _blend_skills(embed_skills_sim, lexical_skills)
+    skills_sim = _blend_skills(
+        embed_skills_sim,
+        lexical_skills,
+        candidate_skill_count=len([s for s in (cand_row.get("skills") or []) if s]),
+        title_aff=title_aff,
+    )
     profile_sim = _blend_profile(embed_profile_sim, title_aff)
 
     exp_score = _experience_score(cand_row["years_experience"], job_row["seniority"])
