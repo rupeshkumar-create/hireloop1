@@ -119,13 +119,16 @@ export function SignupForm() {
     setLoadingAction("linkedin");
     setErrorMessage("");
     setInfoMessage("");
+    // Always overwrite sticky role so a prior Recruiter visit cannot hijack Job Seeker OAuth.
     persistSignupRole(role);
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "linkedin_oidc",
         options: {
-          redirectTo: oauthCallbackUrl(),
+          // Embed signup_role in redirectTo (same idea as email OTP) so LinkedIn
+          // cannot drop Job Seeker vs Recruiter intent after the OAuth round-trip.
+          redirectTo: oauthCallbackUrl(role),
           scopes: "openid profile email",
         },
       });
@@ -330,6 +333,11 @@ export function SignupForm() {
               onClick={() => {
                 setRole(r);
                 persistSignupRole(r);
+                // Keep the URL in sync so refresh/share and LinkedIn intent stay aligned.
+                const next = new URLSearchParams(searchParams.toString());
+                next.set("role", r);
+                next.set("signup_role", r);
+                router.replace(`/signup?${next.toString()}`, { scroll: false });
               }}
               className={cn(
                 "p-3 text-sm",
@@ -352,7 +360,11 @@ export function SignupForm() {
         onClick={handleLinkedInSignIn}
         className="rounded-lg font-semibold"
       >
-        {loadingAction === "linkedin" ? "Redirecting..." : "Continue with LinkedIn"}
+        {loadingAction === "linkedin"
+          ? "Redirecting..."
+          : role === "candidate"
+            ? "Continue with LinkedIn as Job Seeker"
+            : "Continue with LinkedIn as Recruiter"}
       </Button>
 
       <div className="relative">

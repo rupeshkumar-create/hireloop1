@@ -1,11 +1,17 @@
-import { SIGNUP_ROLE_COOKIE, SIGNUP_ROLE_QUERY, parseSignupRole, type SignupRole } from "@/lib/auth/constants";
+import {
+  SIGNUP_ROLE_COOKIE,
+  SIGNUP_ROLE_MAX_AGE_SEC,
+  SIGNUP_ROLE_QUERY,
+  parseSignupRole,
+  type SignupRole,
+} from "@/lib/auth/constants";
 
 const SIGNUP_ROLE_SESSION_KEY = "hireloop_signup_role";
 
 /** Persist role across OAuth / email round-trips (cookie + sessionStorage). */
 export function persistSignupRole(role: SignupRole): void {
   if (typeof document === "undefined") return;
-  document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=3600; SameSite=Lax`;
+  document.cookie = `${SIGNUP_ROLE_COOKIE}=${role}; path=/; max-age=${SIGNUP_ROLE_MAX_AGE_SEC}; SameSite=Lax`;
   try {
     sessionStorage.setItem(SIGNUP_ROLE_SESSION_KEY, role);
   } catch {
@@ -13,12 +19,20 @@ export function persistSignupRole(role: SignupRole): void {
   }
 }
 
+/**
+ * Prefer the URL query (survives LinkedIn / email redirects), then session, then cookie.
+ * Defaults to candidate so a stale recruiter cookie cannot hijack Job Seeker OAuth.
+ */
 export function readSignupRole(searchParams?: URLSearchParams | null): SignupRole {
+  const fromParams =
+    searchParams?.get(SIGNUP_ROLE_QUERY) ?? searchParams?.get("role") ?? null;
+  if (fromParams) return parseSignupRole(fromParams);
+
   if (typeof window !== "undefined") {
-    for (const key of [SIGNUP_ROLE_QUERY, "role"] as const) {
-      const fromQuery = searchParams?.get(key);
-      if (fromQuery) return parseSignupRole(fromQuery);
-    }
+    const urlParams = new URLSearchParams(window.location.search);
+    const fromWindow =
+      urlParams.get(SIGNUP_ROLE_QUERY) ?? urlParams.get("role") ?? null;
+    if (fromWindow) return parseSignupRole(fromWindow);
 
     try {
       const fromSession = sessionStorage.getItem(SIGNUP_ROLE_SESSION_KEY);
@@ -34,9 +48,7 @@ export function readSignupRole(searchParams?: URLSearchParams | null): SignupRol
     if (fromCookie) return parseSignupRole(fromCookie);
   }
 
-  const fromQuery =
-    searchParams?.get(SIGNUP_ROLE_QUERY) ?? searchParams?.get("role");
-  return parseSignupRole(fromQuery ?? undefined);
+  return "candidate";
 }
 
 export function clearSignupRole(): void {
@@ -55,18 +67,23 @@ export function signupUrl(
   params?: { error?: string; message?: string },
 ): string {
   const qs = new URLSearchParams();
-  if (role === "recruiter") {
-    qs.set("role", "recruiter");
-    qs.set(SIGNUP_ROLE_QUERY, "recruiter");
-  }
+  qs.set("role", role);
+  qs.set(SIGNUP_ROLE_QUERY, role);
   if (params?.error) qs.set("error", params.error);
   if (params?.message) qs.set("message", params.message);
-  const tail = qs.toString();
-  return tail ? `/signup?${tail}` : "/signup";
+  return `/signup?${qs.toString()}`;
 }
 
-/** OAuth redirect target — no query string (must match Supabase allow-list exactly). */
-export function oauthCallbackUrl(): string {
-  if (typeof window === "undefined") return "/auth/callback";
-  return `${window.location.origin}/auth/callback`;
+/**
+ * LinkedIn OAuth redirect — always embeds signup_role so Job Seeker vs Recruiter
+ * survives the LinkedIn round-trip (parity with email OTP emailRedirectTo).
+ * Supabase redirect allow-list must include `/auth/callback` (exact or `/**`).
+ */
+export function oauthCallbackUrl(role: SignupRole): string {
+  if (typeof window === "undefined") {
+    return `/auth/callback?${SIGNUP_ROLE_QUERY}=${role}`;
+  }
+  const url = new URL("/auth/callback", window.location.origin);
+  url.searchParams.set(SIGNUP_ROLE_QUERY, role);
+  return url.toString();
 }

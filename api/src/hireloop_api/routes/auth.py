@@ -342,7 +342,8 @@ async def bootstrap_user(
             detail="Could not create your account. Please try signing in again.",
         )
 
-    # Never downgrade an existing recruiter when the signup tab was "Job Seeker".
+    # Honor the Job Seeker vs Recruiter intent from this login (signup tab /
+    # LinkedIn signup_role / email redirect). Dual-role switch stays on POST /auth/role.
     has_recruiter = await db.fetchval(
         """
         SELECT 1 FROM public.recruiters

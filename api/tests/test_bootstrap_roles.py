@@ -3,10 +3,13 @@ from hireloop_api.services.bootstrap_roles import can_switch_roles, resolve_boot
 
 def test_recruiter_tab_always_recruiter() -> None:
     assert resolve_bootstrap_role("recruiter", has_recruiter=False) == "recruiter"
+    assert resolve_bootstrap_role("recruiter", has_recruiter=True) == "recruiter"
 
 
-def test_existing_recruiter_not_downgraded() -> None:
-    assert resolve_bootstrap_role("candidate", has_recruiter=True) == "recruiter"
+def test_candidate_tab_honored_even_if_recruiter_row_exists() -> None:
+    # Explicit Job Seeker LinkedIn / email intent must not be sticky-overridden
+    # by a prior recruiter profile created from a stale signup cookie.
+    assert resolve_bootstrap_role("candidate", has_recruiter=True) == "candidate"
 
 
 def test_new_candidate_stays_candidate() -> None:

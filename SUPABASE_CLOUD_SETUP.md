@@ -46,7 +46,9 @@ psql "<postgres-uri>" -f scripts/seed_dev.sql
 | Setting | Local dev | Production (custom domain) |
 |---------|-----------|---------------------------|
 | Site URL | `http://localhost:3001` | `https://www.hireschema.com` |
-| Redirect URLs | `http://localhost:3001/auth/callback`, `…/auth/confirm`, `http://localhost:3001/**` | `https://www.hireschema.com/auth/callback`, `…/auth/confirm`, `…/**` |
+| Redirect URLs | `http://localhost:3001/auth/callback`, `…/auth/callback?*`, `…/auth/confirm`, `http://localhost:3001/**` | `https://www.hireschema.com/auth/callback`, `…/auth/callback?*`, `…/auth/confirm`, `…/**` |
+
+LinkedIn OAuth always redirects to `/auth/callback?signup_role=candidate|recruiter` so Job Seeker vs Recruiter survive the LinkedIn round-trip. Keep a wildcard (`/**` or `/auth/callback?*`) in the Redirect URLs allow-list — an exact `/auth/callback` alone can reject the query string.
 
 Also keep Vercel preview URLs if you still deploy previews:
 
