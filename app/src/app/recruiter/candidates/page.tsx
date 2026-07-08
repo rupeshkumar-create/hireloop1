@@ -194,6 +194,20 @@ export default function RecruiterCandidatesPage() {
     return () => window.clearTimeout(handle);
   }, [query, roleFilter, load]);
 
+  // Keep recruiter views fresh as candidates update their profiles.
+  useEffect(() => {
+    const onFocus = () => void load(query, roleFilter);
+    window.addEventListener("focus", onFocus);
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void load(query, roleFilter);
+    }, 30_000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(id);
+    };
+  }, [load, query, roleFilter]);
+
   return (
     <div className="px-4 md:px-6 py-6 space-y-6 max-w-3xl mx-auto">
       <RecruiterBreadcrumbs

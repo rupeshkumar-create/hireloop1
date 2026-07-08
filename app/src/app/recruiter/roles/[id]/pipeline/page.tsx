@@ -67,6 +67,20 @@ export default function PipelinePage() {
     void load();
   }, [load]);
 
+  // Keep pipeline cards fresh when candidates update their profiles.
+  useEffect(() => {
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void load();
+    }, 30_000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(id);
+    };
+  }, [load]);
+
   async function advance(pipelineId: string, stage: string) {
     setMoving(pipelineId);
     try {

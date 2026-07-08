@@ -952,6 +952,12 @@ async def nitya_chat_message(
     reply = ""
     published = await is_role_published(db, role_id=role_id)
 
+    if not (getattr(settings, "openrouter_api_key", "") or ""):
+        raise HTTPException(
+            status_code=503,
+            detail="Nitya chat is temporarily unavailable (LLM not configured).",
+        )
+
     if body.bootstrap and history:
         candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
         reply = next(
@@ -965,31 +971,46 @@ async def nitya_chat_message(
     elif body.bootstrap and brief_complete:
         candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
         if not candidates:
-            sr = await search_candidates_for_role(
-                db,
-                role_id=role_id,
-                limit=25,
-                public_profiles=True,
-                openrouter_api_key=settings.openrouter_api_key,
-            )
-            candidates = sr.candidates
-            search_meta = {
-                "diagnostic": sr.diagnostic,
-                "message": sr.diagnostic_message,
-                "published": sr.published,
-            }
-            if candidates:
-                await db.execute(
-                    """
-                    INSERT INTO public.agent_actions
-                      (agent, user_id, session_id, action_type, payload, result)
-                    VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb,
-                            $3::jsonb)
-                    """,
-                    current_user["id"],
-                    conv_id,
-                    json.dumps({"count": len(candidates)}),
+            try:
+                sr = await search_candidates_for_role(
+                    db,
+                    role_id=role_id,
+                    limit=25,
+                    public_profiles=True,
+                    openrouter_api_key=settings.openrouter_api_key,
                 )
+                candidates = sr.candidates
+                search_meta = {
+                    "diagnostic": sr.diagnostic,
+                    "message": sr.diagnostic_message,
+                    "published": sr.published,
+                }
+                if candidates:
+                    await db.execute(
+                        """
+                        INSERT INTO public.agent_actions
+                          (agent, user_id, session_id, action_type, payload, result)
+                        VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb,
+                                $3::jsonb)
+                        """,
+                        current_user["id"],
+                        conv_id,
+                        json.dumps({"count": len(candidates)}),
+                    )
+            except Exception as exc:
+                logger.exception(
+                    "nitya_candidate_search_failed_bootstrap",
+                    role_id=str(role_id),
+                    error=str(exc)[:300],
+                )
+                search_meta = {
+                    "diagnostic": "search_failed",
+                    "message": (
+                        "Your hiring brief is ready, but candidate search hit a snag. "
+                        "Try again in a moment or ask me to refresh matches."
+                    ),
+                    "published": published,
+                }
         if search_meta and search_meta.get("diagnostic") == "no_matches":
             reply = search_meta.get("message") or (
                 "Your hiring brief is ready, but I couldn't find strong matches yet. "
@@ -1026,17 +1047,24 @@ async def nitya_chat_message(
                 "X-Title": "Hireschema - Nitya Recruiter Chat",
             },
         )
-        reply, brief, chips = await run_nitya_turn(
-            db,
-            llm=llm,
-            user_id=current_user["id"],
-            conversation_id=conv_id,
-            user_message=user_message,
-            history=history,
-            role_context=_format_role_context(role_dict),
-            role=role_dict,
-            recruiter_turn_count=0,
-        )
+        try:
+            reply, brief, chips = await run_nitya_turn(
+                db,
+                llm=llm,
+                user_id=current_user["id"],
+                conversation_id=conv_id,
+                user_message=user_message,
+                history=history,
+                role_context=_format_role_context(role_dict),
+                role=role_dict,
+                recruiter_turn_count=0,
+            )
+        except Exception as exc:
+            logger.exception("nitya_chat_bootstrap_failed", role_id=str(role_id), error=str(exc)[:300])
+            raise HTTPException(
+                status_code=502,
+                detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+            ) from exc
         await db.execute(
             """
             INSERT INTO public.messages (conversation_id, role, content, content_type)
@@ -1077,31 +1105,46 @@ async def nitya_chat_message(
         if brief_complete:
             ran_search = False
             if wants_candidate_search(content):
-                sr = await search_candidates_for_role(
-                    db,
-                    role_id=role_id,
-                    limit=25,
-                    public_profiles=True,
-                    openrouter_api_key=settings.openrouter_api_key,
-                )
-                candidates = sr.candidates
-                search_meta = {
-                    "diagnostic": sr.diagnostic,
-                    "message": sr.diagnostic_message,
-                    "published": sr.published,
-                }
-                ran_search = True
-                await db.execute(
-                    """
-                    INSERT INTO public.agent_actions
-                      (agent, user_id, session_id, action_type, payload, result)
-                    VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb,
-                            $3::jsonb)
-                    """,
-                    current_user["id"],
-                    conv_id,
-                    json.dumps({"count": len(candidates)}),
-                )
+                try:
+                    sr = await search_candidates_for_role(
+                        db,
+                        role_id=role_id,
+                        limit=25,
+                        public_profiles=True,
+                        openrouter_api_key=settings.openrouter_api_key,
+                    )
+                    candidates = sr.candidates
+                    search_meta = {
+                        "diagnostic": sr.diagnostic,
+                        "message": sr.diagnostic_message,
+                        "published": sr.published,
+                    }
+                    ran_search = True
+                    await db.execute(
+                        """
+                        INSERT INTO public.agent_actions
+                          (agent, user_id, session_id, action_type, payload, result)
+                        VALUES ('nitya', $1::uuid, $2::uuid, 'candidate_search', '{}'::jsonb,
+                                $3::jsonb)
+                        """,
+                        current_user["id"],
+                        conv_id,
+                        json.dumps({"count": len(candidates)}),
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "nitya_candidate_search_failed_chat",
+                        role_id=str(role_id),
+                        error=str(exc)[:300],
+                    )
+                    search_meta = {
+                        "diagnostic": "search_failed",
+                        "message": (
+                            "Candidate search hit a snag. Try again in a moment or publish the role."
+                        ),
+                        "published": published,
+                    }
+                    ran_search = True
             elif wants_shortlist(content):
                 n = shortlist_count_from_text(content)
                 moved = await shortlist_top_candidates(db, role_id=role_id, count=n)
@@ -1121,16 +1164,23 @@ async def nitya_chat_message(
             else:
                 candidates = await load_pipeline_candidates_for_chat(db, role_id=role_id)
 
-            reply, chips = await run_nitya_post_brief_turn(
-                db,
-                llm=llm,
-                user_id=current_user["id"],
-                conversation_id=conv_id,
-                user_message=user_message,
-                history=history,
-                role_context=_format_role_context(role_dict),
-                candidate_count=len(candidates),
-            )
+            try:
+                reply, chips = await run_nitya_post_brief_turn(
+                    db,
+                    llm=llm,
+                    user_id=current_user["id"],
+                    conversation_id=conv_id,
+                    user_message=user_message,
+                    history=history,
+                    role_context=_format_role_context(role_dict),
+                    candidate_count=len(candidates),
+                )
+            except Exception as exc:
+                logger.exception("nitya_post_brief_chat_failed", role_id=str(role_id), error=str(exc)[:300])
+                raise HTTPException(
+                    status_code=502,
+                    detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+                ) from exc
             if ran_search and candidates:
                 reply = (
                     f"Refreshed your matches — {len(candidates)} candidates in the pipeline. "
@@ -1140,6 +1190,8 @@ async def nitya_chat_message(
                 reply = search_meta.get("message") or (
                     "No strong matches yet. Try publishing the role or relaxing must-haves."
                 )
+            elif ran_search and search_meta and search_meta.get("diagnostic") == "search_failed":
+                reply = search_meta.get("message") or reply
             elif wants_shortlist(content):
                 reply = (
                     "Shortlisted your top match"
@@ -1147,17 +1199,24 @@ async def nitya_chat_message(
                     + ". Request an intro when you're ready."
                 )
         else:
-            reply, brief, chips = await run_nitya_turn(
-                db,
-                llm=llm,
-                user_id=current_user["id"],
-                conversation_id=conv_id,
-                user_message=user_message,
-                history=history,
-                role_context=_format_role_context(role_dict),
-                role=role_dict,
-                recruiter_turn_count=recruiter_turn_count,
-            )
+            try:
+                reply, brief, chips = await run_nitya_turn(
+                    db,
+                    llm=llm,
+                    user_id=current_user["id"],
+                    conversation_id=conv_id,
+                    user_message=user_message,
+                    history=history,
+                    role_context=_format_role_context(role_dict),
+                    role=role_dict,
+                    recruiter_turn_count=recruiter_turn_count,
+                )
+            except Exception as exc:
+                logger.exception("nitya_chat_turn_failed", role_id=str(role_id), error=str(exc)[:300])
+                raise HTTPException(
+                    status_code=502,
+                    detail="Nitya chat is temporarily unavailable. Please try again in ~30 seconds.",
+                ) from exc
 
         await db.execute(
             """
