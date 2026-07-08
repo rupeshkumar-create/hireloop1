@@ -12,7 +12,9 @@ import pytest
 from hireloop_api.config import Settings
 from hireloop_api.services import background_jobs as bj
 from hireloop_api.services.background_jobs import (
+    _INTERACTIVE_JOB_KINDS,
     AARYA_AUTO_INGEST,
+    APPLICATION_KIT,
     claim_next_job,
     enqueue_job,
     mark_job_failed,
@@ -57,9 +59,32 @@ class _JobDB:
                 for j in self.jobs.values()
                 if j["status"] == "pending" and j["run_after"] <= datetime.now(UTC)
             ]
+            # WHERE filters live before ORDER BY; $2 is always the interactive priority list.
+            where_sql = query.split("ORDER BY", 1)[0]
+            kinds: set[str] | None = None
+            exclude: set[str] | None = None
+            if "kind = ANY(" in where_sql:
+                # kinds filter is the first *extra* bind after worker + interactive list.
+                kinds = {str(k) for k in (args[2] or [])}  # type: ignore[arg-type]
+            if "kind <> ALL(" in where_sql:
+                excl_idx = 3 if "kind = ANY(" in where_sql else 2
+                exclude = {str(k) for k in (args[excl_idx] or [])}  # type: ignore[arg-type]
+            if kinds is not None:
+                pending = [j for j in pending if j["kind"] in kinds]
+            if exclude is not None:
+                pending = [j for j in pending if j["kind"] not in exclude]
             if not pending:
                 return None
-            job = sorted(pending, key=lambda j: j["run_after"])[0]
+            interactive = {str(k) for k in (args[1] or [])} if len(args) >= 2 else set()  # type: ignore[arg-type]
+
+            def _prio(j: dict[str, Any]) -> tuple[int, datetime, Any]:
+                return (
+                    0 if j["kind"] in interactive else 1,
+                    j["run_after"],
+                    j["id"],
+                )
+
+            job = sorted(pending, key=_prio)[0]
             job["status"] = "running"
             job["attempts"] += 1
             return {
@@ -157,6 +182,59 @@ async def test_mark_failed_retries_then_dead() -> None:
         max_attempts=2,
     )
     assert db.jobs[job_id]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_claim_prefers_application_kit_over_older_ingest() -> None:
+    """Interactive kits must jump ahead of earlier Apify ingest jobs."""
+    db = _JobDB()
+    earlier = datetime.now(UTC)
+    await enqueue_job(
+        db,  # type: ignore[arg-type]
+        kind=AARYA_AUTO_INGEST,
+        payload={"candidate_id": "heavy"},
+        run_after=earlier,
+    )
+    kit_id = await enqueue_job(
+        db,  # type: ignore[arg-type]
+        kind=APPLICATION_KIT,
+        payload={"candidate_id": "ui", "job_id": "j1"},
+        run_after=earlier,
+    )
+    claimed = await claim_next_job(db, worker_id="w1")  # type: ignore[arg-type]
+    assert claimed is not None
+    assert claimed["id"] == str(kit_id)
+    assert claimed["kind"] == APPLICATION_KIT
+
+
+@pytest.mark.asyncio
+async def test_claim_interactive_lane_skips_heavy_kinds() -> None:
+    db = _JobDB()
+    await enqueue_job(
+        db,  # type: ignore[arg-type]
+        kind=AARYA_AUTO_INGEST,
+        payload={"candidate_id": "heavy"},
+    )
+    kit_id = await enqueue_job(
+        db,  # type: ignore[arg-type]
+        kind=APPLICATION_KIT,
+        payload={"candidate_id": "ui", "job_id": "j1"},
+    )
+    claimed = await claim_next_job(
+        db,  # type: ignore[arg-type]
+        worker_id="w-ui",
+        kinds=_INTERACTIVE_JOB_KINDS,
+    )
+    assert claimed is not None
+    assert claimed["id"] == str(kit_id)
+
+    heavy = await claim_next_job(
+        db,  # type: ignore[arg-type]
+        worker_id="w-heavy",
+        exclude_kinds=_INTERACTIVE_JOB_KINDS,
+    )
+    assert heavy is not None
+    assert heavy["kind"] == AARYA_AUTO_INGEST
 
 
 @pytest.mark.asyncio

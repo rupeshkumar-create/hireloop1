@@ -55,7 +55,7 @@ type ApplicationKitBackgroundJob = {
   completed_at: string | null;
 };
 
-const APPLICATION_KIT_POLL_ATTEMPTS = 45;
+const APPLICATION_KIT_POLL_ATTEMPTS = 90;
 const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
 
 /**

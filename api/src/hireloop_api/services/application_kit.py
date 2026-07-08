@@ -536,8 +536,12 @@ async def _prepare_application_kit_for_candidate_row(
         ON CONFLICT (candidate_id, job_id) DO UPDATE SET
           cover_letter = EXCLUDED.cover_letter,
           interview_prep = EXCLUDED.interview_prep,
-          tailored_resume_id = EXCLUDED.tailored_resume_id,
-          mock_interview_id = EXCLUDED.mock_interview_id,
+          tailored_resume_id = COALESCE(
+            EXCLUDED.tailored_resume_id, public.job_application_kits.tailored_resume_id
+          ),
+          mock_interview_id = COALESCE(
+            EXCLUDED.mock_interview_id, public.job_application_kits.mock_interview_id
+          ),
           updated_at = NOW()
         RETURNING id
         """,
