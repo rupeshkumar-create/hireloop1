@@ -177,7 +177,13 @@ export function ProfileBoosters({
               <FileText className="h-4 w-4 text-ink-500" strokeWidth={1.5} />
               Upload resume
             </div>
-            <ResumeUpload autoApply onDone={() => onProfileUpdated?.()} />
+            <ResumeUpload
+              autoApply
+              onDone={() => {
+                onProfileUpdated?.();
+                window.location.replace("/dashboard?kickoff=career");
+              }}
+            />
           </div>
         )}
 

@@ -427,6 +427,7 @@ export function ProfilePanel({
                   autoApply
                   currentFileName={profile?.resume_filename ?? null}
                   onDone={async (_id, parsed) => {
+                    const wasFirstResume = !profile?.resume_filename;
                     try {
                       hydrate(await fetchMyProfile());
                       setProfileError("");
@@ -439,6 +440,11 @@ export function ProfilePanel({
                         ? `Profile updated from your CV — ${count} skills detected`
                         : "Profile updated from your CV",
                     );
+                    // If this was their first resume, immediately run the 3-step kickoff
+                    // (analysis → pick path → review → job search) on the dashboard.
+                    if (wasFirstResume) {
+                      window.location.replace("/dashboard?kickoff=career");
+                    }
                   }}
                 />
               </CardBody>

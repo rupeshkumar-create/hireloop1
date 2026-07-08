@@ -1252,24 +1252,44 @@ export function ChatInterface({
           // best-effort — don't block the chat message
         }
 
-        // ── Build summary for Aarya ────────────────────────────────────────
+        setIsUploading(false);
+        // After resume upload, always run the 3-step kickoff unless the user has
+        // already completed it for this account.
+        if (!hasCareerKickoffDone(authUserId ?? undefined)) {
+          clearCareerKickoffProgress();
+          setKickoffActive(true);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant" as const,
+              content:
+                "Resume received. Let’s do a quick 3-step setup: (1) review what I extracted, (2) pick your preferred career path, (3) confirm — then I’ll start pulling jobs.",
+              content_type: "text" as const,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        // If kickoff is already done, continue with normal chat.
         const p = data.parsed;
         const parts: string[] = [];
-        if (p.full_name)         parts.push(`Name: ${p.full_name}`);
-        if (p.current_title)     parts.push(`Role: ${p.current_title}`);
-        if (p.current_company)   parts.push(`Company: ${p.current_company}`);
-        if (p.years_experience)  parts.push(`${p.years_experience} years of experience`);
+        if (p.full_name) parts.push(`Name: ${p.full_name}`);
+        if (p.current_title) parts.push(`Role: ${p.current_title}`);
+        if (p.current_company) parts.push(`Company: ${p.current_company}`);
+        if (p.years_experience) parts.push(`${p.years_experience} years of experience`);
         if (p.skills?.length) {
           const top = p.skills.slice(0, 8).join(", ");
           const extra = p.skills.length > 8 ? ` (+${p.skills.length - 8} more)` : "";
           parts.push(`Skills: ${top}${extra}`);
         }
 
-        const summary = parts.length > 0
-          ? `I just uploaded my resume (${file.name}). Here's what was extracted and applied to my profile: ${parts.join("; ")}. What should I do next?`
-          : `I just uploaded my resume (${file.name}). What should I do next?`;
+        const summary =
+          parts.length > 0
+            ? `I just uploaded my resume (${file.name}). Here's what was extracted and applied to my profile: ${parts.join("; ")}. What should I do next?`
+            : `I just uploaded my resume (${file.name}). What should I do next?`;
 
-        setIsUploading(false);
         await sendMessage(summary);
 
       } catch (err) {
@@ -1289,7 +1309,7 @@ export function ChatInterface({
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [isUploading, isStreaming, sendMessage]
+    [authUserId, isUploading, isStreaming, sendMessage]
   );
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
