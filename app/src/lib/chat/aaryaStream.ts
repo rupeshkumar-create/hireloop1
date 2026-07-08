@@ -95,7 +95,11 @@ export class StaleSessionError extends Error {
 }
 
 function parseApiErrorDetail(res: Response, body: unknown): string {
-  const detail = (body as { detail?: unknown }).detail;
+  const payload = body as {
+    detail?: unknown;
+    error?: { type?: string; message?: string };
+  };
+  const detail = payload.detail;
   if (typeof detail === "string" && detail.trim()) {
     return detail;
   }
@@ -109,6 +113,13 @@ function parseApiErrorDetail(res: Response, body: unknown): string {
       })
       .filter(Boolean);
     if (parts.length) return parts.join("; ");
+  }
+  const nested = payload.error?.message;
+  if (typeof nested === "string" && nested.trim()) {
+    return nested;
+  }
+  if (res.status === 429) {
+    return "Aarya is busy right now — wait a few seconds and try again.";
   }
   if (res.status === 404) {
     return "Conversation not found — starting a fresh chat.";
@@ -127,10 +138,17 @@ export function sanitizeChatError(message: string): string {
     lower.includes("{'error'") ||
     lower.includes('"error"') ||
     lower.includes("api key") ||
-    lower.includes("unauthorized") ||
-    lower.includes("rate limit")
+    lower.includes("unauthorized")
   ) {
     return "Failed.";
+  }
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429") ||
+    lower.includes("busy right now")
+  ) {
+    return "Aarya is busy right now — wait a few seconds and try again.";
   }
   return message || "Failed.";
 }
