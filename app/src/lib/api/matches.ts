@@ -38,6 +38,9 @@ export type MatchedJob = {
   ctc_score: number | null;
   explanation: string | null;
   computed_at: string;
+  // Retention: job is new to this candidate (not previously surfaced).
+  is_new_for_you?: boolean;
+  first_seen_at?: string | null;
   // Presentation layer — confidence badge from the API ranking layer.
   tier?: string | null;
   tier_label?: string | null;

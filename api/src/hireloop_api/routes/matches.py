@@ -386,6 +386,9 @@ class MatchedJob(BaseModel):
     # None for pool jobs not yet scored for this candidate (LEFT JOIN) — a
     # required str here turned that into a response-validation 500.
     computed_at: str | None = None
+    # Retention: jobs the candidate hasn't been shown before.
+    is_new_for_you: bool = False
+    first_seen_at: str | None = None
     # Skill detail: which required skills the candidate has vs is missing.
     skills_matched: list[str] = []
     skills_gap: list[str] = []
@@ -439,6 +442,7 @@ async def get_match_feed(
                c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
                c.remote_preference, c.open_to_relocation, c.location_scope,
                c.aarya_state, c.market,
+               c.last_visit_at,
                (
                    SELECT cp.target_titles
                    FROM public.career_paths cp
@@ -678,6 +682,49 @@ async def get_match_feed(
     # canonical taxonomy as scoring) so the feed shows "N of M skills" at a glance.
     _annotate_skill_match(result, candidate.get("skills"))
     attach_tiers(result)
+
+    # Retention: mark which jobs are new for this candidate and persist impressions.
+    # Best-effort: the feed should never fail due to analytics/retention writes.
+    try:
+        job_ids = [str(item.get("job_id") or "") for item in result]
+        job_uuids = [uuid.UUID(jid) for jid in job_ids if jid]
+        seen_map: dict[str, object] = {}
+        if job_uuids:
+            seen_rows = await db.fetch(
+                """
+                SELECT job_id::text, first_seen_at
+                FROM public.candidate_job_impressions
+                WHERE candidate_id = $1::uuid
+                  AND job_id = ANY($2::uuid[])
+                """,
+                candidate["id"],
+                job_uuids,
+            )
+            seen_map = {str(r["job_id"]): r["first_seen_at"] for r in seen_rows}
+        for item in result:
+            jid = str(item.get("job_id") or "")
+            first_seen = seen_map.get(jid)
+            item["is_new_for_you"] = jid not in seen_map
+            item["first_seen_at"] = (
+                first_seen.isoformat() if hasattr(first_seen, "isoformat") else None
+            )
+        if job_uuids:
+            await db.execute(
+                """
+                INSERT INTO public.candidate_job_impressions (candidate_id, job_id, source)
+                SELECT $1::uuid, jid, 'matches'
+                FROM unnest($2::uuid[]) AS jid
+                ON CONFLICT (candidate_id, job_id) DO UPDATE
+                SET last_seen_at = NOW(),
+                    seen_count = public.candidate_job_impressions.seen_count + 1,
+                    source = EXCLUDED.source,
+                    updated_at = NOW()
+                """,
+                candidate["id"],
+                job_uuids,
+            )
+    except Exception as exc:
+        logger.debug("candidate_job_impressions_upsert_failed", error=str(exc)[:200])
     return result
 
 
@@ -1004,6 +1051,7 @@ async def _fetch_cached_match_rows(
             ms.llm_rationale,
             ms.llm_rationale_at,
             ms.computed_at,
+            cji.first_seen_at,
             -- Action-state: surface what the candidate (or Aarya) has already done
             -- for this role, so an acted-on match no longer looks untouched.
             EXISTS (
@@ -1023,6 +1071,8 @@ async def _fetch_cached_match_rows(
         FROM public.match_scores ms
         JOIN public.jobs j ON j.id = ms.job_id
         LEFT JOIN public.companies co ON co.id = j.company_id
+        LEFT JOIN public.candidate_job_impressions cji
+          ON cji.candidate_id = ms.candidate_id AND cji.job_id = ms.job_id
         WHERE ms.candidate_id = $1::uuid
           AND ms.overall_score >= $2
           AND j.is_active = TRUE
@@ -1032,6 +1082,7 @@ async def _fetch_cached_match_rows(
           {remote_clause}
           {company_exclude}
         ORDER BY
+            (cji.first_seen_at IS NULL) DESC,
             COALESCE(j.scraped_at, j.created_at) DESC NULLS LAST,
             ms.overall_score * (
                 -- Freshness decay (#27), applied at serve time so the stored score
@@ -1110,6 +1161,7 @@ def _serialize_cached_match_row(
     current_quality: dict | None = None,
 ) -> dict:
     data = dict(row)
+    first_seen = data.get("first_seen_at")
     # A cached LLM rationale is usable only if it was generated AFTER the latest
     # score (otherwise the row was re-scored and the rationale may be stale).
     llm = data.pop("llm_rationale", None)
@@ -1131,6 +1183,8 @@ def _serialize_cached_match_row(
         "job_id": str(row["job_id"]),
         "skills_required": row["skills_required"] or [],
         "computed_at": computed_at.isoformat() if computed_at else None,
+        "first_seen_at": first_seen.isoformat() if hasattr(first_seen, "isoformat") else None,
+        "is_new_for_you": first_seen is None,
         "action_state": action_state,
         "action_label": action_label,
         # Internal flag (stripped before the response): True when a fresh LLM

@@ -1073,6 +1073,29 @@ async def job_search(
         duration_ms,
     )
 
+    # Retention: mark jobs surfaced via chat as "seen".
+    # Best-effort: never fail the tool due to retention writes.
+    if candidate is not None and job_cards:
+        try:
+            job_uuids = [uuid.UUID(str(j.get("job_id") or j.get("id"))) for j in job_cards if (j.get("job_id") or j.get("id"))]
+            if job_uuids:
+                await db.execute(
+                    """
+                    INSERT INTO public.candidate_job_impressions (candidate_id, job_id, source)
+                    SELECT $1::uuid, jid, 'chat'
+                    FROM unnest($2::uuid[]) AS jid
+                    ON CONFLICT (candidate_id, job_id) DO UPDATE
+                    SET last_seen_at = NOW(),
+                        seen_count = public.candidate_job_impressions.seen_count + 1,
+                        source = EXCLUDED.source,
+                        updated_at = NOW()
+                    """,
+                    candidate["id"],
+                    job_uuids,
+                )
+        except Exception as exc:
+            logger.debug("chat_job_impressions_upsert_failed", error=str(exc)[:200])
+
     # When nothing matched, warm the index so the candidate's NEXT search has
     # live openings. Career-path users get a path-scoped ingest regardless of
     # the old generic auto-ingest flag; generic fallbacks still respect the flag

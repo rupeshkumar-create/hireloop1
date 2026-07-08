@@ -300,6 +300,24 @@ async def get_access_status(
     }
 
 
+@router.post("/visit")
+async def mark_visit(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Track candidate returns so the UI can surface fresh jobs."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET last_visit_at = NOW(), updated_at = NOW()
+        WHERE user_id = $1::uuid AND deleted_at IS NULL
+        """,
+        user_id,
+    )
+    return {"ok": True}
+
+
 @router.patch("/market")
 async def update_my_market(
     body: MarketUpdateRequest,

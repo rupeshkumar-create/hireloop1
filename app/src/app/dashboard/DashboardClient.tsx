@@ -18,6 +18,7 @@ import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
 import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
+import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { cn } from "@/lib/utils";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
@@ -102,6 +103,11 @@ export function DashboardClient({
   // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
   // never has to click "Find jobs" to see them there.
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
+
+  // Retention: update last visit so Matches can label "New for you".
+  useEffect(() => {
+    void apiAuthFetch("/api/v1/me/visit", { method: "POST" }).catch(() => undefined);
+  }, []);
 
   // Allow deep-linking into an intro request from places like /jobs/[id].
   // Example: /dashboard?intro_job_id=...&intro_id=...&intro_title=...&intro_company=...

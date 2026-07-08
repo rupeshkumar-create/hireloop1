@@ -78,6 +78,13 @@ const MORE_SECTION = { key: "_more", label: "More matches", description: "" };
 
 type FeedSection = { key: string; label: string; description: string; jobs: MatchedJob[] };
 
+const NEW_SECTION: FeedSection = {
+  key: "_new_for_you",
+  label: "New for you",
+  description: "Fresh roles you haven’t seen before.",
+  jobs: [],
+};
+
 /** Group jobs into ordered confidence-tier sections; untiered (load-more) last. */
 function groupByTier(jobs: MatchedJob[]): FeedSection[] {
   const buckets = new Map<string, MatchedJob[]>();
@@ -95,6 +102,16 @@ function groupByTier(jobs: MatchedJob[]): FeedSection[] {
   const more = buckets.get(MORE_SECTION.key);
   if (more?.length) sections.push({ ...MORE_SECTION, jobs: more });
   return sections;
+}
+
+function groupWithNewSection(jobs: MatchedJob[], options: { enabled: boolean }): FeedSection[] {
+  if (!options.enabled) return groupByTier(jobs);
+  const fresh = jobs.filter((j) => Boolean(j.is_new_for_you));
+  const rest = jobs.filter((j) => !j.is_new_for_you);
+  const out: FeedSection[] = [];
+  if (fresh.length) out.push({ ...NEW_SECTION, jobs: fresh });
+  out.push(...groupByTier(rest));
+  return out;
 }
 
 function applyLocalFilters(
@@ -284,7 +301,7 @@ export function MatchFeed({
     { remoteOnly, seniority },
   );
   const visibleCount = displayJobs.length;
-  const sections = groupByTier(displayJobs);
+  const sections = groupWithNewSection(displayJobs, { enabled: !compact && offset <= pageSize });
   // Hide headers when the only section is the untiered "More" bucket (e.g. the
   // backend didn't curate this page) — a lone "More matches" header reads oddly.
   const showHeaders =

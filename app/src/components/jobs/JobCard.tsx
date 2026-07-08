@@ -270,6 +270,11 @@ export function JobCard({
 
       {/* ── Tags row ───────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        {job.is_new_for_you && (
+          <Badge tone="accent">
+            New
+          </Badge>
+        )}
         {job.action_label && (
           <Badge tone="accent">
             <Check className="h-3 w-3 mr-0.5 inline" strokeWidth={2.5} />
