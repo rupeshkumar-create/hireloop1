@@ -299,8 +299,13 @@ def test_title_affinity() -> None:
 
 
 def test_blend_never_returns_blind_half_when_signal_exists() -> None:
-    # The core bug fix: with a real lexical/title signal we never collapse to 0.5.
-    assert _blend_skills(None, 0.0) == 0.0
+    # Lexical coverage is the backbone; a blind 0.5 must only appear when we
+    # truly have no skill signal. Zero overlap on a skill-sparse profile (or a
+    # strong title match without embeddings yet) is treated as *missing* so a
+    # single junk label can't erase an exact title hit — otherwise keep 0.0.
+    assert _blend_skills(None, 0.0) == 0.5  # default: skill-sparse (count=0) → neutral
+    assert _blend_skills(None, 0.0, candidate_skill_count=5) == 0.0
+    assert _blend_skills(None, 0.0, candidate_skill_count=5, title_aff=0.8) == 0.5
     assert _blend_skills(None, 1.0) == 1.0
     assert _blend_skills(1.0, 1.0) == 1.0
     assert _blend_skills(None, None) == 0.5  # only when truly no data
