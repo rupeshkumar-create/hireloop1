@@ -5,12 +5,14 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.application_kit import prepare_application_kit
 
+logger = structlog.get_logger()
 router = APIRouter(prefix="/application-kits", tags=["application-kits"])
 
 
@@ -104,7 +106,19 @@ async def prepare_application_kit_for_job(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Generate resume, cover letter, and interview prep for one saved/matched job."""
-    result = await prepare_application_kit(db, current_user["id"], job_id, settings)
+    try:
+        result = await prepare_application_kit(db, current_user["id"], job_id, settings)
+    except Exception as exc:
+        logger.exception(
+            "application_kit_prepare_failed",
+            job_id=job_id,
+            user_id=str(current_user.get("id")),
+            error=str(exc)[:300],
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't prepare the application kit. Please try again in a moment.",
+        ) from exc
     if result.get("error"):
         raise HTTPException(status_code=404, detail=str(result["error"]))
     return result

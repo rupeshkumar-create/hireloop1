@@ -35,8 +35,11 @@ export async function prepareApplicationKit(jobId: string): Promise<ApplicationK
     method: "POST",
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? `Kit prepare failed: ${res.status}`);
+    const body = await res.json().catch(async () => ({
+      detail: (await res.text().catch(() => "")) || res.statusText,
+    }));
+    const detail = (body as { detail?: string }).detail;
+    throw new Error(detail?.trim() || `Kit prepare failed: ${res.status}`);
   }
   return res.json() as Promise<ApplicationKit>;
 }

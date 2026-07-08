@@ -398,6 +398,17 @@ async def prepare_application_kit(
     market = await fetch_candidate_market(db, candidate["id"])
     vis = job_visible_for_market_sql(market_param="$2")
 
+    # Bookmark first so inactive / off-market jobs remain eligible for kits.
+    await db.execute(
+        """
+        INSERT INTO public.saved_jobs (candidate_id, job_id)
+        VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT (candidate_id, job_id) DO NOTHING
+        """,
+        candidate_id,
+        uuid.UUID(job_id),
+    )
+
     job_row = await db.fetchrow(
         f"""
         SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
@@ -421,16 +432,6 @@ async def prepare_application_kit(
     )
     if not job_row:
         return {"error": "Job not found"}
-
-    await db.execute(
-        """
-        INSERT INTO public.saved_jobs (candidate_id, job_id)
-        VALUES ($1::uuid, $2::uuid)
-        ON CONFLICT (candidate_id, job_id) DO NOTHING
-        """,
-        candidate_id,
-        uuid.UUID(job_id),
-    )
 
     profile = await load_tailored_resume_profile(db, candidate_id)
     if not profile:

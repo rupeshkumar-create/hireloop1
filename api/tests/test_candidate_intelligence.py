@@ -179,3 +179,38 @@ async def test_tailored_resume_profile_uses_candidate_intelligence_adapter() -> 
     assert profile["career_goals"]["desired_title"] == "Head of Growth"
     assert profile["latest_resume_file_name"] == "asha-resume.pdf"
     assert profile["source_note"].startswith("All employers, titles, dates")
+
+
+@pytest.mark.asyncio
+async def test_null_negative_preferences_do_not_crash_profile_load() -> None:
+    """Regression: kit prepare crashed with 'NoneType is not iterable' when
+    aarya_state.negative_preferences.companies/titles were JSON null."""
+    from hireloop_api.services.candidate_intelligence import _build_negative_preferences
+
+    prefs = _build_negative_preferences(
+        {"negative_preferences": {"companies": None, "titles": None}}
+    )
+    assert prefs.companies == []
+    assert prefs.titles == []
+
+    db = FakeCandidateIntelligenceDb()
+    # Inject a null companies list into the fake candidate row.
+    original_fetchrow = db.fetchrow
+
+    async def fetchrow_with_null_prefs(query: str, *args):  # type: ignore[no-untyped-def]
+        row = await original_fetchrow(query, *args)
+        if isinstance(row, dict) and "aarya_state" in row:
+            row = dict(row)
+            row["aarya_state"] = {
+                **(row["aarya_state"] or {}),
+                "negative_preferences": {"companies": None, "titles": None},
+            }
+        return row
+
+    db.fetchrow = fetchrow_with_null_prefs  # type: ignore[method-assign]
+    snapshot = await load_candidate_intelligence(db, db.candidate_id)
+    assert snapshot is not None
+    assert snapshot.negative_preferences.companies == []
+    # Kit profile load must also succeed.
+    profile = await load_tailored_resume_profile(db, db.candidate_id)  # type: ignore[arg-type]
+    assert profile is not None

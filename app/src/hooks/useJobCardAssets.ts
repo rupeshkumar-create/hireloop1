@@ -69,7 +69,9 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
       setKitByJob((s) => ({ ...s, [job.job_id]: "loading" }));
       try {
         options.onJobSaved?.(job.job_id);
-        void saveJob(job.job_id).catch(() => undefined);
+        // Must finish save BEFORE prepare — inactive/off-market jobs are only
+        // eligible for kits when a saved_jobs row exists.
+        await saveJob(job.job_id).catch(() => undefined);
         const kit = await prepareApplicationKit(job.job_id);
         const resumeId = kit.resume?.resume_id ?? null;
         if (resumeId) {

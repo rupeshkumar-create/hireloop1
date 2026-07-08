@@ -530,9 +530,14 @@ def _build_goals(data: dict[str, Any], career_facts: dict[str, Any]) -> Candidat
 
 def _build_negative_preferences(aarya_state: dict[str, Any]) -> NegativePreferences:
     raw = _coerce_json(aarya_state.get("negative_preferences"))
+    # companies/titles may be explicitly null in JSON — never pass None into
+    # _unique_nonempty (TypeError: 'NoneType' object is not iterable), which was
+    # crashing application-kit prepare for some saved jobs.
+    companies = raw.get("companies") if isinstance(raw, dict) else None
+    titles = raw.get("titles") if isinstance(raw, dict) else None
     return NegativePreferences(
-        companies=_unique_nonempty(raw.get("companies") if isinstance(raw, dict) else []),
-        titles=_unique_nonempty(raw.get("titles") if isinstance(raw, dict) else []),
+        companies=_unique_nonempty(companies if isinstance(companies, list) else []),
+        titles=_unique_nonempty(titles if isinstance(titles, list) else []),
     )
 
 
@@ -552,10 +557,10 @@ def _jsonable_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in dict(row).items()}
 
 
-def _unique_nonempty(values: list[Any]) -> list[str]:
+def _unique_nonempty(values: list[Any] | None) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    for value in values:
+    for value in values or []:
         text = str(value or "").strip()
         key = text.lower()
         if text and key not in seen:
