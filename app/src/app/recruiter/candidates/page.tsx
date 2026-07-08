@@ -24,7 +24,7 @@ import {
   type RecruiterCandidateSearchHit,
   type RoleListItem,
 } from "@/lib/api/recruiter";
-import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
+import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { RecruiterBreadcrumbs } from "@/components/ux";
 import { cn } from "@/lib/utils";
 
@@ -36,14 +36,44 @@ const STAGE_LABEL: Record<string, string> = {
   hired: "Hired",
 };
 
-function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
+function CandidateDetailCard({
+  hit,
+  roles,
+  roleFilter,
+}: {
+  hit: RecruiterCandidateSearchHit;
+  roles: RoleListItem[];
+  roleFilter: string;
+}) {
   const router = useRouter();
+  const { toast } = useToast();
+  const [introing, setIntroing] = useState(false);
   const location = [hit.location_city, hit.location_state].filter(Boolean).join(", ");
   const roleLine = [hit.current_title, hit.current_company].filter(Boolean).join(" @ ");
   const pipelineHref = hit.role_id ? `/recruiter/roles/${hit.role_id}/pipeline` : null;
   const skills = (hit.skills ?? []).slice(0, 6);
   const summary = hit.summary?.trim() || hit.headline?.trim() || null;
-  const canChat = Boolean(hit.role_id);
+  const fallbackRole = roles.find((role) => role.id === roleFilter) ?? roles[0] ?? null;
+  const chatRoleId = hit.role_id ?? fallbackRole?.id ?? null;
+  const chatRoleTitle = hit.role_title ?? fallbackRole?.title ?? null;
+  const canChat = Boolean(chatRoleId);
+  const chatTitle = canChat
+    ? `Start a chat${chatRoleTitle ? ` about ${chatRoleTitle}` : ""}`
+    : "Create a role to start candidate chats";
+
+  async function startChat() {
+    if (!chatRoleId) return;
+    setIntroing(true);
+    try {
+      const result = await publishAndRequestIntro(chatRoleId, hit.candidate_id);
+      const qs = result.intro_id ? `?intro_id=${encodeURIComponent(result.intro_id)}` : "";
+      router.push(`/recruiter/inbox${qs}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setIntroing(false);
+    }
+  }
 
   return (
     <Card className="overflow-hidden">
@@ -131,13 +161,9 @@ function CandidateDetailCard({ hit }: { hit: RecruiterCandidateSearchHit }) {
             variant={canChat ? "secondary" : "ghost"}
             size="sm"
             disabled={!canChat}
-            title={canChat ? "Start a chat via intro request" : "Select a role to start a chat"}
-            onClick={() => {
-              if (!hit.role_id) return;
-              void publishAndRequestIntro(hit.role_id, hit.candidate_id).finally(() => {
-                router.push("/recruiter/inbox");
-              });
-            }}
+            loading={introing}
+            title={chatTitle}
+            onClick={() => void startChat()}
           >
             Chat
           </Button>
@@ -296,7 +322,12 @@ export default function RecruiterCandidatesPage() {
       ) : (
         <div className="space-y-3">
           {candidates.map((hit) => (
-            <CandidateDetailCard key={hit.candidate_id} hit={hit} />
+            <CandidateDetailCard
+              key={hit.candidate_id}
+              hit={hit}
+              roles={roles}
+              roleFilter={roleFilter}
+            />
           ))}
         </div>
       )}

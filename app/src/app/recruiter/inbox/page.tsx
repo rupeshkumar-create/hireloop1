@@ -6,6 +6,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Briefcase,
   ChevronRight,
@@ -43,6 +44,8 @@ const ROLE_STATUS_BADGE: Record<string, { tone: "muted" | "strong" | "accent" }>
 };
 
 export default function RecruiterInboxPage() {
+  const searchParams = useSearchParams();
+  const selectedIntroId = searchParams.get("intro_id");
   const [data, setData] = useState<InboxData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -185,6 +188,7 @@ export default function RecruiterInboxPage() {
         <RecruiterIntrosInboxPanel
           items={data?.items ?? []}
           loading={loading && !data}
+          initialSelectedIntroId={selectedIntroId}
           onItemsChange={(items) =>
             setData((prev) => (prev ? { ...prev, items } : prev))
           }

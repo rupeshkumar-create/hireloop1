@@ -36,6 +36,16 @@ const STATUS_META: Record<
   expired: { tone: "muted", label: "Expired" },
 };
 
+function statusMeta(item: RecruiterInboxItem): { tone: "muted" | "strong" | "accent"; label: string } {
+  if (
+    item.direction === "recruiter_to_candidate" &&
+    ["pending", "invited"].includes(item.status)
+  ) {
+    return { tone: "accent", label: "Awaiting candidate" };
+  }
+  return STATUS_META[item.status] ?? { tone: "muted", label: item.status };
+}
+
 type ListGroup = {
   id: string;
   label: string;
@@ -89,10 +99,12 @@ function groupItems(items: RecruiterInboxItem[]): ListGroup[] {
 export function RecruiterIntrosInboxPanel({
   items,
   loading,
+  initialSelectedIntroId,
   onItemsChange,
 }: {
   items: RecruiterInboxItem[];
   loading?: boolean;
+  initialSelectedIntroId?: string | null;
   onItemsChange?: (items: RecruiterInboxItem[]) => void;
 }) {
   const { toast } = useToast();
@@ -104,14 +116,22 @@ export function RecruiterIntrosInboxPanel({
 
   useEffect(() => {
     setSelectedId((prev) => {
+      if (initialSelectedIntroId && flatItems.some((i) => i.id === initialSelectedIntroId)) {
+        return initialSelectedIntroId;
+      }
       if (prev && flatItems.some((i) => i.id === prev)) return prev;
       const chatReady = flatItems.find((i) => i.status === "accepted");
+      const recruiterStarted = flatItems.find(
+        (i) =>
+          i.direction === "recruiter_to_candidate" &&
+          ["pending", "invited"].includes(i.status),
+      );
       const needsYou = flatItems.find(
         (i) => i.direction === "candidate_to_recruiter" && i.status === "pending",
       );
-      return chatReady?.id ?? needsYou?.id ?? flatItems[0]?.id ?? null;
+      return chatReady?.id ?? recruiterStarted?.id ?? needsYou?.id ?? flatItems[0]?.id ?? null;
     });
-  }, [flatItems]);
+  }, [flatItems, initialSelectedIntroId]);
 
   async function respond(introId: string, accept: boolean) {
     setResponding(introId);
@@ -132,15 +152,13 @@ export function RecruiterIntrosInboxPanel({
   }
 
   const selected = flatItems.find((i) => i.id === selectedId) ?? null;
-  const selectedMeta = selected
-    ? (STATUS_META[selected.status] ?? {
-        tone: "muted" as const,
-        label: selected.status,
-      })
-    : null;
+  const selectedMeta = selected ? statusMeta(selected) : null;
   const fromCandidate = selected?.direction === "candidate_to_recruiter";
   const canRespond = fromCandidate && selected?.status === "pending";
-  const canChat = selected?.status === "accepted";
+  const canChat =
+    selected?.status === "accepted" ||
+    (selected?.direction === "recruiter_to_candidate" &&
+      ["pending", "invited"].includes(selected.status));
 
   if (loading) {
     return (
@@ -163,7 +181,7 @@ export function RecruiterIntrosInboxPanel({
         <EmptyState
           icon={<MessageCircle strokeWidth={1.5} />}
           title="No intro activity yet"
-          description="When candidates request intros to your roles, they'll appear here. Accept to open a direct chat."
+          description="Start a candidate chat from Talent, or accept intro requests when candidates reach out."
         />
       </div>
     );
@@ -180,10 +198,7 @@ export function RecruiterIntrosInboxPanel({
             </p>
             <ul className="divide-y divide-ink-100">
               {group.items.map((item) => {
-                const meta = STATUS_META[item.status] ?? {
-                  tone: "muted" as const,
-                  label: item.status,
-                };
+                const meta = statusMeta(item);
                 const active = item.id === selectedId;
                 const title = item.role_title ?? item.job_title;
 
