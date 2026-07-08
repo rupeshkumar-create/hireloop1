@@ -16,6 +16,7 @@ POST /api/v1/resumes/{resume_id}/apply-to-profile
 
 import asyncio
 import json
+import re
 import uuid
 from typing import Annotated, Any, Literal
 
@@ -386,6 +387,51 @@ def _build_profile_updates_from_resume(
     updates: dict[str, object] = {}
     fields_updated: list[str] = []
 
+    def _normalize_location_city(raw: str | None, full_name: str | None) -> str | None:
+        if not raw:
+            return None
+        v = str(raw).strip()
+        if not v:
+            return None
+        # Guard against resume parsers accidentally prepending the candidate's name.
+        # Example: "nayak Bengaluru" where "Nayak" is a name token, not a city.
+        if full_name:
+            name_tokens = {
+                t.lower() for t in re.split(r"[\s,./|-]+", str(full_name)) if t and len(t) > 1
+            }
+            parts = [p for p in re.split(r"\s+", v) if p]
+            while parts and parts[0].lower() in name_tokens:
+                parts.pop(0)
+            v = " ".join(parts).strip()
+        return v or None
+
+    def _normalize_skills(raw_skills: list[str] | None) -> list[str]:
+        from hireloop_api.services.skills import display_skill
+
+        cleaned: list[str] = []
+        seen = set()
+        for s in raw_skills or []:
+            t = str(s).strip()
+            if not t:
+                continue
+            low = t.lower()
+            # Drop obvious junk.
+            if "http://" in low or "https://" in low or "www." in low:
+                continue
+            if "/" in t and "." in t:
+                # Usually a URL/domain fragment.
+                continue
+            if len(t) > 60:
+                continue
+            # Prefer canonical display labels for known skills; otherwise title-case.
+            label = display_skill(t)
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(label)
+        return cleaned
+
     def maybe_update(field: str, value: object) -> None:
         if not value:
             return
@@ -408,16 +454,17 @@ def _build_profile_updates_from_resume(
     maybe_update("notice_period_days", parsed.notice_period_days)
     maybe_update("linkedin_url", parsed.linkedin_url)
     maybe_update("github_url", parsed.github_url)
-    maybe_update("location_city", parsed.location_city)
+    maybe_update("location_city", _normalize_location_city(parsed.location_city, parsed.full_name))
     maybe_update("location_state", parsed.location_state)
 
     if parsed.skills:
         existing_skills = set(candidate["skills"] or [])
+        normalized_skills = _normalize_skills(parsed.skills)
         if overwrite:
             # The new CV's skill set is the source of truth on replace.
-            new_skills = set(parsed.skills)
+            new_skills = set(normalized_skills)
         else:
-            new_skills = existing_skills | set(parsed.skills)
+            new_skills = existing_skills | set(normalized_skills)
         if new_skills != existing_skills:
             updates["skills"] = list(new_skills)
             fields_updated.append("skills")

@@ -100,7 +100,32 @@ function buildRoleSearchPrompt(profile: MyProfileData | null, title: string): st
 
 function buildAnalysisRows(profile: MyProfileData | null) {
   const c = profile?.candidate;
-  const skills = (c?.skills ?? []).map((s) => s.trim()).filter(Boolean);
+  const cleanLocation = (raw: string | null | undefined) => {
+    const v = (raw ?? "").trim();
+    if (!v) return null;
+    // Display-side guard for legacy bad parses like "nayak Bengaluru".
+    const parts = v.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const tail = parts.slice(1).join(" ");
+      if (/(^|[\s,])bengaluru([\s,]|$)/i.test(v) && parts[0] === parts[0].toLowerCase()) {
+        return tail;
+      }
+    }
+    return v;
+  };
+
+  const cleanSkill = (raw: string) => {
+    const v = raw.trim();
+    if (!v) return "";
+    if (/https?:\/\//i.test(v) || /www\./i.test(v)) return "";
+    // If it's all-lowercase words, title-case it for readability.
+    if (v === v.toLowerCase()) return v.replace(/\b\w/g, (m) => m.toUpperCase());
+    return v;
+  };
+
+  const skills = (c?.skills ?? [])
+    .map((s) => cleanSkill(s))
+    .filter(Boolean);
   return [
     {
       label: "Current role",
@@ -109,7 +134,7 @@ function buildAnalysisRows(profile: MyProfileData | null) {
         : null,
     },
     { label: "Experience", value: c?.years_experience ? `${c.years_experience} years` : null },
-    { label: "Location", value: c?.location_city ?? null },
+    { label: "Location", value: cleanLocation(c?.location_city ?? null) },
     { label: "Skills", value: skills.length > 0 ? skills.slice(0, 8).join(", ") : null },
     { label: "Looking for", value: c?.looking_for?.trim() || null },
     { label: "CV", value: profile?.resume_filename ?? null },
