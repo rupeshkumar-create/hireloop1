@@ -335,8 +335,8 @@ def _friendly_stream_error(exc: Exception) -> str:
         return "Failed."
     if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
         return "Failed."
-    if "rate limit" in lower or "429" in lower:
-        return "Failed."
+    if "rate limit" in lower or "429" in lower or "too many requests" in lower:
+        return "Aarya is busy right now — wait a few seconds and try again."
     return text[:500]
 
 
