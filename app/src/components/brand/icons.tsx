@@ -18,7 +18,7 @@ export const HIRELOOP_ARROWS = HIRESCHEMA_ARROWS;
  */
 export type { LucideIcon } from "lucide-react";
 
-const LIME = "#B9F84C";
+const LIME = "#B5FF6B";
 
 function svgHtml(l: string, n?: string): string {
   return l + (n ? `<g fill="${LIME}" stroke="none">${n}</g>` : "");

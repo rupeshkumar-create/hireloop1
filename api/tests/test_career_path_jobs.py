@@ -5,7 +5,32 @@ from hireloop_api.services.career_path_jobs import (
     job_matches_path_titles,
     normalize_path_search_titles,
     rank_path_job_rows,
+    should_enforce_path_title_gate,
 )
+
+
+def test_should_enforce_path_title_gate_for_customer_success_only() -> None:
+    cs = normalize_path_search_titles(
+        ["Customer Success Team Lead"],
+        prioritized_title="Customer Success Team Lead",
+    )
+    generic = normalize_path_search_titles(
+        ["Assistant Manager"],
+        prioritized_title="Assistant Manager",
+    )
+    assert should_enforce_path_title_gate(cs)
+    assert not should_enforce_path_title_gate(generic)
+
+
+def test_job_matches_path_titles_rejects_plain_operations_for_customer_success_team_lead() -> None:
+    titles = normalize_path_search_titles(
+        ["Customer Success Team Lead"],
+        prioritized_title="Customer Success Team Lead",
+    )
+    assert not job_matches_path_titles("Lead Operations Manager - MFI South", titles)
+    assert not job_matches_path_titles("Head - Revenue Operations and Monetisation", titles)
+    assert job_matches_path_titles("Customer-Success (Bengaluru)", titles)
+    assert job_matches_path_titles("Customer Success Manager", titles)
 
 
 def test_job_matches_path_titles_rejects_marketing_ops_for_customer_success_path() -> None:

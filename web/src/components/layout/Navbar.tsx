@@ -27,7 +27,7 @@ export function Navbar() {
           <Link href="/" className="flex items-center gap-2 shrink-0" aria-label="Hireschema home">
             <div className="w-8 h-8 shrink-0">
               <svg viewBox="0 0 48 48" fill="none" className="h-8 w-8" aria-hidden>
-                <rect width="48" height="48" fill="#B9F84C" />
+                <rect width="48" height="48" fill="#B5FF6B" />
                 <g transform="translate(24 24) skewX(-10) translate(-24 -24)">
                   <rect x="10.5" y="9" width="7.5" height="12.5" fill="#141414" />
                   <rect x="10.5" y="26.5" width="7.5" height="12.5" fill="#141414" />

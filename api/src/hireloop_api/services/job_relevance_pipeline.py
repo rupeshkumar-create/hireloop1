@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from hireloop_api.services.career_path_jobs import job_matches_path_titles
+from hireloop_api.services.career_path_jobs import (
+    job_matches_path_titles,
+    normalize_path_search_titles,
+    should_enforce_path_title_gate,
+)
 from hireloop_api.services.skills import canonical_skill
 from hireloop_api.services.titles import canonical_title_tokens, title_affinity
 
@@ -76,7 +80,9 @@ def _role_family_allowed(job: dict[str, Any], candidate_titles: list[str]) -> bo
     if required_specialties and job_specialties and not (required_specialties & job_specialties):
         return False
 
-    candidate_science = any(canonical_title_tokens(title) & _SCIENCE_TOKENS for title in candidate_titles)
+    candidate_science = any(
+        canonical_title_tokens(title) & _SCIENCE_TOKENS for title in candidate_titles
+    )
     if candidate_science and "engineer" in job_tokens and not (job_tokens & _SCIENCE_TOKENS):
         return False
 
@@ -111,8 +117,25 @@ def _passes_lexical_filter(
     if not candidate_titles and not candidate.get("skills"):
         return True
 
-    if candidate_titles and job_matches_path_titles(str(job.get("title") or ""), candidate_titles):
+    prioritized = str(candidate.get("prioritized_title") or "").strip()
+    path_titles = (
+        normalize_path_search_titles(
+            list(candidate.get("target_titles") or []),
+            prioritized_title=prioritized,
+        )
+        if prioritized
+        else candidate_titles
+    )
+    path_locked = should_enforce_path_title_gate(path_titles) if prioritized else False
+
+    if path_titles and job_matches_path_titles(str(job.get("title") or ""), path_titles):
         return True
+
+    if path_locked:
+        if _best_title_affinity(job, [prioritized]) >= _MIN_TITLE_AFFINITY:
+            return True
+        return False
+
     if _best_title_affinity(job, candidate_titles) >= _MIN_TITLE_AFFINITY:
         return True
     if _skill_signal(job, candidate) >= _MIN_SKILL_SIGNAL:
@@ -120,7 +143,9 @@ def _passes_lexical_filter(
     return False
 
 
-def _rerank_score(job: dict[str, Any], candidate: dict[str, Any], candidate_titles: list[str]) -> float:
+def _rerank_score(
+    job: dict[str, Any], candidate: dict[str, Any], candidate_titles: list[str]
+) -> float:
     overall = float(job.get("overall_score") or 0.0)
     skills = float(job.get("skills_score") or 0.0)
     title = _best_title_affinity(job, candidate_titles)

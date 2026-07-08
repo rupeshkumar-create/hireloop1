@@ -21,18 +21,18 @@
   .text-paper-1 { color: #1C1C1C; }
 
   /* accent (v2: electric lime) */
-  .bg-accent        { background-color: #B9F84C; }
-  .bg-accent-hover  { background-color: #A8EA3A; }
-  .text-accent      { color: #B9F84C; }
+  .bg-accent        { background-color: #B5FF6B; }
+  .bg-accent-hover  { background-color: #A5EF58; }
+  .text-accent      { color: #B5FF6B; }
   .text-accent-fg   { color: #000000; }
   .text-on-accent   { color: #000000; }
   .hover\:text-on-accent:hover { color: #000000; }
-  .border-accent    { border-color: #B9F84C; }
-  .ring-accent      { --tw-ring-color: #B9F84C; }
-  .ring-accent-ring { --tw-ring-color: rgba(185, 248, 76, 0.30); }
-  .hover\:bg-accent-hover:hover { background-color: #A8EA3A; }
-  .focus\:border-accent:focus   { border-color: #B9F84C; }
-  .focus\:ring-accent-ring:focus { --tw-ring-color: rgba(185, 248, 76, 0.30); }
+  .border-accent    { border-color: #B5FF6B; }
+  .ring-accent      { --tw-ring-color: #B5FF6B; }
+  .ring-accent-ring { --tw-ring-color: rgba(181, 255, 107, 0.30); }
+  .hover\:bg-accent-hover:hover { background-color: #A5EF58; }
+  .focus\:border-accent:focus   { border-color: #B5FF6B; }
+  .focus\:ring-accent-ring:focus { --tw-ring-color: rgba(181, 255, 107, 0.30); }
 
   /* ink-50 is nearly page-colour — bump hover chips so controls read on charcoal */
   .hover\:bg-ink-50:hover {
@@ -75,7 +75,7 @@
   .hs-btn-frame {
     border: 2px solid #000000;
     color: #000000;
-    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #b5ff6b, 0 0 0 4px #000000;
     transition:
       background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
       color 160ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -96,17 +96,17 @@
   }
 
   .hs-btn-primary {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
     color: #000000;
     border-color: #000000;
-    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #b5ff6b, 0 0 0 4px #000000;
   }
 
   .hs-btn-primary:hover:not(:disabled) {
-    background-color: #a8ea3a;
+    background-color: #a5ef58;
     color: #000000;
     border-color: #000000;
-    box-shadow: 0 0 0 2px #a8ea3a, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #a5ef58, 0 0 0 4px #000000;
   }
 
   .hs-btn-secondary {
@@ -117,10 +117,10 @@
   }
 
   .hs-btn-secondary:hover:not(:disabled) {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
     color: #000000;
     border-color: #000000;
-    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #b5ff6b, 0 0 0 4px #000000;
   }
 
   .hs-btn-ghost {
@@ -131,10 +131,10 @@
   }
 
   .hs-btn-ghost:hover:not(:disabled) {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
     color: #000000;
     border-color: #000000;
-    box-shadow: 0 0 0 2px #b9f84c, 0 0 0 4px #000000;
+    box-shadow: 0 0 0 2px #b5ff6b, 0 0 0 4px #000000;
   }
 
   .hs-btn-destructive {
@@ -225,11 +225,11 @@
   }
 
   :where(button, a, [role="button"]).hs-btn-primary {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
   }
 
   :where(button, a, [role="button"]).hs-btn-primary:hover:not(:disabled) {
-    background-color: #a8ea3a;
+    background-color: #a5ef58;
   }
 
   :where(button, a, [role="button"]).hs-btn-secondary,
@@ -239,7 +239,7 @@
 
   :where(button, a, [role="button"]).hs-btn-secondary:hover:not(:disabled),
   :where(button, a, [role="button"]).hs-btn-ghost:hover:not(:disabled) {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
   }
 
   /* icon / chip controls without hs-btn-frame */
@@ -249,17 +249,17 @@
   }
 
   :where(button, a, [role="button"]).bg-ink-700:hover:not(:disabled) {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
     color: #000000;
   }
 
   :where(button, a, [role="button"]).bg-accent {
-    background-color: #b9f84c;
+    background-color: #b5ff6b;
     color: #000000;
   }
 
   :where(button, a, [role="button"]).bg-accent:hover:not(:disabled) {
-    background-color: #a8ea3a;
+    background-color: #a5ef58;
     color: #000000;
   }
 
@@ -272,13 +272,13 @@
   /* Strong focus ring — always visible, never removed */
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #B9F84C;
+    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #B5FF6B;
     border-radius: 0;
   }
 
   /* Selection */
   ::selection {
-    background-color: rgba(185, 248, 76, 0.22);
+    background-color: rgba(181, 255, 107, 0.22);
     color: #FAFAFA;
   }
 }

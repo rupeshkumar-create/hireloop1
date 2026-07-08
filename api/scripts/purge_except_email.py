@@ -1,11 +1,13 @@
 """
-Delete every user except one keep-email account (and that user's graph).
+Delete every user except keep-email account(s) (and those users' graphs).
 
 DEV/STAGING ONLY — refuses when ENVIRONMENT=production.
 
 Usage (from api/):
     .venv/bin/python scripts/purge_except_email.py
     .venv/bin/python scripts/purge_except_email.py --email rupesh.kumar@candidate.ly
+    .venv/bin/python scripts/purge_except_email.py \\
+        --email rupesh.kumar@candidate.ly --email ranjitmahto1998@gmail.com
 """
 
 from __future__ import annotations
@@ -18,36 +20,49 @@ import asyncpg
 
 from hireloop_api.config import get_settings
 
-DEFAULT_KEEP_EMAIL = "rupesh.kumar@candidate.ly"
+DEFAULT_KEEP_EMAILS = (
+    "rupesh.kumar@candidate.ly",
+    "ranjitmahto1998@gmail.com",
+)
 
 
-async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
-    keep_id = await conn.fetchval(
-        "SELECT id FROM auth.users WHERE lower(email) = lower($1)",
-        keep_email,
-    )
-    if not keep_id:
-        raise SystemExit(f"Keep user not found in auth.users: {keep_email}")
+async def purge_except(conn: asyncpg.Connection, keep_emails: list[str]) -> None:
+    if not keep_emails:
+        raise SystemExit("At least one --email is required")
 
-    keep_recruiter_id = await conn.fetchval(
-        "SELECT id FROM public.recruiters WHERE user_id = $1::uuid",
-        keep_id,
-    )
+    keep_ids: list[object] = []
+    for email in keep_emails:
+        keep_id = await conn.fetchval(
+            "SELECT id FROM auth.users WHERE lower(email) = lower($1)",
+            email,
+        )
+        if not keep_id:
+            raise SystemExit(f"Keep user not found in auth.users: {email}")
+        keep_ids.append(keep_id)
+
+    keep_recruiter_ids = [
+        r["id"]
+        for r in await conn.fetch(
+            "SELECT id FROM public.recruiters WHERE user_id = ANY($1::uuid[])",
+            keep_ids,
+        )
+    ]
 
     delete_ids = [
         r["id"]
         for r in await conn.fetch(
-            "SELECT id FROM auth.users WHERE id != $1::uuid",
-            keep_id,
+            "SELECT id FROM auth.users WHERE NOT (id = ANY($1::uuid[]))",
+            keep_ids,
         )
     ]
 
     before_auth = await conn.fetchval("SELECT count(*) FROM auth.users")
     before_public = await conn.fetchval("SELECT count(*) FROM public.users")
     before_jobs = await conn.fetchval("SELECT count(*) FROM public.jobs WHERE deleted_at IS NULL")
-    print(f"Keeping: {keep_email} ({keep_id})")
-    if keep_recruiter_id:
-        print(f"Keeping recruiter jobs for recruiter_id={keep_recruiter_id}")
+    print(f"Keeping: {', '.join(keep_emails)}")
+    print(f"Keep user ids: {', '.join(str(i) for i in keep_ids)}")
+    if keep_recruiter_ids:
+        print(f"Keeping recruiter jobs for recruiter_id(s)={keep_recruiter_ids}")
     print(f"Removing {len(delete_ids)} other auth user(s)")
     print("Before:")
     print(f"  auth.users:   {before_auth}")
@@ -188,29 +203,51 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
             delete_ids,
         )
 
-        # Drop scraped market jobs and recruiter-posted jobs not owned by keep user.
-        await conn.execute(
-            """
-            UPDATE public.recruiter_invites
-            SET job_id = NULL
-            WHERE job_id IN (
-              SELECT id FROM public.jobs
-              WHERE $1::uuid IS NULL
-                 OR recruiter_id IS DISTINCT FROM $1::uuid
-                 OR recruiter_id IS NULL
+        # Drop scraped market jobs and recruiter-posted jobs not owned by keep user(s).
+        if keep_recruiter_ids:
+            await conn.execute(
+                """
+                DELETE FROM public.recruiter_searches
+                WHERE job_id IN (
+                  SELECT id FROM public.jobs
+                  WHERE recruiter_id IS NULL
+                     OR NOT (recruiter_id = ANY($1::uuid[]))
+                )
+                OR recruiter_id IN (
+                  SELECT id FROM public.recruiters WHERE user_id = ANY($2::uuid[])
+                )
+                """,
+                keep_recruiter_ids,
+                delete_ids,
             )
-            """,
-            keep_recruiter_id,
-        )
-        jobs_removed = await conn.execute(
-            """
-            DELETE FROM public.jobs
-            WHERE $1::uuid IS NULL
-               OR recruiter_id IS DISTINCT FROM $1::uuid
-               OR recruiter_id IS NULL
-            """,
-            keep_recruiter_id,
-        )
+            await conn.execute(
+                """
+                UPDATE public.recruiter_invites
+                SET job_id = NULL
+                WHERE job_id IN (
+                  SELECT id FROM public.jobs
+                  WHERE recruiter_id IS NULL
+                     OR NOT (recruiter_id = ANY($1::uuid[]))
+                )
+                """,
+                keep_recruiter_ids,
+            )
+            jobs_removed = await conn.execute(
+                """
+                DELETE FROM public.jobs
+                WHERE recruiter_id IS NULL
+                   OR NOT (recruiter_id = ANY($1::uuid[]))
+                """,
+                keep_recruiter_ids,
+            )
+        else:
+            await conn.execute(
+                "DELETE FROM public.recruiter_searches WHERE recruiter_id IN "
+                "(SELECT id FROM public.recruiters WHERE user_id = ANY($1::uuid[]))",
+                delete_ids,
+            )
+            await conn.execute("UPDATE public.recruiter_invites SET job_id = NULL")
+            jobs_removed = await conn.execute("DELETE FROM public.jobs")
         print(f"Removed jobs: {jobs_removed}")
 
         # Detach any remaining recruiter-owned jobs before dropping other recruiters' roles.
@@ -232,8 +269,21 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
         )
         await conn.execute(
             """
-            UPDATE public.intro_requests
-            SET role_id = NULL, invite_id = NULL, recruiter_id = NULL
+            DELETE FROM public.intro_messages
+            WHERE intro_request_id IN (
+              SELECT ir.id
+              FROM public.intro_requests ir
+              LEFT JOIN public.candidates c ON c.id = ir.candidate_id
+              LEFT JOIN public.recruiters rec ON rec.id = ir.recruiter_id
+              WHERE c.user_id = ANY($1::uuid[])
+                 OR rec.user_id = ANY($1::uuid[])
+            )
+            """,
+            delete_ids,
+        )
+        await conn.execute(
+            """
+            DELETE FROM public.intro_requests
             WHERE candidate_id IN (
               SELECT id FROM public.candidates WHERE user_id = ANY($1::uuid[])
             )
@@ -286,20 +336,6 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
             delete_ids,
         )
 
-        # Remove intro rows tied to deleted users (kept-user intros stay).
-        await conn.execute(
-            """
-            DELETE FROM public.intro_requests
-            WHERE candidate_id IN (
-              SELECT id FROM public.candidates WHERE user_id = ANY($1::uuid[])
-            )
-            OR recruiter_id IN (
-              SELECT id FROM public.recruiters WHERE user_id = ANY($1::uuid[])
-            )
-            """,
-            delete_ids,
-        )
-
         # Drop auth accounts — cascades public.users → candidates/recruiters/etc.
         await conn.execute(
             "DELETE FROM auth.users WHERE id = ANY($1::uuid[])",
@@ -320,12 +356,18 @@ async def purge_except(conn: asyncpg.Connection, keep_email: str) -> None:
     print(f"  recruiters:   {after_recruiters}")
     print(f"  roles:        {after_roles}")
     print(f"  active jobs:  {jobs_left} (kept recruiter jobs only)")
-    print(f"\nDone — only {keep_email} remains.")
+    print(f"\nDone — only {', '.join(keep_emails)} remain.")
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Purge all users except one email.")
-    parser.add_argument("--email", default=DEFAULT_KEEP_EMAIL, help="Account to keep")
+    parser = argparse.ArgumentParser(description="Purge all users except listed email(s).")
+    parser.add_argument(
+        "--email",
+        action="append",
+        dest="emails",
+        metavar="EMAIL",
+        help="Account to keep (repeat for multiple)",
+    )
     parser.add_argument(
         "--allow-production",
         action="store_true",
@@ -340,8 +382,9 @@ async def main() -> None:
 
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
     conn = await asyncpg.connect(dsn)
+    keep_emails = args.emails or list(DEFAULT_KEEP_EMAILS)
     try:
-        await purge_except(conn, args.email.strip())
+        await purge_except(conn, [e.strip() for e in keep_emails if e.strip()])
     finally:
         await conn.close()
 

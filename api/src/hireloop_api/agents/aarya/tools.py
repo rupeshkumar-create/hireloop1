@@ -33,6 +33,13 @@ import structlog
 from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market, fetch_user_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.services.career_path import CareerPathService
+from hireloop_api.services.career_path_jobs import (
+    job_matches_path_titles,
+    normalize_path_search_titles,
+    rank_path_job_rows,
+    should_enforce_path_title_gate,
+)
 from hireloop_api.services.career_path_selection import career_path_options
 from hireloop_api.services.job_preferences import (
     VALID_REMOTE_PREFERENCES,
@@ -109,7 +116,13 @@ def _search_tokens(query_text: str | None) -> list[str]:
     return tokens
 
 
-def _candidate_quality_row(candidate: dict[str, Any], target_titles: list[str]) -> dict[str, Any]:
+def _candidate_quality_row(
+    candidate: dict[str, Any],
+    target_titles: list[str],
+    *,
+    prioritized_title: str | None = None,
+    looking_for: str | None = None,
+) -> dict[str, Any]:
     return {
         "current_title": candidate.get("current_title"),
         "current_company": candidate.get("current_company"),
@@ -125,6 +138,8 @@ def _candidate_quality_row(candidate: dict[str, Any], target_titles: list[str]) 
         "remote_preference": candidate.get("remote_preference"),
         "open_to_relocation": bool(candidate.get("open_to_relocation")),
         "location_scope": candidate.get("location_scope"),
+        "looking_for": looking_for or candidate.get("looking_for"),
+        "prioritized_title": prioritized_title or candidate.get("prioritized_title"),
         "target_titles": target_titles,
     }
 
@@ -149,6 +164,9 @@ def _quality_filter_job_rows(
     *,
     candidate: dict[str, Any] | None,
     target_titles: list[str],
+    path_search_titles: list[str] | None = None,
+    prioritized_title: str | None = None,
+    looking_for: str | None = None,
     lenient: bool = False,
 ) -> list[dict[str, Any]]:
     if not rows:
@@ -156,11 +174,20 @@ def _quality_filter_job_rows(
     if candidate is None:
         return [dict(r) for r in rows]
 
-    cand_row = _candidate_quality_row(candidate, target_titles)
+    cand_row = _candidate_quality_row(
+        candidate,
+        target_titles,
+        prioritized_title=prioritized_title,
+        looking_for=looking_for,
+    )
     filtered: list[dict[str, Any]] = []
     for row in rows:
         row_dict = dict(row)
         job_row = _job_quality_row(row_dict)
+        if path_search_titles and not job_matches_path_titles(
+            job_row.get("title"), path_search_titles
+        ):
+            continue
         if is_test_job(row_dict):
             if not test_jobs_enabled():
                 continue
@@ -186,11 +213,15 @@ def _quality_filter_job_rows(
             row_dict["ctc_score"] = round(score["ctc_score"], 4)
         row_dict["explanation"] = row_dict.get("explanation") or score["explanation"]
         filtered.append(row_dict)
-    if filtered or not lenient:
+    if filtered or not lenient or path_search_titles:
         return filtered
     fallback: list[dict[str, Any]] = []
     for row in rows:
         row_dict = dict(row)
+        if path_search_titles and not job_matches_path_titles(
+            row_dict.get("title"), path_search_titles
+        ):
+            continue
         if row_dict.get("overall_score") is None:
             job_row = _job_quality_row(row_dict)
             score = _assemble_score(
@@ -641,7 +672,6 @@ async def job_search(
     """
     import time
 
-    from hireloop_api.services.career_path import CareerPathService
     from hireloop_api.services.job_recall_pipeline import union_and_rank_recall_pools
     from hireloop_api.services.job_search_refresh import (
         compute_job_search_fetch_limit,
@@ -659,7 +689,7 @@ async def job_search(
                c.current_title, c.current_company, c.headline, c.summary,
                c.years_experience, c.skills, c.location_city, c.location_state,
                c.expected_ctc_min, c.expected_ctc_max,
-               c.open_to_relocation, c.location_scope,
+               c.open_to_relocation, c.location_scope, c.looking_for,
                u.full_name
         FROM public.candidates c
         JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
@@ -690,10 +720,19 @@ async def job_search(
     company_exclude = test_jobs_company_sql_exclude(company_alias="co")
 
     target_titles: list[str] = []
+    path_search_titles: list[str] = []
+    prioritized_title: str | None = None
     intelligence_skills: list[str] = []
     if candidate:
         path = await CareerPathService.get_latest(db, str(candidate["id"]))
-        target_titles = list((path or {}).get("target_titles") or [])
+        path_row_titles = list((path or {}).get("target_titles") or [])
+        prioritized_title = (path or {}).get("prioritized_title") or None
+        target_titles = path_row_titles
+        if prioritized_title:
+            path_search_titles = normalize_path_search_titles(
+                path_row_titles,
+                prioritized_title=str(prioritized_title),
+            )
         try:
             from hireloop_api.services.candidate_intelligence import load_candidate_intelligence
 
@@ -705,8 +744,22 @@ async def job_search(
         except Exception as exc:
             logger.warning("candidate_intelligence_snapshot_unavailable", error=str(exc)[:200])
     candidate_profile = dict(candidate) if candidate else None
-    if candidate_profile and intelligence_skills:
-        candidate_profile["skills"] = intelligence_skills
+    if candidate_profile:
+        if prioritized_title:
+            candidate_profile["prioritized_title"] = prioritized_title
+        if path_search_titles:
+            candidate_profile["target_titles"] = path_search_titles
+        if intelligence_skills:
+            candidate_profile["skills"] = intelligence_skills
+
+    path_locked = should_enforce_path_title_gate(path_search_titles)
+    path_filter_kwargs = {
+        "path_search_titles": path_search_titles if path_locked else None,
+        "prioritized_title": prioritized_title,
+        "looking_for": str(candidate["looking_for"])
+        if candidate and candidate.get("looking_for")
+        else None,
+    }
 
     recall_pools: list[tuple[str, list[dict[str, Any]]]] = []
     if candidate:
@@ -750,6 +803,7 @@ async def job_search(
             step1_raw,
             candidate=candidate_profile,
             target_titles=target_titles,
+            **path_filter_kwargs,
         )
         # Lenient re-fetch is only safe when step 1 had nothing REAL to offer
         # (empty, or demo rows only). If real rows existed and strict quality
@@ -758,7 +812,7 @@ async def job_search(
         had_real_raw = any(not is_test_job(dict(r)) for r in step1_raw)
         if step1_filtered:
             recall_pools.append(("precomputed_query", step1_filtered))
-        elif not had_real_raw:
+        elif not had_real_raw and not path_locked:
             # Step 1b: narrow query missed, or only demo rows were filtered out.
             vis_fallback = job_visible_for_market_sql(market_param="$3")
             step1b_raw = await db.fetch(
@@ -790,6 +844,7 @@ async def job_search(
                 candidate=candidate_profile,
                 target_titles=target_titles,
                 lenient=True,
+                **path_filter_kwargs,
             )
             if step1b_filtered:
                 recall_pools.append(("precomputed_broad", step1b_filtered))
@@ -833,6 +888,7 @@ async def job_search(
         keyword_rows,
         candidate=candidate_profile,
         target_titles=target_titles,
+        **path_filter_kwargs,
     )
     if keyword_filtered:
         recall_pools.append(("keyword", keyword_filtered))
@@ -884,7 +940,8 @@ async def job_search(
             tok_rows,
             candidate=candidate_profile,
             target_titles=target_titles,
-            lenient=True,
+            lenient=not path_locked,
+            **path_filter_kwargs,
         )
         if token_filtered:
             recall_pools.append(("token", token_filtered))
@@ -930,18 +987,22 @@ async def job_search(
         profile_rows,
         candidate=candidate_profile,
         target_titles=target_titles,
+        **path_filter_kwargs,
     )
-    if not profile_filtered:
+    if not profile_filtered and not path_locked:
         profile_filtered = _quality_filter_job_rows(
             profile_rows,
             candidate=candidate_profile,
             target_titles=target_titles,
             lenient=True,
+            **path_filter_kwargs,
         )
     if profile_filtered:
         recall_pools.append(("profile_broad", profile_filtered))
 
     rows = union_and_rank_recall_pools(recall_pools, limit=fetch_limit)
+    if path_locked and path_search_titles and rows:
+        rows = rank_path_job_rows([dict(r) for r in rows], path_search_titles, limit=fetch_limit)
 
     if rows:
         rows = exclude_job_rows(
@@ -1008,7 +1069,23 @@ async def job_search(
         )
 
         candidate_id = str(candidate["id"])
-        if target_titles:
+        if path_search_titles:
+            await enqueue_job(
+                db,
+                kind=CAREER_PATH_INGEST,
+                payload={
+                    "candidate_id": candidate_id,
+                    "derive_from_candidate": True,
+                    "force_refresh": True,
+                },
+                idempotency_key=f"career_path_ingest:{candidate_id}",
+            )
+            logger.info(
+                "aarya_path_ingest_enqueued",
+                candidate_id=candidate_id,
+                queries=path_search_titles,
+            )
+        elif target_titles:
             await enqueue_job(
                 db,
                 kind=CAREER_PATH_INGEST,

@@ -34,8 +34,12 @@ _CROSS_FUNCTION_TOKENS = frozenset(
         "hr",
         "legal",
         "accounting",
+        "operations",
     }
 )
+
+# Path titles containing these tokens are treated as customer-success tracks.
+_CUSTOMER_SUCCESS_TARGETS = frozenset({"customer", "success", "experience"})
 
 _ENGINEERING_SPECIALTIES = frozenset(
     {
@@ -50,11 +54,32 @@ _ENGINEERING_SPECIALTIES = frozenset(
 )
 
 
+def _path_targets_customer_success(path_titles: list[str]) -> bool:
+    for target in path_titles:
+        if canonical_title_tokens(target) & _CUSTOMER_SUCCESS_TARGETS:
+            return True
+    return False
+
+
+def _bare_operations_conflict(job_title: str | None, path_titles: list[str]) -> bool:
+    """Ops-only titles (no CS/CX signal) conflict with a customer-success career path."""
+    if not _path_targets_customer_success(path_titles):
+        return False
+    job_tokens = canonical_title_tokens(job_title)
+    if "operations" not in job_tokens:
+        return False
+    return not bool(job_tokens & _CUSTOMER_SUCCESS_TARGETS)
+
+
 def _conflicting_function_tokens(job_title: str | None, target: str) -> set[str]:
     job_tokens = canonical_title_tokens(job_title)
     target_tokens = canonical_title_tokens(target)
     extra = job_tokens - target_tokens
-    return extra & _CROSS_FUNCTION_TOKENS
+    conflict = extra & _CROSS_FUNCTION_TOKENS
+    if _path_targets_customer_success([target]) and "operations" in extra:
+        if not (job_tokens & _CUSTOMER_SUCCESS_TARGETS):
+            conflict = conflict | {"operations"}
+    return conflict
 
 
 def _role_family_conflict(job_title: str | None, target: str) -> bool:
@@ -121,9 +146,25 @@ def normalize_path_search_titles(
     return ordered
 
 
+def should_enforce_path_title_gate(path_titles: list[str]) -> bool:
+    """Hard-filter chat/feed results only when the locked path is function-specific."""
+    if not path_titles:
+        return False
+    if _path_targets_customer_success(path_titles):
+        return True
+    for title in path_titles:
+        specific = canonical_title_tokens(title) - _GENERIC_FUNCTION
+        if len(specific) >= 2:
+            return True
+    return False
+
+
 def job_matches_path_titles(job_title: str | None, path_titles: list[str]) -> bool:
     """True when a job title plausibly matches at least one path target role."""
     if not job_title or not path_titles:
+        return False
+
+    if _bare_operations_conflict(job_title, path_titles):
         return False
 
     for target in path_titles:
