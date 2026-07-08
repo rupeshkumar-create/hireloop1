@@ -53,6 +53,32 @@ Handler = Callable[[Settings, dict[str, Any]], Awaitable[None]]
 _BACKOFF_BASE_SECONDS = 30
 _BACKOFF_MAX_SECONDS = 900
 
+# User-facing generation must not sit behind multi-minute Apify scrapes.
+# claim_next_job orders these ahead of ingest/embed bulk work.
+_INTERACTIVE_JOB_KINDS = frozenset(
+    {
+        APPLICATION_KIT,
+        TAILORED_RESUME,
+        CAREER_PATH_RESUMES,
+        LEARNING_ROADMAP,
+    }
+)
+# Heavy kinds run on the single heavy lane so they cannot block interactive kits.
+_HEAVY_JOB_KINDS = frozenset(
+    {
+        AARYA_AUTO_INGEST,
+        CAREER_PATH_INGEST,
+        POOL_INGEST,
+        JOB_INGEST,
+        MATCH_EMBED_ALL,
+        MATCH_RECOMPUTE_ALL,
+        MATCH_EMBED_CANDIDATE,
+        JOB_EMBED,
+        JOB_SCORE,
+    }
+)
+_MAX_CONCURRENT_INTERACTIVE = 2
+
 
 async def enqueue_job(
     db: asyncpg.Connection,
@@ -101,16 +127,34 @@ async def claim_next_job(
     db: asyncpg.Connection,
     *,
     worker_id: str,
+    kinds: frozenset[str] | None = None,
+    exclude_kinds: frozenset[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Atomically claim the next runnable job, or None if the queue is empty."""
+    """Atomically claim the next runnable job, or None if the queue is empty.
+
+    Interactive kinds (application kits, tailored resumes) are claimed before
+    heavy Apify/embed work so the UI 90s poll does not time out while scrapes run.
+    """
+    # $1 = worker_id, $2 = interactive priority list (ORDER BY), then optional filters.
+    args: list[object] = [worker_id, list(_INTERACTIVE_JOB_KINDS)]
+    filters = ["status = 'pending'", "run_after <= NOW()"]
+    if kinds:
+        args.append(list(kinds))
+        filters.append(f"kind = ANY(${len(args)}::text[])")
+    if exclude_kinds:
+        args.append(list(exclude_kinds))
+        filters.append(f"kind <> ALL(${len(args)}::text[])")
+    where = " AND ".join(filters)
     row = await db.fetchrow(
-        """
+        f"""
         WITH next AS (
           SELECT id
           FROM public.background_jobs
-          WHERE status = 'pending'
-            AND run_after <= NOW()
-          ORDER BY run_after ASC, created_at ASC
+          WHERE {where}
+          ORDER BY
+            CASE WHEN kind = ANY($2::text[]) THEN 0 ELSE 1 END,
+            run_after ASC,
+            created_at ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
         )
@@ -124,7 +168,7 @@ async def claim_next_job(
         WHERE j.id = next.id
         RETURNING j.id, j.kind, j.payload, j.attempts, j.max_attempts
         """,
-        worker_id,
+        *args,
     )
     if not row:
         return None
@@ -620,6 +664,10 @@ async def run_background_worker(
     """
     Long-polling worker loop. Started from FastAPI lifespan; disabled in tests
     unless ``settings.background_worker_enabled`` is True.
+
+    Heavy Apify/embed jobs stay single-lane; interactive kits/resumes run on up
+    to ``_MAX_CONCURRENT_INTERACTIVE`` concurrent tasks so UI polls succeed while
+    scrapes are in flight.
     """
     import time as _time
 
@@ -637,6 +685,17 @@ async def run_background_worker(
     reclaim_interval_s = 5 * 60
     next_reclaim_at = _time.monotonic() + 30
     stuck_running_ttl = timedelta(minutes=20)
+
+    heavy_task: asyncio.Task[None] | None = None
+    interactive_tasks: set[asyncio.Task[None]] = set()
+
+    def _on_interactive_done(task: asyncio.Task[None]) -> None:
+        interactive_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("interactive_background_job_task_error", error=str(exc)[:300])
 
     while not stop_event.is_set():
         try:
@@ -665,11 +724,47 @@ async def run_background_worker(
                         ttl_minutes=int(stuck_running_ttl.total_seconds() // 60),
                     )
 
-            job: dict[str, Any] | None = None
-            async with pool.acquire() as conn:
-                job = await claim_next_job(conn, worker_id=wid)
-            if job:
-                await process_job(pool, settings, job)
+            claimed_any = False
+
+            # Drain interactive queue concurrently (kits must not wait on Apify).
+            while len(interactive_tasks) < _MAX_CONCURRENT_INTERACTIVE:
+                async with pool.acquire() as conn:
+                    interactive = await claim_next_job(
+                        conn,
+                        worker_id=f"{wid}-ui",
+                        kinds=_INTERACTIVE_JOB_KINDS,
+                    )
+                if not interactive:
+                    break
+                claimed_any = True
+                task = asyncio.create_task(
+                    process_job(pool, settings, interactive),
+                    name=f"bg-{interactive['kind']}-{interactive['id'][:8]}",
+                )
+                interactive_tasks.add(task)
+                task.add_done_callback(_on_interactive_done)
+
+            # Single heavy lane for Apify / bulk embed work.
+            if heavy_task is None or heavy_task.done():
+                if heavy_task is not None and not heavy_task.cancelled():
+                    exc = heavy_task.exception()
+                    if exc is not None:
+                        logger.error("heavy_background_job_task_error", error=str(exc)[:300])
+                heavy_task = None
+                async with pool.acquire() as conn:
+                    heavy = await claim_next_job(
+                        conn,
+                        worker_id=f"{wid}-heavy",
+                        exclude_kinds=_INTERACTIVE_JOB_KINDS,
+                    )
+                if heavy:
+                    claimed_any = True
+                    heavy_task = asyncio.create_task(
+                        process_job(pool, settings, heavy),
+                        name=f"bg-{heavy['kind']}-{heavy['id'][:8]}",
+                    )
+
+            if claimed_any:
                 continue
 
             if _time.monotonic() >= next_sweep_at:
@@ -693,5 +788,12 @@ async def run_background_worker(
             await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
         except TimeoutError:
             pass
+
+    # Drain in-flight tasks on shutdown (best-effort).
+    pending = list(interactive_tasks)
+    if heavy_task is not None and not heavy_task.done():
+        pending.append(heavy_task)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
     logger.info("background_worker_stopped", worker_id=wid)
