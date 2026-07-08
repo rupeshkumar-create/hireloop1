@@ -38,6 +38,7 @@ export default function NewRolePage() {
   const [market, setMarket] = useState<MarketCode>("IN");
   const [title, setTitle] = useState("");
   const [jd, setJd] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [compMin, setCompMin] = useState("");
   const [compMax, setCompMax] = useState("");
   const [city, setCity] = useState("");
@@ -69,6 +70,7 @@ export default function NewRolePage() {
       const res = await importRoleFromUrl(url);
       if (res.title) setTitle(res.title);
       if (res.jd_text) setJd(res.jd_text);
+      if (res.company_name) setCompanyName(res.company_name);
       if (res.comp_min_lpa != null) setCompMin(String(res.comp_min_lpa));
       if (res.comp_max_lpa != null) setCompMax(String(res.comp_max_lpa));
       if (res.location_city) setCity(res.location_city);
@@ -91,6 +93,7 @@ export default function NewRolePage() {
       const res = await createRole({
         title: title.trim(),
         jd_text: jd.trim() || null,
+        company_name: companyName.trim() || null,
         duplicate_from_role_id: duplicateId || null,
         comp_min_lpa: compMin ? Number(compMin) : null,
         comp_max_lpa: compMax ? Number(compMax) : null,
@@ -171,6 +174,20 @@ export default function NewRolePage() {
                     placeholder="e.g. Senior Backend Engineer"
                     required
                     autoFocus
+                  />
+                </Field>
+
+                <Field
+                  label="Company"
+                  htmlFor="role-company"
+                  helper="Auto-filled from the job link when available"
+                >
+                  <Input
+                    id="role-company"
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Acme India Pvt Ltd"
                   />
                 </Field>
 

@@ -16,10 +16,11 @@ from hireloop_api.config import Settings
 
 logger = structlog.get_logger()
 
-_EXTRACT_SYSTEM = """You extract structured hiring data from an India job description.
+_EXTRACT_SYSTEM = """You extract structured hiring data from a job description.
 Return ONLY valid JSON (no markdown fences):
 {
   "title": "role title",
+  "company_name": "hiring company name or null",
   "seniority": "junior|mid|senior|lead|manager|director|unknown",
   "years_experience_min": integer or null,
   "years_experience_max": integer or null,
@@ -37,7 +38,9 @@ Return ONLY valid JSON (no markdown fences):
   "assumptions": ["explicit assumptions when JD is ambiguous"]
 }
 Weights in evaluation_criteria should sum to ~100. No calibration profiles.
-Use India context (LPA, cities). If comp is missing, set comp_structure to unclear."""
+Prefer India context (LPA, cities) when the JD is India-focused.
+Never invent a company name — only use one that appears clearly in the text.
+If comp is missing, set comp_structure to unclear."""
 
 ROLE_REMOTE_POLICIES = frozenset({"onsite", "hybrid", "remote", "flex"})
 
@@ -391,8 +394,16 @@ def _normalize_extraction(
         "comp_structure": data.get("comp_structure"),
     }
 
+    company_raw = data.get("company_name")
+    company_name = (
+        company_raw.strip()[:120]
+        if isinstance(company_raw, str) and company_raw.strip()
+        else None
+    )
+
     return {
         "title": data.get("title") or title,
+        "company_name": company_name,
         "comp_min": comp_min,
         "comp_max": comp_max,
         "comp_min_lpa": data.get("comp_min_lpa"),
