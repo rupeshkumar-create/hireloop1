@@ -17,7 +17,7 @@
  * Chat is ALWAYS visible on the RIGHT — the preview panel opens on the LEFT.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "@/components/brand/icons";
@@ -225,14 +225,14 @@ export function DashboardClient({
     };
   }, [router]);
 
-  function handleSavedChange(jobId: string, saved: boolean) {
+  const handleSavedChange = useCallback((jobId: string, saved: boolean) => {
     setSavedJobIds((prev) => {
       const next = new Set(prev);
       if (saved) next.add(jobId);
       else next.delete(jobId);
       return next;
     });
-  }
+  }, []);
 
   function syncDashboardUrl(panel: PanelId | null, jobsTab?: JobsTab) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");

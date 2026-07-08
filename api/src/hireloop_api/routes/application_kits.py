@@ -181,7 +181,8 @@ async def get_application_kit_status_for_job(
     background_job = _serialize_background_job(job)
     job_status = job["status"] if job else None
 
-    if row and (row["tailored_resume_id"] or job_status not in {"pending", "running"}):
+    # Ready only when a tailored resume exists — cover/interview-only rows are incomplete.
+    if row and row["tailored_resume_id"]:
         return {
             "status": "ready",
             "saved": True,
@@ -208,18 +209,20 @@ async def get_application_kit_status_for_job(
             "message": "Application kit generation failed. Please retry from the job card.",
         }
 
-    if job_status == "completed" and not row:
+    if job_status == "completed" and (not row or not row["tailored_resume_id"]):
         return {
             "status": "failed",
-            "saved": False,
+            "saved": bool(row),
             "job_id": str(job_uuid),
             "background_job": background_job,
-            "message": "Application kit generation finished without creating assets. Please retry.",
+            "message": "Application kit generation finished without creating a resume. Please retry.",
         }
 
+    # Incomplete kit row (cover/prep, no resume) and no active job — treat as missing
+    # so clients can POST /prepare again instead of stopping on a hollow "ready".
     return {
         "status": "missing",
-        "saved": False,
+        "saved": bool(row),
         "job_id": str(job_uuid),
         "background_job": background_job,
         "message": "No application kit for this job yet.",

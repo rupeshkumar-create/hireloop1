@@ -1215,40 +1215,64 @@ export function ChatInterface({
   }, [injectedMessage, sendMessage]);
 
   // ── Deterministic application-kit requests from dashboard/job deep links ───
-  const lastKitRequestNonce = useRef<number | null>(null);
+  // Stabilize onSavedChange via ref. Depend only on the request nonce so parent
+  // re-renders cannot cancel an in-flight poll. Apply results when this nonce is
+  // still the latest kit request (survives React Strict Mode remounts).
+  const onSavedChangeRef = useRef(onSavedChange);
+  onSavedChangeRef.current = onSavedChange;
+  const kitRequestRef = useRef(applicationKitRequest);
+  kitRequestRef.current = applicationKitRequest;
+  const kitPrepareNonceRef = useRef<number | null>(null);
   useEffect(() => {
     if (!applicationKitRequest?.jobId || !applicationKitRequest.nonce) return;
-    if (applicationKitRequest.nonce === lastKitRequestNonce.current) return;
-    lastKitRequestNonce.current = applicationKitRequest.nonce;
-
-    let cancelled = false;
     const { jobId, title, company, nonce } = applicationKitRequest;
+
+    // Same nonce already preparing (Strict Mode remount) — restore loading UI only.
+    if (kitPrepareNonceRef.current === nonce) {
+      setIsStreaming(true);
+      setThinkingStatus("Preparing your resume, cover letter, and interview prep…");
+      return;
+    }
+    kitPrepareNonceRef.current = nonce;
+
     const userMessageId = `kit-request-user-${jobId}-${nonce}`;
     const assistantMessageId = `kit-request-assistant-${jobId}-${nonce}`;
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: userMessageId,
-        role: "user",
-        content: `Prepare my application kit for the "${title}" role at ${company}.`,
-        content_type: "text",
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: assistantMessageId,
-        role: "assistant",
-        content:
-          "I’m preparing your application kit now — tailored resume, cover letter, and interview prep. I’ll show preview and download options here as soon as it’s ready.",
-        content_type: "text",
-        created_at: new Date().toISOString(),
-      },
-    ]);
+    setIsStreaming(true);
+    setThinkingStatus("Preparing your resume, cover letter, and interview prep…");
+    setStreamingContent("");
+    setStreamingApplicationKits([]);
+
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === userMessageId || m.id === assistantMessageId)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: userMessageId,
+          role: "user",
+          content: `Prepare my application kit for the "${title}" role at ${company}.`,
+          content_type: "text",
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          content:
+            "I’m preparing your application kit now — tailored resume, cover letter, and interview prep. Hang tight while I finish this — you’ll see preview and download options here when it’s ready.",
+          content_type: "text",
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
 
     void prepareApplicationKit(jobId)
       .then((kit) => {
-        if (cancelled) return;
-        if (kit.saved && kit.job?.job_id) onSavedChange?.(kit.job.job_id, true);
+        if (kitRequestRef.current?.nonce !== nonce) return;
+        if (kit.saved && kit.job?.job_id) {
+          onSavedChangeRef.current?.(kit.job.job_id, true);
+        }
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMessageId
@@ -1263,7 +1287,7 @@ export function ChatInterface({
         );
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (kitRequestRef.current?.nonce !== nonce) return;
         const message = e instanceof Error ? e.message : "Please try again.";
         setMessages((prev) =>
           prev.map((m) =>
@@ -1275,12 +1299,13 @@ export function ChatInterface({
               : m,
           ),
         );
+      })
+      .finally(() => {
+        if (kitRequestRef.current?.nonce !== nonce) return;
+        setIsStreaming(false);
+        setThinkingStatus(null);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applicationKitRequest, onSavedChange]);
+  }, [applicationKitRequest]);
 
   // ── Resume upload ────────────────────────────────────────────────────────
 

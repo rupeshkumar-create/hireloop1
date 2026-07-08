@@ -142,19 +142,40 @@ function kitRowToApplicationKit(kit: JobApplicationKit): ApplicationKit {
 }
 
 async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
+  let requeuedIncomplete = false;
   for (let attempt = 0; attempt < APPLICATION_KIT_POLL_ATTEMPTS; attempt += 1) {
     if (attempt > 0) {
       await sleep(APPLICATION_KIT_POLL_INTERVAL_MS);
     }
     const status = await getApplicationKitStatusForJob(jobId);
     if (status.status === "ready") {
-      return kitRowToApplicationKit(status.kit);
+      const kit = kitRowToApplicationKit(status.kit);
+      if (kit.resume.resume_id) {
+        return kit;
+      }
+      // Status should not return ready without resume; keep waiting if it does.
+      continue;
     }
     if (status.status === "failed") {
       throw new Error(
         status.message ||
           "Application kit generation failed. Please retry from the job card."
       );
+    }
+    if (status.status === "missing" && !requeuedIncomplete) {
+      // Incomplete prior kit (cover/prep only) — ask backend to generate again once.
+      requeuedIncomplete = true;
+      const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = (await res.json()) as PrepareApplicationKitResponse;
+        if (isApplicationKit(data)) return data;
+        if (data.status === "ready") {
+          const kit = kitRowToApplicationKit(data.kit);
+          if (kit.resume.resume_id) return kit;
+        }
+      }
     }
   }
 

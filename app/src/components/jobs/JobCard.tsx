@@ -107,7 +107,10 @@ export function JobCard({
   const isChat = variant === "chat";
 
   const tailoring = tailorStatus === "loading";
-  const tailoredReady = tailorStatus === "ready";
+  // Matches API may already know the kit exists even if local kitByJob is idle.
+  const tailoredReady =
+    tailorStatus === "ready" ||
+    (tailorStatus === "idle" && job.action_state === "kit_ready");
   const roadmapBuilding = roadmapStatus === "loading";
   const roadmapReady = roadmapStatus === "ready";
 

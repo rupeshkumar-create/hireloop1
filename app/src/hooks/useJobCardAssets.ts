@@ -28,6 +28,13 @@ export type UseJobCardAssetsOptions = {
   onJobSaved?: (jobId: string) => void;
 };
 
+function kitReadyFromJob(job: MatchedJob, kitByJob: Record<string, AssetStatus>): boolean {
+  const local = kitByJob[job.job_id];
+  if (local === "ready") return true;
+  if (local === "loading" || local === "error") return false;
+  return job.action_state === "kit_ready";
+}
+
 export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
   const router = useRouter();
   const { toast } = useToast();
@@ -45,6 +52,7 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
         resumeId = kit?.tailored_resume_id ?? null;
         if (resumeId) {
           setResumeIdByJob((s) => ({ ...s, [job.job_id]: resumeId! }));
+          setKitByJob((s) => ({ ...s, [job.job_id]: "ready" }));
         }
       }
       setPreview({
@@ -62,7 +70,7 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
   const handlePrepareKit = useCallback(
     async (job: MatchedJob) => {
       const status = kitByJob[job.job_id];
-      if (status === "ready") {
+      if (kitReadyFromJob(job, kitByJob)) {
         await openKitPreview(job, "resume");
         return;
       }
@@ -74,6 +82,21 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
         // Must finish save BEFORE prepare — inactive/off-market jobs are only
         // eligible for kits when a saved_jobs row exists.
         await saveJob(job.job_id).catch(() => undefined);
+
+        // If a kit already exists (e.g. after refresh / completed in chat), open it
+        // instead of bouncing through another prepare deep-link.
+        const existing = await getApplicationKitForJob(job.job_id).catch(() => null);
+        if (existing?.tailored_resume_id) {
+          setResumeIdByJob((s) => ({
+            ...s,
+            [job.job_id]: existing.tailored_resume_id!,
+          }));
+          setKitByJob((s) => ({ ...s, [job.job_id]: "ready" }));
+          options.onKitReady?.(job);
+          await openKitPreview(job, "resume");
+          return;
+        }
+
         const params = new URLSearchParams();
         params.set("kit_job_id", job.job_id);
         if (job.title) params.set("kit_title", job.title);
