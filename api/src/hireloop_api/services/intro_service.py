@@ -27,6 +27,54 @@ from hireloop_api.services.public_role import enable_public_listing
 logger = structlog.get_logger()
 
 
+def _simple_intro_draft(
+    *, candidate_name: str | None, job_title: str | None, company_name: str | None
+) -> str:
+    """
+    Minimal deterministic draft shown in chat immediately.
+    Nitya can overwrite this later with a personalised LLM draft.
+    """
+    who = (candidate_name or "I").strip() or "I"
+    role = (job_title or "this role").strip() or "this role"
+    company = (company_name or "your team").strip() or "your team"
+    subject = f"Quick intro — {role} at {company}"
+    body_text = (
+        f"Hi,\n\n"
+        f"I'm {who}. I came across the {role} role at {company} and it looks like a strong fit.\n"
+        f"If you're the right person to speak to, I'd love to book a quick 15–20 minute chat.\n\n"
+        f"Thanks,\n"
+        f"{who}\n"
+    )
+    body_html = (
+        "<p>Hi,</p>"
+        f"<p>I’m {who}. I came across the <strong>{role}</strong> role at <strong>{company}</strong> and it looks like a strong fit. "
+        "If you’re the right person to speak to, I’d love to book a quick 15–20 minute chat.</p>"
+        f"<p>Thanks,<br/>{who}</p>"
+    )
+    return json.dumps({"subject": subject, "body_text": body_text, "body_html": body_html})
+
+
+async def _maybe_enqueue_hm_enrich(db: asyncpg.Connection, *, hm_id: str) -> None:
+    """
+    Opportunistically queue Apify + NeverBounce enrichment when keys are configured.
+    This makes the candidate chat experience work even if Nitya isn't running.
+    """
+    from hireloop_api.services.background_jobs import HM_ENRICH, enqueue_job
+
+    settings = get_settings()
+    if not (getattr(settings, "apify_token", "") or "").strip():
+        return
+    if not (getattr(settings, "neverbounce_api_key", "") or "").strip():
+        return
+
+    await enqueue_job(
+        db,
+        kind=HM_ENRICH,
+        payload={"hm_id": hm_id},
+        idempotency_key=f"hm_enrich:{hm_id}",
+    )
+
+
 def _app_base_url() -> str:
     """Best-effort public app origin for building invite CTA links."""
     settings = get_settings()
@@ -305,6 +353,20 @@ async def create_candidate_intro(
             hm["id"],
             message,
         )
+        # Show a simple draft immediately in chat; Nitya can overwrite later.
+        company = await db.fetchrow(
+            "SELECT name FROM public.companies WHERE id = $1::uuid",
+            job["company_id"],
+        )
+        await db.execute(
+            "UPDATE public.intro_requests SET draft_email = $1, updated_at = NOW() WHERE id = $2::uuid",
+            _simple_intro_draft(
+                candidate_name=candidate["full_name"],
+                job_title=job["title"],
+                company_name=(company["name"] if company else None),
+            ),
+            intro_id,
+        )
         return {
             "intro_id": str(intro_id),
             "status": "pending",
@@ -386,6 +448,24 @@ async def create_candidate_intro(
         uuid.UUID(str(hiring_manager_id)),
         message,
     )
+    # Queue enrichment immediately (best-effort) and drop a simple draft for chat.
+    company = await db.fetchrow(
+        "SELECT name FROM public.companies WHERE id = $1::uuid",
+        job["company_id"],
+    )
+    await db.execute(
+        "UPDATE public.intro_requests SET draft_email = $1, updated_at = NOW() WHERE id = $2::uuid",
+        _simple_intro_draft(
+            candidate_name=candidate["full_name"],
+            job_title=job["title"],
+            company_name=(company["name"] if company else None),
+        ),
+        intro_id,
+    )
+    try:
+        await _maybe_enqueue_hm_enrich(db, hm_id=str(hiring_manager_id))
+    except Exception as exc:  # enqueue is best-effort; Nitya may still handle it via NOTIFY
+        logger.info("hm_enrich_enqueue_skipped", hm_id=str(hiring_manager_id), error=str(exc))
     return {
         "intro_id": str(intro_id),
         "status": "pending",
