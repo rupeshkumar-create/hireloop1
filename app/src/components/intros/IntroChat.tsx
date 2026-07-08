@@ -1,7 +1,9 @@
 "use client";
 
 /**
- * IntroChat — the direct candidate↔recruiter thread for an accepted intro.
+ * IntroChat — the direct candidate↔recruiter thread for an intro.
+ * For recruiter→candidate requests, the recruiter can send the first note while
+ * the candidate hasn't accepted yet; the candidate can only reply once accepted.
  * Used from both the candidate intros page and the recruiter inbox; `side`
  * selects which auth-scoped API to hit.
  */

@@ -62,10 +62,21 @@ async def list_messages(db: asyncpg.Connection, *, intro_id: str, user_id: str) 
         """,
         intro_uuid,
     )
+    can_post = intro["status"] in _CHATTABLE
+    # Recruiter→candidate intros allow the recruiter to send the first note while
+    # the candidate hasn't accepted yet. Candidate still cannot reply until accepted.
+    if (
+        not can_post
+        and intro["status"] == "pending"
+        and sender_type == "recruiter"
+        and intro.get("direction") == "recruiter_to_candidate"
+    ):
+        can_post = True
+
     return {
         "intro_id": str(intro_uuid),
         "status": intro["status"],
-        "can_chat": intro["status"] in _CHATTABLE,
+        "can_chat": can_post,
         "you": sender_type,
         "messages": [
             {
@@ -94,7 +105,12 @@ async def post_message(
     intro, sender_type = await _resolve_party(db, intro_id=intro_uuid, user_id=user_uuid)
 
     if intro["status"] not in _CHATTABLE:
-        raise PermissionError("This intro hasn't been accepted yet")
+        if not (
+            intro["status"] == "pending"
+            and sender_type == "recruiter"
+            and intro.get("direction") == "recruiter_to_candidate"
+        ):
+            raise PermissionError("This intro hasn't been accepted yet")
 
     msg_id = uuid.uuid4()
     created = await db.fetchval(
