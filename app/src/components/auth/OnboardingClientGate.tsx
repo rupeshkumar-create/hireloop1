@@ -9,6 +9,9 @@ import {
   sleep,
 } from "@/lib/auth/onboarding-complete";
 
+const GATE_MAX_WAIT_MS = 12_000;
+const PROFILE_FETCH_TIMEOUT_MS = 8_000;
+
 /**
  * Prevents the onboarding wizard from flashing when activation already finished.
  * Only redirects when the API confirms onboarding_complete (with short retries
@@ -16,9 +19,11 @@ import {
  */
 export function OnboardingClientGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [slowApi, setSlowApi] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    const deadline = Date.now() + GATE_MAX_WAIT_MS;
 
     void (async () => {
       try {
@@ -31,9 +36,15 @@ export function OnboardingClientGate({ children }: { children: React.ReactNode }
 
         for (const delayMs of delays) {
           if (cancelled) return;
+          if (Date.now() >= deadline) break;
           if (delayMs > 0) await sleep(delayMs);
 
-          const profile = await fetchMyProfile({ force: true });
+          const profile = await Promise.race([
+            fetchMyProfile({ force: true }),
+            sleep(PROFILE_FETCH_TIMEOUT_MS).then(() => {
+              throw new Error("profile_fetch_timeout");
+            }),
+          ]);
           if (cancelled) return;
 
           if (profile.candidate?.onboarding_complete === true) {
@@ -42,7 +53,10 @@ export function OnboardingClientGate({ children }: { children: React.ReactNode }
             return;
           }
         }
-      } catch {
+      } catch (err) {
+        if (!cancelled && err instanceof Error && err.message === "profile_fetch_timeout") {
+          setSlowApi(true);
+        }
         /* show wizard */
       }
 
@@ -56,8 +70,13 @@ export function OnboardingClientGate({ children }: { children: React.ReactNode }
 
   if (!ready) {
     return (
-      <div className="min-h-screen bg-paper-0 flex items-center justify-center">
+      <div className="min-h-screen bg-paper-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-small text-ink-500">Loading…</p>
+        {slowApi ? (
+          <p className="text-caption text-ink-400 max-w-sm">
+            The server is taking longer than usual. You can continue setup below in a moment.
+          </p>
+        ) : null}
       </div>
     );
   }

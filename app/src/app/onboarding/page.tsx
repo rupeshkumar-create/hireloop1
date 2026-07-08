@@ -34,11 +34,13 @@ export default async function OnboardingPage() {
   } = await supabase.auth.getSession();
   const token = session?.access_token;
   const apiBase = getServerApiBaseUrl();
+  const serverFetchTimeoutMs = 12_000;
   if (token) {
     try {
       const meRes = await fetch(`${apiBase}/api/v1/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
+        signal: AbortSignal.timeout(serverFetchTimeoutMs),
       });
       if (meRes.ok) {
         const me = (await meRes.json()) as { role?: string };
@@ -62,6 +64,7 @@ export default async function OnboardingPage() {
       const profileRes = await fetch(`${apiBase}/api/v1/me/profile`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
+        signal: AbortSignal.timeout(serverFetchTimeoutMs),
       });
       if (profileRes.ok) {
         const profileData = (await profileRes.json()) as {

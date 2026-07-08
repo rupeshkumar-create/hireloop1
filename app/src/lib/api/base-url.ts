@@ -8,9 +8,15 @@
  * On the server (RSC, route handlers) we call the backend directly.
  */
 
-export const DIRECT_API_URL = (
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
-).replace(/\/$/, "");
+const DEFAULT_DEV_API_URL = "http://127.0.0.1:8000";
+
+/** Treat unset *and* empty-string env as missing (Vercel can store ""). */
+export function resolveDirectApiUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  return (raw || DEFAULT_DEV_API_URL).replace(/\/$/, "");
+}
+
+export const DIRECT_API_URL = resolveDirectApiUrl();
 
 /** Same-origin proxy path — must match `rewrites()` in next.config.mjs */
 export const API_PROXY_PREFIX = "/hireloop-api";

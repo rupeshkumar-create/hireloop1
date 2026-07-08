@@ -9,7 +9,7 @@ import {
   readPostAuthRedirect,
 } from "@/lib/auth/post-auth-redirect";
 
-const BOOTSTRAP_TIMEOUT_MS = 45_000;
+const BOOTSTRAP_TIMEOUT_MS = 30_000;
 
 export async function finishAuthSession(
   accessToken: string,

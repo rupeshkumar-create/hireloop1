@@ -35,6 +35,12 @@ export class ApiUnreachableError extends Error {
   }
 }
 
+const DEFAULT_API_FETCH_TIMEOUT_MS = 25_000;
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+}
+
 export async function getAccessToken(): Promise<string | null> {
   try {
     const supabase = createClient();
@@ -56,7 +62,8 @@ export async function getAccessToken(): Promise<string | null> {
 
 export async function apiAuthFetch(
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options?: { timeoutMs?: number },
 ): Promise<Response> {
   const token = await getAccessToken();
   const headers = new Headers(init.headers);
@@ -73,19 +80,43 @@ export async function apiAuthFetch(
   }
 
   const url = `${getApiBaseUrl()}${path}`;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_API_FETCH_TIMEOUT_MS;
+  const hasCallerSignal = init.signal !== undefined;
+  const timeoutSignal =
+    !hasCallerSignal && typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+      ? AbortSignal.timeout(timeoutMs)
+      : null;
+  const controller = hasCallerSignal || timeoutSignal ? null : new AbortController();
+  const timeoutId =
+    controller === null
+      ? undefined
+      : globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     return await fetch(url, {
       ...init,
       headers,
       credentials: "same-origin",
+      signal: hasCallerSignal
+        ? init.signal
+        : timeoutSignal ?? controller!.signal,
     });
   } catch (err) {
+    if (isAbortError(err)) {
+      const displayUrl =
+        typeof window !== "undefined" ? DIRECT_API_URL : getApiBaseUrl();
+      throw new ApiUnreachableError(
+        displayUrl,
+        new Error("Request timed out — our servers may be busy. Try again."),
+      );
+    }
     // Browser fetch only throws on genuine network failures (CORS, DNS,
     // connection refused, abort). NOT on 4xx/5xx — those return a Response.
     const displayUrl =
       typeof window !== "undefined" ? DIRECT_API_URL : getApiBaseUrl();
     throw new ApiUnreachableError(displayUrl, err);
+  } finally {
+    if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
   }
 }
 

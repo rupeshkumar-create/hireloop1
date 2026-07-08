@@ -46,9 +46,9 @@ async def get_db_pool(settings: Settings) -> asyncpg.Pool:
         dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
         pool_kwargs: dict[str, Any] = {
             "min_size": 2,
-            # 20: kickoff bursts (path build + feed + find-jobs + chat warmup in
-            # parallel) exhausted 10 and 503'd unrelated routes via acquire timeout.
-            "max_size": 20,
+            # 30: each authenticated route used to hold two connections when auth
+            # deps used get_db_optional while handlers used get_db (not cached).
+            "max_size": 30,
             "command_timeout": 30,
         }
         # Supabase (direct or transaction pooler) requires statement cache off with PgBouncer.
@@ -369,7 +369,7 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection | None = Depends(get_db_optional),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Validate the Supabase JWT from the Authorization header.
@@ -397,11 +397,10 @@ async def get_current_user(
         )
 
     uid = coerce_uuid(row["id"])
-    if db is not None:
-        try:
-            row["role"] = await _resolve_user_role(db, uid, str(row.get("role") or "candidate"))
-        except Exception as exc:
-            logger.warning("resolve_user_role_failed", error=str(exc)[:200])
+    try:
+        row["role"] = await _resolve_user_role(db, uid, str(row.get("role") or "candidate"))
+    except Exception as exc:
+        logger.warning("resolve_user_role_failed", error=str(exc)[:200])
     return row
 
 
@@ -432,7 +431,7 @@ async def get_current_user_with_supabase(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-    db: asyncpg.Connection | None = Depends(get_db_optional),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Like get_current_user, but also returns the raw Supabase user payload under
@@ -455,12 +454,11 @@ async def get_current_user_with_supabase(
             detail="User not found",
         )
 
-    if db is not None:
-        uid = coerce_uuid(base["id"])
-        try:
-            base["role"] = await _resolve_user_role(db, uid, str(base.get("role") or "candidate"))
-        except Exception as exc:
-            logger.warning("resolve_user_role_failed", error=str(exc)[:200])
+    uid = coerce_uuid(base["id"])
+    try:
+        base["role"] = await _resolve_user_role(db, uid, str(base.get("role") or "candidate"))
+    except Exception as exc:
+        logger.warning("resolve_user_role_failed", error=str(exc)[:200])
     return {**base, "_supabase_user": supabase_user}
 
 
