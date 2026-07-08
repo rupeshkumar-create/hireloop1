@@ -1,6 +1,7 @@
 """
 Intro handshake routes — candidate-facing intro request management.
 
+POST /api/v1/intros                     → create candidate intro request
 GET  /api/v1/intros                     → list candidate's intro requests
 GET  /api/v1/intros/{id}                → single intro detail (+ draft email preview)
 POST /api/v1/intros/{id}/cancel         → candidate cancels a pending intro
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.display_name import sanitize_display_name
+from hireloop_api.services.intro_service import create_candidate_intro
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/intros", tags=["intros"])
@@ -53,7 +55,32 @@ class IntroDetail(IntroSummary):
     hm_email: str | None = None
 
 
+class CreateIntroRequest(BaseModel):
+    job_id: uuid.UUID
+    hiring_manager_id: uuid.UUID | None = None
+    message: str | None = None
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.post("", status_code=201)
+async def create_intro(
+    body: CreateIntroRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Create a candidate intro request without relying on chat tool execution."""
+    result = await create_candidate_intro(
+        db,
+        user_id=current_user["id"],
+        job_id=str(body.job_id),
+        hiring_manager_id=str(body.hiring_manager_id) if body.hiring_manager_id else None,
+        message=body.message,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=str(result["error"]))
+    return result
 
 
 @router.get("", response_model=list[IntroSummary])
@@ -151,7 +178,7 @@ async def get_intro(
     d["draft_email"] = row["draft_email"]
     d["error_message"] = row["error_message"]
     d["gmail_connected"] = gmail_row is not None
-    d["hm_email"] = row.get("hm_email")
+    d["hm_email"] = row["hm_email"]
     return d
 
 

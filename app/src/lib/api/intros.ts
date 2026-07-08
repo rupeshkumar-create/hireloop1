@@ -39,6 +39,13 @@ export type IntroDetail = IntroRequest & {
   hm_email?: string | null;
 };
 
+export type CreateIntroResult = {
+  intro_id?: string;
+  status?: string;
+  direction?: IntroDirection;
+  message?: string;
+};
+
 let _introsCache: IntroRequest[] | null = null;
 let _introsInFlight: Promise<IntroRequest[]> | null = null;
 
@@ -74,6 +81,16 @@ export async function fetchIntros(
 
   _introsInFlight = req;
   return req;
+}
+
+/** Create an intro request for a job through the API service layer. */
+export async function createCandidateIntro(jobId: string): Promise<CreateIntroResult> {
+  const result = await apiFetch<CreateIntroResult>("/api/v1/intros", {
+    method: "POST",
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  _introsCache = null;
+  return result;
 }
 
 /**

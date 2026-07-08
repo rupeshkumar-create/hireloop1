@@ -23,7 +23,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "@/components/brand/icons";
 import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
 import { type MatchedJob } from "@/lib/api/matches";
-import { fetchIntros } from "@/lib/api/intros";
+import { createCandidateIntro, fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds, saveJob, subscribeSavedJobs } from "@/lib/api/saved-jobs";
 import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
 import { recordJobApplication } from "@/lib/api/job-applications";
@@ -57,6 +57,8 @@ const ChatInterface = dynamic(
     ssr: false,
   },
 );
+
+type IntroWatch = { jobId: string; nonce: number; introId?: string };
 
 interface DashboardClientProps {
   conversationId?: string;
@@ -104,7 +106,7 @@ export function DashboardClient({
   const [savedJobsRefreshKey, setSavedJobsRefreshKey] = useState(0);
   const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
-  const [introWatch, setIntroWatch] = useState<{ jobId: string; nonce: number } | null>(null);
+  const [introWatch, setIntroWatch] = useState<IntroWatch | null>(null);
   const [handledIntroParam] = useState(() => ({ handled: false }));
   const [handledKitParam] = useState(() => ({ handled: false }));
   const [sendToChatRef] = useState(() => ({ fn: (_text: string) => Date.now() }));
@@ -113,27 +115,38 @@ export function DashboardClient({
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
 
   // Allow deep-linking into an intro request from places like /jobs/[id].
-  // Example: /dashboard?intro_job_id=...&intro_title=...&intro_company=...
+  // Example: /dashboard?intro_job_id=...&intro_id=...&intro_title=...&intro_company=...
   useEffect(() => {
     if (handledIntroParam.handled) return;
     const jobId = searchParams?.get("intro_job_id")?.trim();
     if (!jobId) return;
     handledIntroParam.handled = true;
 
+    const introId = searchParams?.get("intro_id")?.trim() || undefined;
     const title = searchParams?.get("intro_title")?.trim() || "this role";
     const company = searchParams?.get("intro_company")?.trim() || "this company";
     const nonce = sendToChatRef.fn(
       `I'd like to request an intro for the "${title}" role at ${company} (job ID: ${jobId}).`,
     );
-    setIntroWatch({ jobId, nonce });
+    setIntroWatch({ jobId, nonce, introId });
+    if (!introId) {
+      void createCandidateIntro(jobId)
+        .then((result) => {
+          if (result.intro_id) setIntroWatch({ jobId, nonce, introId: result.intro_id });
+        })
+        .catch((e) => {
+          toast.error((e as Error).message || "Couldn't request intro.");
+        });
+    }
 
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.delete("intro_job_id");
+    params.delete("intro_id");
     params.delete("intro_title");
     params.delete("intro_company");
     const q = params.toString();
     router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
-  }, [router, searchParams, handledIntroParam, sendToChatRef]);
+  }, [router, searchParams, handledIntroParam, sendToChatRef, toast]);
 
   // Deep-link from job cards/detail pages into chat-mediated application-kit
   // generation. Example: /dashboard?kit_job_id=...&kit_title=...&kit_company=...
@@ -274,6 +287,15 @@ export function DashboardClient({
       } (job ID: ${job.job_id}).`,
     );
     setIntroWatch({ jobId: job.job_id, nonce });
+    void createCandidateIntro(job.job_id)
+      .then((result) => {
+        if (result.intro_id) {
+          setIntroWatch({ jobId: job.job_id, nonce, introId: result.intro_id });
+        }
+      })
+      .catch((e) => {
+        toast.error((e as Error).message || "Couldn't request intro.");
+      });
   }
 
   function handleDirectApply(job: MatchedJob) {

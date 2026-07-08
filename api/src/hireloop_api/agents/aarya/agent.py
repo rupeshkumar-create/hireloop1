@@ -804,7 +804,7 @@ TOOL_DEFINITIONS = [
                     "job_id": {"type": "string"},
                     "hiring_manager_id": {"type": "string"},
                 },
-                "required": ["job_id", "hiring_manager_id"],
+                "required": ["job_id"],
             },
         },
     },
