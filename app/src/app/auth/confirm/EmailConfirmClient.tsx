@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
@@ -27,41 +27,36 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const inFlightRef = useRef(false);
 
   async function handleConfirm() {
+    // Sync lock — React state alone can still let double-clicks burn the token.
+    if (inFlightRef.current || loading) return;
+    inFlightRef.current = true;
     setLoading(true);
     setErrorMessage("");
 
-    const attempts: EmailOtpType[] = ["signup", "email", "magiclink", type].filter(
-      (value, index, arr) => arr.indexOf(value) === index,
-    );
+    // Verify ONCE with the type from the email link. Cycling signup→email→magiclink
+    // burns GoTrue attempt budget and can invalidate the same token the signup
+    // form's 6-digit code uses.
+    const { data, error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type,
+    });
 
-    let lastError: string | null = null;
-    let accessToken: string | null = null;
-    for (const attemptType of attempts) {
-      const { data, error } = await supabase.auth.verifyOtp({
-        token_hash: tokenHash,
-        type: attemptType,
-      });
-      if (!error) {
-        accessToken = data.session?.access_token ?? null;
-        lastError = null;
-        break;
-      }
-      lastError = error.message;
-    }
-
-    if (lastError) {
-      const lowered = lastError.toLowerCase();
+    if (error) {
+      const lowered = (error.message ?? "").toLowerCase();
       setErrorMessage(
         lowered.includes("invalid") || lowered.includes("expired")
-          ? "This link was already used or expired (temp-mail scanners often open links before you do). Request a new email and use the 6-digit code on the signup page instead."
-          : lastError,
+          ? "This link was already used or expired (some inboxes scan links automatically). Request a new email and enter the 6-digit code on the signup page — do not open the link if you plan to use the code."
+          : error.message,
       );
+      inFlightRef.current = false;
       setLoading(false);
       return;
     }
 
+    let accessToken = data.session?.access_token ?? null;
     if (!accessToken) {
       const {
         data: { session },
@@ -71,6 +66,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
 
     if (!accessToken) {
       setErrorMessage("Verified, but no session was created. Please try again from signup.");
+      inFlightRef.current = false;
       setLoading(false);
       return;
     }
@@ -92,6 +88,7 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
             ? err.message
             : "Account setup failed. Please try again.",
       );
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
@@ -133,7 +130,8 @@ export function EmailConfirmClient({ tokenHash, type }: EmailConfirmClientProps)
           >
             sign up
           </a>{" "}
-          and enter the 6-digit code from the same email.
+          , request a <strong>fresh</strong> email, and enter the 6-digit code (same email&apos;s
+          old link and code are one-time and cannot both be used).
         </p>
       </div>
     </main>

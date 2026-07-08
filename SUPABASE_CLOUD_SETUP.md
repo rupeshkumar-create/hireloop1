@@ -71,6 +71,8 @@ python3 scripts/patch_supabase_email_templates.py
 
 Or paste `supabase/templates/confirmation.html` and `magic_link.html` into
 **Authentication → Email Templates** in the dashboard (Confirm signup + Magic link).
+Templates remind users: the 6-digit code and the link share one one-time login —
+use **either**, not both (opening the link burns the code).
 After updating, request a **new** sign-in email; old links still use the broken URL.
 
 ---

@@ -1,8 +1,14 @@
 <h2>Sign in to Hireschema</h2>
-<p>Your one-time code: <strong style="font-size:20px;letter-spacing:2px">{{ .Token }}</strong></p>
-<p>Enter that code on the signup page, or tap below to sign in (you&apos;ll be asked to confirm once).</p>
+<p>
+  Your one-time code:
+  <strong style="font-size:20px;letter-spacing:2px">{{ .Token }}</strong>
+</p>
+<p>
+  Enter that code on the signup page. Opening the link below uses the
+  <strong>same</strong> one-time login — if you plan to use the code, do not open the link.
+</p>
 <p>
   <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&amp;type=email"
-    >Sign in to Hireschema</a
+    >Sign in with link instead</a
   >
 </p>
