@@ -275,6 +275,10 @@ def derive_ingest_locations(
 
     out: list[str] = []
     seen: set[str] = set()
+    # When candidate stores a non-location string (e.g. "Upselling") but still
+    # includes the market ("India"), falling back to safe metro cities avoids
+    # empty Google Jobs results.
+    fallback_added_markets: set[str] = set()
 
     def _add(raw: str | None) -> None:
         loc = (raw or "").strip()
@@ -309,9 +313,15 @@ def derive_ingest_locations(
                 if canonical:
                     _add(canonical)
                 else:
-                    label = MARKET_LABELS.get(market)
-                    loc_low = loc.lower()
-                    _add(f"{loc}, {label}" if label and label.lower() not in loc_low else loc)
+                    # Unknown city/state inside a resolved market → ignore it and
+                    # inject safe market metros once.
+                    if market not in fallback_added_markets:
+                        fallback_added_markets.add(market)
+                        for default_loc in MARKET_SCRAPE_LOCATIONS.get(market, [])[
+                            :max_locations
+                        ]:
+                            _add(default_loc)
+                    # Otherwise: ignore this invalid location string.
             else:
                 _add(loc)
 
