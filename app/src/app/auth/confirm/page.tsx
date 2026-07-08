@@ -7,6 +7,8 @@ type PageProps = {
     token_hash?: string;
     type?: string;
     code?: string;
+    signup_role?: string;
+    role?: string;
   }>;
 };
 
@@ -23,7 +25,14 @@ export default async function EmailConfirmPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const code = params.code?.trim();
   if (code) {
-    redirect(`/auth/callback?code=${encodeURIComponent(code)}`);
+    // Preserve Job Seeker vs Recruiter when a code lands on /auth/confirm.
+    const qs = new URLSearchParams();
+    qs.set("code", code);
+    const signupRole = params.signup_role?.trim() || params.role?.trim();
+    if (signupRole === "recruiter" || signupRole === "candidate") {
+      qs.set("signup_role", signupRole);
+    }
+    redirect(`/auth/callback?${qs.toString()}`);
   }
 
   const tokenHash = params.token_hash?.trim() ?? "";
