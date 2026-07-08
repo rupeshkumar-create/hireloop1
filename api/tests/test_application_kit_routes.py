@@ -57,6 +57,20 @@ class _ExistingMissingResumeDb:
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         if "FROM public.candidates" in query:
             return {"id": self.candidate_id}
+        if "FROM public.background_jobs" in query:
+            if not self.active_job_id:
+                return None
+            now = datetime.now(UTC)
+            return {
+                "id": self.active_job_id,
+                "status": "running",
+                "last_error": None,
+                "attempts": 1,
+                "max_attempts": 3,
+                "created_at": now,
+                "updated_at": now,
+                "completed_at": None,
+            }
         if "FROM public.job_application_kits" in query:
             return self._kit_row()
         return None
@@ -138,3 +152,71 @@ async def test_get_existing_kit_without_resume_stays_not_ready_while_job_active(
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Application kit is still preparing"
+
+
+async def test_status_reports_processing_for_active_background_job() -> None:
+    db = _ExistingMissingResumeDb()
+    db.active_job_id = uuid.uuid4()
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "processing"
+    assert out["saved"] is True
+    assert out["background_job"]["id"] == str(db.active_job_id)
+
+
+async def test_status_returns_ready_kit_after_active_job_finishes() -> None:
+    db = _ExistingMissingResumeDb()
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "ready"
+    assert out["saved"] is True
+    assert out["kit"]["cover_letter"] == "Dear Hiring Team..."
+
+
+async def test_status_reports_failed_background_job_without_assets() -> None:
+    class _FailedDb(_ExistingMissingResumeDb):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed_job_id = uuid.uuid4()
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            if "FROM public.candidates" in query:
+                return {"id": self.candidate_id}
+            if "FROM public.background_jobs" in query:
+                now = datetime.now(UTC)
+                return {
+                    "id": self.failed_job_id,
+                    "status": "failed",
+                    "last_error": "boom",
+                    "attempts": 3,
+                    "max_attempts": 3,
+                    "created_at": now,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            if "FROM public.job_application_kits" in query:
+                return None
+            return None
+
+    db = _FailedDb()
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "failed"
+    assert out["saved"] is False
+    assert out["background_job"]["status"] == "failed"
+    assert "Please retry" in out["message"]

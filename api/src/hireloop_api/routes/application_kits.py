@@ -30,8 +30,8 @@ def _serialize_kit(row: asyncpg.Record) -> dict:
     return {
         "id": str(row["id"]),
         "job_id": str(row["job_id"]),
-        "job_title": row.get("job_title"),
-        "company_name": row.get("company_name"),
+        "job_title": row["job_title"],
+        "company_name": row["company_name"],
         "cover_letter": row["cover_letter"],
         "interview_prep": row["interview_prep"],
         "tailored_resume_id": str(row["tailored_resume_id"]) if row["tailored_resume_id"] else None,
@@ -45,25 +45,71 @@ def _application_kit_job_key(candidate_id: uuid.UUID, job_id: uuid.UUID) -> str:
     return f"application_kit:{candidate_id}:{job_id}"
 
 
-async def _active_application_kit_job_id(
+async def _latest_application_kit_job(
     db: asyncpg.Connection,
     *,
     candidate_id: uuid.UUID,
     job_id: uuid.UUID,
-) -> uuid.UUID | None:
-    job = await db.fetchval(
+) -> asyncpg.Record | None:
+    return await db.fetchrow(
         """
-        SELECT id FROM public.background_jobs
+        SELECT id, status, last_error, attempts, max_attempts,
+               created_at, updated_at, completed_at
+        FROM public.background_jobs
         WHERE idempotency_key = $1
           AND kind = $2
-          AND status IN ('pending', 'running')
         ORDER BY created_at DESC
         LIMIT 1
         """,
         _application_kit_job_key(candidate_id, job_id),
         background_jobs.APPLICATION_KIT,
     )
-    return uuid.UUID(str(job)) if job else None
+
+
+async def _active_application_kit_job_id(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> uuid.UUID | None:
+    job = await _latest_application_kit_job(db, candidate_id=candidate_id, job_id=job_id)
+    if not job or job["status"] not in {"pending", "running"}:
+        return None
+    return uuid.UUID(str(job["id"]))
+
+
+async def _application_kit_row_for_job(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> asyncpg.Record | None:
+    return await db.fetchrow(
+        """
+        SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
+               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
+               j.title AS job_title, co.name AS company_name
+        FROM public.job_application_kits k
+        JOIN public.jobs j ON j.id = k.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE k.candidate_id = $1::uuid AND k.job_id = $2::uuid
+        """,
+        candidate_id,
+        job_id,
+    )
+
+
+def _serialize_background_job(row: asyncpg.Record | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "id": str(row["id"]),
+        "status": row["status"],
+        "attempts": row["attempts"],
+        "max_attempts": row["max_attempts"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+    }
 
 
 @router.get("")
@@ -105,19 +151,7 @@ async def get_application_kit_for_job(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid job ID") from exc
 
-    row = await db.fetchrow(
-        """
-        SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
-               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
-               j.title AS job_title, co.name AS company_name
-        FROM public.job_application_kits k
-        JOIN public.jobs j ON j.id = k.job_id
-        LEFT JOIN public.companies co ON co.id = j.company_id
-        WHERE k.candidate_id = $1::uuid AND k.job_id = $2::uuid
-        """,
-        cid,
-        job_uuid,
-    )
+    row = await _application_kit_row_for_job(db, candidate_id=cid, job_id=job_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="No application kit for this job yet")
     if not row["tailored_resume_id"] and await _active_application_kit_job_id(
@@ -127,6 +161,69 @@ async def get_application_kit_for_job(
     ):
         raise HTTPException(status_code=404, detail="Application kit is still preparing")
     return {"kit": _serialize_kit(row)}
+
+
+@router.get("/jobs/{job_id}/status")
+async def get_application_kit_status_for_job(
+    job_id: str,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Poll-friendly application-kit status, including durable job failures."""
+    cid = await _candidate_id(db, current_user["id"])
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid job ID") from exc
+
+    row = await _application_kit_row_for_job(db, candidate_id=cid, job_id=job_uuid)
+    job = await _latest_application_kit_job(db, candidate_id=cid, job_id=job_uuid)
+    background_job = _serialize_background_job(job)
+    job_status = job["status"] if job else None
+
+    if row and (row["tailored_resume_id"] or job_status not in {"pending", "running"}):
+        return {
+            "status": "ready",
+            "saved": True,
+            "job_id": str(job_uuid),
+            "kit": _serialize_kit(row),
+            "background_job": background_job,
+        }
+
+    if job_status in {"pending", "running"}:
+        return {
+            "status": "processing",
+            "saved": bool(row),
+            "job_id": str(job_uuid),
+            "background_job": background_job,
+            "message": "Preparing your resume, cover letter, and interview prep.",
+        }
+
+    if job_status == "failed":
+        return {
+            "status": "failed",
+            "saved": bool(row),
+            "job_id": str(job_uuid),
+            "background_job": background_job,
+            "message": "Application kit generation failed. Please retry from the job card.",
+        }
+
+    if job_status == "completed" and not row:
+        return {
+            "status": "failed",
+            "saved": False,
+            "job_id": str(job_uuid),
+            "background_job": background_job,
+            "message": "Application kit generation finished without creating assets. Please retry.",
+        }
+
+    return {
+        "status": "missing",
+        "saved": False,
+        "job_id": str(job_uuid),
+        "background_job": background_job,
+        "message": "No application kit for this job yet.",
+    }
 
 
 @router.post("/jobs/{job_id}/prepare")
@@ -143,19 +240,7 @@ async def prepare_application_kit_for_job(
         raise HTTPException(status_code=400, detail="Invalid job ID") from exc
 
     cid = await _candidate_id(db, current_user["id"])
-    existing = await db.fetchrow(
-        """
-        SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
-               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
-               j.title AS job_title, co.name AS company_name
-        FROM public.job_application_kits k
-        JOIN public.jobs j ON j.id = k.job_id
-        LEFT JOIN public.companies co ON co.id = j.company_id
-        WHERE k.candidate_id = $1::uuid AND k.job_id = $2::uuid
-        """,
-        cid,
-        job_uuid,
-    )
+    existing = await _application_kit_row_for_job(db, candidate_id=cid, job_id=job_uuid)
     if existing:
         if existing["tailored_resume_id"]:
             return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}

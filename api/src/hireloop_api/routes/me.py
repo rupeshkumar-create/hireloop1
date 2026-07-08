@@ -207,6 +207,14 @@ async def _ensure_candidate_row(
           tailored_resume_enabled
         )
         VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE, FALSE)
+        ON CONFLICT (user_id) DO UPDATE
+        SET headline = COALESCE(NULLIF(TRIM(public.candidates.headline), ''), EXCLUDED.headline),
+            hide_contact_public = COALESCE(public.candidates.hide_contact_public, TRUE),
+            share_with_recruiters = COALESCE(public.candidates.share_with_recruiters, TRUE),
+            public_profile_enabled = COALESCE(public.candidates.public_profile_enabled, TRUE),
+            tailored_resume_enabled = COALESCE(public.candidates.tailored_resume_enabled, FALSE),
+            updated_at = NOW()
+        WHERE public.candidates.deleted_at IS NULL
         RETURNING id, market, headline, summary, current_title, current_company,
                   years_experience, location_city, location_state, skills,
                   profile_complete, onboarding_complete, visibility, looking_for, remote_preference,
@@ -219,6 +227,11 @@ async def _ensure_candidate_row(
         user_id,
         headline,
     )
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This candidate profile was previously deleted. Please contact support to restore it.",
+        )
     from hireloop_api.services.public_profile import bootstrap_candidate_public_profile
 
     user_row = await db.fetchrow(

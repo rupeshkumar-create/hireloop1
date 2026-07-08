@@ -12,8 +12,9 @@ export type KickoffProgress = {
 };
 
 export function markCareerKickoffDone(userId?: string): void {
+  if (!userId) return;
   try {
-    localStorage.setItem(CAREER_KICKOFF_DONE_KEY, userId ?? "1");
+    localStorage.setItem(CAREER_KICKOFF_DONE_KEY, userId);
     clearCareerKickoffProgress();
   } catch {
     /* ignore */
@@ -21,18 +22,22 @@ export function markCareerKickoffDone(userId?: string): void {
 }
 
 export function hasCareerKickoffDone(userId?: string): boolean {
+  if (!userId) return false;
   try {
     const stored = localStorage.getItem(CAREER_KICKOFF_DONE_KEY);
     if (!stored) return false;
-    if (!userId) return stored === "1" || stored.length > 0;
-    return stored === userId || stored === "1";
+    return stored === userId;
   } catch {
     return false;
   }
 }
 
-export function clearCareerKickoffDone(): void {
+export function clearCareerKickoffDone(userId?: string): void {
   try {
+    if (userId) {
+      const stored = localStorage.getItem(CAREER_KICKOFF_DONE_KEY);
+      if (stored && stored !== userId) return;
+    }
     localStorage.removeItem(CAREER_KICKOFF_DONE_KEY);
   } catch {
     /* ignore */
@@ -43,10 +48,11 @@ export function saveCareerKickoffProgress(
   progress: KickoffProgress,
   userId?: string,
 ): void {
+  if (!userId) return;
   try {
     sessionStorage.setItem(
       CAREER_KICKOFF_PROGRESS_KEY,
-      JSON.stringify({ ...progress, userId: userId ?? progress.userId }),
+      JSON.stringify({ ...progress, userId }),
     );
   } catch {
     /* ignore */
@@ -54,12 +60,13 @@ export function saveCareerKickoffProgress(
 }
 
 export function readCareerKickoffProgress(userId?: string): KickoffProgress | null {
+  if (!userId) return null;
   try {
     const raw = sessionStorage.getItem(CAREER_KICKOFF_PROGRESS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as KickoffProgress;
     if (!parsed?.step || !Array.isArray(parsed.selected)) return null;
-    if (userId && parsed.userId && parsed.userId !== userId && parsed.userId !== "1") {
+    if (parsed.userId !== userId) {
       return null;
     }
     return {

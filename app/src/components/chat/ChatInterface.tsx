@@ -131,6 +131,7 @@ import {
   clearCareerKickoffProgress,
   hasCareerKickoffDone,
   hasCareerKickoffInProgress,
+  clearCareerKickoffDone,
   markCareerKickoffDone,
 } from "@/lib/auth/career-kickoff";
 import {
@@ -536,6 +537,11 @@ export function ChatInterface({
   // or the candidate has not picked a career path yet (first dashboard visit).
   useEffect(() => {
     if (historyLoading) return;
+    if (!authUserId) return;
+    if (kickoffActive && hasCareerKickoffDone(authUserId)) {
+      setKickoffActive(false);
+      return;
+    }
     if (kickoffAutoCheckedRef.current) return;
 
     if (kickoffActive) {
@@ -547,8 +553,8 @@ export function ChatInterface({
 
     let cancelled = false;
     void (async () => {
-      if (hasCareerKickoffDone(authUserId ?? undefined)) return;
-      if (hasCareerKickoffInProgress(authUserId ?? undefined)) {
+      if (hasCareerKickoffDone(authUserId)) return;
+      if (hasCareerKickoffInProgress(authUserId)) {
         if (!cancelled) setKickoffActive(true);
         return;
       }
@@ -1263,45 +1269,23 @@ export function ChatInterface({
         }
 
         setIsUploading(false);
-        // After resume upload, always run the 3-step kickoff unless the user has
-        // already completed it for this account.
-        if (!hasCareerKickoffDone(authUserId ?? undefined)) {
-          clearCareerKickoffProgress();
-          setKickoffActive(true);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant" as const,
-              content:
-                "Resume received. Let’s do a quick 3-step setup: (1) review what I extracted, (2) pick your preferred career path, (3) confirm — then I’ll start pulling jobs.",
-              content_type: "text" as const,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-
-        // If kickoff is already done, continue with normal chat.
-        const p = data.parsed;
-        const parts: string[] = [];
-        if (p.full_name) parts.push(`Name: ${p.full_name}`);
-        if (p.current_title) parts.push(`Role: ${p.current_title}`);
-        if (p.current_company) parts.push(`Company: ${p.current_company}`);
-        if (p.years_experience) parts.push(`${p.years_experience} years of experience`);
-        if (p.skills?.length) {
-          const top = p.skills.slice(0, 8).join(", ");
-          const extra = p.skills.length > 8 ? ` (+${p.skills.length - 8} more)` : "";
-          parts.push(`Skills: ${top}${extra}`);
-        }
-
-        const summary =
-          parts.length > 0
-            ? `I just uploaded my resume (${file.name}). Here's what was extracted and applied to my profile: ${parts.join("; ")}. What should I do next?`
-            : `I just uploaded my resume (${file.name}). What should I do next?`;
-
-        await sendMessage(summary);
-
+        // A new CV can materially change the search direction, so restart the
+        // guided path once for this deliberate upload.
+        clearCareerKickoffDone(authUserId ?? undefined);
+        clearCareerKickoffProgress();
+        setKickoffActive(true);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            content:
+              "Resume received. Let’s do a quick 3-step setup: (1) review what I extracted, (2) pick your preferred career path, (3) confirm — then I’ll start pulling jobs.",
+            content_type: "text" as const,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        return;
       } catch (err) {
         setIsUploading(false);
         const msg = err instanceof Error ? err.message : "Unknown error";
@@ -1319,7 +1303,7 @@ export function ChatInterface({
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [authUserId, isUploading, isStreaming, sendMessage]
+    [authUserId, isUploading, isStreaming]
   );
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────

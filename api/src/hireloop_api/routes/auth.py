@@ -38,6 +38,7 @@ from hireloop_api.deps import (
     get_supabase_identity,
 )
 from hireloop_api.markets import normalize_market, validate_e164_phone
+from hireloop_api.routes.me import _ensure_candidate_row
 from hireloop_api.services import otp_store
 from hireloop_api.services.bootstrap_roles import can_switch_roles, resolve_bootstrap_role
 from hireloop_api.services.consent import log_consent
@@ -409,18 +410,8 @@ async def bootstrap_user(
             user_id,
         )
         is_new_user = existing is None
-        if not existing:
-            await db.execute(
-                """
-                INSERT INTO public.candidates (
-                  user_id, headline, profile_complete,
-                  hide_contact_public, share_with_recruiters, public_profile_enabled
-                )
-                VALUES ($1, $2, FALSE, TRUE, TRUE, TRUE)
-                """,
-                user_id,
-                initial_headline,
-            )
+        await _ensure_candidate_row(db, user_id, headline=initial_headline)
+        if is_new_user:
             try:
                 await log_consent(db, user_id=user_id, purpose="profile_creation", granted=True)
             except Exception as exc:

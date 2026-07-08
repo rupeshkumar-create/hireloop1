@@ -30,6 +30,31 @@ type PrepareApplicationKitResponse =
       kit: JobApplicationKit;
     };
 
+type ApplicationKitStatusResponse =
+  | {
+      status: "ready";
+      saved: boolean;
+      job_id: string;
+      kit: JobApplicationKit;
+      background_job?: ApplicationKitBackgroundJob | null;
+    }
+  | {
+      status: "processing" | "failed" | "missing";
+      saved: boolean;
+      job_id: string;
+      message?: string;
+      background_job?: ApplicationKitBackgroundJob | null;
+    };
+
+type ApplicationKitBackgroundJob = {
+  id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  attempts: number;
+  max_attempts: number;
+  updated_at: string | null;
+  completed_at: string | null;
+};
+
 const APPLICATION_KIT_POLL_ATTEMPTS = 45;
 const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
 
@@ -45,6 +70,20 @@ export async function getApplicationKitForJob(
   if (!res.ok) throw new Error(`Kit fetch failed: ${res.status}`);
   const data = (await res.json()) as { kit: JobApplicationKit };
   return data.kit;
+}
+
+async function getApplicationKitStatusForJob(
+  jobId: string
+): Promise<ApplicationKitStatusResponse> {
+  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/status`);
+  if (!res.ok) {
+    const body = await res.json().catch(async () => ({
+      detail: (await res.text().catch(() => "")) || res.statusText,
+    }));
+    const detail = (body as { detail?: string }).detail;
+    throw new Error(detail?.trim() || `Kit status failed: ${res.status}`);
+  }
+  return res.json() as Promise<ApplicationKitStatusResponse>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -107,9 +146,15 @@ async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
     if (attempt > 0) {
       await sleep(APPLICATION_KIT_POLL_INTERVAL_MS);
     }
-    const kit = await getApplicationKitForJob(jobId);
-    if (kit) {
-      return kitRowToApplicationKit(kit);
+    const status = await getApplicationKitStatusForJob(jobId);
+    if (status.status === "ready") {
+      return kitRowToApplicationKit(status.kit);
+    }
+    if (status.status === "failed") {
+      throw new Error(
+        status.message ||
+          "Application kit generation failed. Please retry from the job card."
+      );
     }
   }
 
