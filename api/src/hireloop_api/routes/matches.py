@@ -12,6 +12,7 @@ POST /api/v1/matches/embed/candidate/{id} → embed + score a single candidate i
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -178,8 +179,54 @@ async def _candidate_with_intelligence(
     if ctx.hard_filters.ctc_floor is not None:
         enriched["expected_ctc_min"] = ctx.hard_filters.ctc_floor
 
-    state = dict(enriched.get("aarya_state") or {})
-    negative = dict(state.get("negative_preferences") or {})
+    # aarya_state is stored as JSONB, but older rows / migrations can contain
+    # shapes that are not a plain dict (e.g. serialized strings, or objects).
+    # Never let this crash the match feed.
+    raw_state = enriched.get("aarya_state")
+    if raw_state is None:
+        state: dict[str, object] = {}
+    elif isinstance(raw_state, dict):
+        state = dict(raw_state)
+    elif isinstance(raw_state, str):
+        try:
+            parsed = json.loads(raw_state)
+            state = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            state = {}
+    elif hasattr(raw_state, "model_dump"):
+        try:
+            dumped = raw_state.model_dump()  # pydantic v2 models
+            state = dumped if isinstance(dumped, dict) else {}
+        except Exception:
+            state = {}
+    else:
+        try:
+            state = dict(raw_state)  # best-effort for mapping-like objects
+        except Exception:
+            state = {}
+
+    raw_negative = state.get("negative_preferences")
+    if raw_negative is None:
+        negative: dict[str, object] = {}
+    elif isinstance(raw_negative, dict):
+        negative = dict(raw_negative)
+    elif isinstance(raw_negative, str):
+        try:
+            parsed = json.loads(raw_negative)
+            negative = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            negative = {}
+    elif hasattr(raw_negative, "model_dump"):
+        try:
+            dumped = raw_negative.model_dump()
+            negative = dumped if isinstance(dumped, dict) else {}
+        except Exception:
+            negative = {}
+    else:
+        try:
+            negative = dict(raw_negative)
+        except Exception:
+            negative = {}
     negative["companies"] = _unique_nonempty(
         [
             *(negative.get("companies") or []),
