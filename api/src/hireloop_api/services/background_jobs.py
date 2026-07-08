@@ -303,7 +303,7 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
     if not settings.openrouter_api_key:
         return
     from hireloop_api.deps import get_db_pool
-    from hireloop_api.services.embeddings import EmbeddingService
+    from hireloop_api.services.embeddings import EmbeddingService, InsufficientCreditsError
     from hireloop_api.services.matching import MatchingEngine
 
     candidate_id = str(payload["candidate_id"])
@@ -311,7 +311,14 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
     async with pool.acquire() as conn:
         svc = EmbeddingService(api_key=settings.openrouter_api_key, db=conn)
         try:
-            await svc.embed_candidate(candidate_id)
+            try:
+                await svc.embed_candidate(candidate_id)
+            except InsufficientCreditsError as exc:
+                logger.warning(
+                    "resume_embed_skipped_insufficient_credits",
+                    candidate_id=candidate_id,
+                    error=str(exc)[:200],
+                )
         finally:
             await svc.close()
         engine = MatchingEngine(conn)
@@ -391,14 +398,20 @@ async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -
 
 async def _handle_match_embed_all(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
-    from hireloop_api.services.embeddings import EmbeddingService
+    from hireloop_api.services.embeddings import EmbeddingService, InsufficientCreditsError
 
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
         svc = EmbeddingService(api_key=settings.openrouter_api_key, db=conn)
         try:
-            await svc.embed_all_pending_jobs()
-            await svc.embed_all_pending_candidates()
+            try:
+                await svc.embed_all_pending_jobs()
+                await svc.embed_all_pending_candidates()
+            except InsufficientCreditsError as exc:
+                logger.warning(
+                    "match_embed_all_skipped_insufficient_credits",
+                    error=str(exc)[:200],
+                )
         finally:
             await svc.close()
 
@@ -415,21 +428,29 @@ async def _handle_match_recompute_all(settings: Settings, payload: dict[str, Any
 
 async def _handle_match_embed_candidate(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
-    from hireloop_api.services.embeddings import EmbeddingService
+    from hireloop_api.services.embeddings import EmbeddingService, InsufficientCreditsError
     from hireloop_api.services.matching import MatchingEngine
 
     candidate_id = str(payload["candidate_id"])
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
-        svc = EmbeddingService(api_key=settings.openrouter_api_key, db=conn)
-        try:
-            embedded, _failed = await svc.embed_all_pending_jobs()
-            ok = await svc.embed_candidate(candidate_id)
-            if ok or embedded:
-                engine = MatchingEngine(conn)
-                await engine.score_candidate(candidate_id)
-        finally:
-            await svc.close()
+        if settings.openrouter_api_key:
+            svc = EmbeddingService(api_key=settings.openrouter_api_key, db=conn)
+            try:
+                try:
+                    await svc.embed_all_pending_jobs()
+                    await svc.embed_candidate(candidate_id)
+                except InsufficientCreditsError as exc:
+                    logger.warning(
+                        "match_embed_candidate_skipped_insufficient_credits",
+                        candidate_id=candidate_id,
+                        error=str(exc)[:200],
+                    )
+            finally:
+                await svc.close()
+        # Always score — lexical matching works without embeddings.
+        engine = MatchingEngine(conn)
+        await engine.score_candidate(candidate_id)
 
 
 async def _handle_job_embed(settings: Settings, payload: dict[str, Any]) -> None:

@@ -31,6 +31,23 @@ _EMBEDDING_DIM = 1536
 _OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 _BATCH_SIZE = 20  # max texts per API call (rate-limit headroom)
 _MAX_CHARS = 8_000  # truncate at 8k chars (~2k tokens) before embedding
+# Stop burning the worker on repeat 402s — scoring still works without vectors.
+_MAX_CONSECUTIVE_EMBED_FAILURES = 3
+
+
+class InsufficientCreditsError(RuntimeError):
+    """OpenRouter returned 402 — stop the batch so scoring can proceed lexically."""
+
+
+def _is_insufficient_credits_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    if "402" in text and ("credit" in text or "payment required" in text):
+        return True
+    if "insufficient credits" in text:
+        return True
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status == 402
 
 
 def _truncate(text: str | None, max_chars: int = _MAX_CHARS) -> str:
@@ -78,6 +95,7 @@ class EmbeddingService:
         Call the embedding API for a batch of texts.
         Returns a list of float vectors in the same order as input.
         Raises httpx.HTTPStatusError on API failure.
+        Raises InsufficientCreditsError on OpenRouter 402 so callers abort the batch.
         """
         if not texts:
             return []
@@ -89,6 +107,10 @@ class EmbeddingService:
             "/embeddings",
             json={"model": _EMBEDDING_MODEL, "input": safe_texts},
         )
+        if response.status_code == 402:
+            raise InsufficientCreditsError(
+                "OpenRouter insufficient credits (402) — add credits or rotate OPENROUTER_API_KEY"
+            )
         response.raise_for_status()
         data = response.json()
 
@@ -97,11 +119,19 @@ class EmbeddingService:
         return [item["embedding"] for item in items]
 
     async def _embed_single(self, text: str) -> list[float]:
-        """Embed a single text string. Returns empty list on error."""
+        """Embed a single text string. Returns empty list on error.
+
+        Re-raises InsufficientCreditsError so batch embedders can abort early
+        instead of looping hundreds of doomed 402 calls.
+        """
         try:
             results = await self._embed_texts([text])
             return results[0] if results else []
+        except InsufficientCreditsError:
+            raise
         except Exception as exc:
+            if _is_insufficient_credits_error(exc):
+                raise InsufficientCreditsError(str(exc)[:200]) from exc
             logger.warning("embed_single_failed", error=str(exc))
             return []
 
@@ -215,7 +245,11 @@ class EmbeddingService:
             logger.info("embed_candidate_done", candidate_id=candidate_id)
             return True
 
+        except InsufficientCreditsError:
+            raise
         except Exception as exc:
+            if _is_insufficient_credits_error(exc):
+                raise InsufficientCreditsError(str(exc)[:200]) from exc
             logger.error("embed_candidate_failed", candidate_id=candidate_id, error=str(exc))
             return False
 
@@ -278,7 +312,11 @@ class EmbeddingService:
             logger.info("embed_job_done", job_id=job_id)
             return True
 
+        except InsufficientCreditsError:
+            raise
         except Exception as exc:
+            if _is_insufficient_credits_error(exc):
+                raise InsufficientCreditsError(str(exc)[:200]) from exc
             logger.error("embed_job_failed", job_id=job_id, error=str(exc))
             return False
 
@@ -295,10 +333,40 @@ class EmbeddingService:
         surfaced from a query outside ``embed_job``'s try) was swallowed silently
         and left most jobs un-embedded. Per-job HTTP latency is hidden by the three
         concurrent ``_embed_single`` calls inside each ``embed_job``.
+
+        Aborts the remainder of the batch after a few consecutive failures or on
+        OpenRouter 402 so a zero-credit key cannot stall match scoring for minutes.
         """
         results: dict[str, bool] = {}
+        consecutive_failures = 0
         for jid in job_ids:
-            results[jid] = await self.embed_job(jid)
+            try:
+                ok = await self.embed_job(jid)
+            except InsufficientCreditsError as exc:
+                logger.warning(
+                    "embed_jobs_batch_aborted_insufficient_credits",
+                    error=str(exc)[:200],
+                    attempted=len(results),
+                    remaining=len(job_ids) - len(results),
+                )
+                for remaining_id in job_ids[len(results) :]:
+                    results[remaining_id] = False
+                break
+            results[jid] = ok
+            if ok:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_EMBED_FAILURES:
+                    logger.warning(
+                        "embed_jobs_batch_aborted_consecutive_failures",
+                        failed_streak=consecutive_failures,
+                        attempted=len(results),
+                        remaining=len(job_ids) - len(results),
+                    )
+                    for remaining_id in job_ids[len(results) :]:
+                        results[remaining_id] = False
+                    break
         return results
 
     async def embed_all_pending_jobs(self) -> tuple[int, int]:
@@ -370,17 +438,27 @@ async def embed_pending_and_score_candidate(
     """
     Embed active jobs missing vectors, then score the candidate against them.
 
-    Ingested Apify/Fantastic jobs are unusable for ranking until embedded — this
-    is the bridge between scrape and a populated match feed.
+    Embeddings improve ranking when OpenRouter credits are available. When credits
+    are exhausted (402), we skip embedding and still run lexical scoring so scraped
+    Apify jobs appear in the match feed immediately.
     Returns (jobs_embedded, pairs_scored).
     """
     from hireloop_api.services.matching import MatchingEngine
 
-    svc = EmbeddingService(api_key=settings.openrouter_api_key, db=db)
-    try:
-        embedded, _failed = await svc.embed_all_pending_jobs()
-    finally:
-        await svc.close()
+    embedded = 0
+    if settings.openrouter_api_key:
+        svc = EmbeddingService(api_key=settings.openrouter_api_key, db=db)
+        try:
+            embedded, _failed = await svc.embed_all_pending_jobs()
+        except InsufficientCreditsError as exc:
+            # Lexical scoring still works without embeddings — never block the feed.
+            logger.warning(
+                "embed_pending_skipped_insufficient_credits",
+                candidate_id=candidate_id,
+                error=str(exc)[:200],
+            )
+        finally:
+            await svc.close()
 
     engine = MatchingEngine(db)
     scored = await engine.score_candidate(candidate_id, limit=limit)

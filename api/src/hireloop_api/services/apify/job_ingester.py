@@ -119,6 +119,20 @@ _TITLE_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "account manager": ("Account Manager", "Key Account Manager"),
     "call quality": ("Quality Analyst", "Customer Support Quality Analyst"),
     "quality monitoring": ("Quality Analyst", "Customer Support Quality Analyst"),
+    # Community / hospitality operations (common India hospitality titles)
+    "community associate": (
+        "Community Manager",
+        "Community Associate",
+        "Guest Relations Executive",
+        "Front Office Executive",
+    ),
+    "community manager": (
+        "Community Manager",
+        "Resident Manager",
+        "Guest Relations Manager",
+    ),
+    "industrial trainee": ("Management Trainee", "Operations Executive", "Graduate Trainee"),
+    "management trainee": ("Management Trainee", "Operations Executive", "Graduate Trainee"),
     # Fashion / retail / merchandising
     "category planner": ("Category Manager", "Merchandiser", "Retail Planner"),
     "category": ("Category Manager", "Category Planner"),
