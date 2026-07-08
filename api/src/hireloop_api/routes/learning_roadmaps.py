@@ -58,7 +58,7 @@ async def _run_roadmap_task(
                    co.name AS company_name
             FROM public.jobs j
             LEFT JOIN public.companies co ON co.id = j.company_id
-            WHERE j.id = $1
+            WHERE j.id = $1 AND j.deleted_at IS NULL
             """,
             job_id,
         )

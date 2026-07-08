@@ -394,6 +394,7 @@ async def prepare_application_kit(
     if not candidate:
         return {"error": "Candidate not found"}
 
+    candidate_id = candidate["id"]
     market = await fetch_candidate_market(db, candidate["id"])
     vis = job_visible_for_market_sql(market_param="$2")
 
@@ -404,16 +405,23 @@ async def prepare_application_kit(
                co.name AS company_name, co.logo_url
         FROM public.jobs j
         LEFT JOIN public.companies co ON co.id = j.company_id
-        WHERE j.id = $1::uuid AND j.is_active = TRUE AND {vis}
+        WHERE j.id = $1::uuid
           AND j.deleted_at IS NULL
+          AND (
+            (j.is_active = TRUE AND {vis})
+            OR EXISTS (
+              SELECT 1 FROM public.saved_jobs sj
+              WHERE sj.candidate_id = $3::uuid AND sj.job_id = j.id
+            )
+          )
         """,
         uuid.UUID(job_id),
         market,
+        candidate_id,
     )
     if not job_row:
         return {"error": "Job not found"}
 
-    candidate_id = candidate["id"]
     await db.execute(
         """
         INSERT INTO public.saved_jobs (candidate_id, job_id)
