@@ -248,11 +248,15 @@ async def test_career_path_ingest_derives_from_candidate(monkeypatch: pytest.Mon
         force_refresh: bool = False,
         requested_titles: list[str] | None = None,
         requested_locations: list[str] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         called["candidate_id"] = candidate_id
         called["force_refresh"] = force_refresh
         called["requested_titles"] = requested_titles
         called["requested_locations"] = requested_locations
+        called["user_id"] = user_id
+        called["session_id"] = session_id
 
     async def _fail_raw_ingest(
         settings: Settings,

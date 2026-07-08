@@ -195,10 +195,11 @@ async def test_empty_search_with_career_path_enqueues_path_ingest_even_when_flag
         _spy_enqueue,
     )
 
+    session_id = str(uuid.uuid4())
     out = await tools.job_search(
         _PathDb(),  # type: ignore[arg-type]
         _USER_ID,
-        str(uuid.uuid4()),
+        session_id,
         "show me jobs",
         settings=_settings(auto_ingest_on_empty_search=False),
     )
@@ -209,4 +210,6 @@ async def test_empty_search_with_career_path_enqueues_path_ingest_even_when_flag
         "candidate_id": str(_CAND_ID),
         "derive_from_candidate": True,
         "force_refresh": True,
+        "user_id": _USER_ID,
+        "session_id": session_id,
     }
