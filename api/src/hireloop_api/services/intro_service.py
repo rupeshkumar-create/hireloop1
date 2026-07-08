@@ -54,7 +54,7 @@ def _simple_intro_draft(
     return json.dumps({"subject": subject, "body_text": body_text, "body_html": body_html})
 
 
-async def _maybe_enqueue_hm_enrich(db: asyncpg.Connection, *, hm_id: str) -> None:
+async def _maybe_enqueue_hm_enrich(db: asyncpg.Connection, *, hm_id: str) -> uuid.UUID | None:
     """
     Opportunistically queue Apify + NeverBounce enrichment when keys are configured.
     This makes the candidate chat experience work even if Nitya isn't running.
@@ -63,15 +63,44 @@ async def _maybe_enqueue_hm_enrich(db: asyncpg.Connection, *, hm_id: str) -> Non
 
     settings = get_settings()
     if not (getattr(settings, "apify_token", "") or "").strip():
-        return
+        return None
     if not (getattr(settings, "neverbounce_api_key", "") or "").strip():
-        return
+        return None
 
-    await enqueue_job(
+    return await enqueue_job(
         db,
         kind=HM_ENRICH,
         payload={"hm_id": hm_id},
         idempotency_key=f"hm_enrich:{hm_id}",
+    )
+
+
+async def _ensure_simple_intro_draft(
+    db: asyncpg.Connection,
+    *,
+    intro_id: str | uuid.UUID,
+    candidate_name: str | None,
+    job: asyncpg.Record,
+) -> None:
+    """Guarantee the candidate can review a draft immediately, even before enrichment."""
+    company = None
+    if job["company_id"]:
+        company = await db.fetchrow(
+            "SELECT name FROM public.companies WHERE id = $1::uuid",
+            job["company_id"],
+        )
+    await db.execute(
+        """
+        UPDATE public.intro_requests
+        SET draft_email = COALESCE(draft_email, $1), updated_at = NOW()
+        WHERE id = $2::uuid
+        """,
+        _simple_intro_draft(
+            candidate_name=candidate_name,
+            job_title=job["title"],
+            company_name=(company["name"] if company else None),
+        ),
+        uuid.UUID(str(intro_id)),
     )
 
 
@@ -334,6 +363,12 @@ async def create_candidate_intro(
             hm["id"],
         )
         if existing:
+            await _ensure_simple_intro_draft(
+                db,
+                intro_id=existing,
+                candidate_name=candidate["full_name"],
+                job=job,
+            )
             return {
                 "intro_id": str(existing),
                 "status": "pending",
@@ -354,18 +389,11 @@ async def create_candidate_intro(
             message,
         )
         # Show a simple draft immediately in chat; Nitya can overwrite later.
-        company = await db.fetchrow(
-            "SELECT name FROM public.companies WHERE id = $1::uuid",
-            job["company_id"],
-        )
-        await db.execute(
-            "UPDATE public.intro_requests SET draft_email = $1, updated_at = NOW() WHERE id = $2::uuid",
-            _simple_intro_draft(
-                candidate_name=candidate["full_name"],
-                job_title=job["title"],
-                company_name=(company["name"] if company else None),
-            ),
-            intro_id,
+        await _ensure_simple_intro_draft(
+            db,
+            intro_id=intro_id,
+            candidate_name=candidate["full_name"],
+            job=job,
         )
         return {
             "intro_id": str(intro_id),
@@ -433,6 +461,12 @@ async def create_candidate_intro(
         uuid.UUID(str(hiring_manager_id)),
     )
     if existing:
+        await _ensure_simple_intro_draft(
+            db,
+            intro_id=existing,
+            candidate_name=candidate["full_name"],
+            job=job,
+        )
         return {"intro_id": str(existing), "status": "pending", "direction": "candidate_to_hm"}
 
     intro_id = uuid.uuid4()
@@ -449,28 +483,39 @@ async def create_candidate_intro(
         message,
     )
     # Queue enrichment immediately (best-effort) and drop a simple draft for chat.
-    company = await db.fetchrow(
-        "SELECT name FROM public.companies WHERE id = $1::uuid",
-        job["company_id"],
+    await _ensure_simple_intro_draft(
+        db,
+        intro_id=intro_id,
+        candidate_name=candidate["full_name"],
+        job=job,
     )
-    await db.execute(
-        "UPDATE public.intro_requests SET draft_email = $1, updated_at = NOW() WHERE id = $2::uuid",
-        _simple_intro_draft(
-            candidate_name=candidate["full_name"],
-            job_title=job["title"],
-            company_name=(company["name"] if company else None),
-        ),
-        intro_id,
-    )
+    hm_enrich_job_id: uuid.UUID | None = None
     try:
-        await _maybe_enqueue_hm_enrich(db, hm_id=str(hiring_manager_id))
+        hm_enrich_job_id = await _maybe_enqueue_hm_enrich(db, hm_id=str(hiring_manager_id))
+        if hm_enrich_job_id:
+            await db.execute(
+                """
+                UPDATE public.intro_requests
+                SET status = 'enriching', updated_at = NOW()
+                WHERE id = $1::uuid AND status = 'pending'
+                """,
+                intro_id,
+            )
     except Exception as exc:  # enqueue is best-effort; Nitya may still handle it via NOTIFY
         logger.info("hm_enrich_enqueue_skipped", hm_id=str(hiring_manager_id), error=str(exc))
+    hm_enrich_queued = hm_enrich_job_id is not None
     return {
         "intro_id": str(intro_id),
-        "status": "pending",
+        "status": "enriching" if hm_enrich_queued else "pending",
         "direction": "candidate_to_hm",
-        "message": "Intro request created. Nitya will enrich the contact and draft your email.",
+        "hm_enrich_queued": hm_enrich_queued,
+        "hm_enrich_provider": "apify" if hm_enrich_queued else None,
+        "message": (
+            "Requested Apify hiring-manager lookup. Nitya will verify the contact "
+            "and draft your email."
+            if hm_enrich_queued
+            else "Intro request created. Nitya will enrich the contact and draft your email."
+        ),
     }
 
 

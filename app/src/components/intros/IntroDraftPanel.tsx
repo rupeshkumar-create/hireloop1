@@ -43,18 +43,24 @@ export function IntroDraftPanel({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchIntroDetail(introId)
-      .then((d) => {
+    const load = async () => {
+      try {
+        const d = await fetchIntroDetail(introId);
         if (!cancelled) setDetail(d);
-      })
-      .catch((e) => {
+      } catch (e) {
         if (!cancelled) setError((e as Error).message);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => {
+      void load();
+    }, 2500);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
     };
   }, [introId]);
 
@@ -95,14 +101,14 @@ export function IntroDraftPanel({
   const draft = parseDraft(detail?.draft_email);
   const inProgress = ["pending", "enriching", "drafting"].includes(detail?.status ?? "");
 
-  if (inProgress) {
+  if (inProgress && !draft) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center text-center px-6">
         <Mail className="h-8 w-8 text-ink-300 mb-3" strokeWidth={1.5} />
         <p className="text-small font-medium text-ink-800">Nitya is preparing your intro</p>
         <p className="text-micro text-ink-500 mt-1 max-w-sm">
           {detail?.status === "enriching"
-            ? "Finding and verifying the hiring manager's email…"
+            ? "Finding the hiring manager email via Apify, then verifying it…"
             : detail?.status === "drafting"
               ? "Drafting a personalised email from your profile…"
               : "Starting the intro campaign…"}
@@ -129,8 +135,9 @@ export function IntroDraftPanel({
         </p>
         <p className="text-small text-ink-500 mt-1">
           Review Nitya&apos;s email to{" "}
-          <span className="text-ink-800 font-medium">{detail?.hm_name}</span>. It sends from your
-          Gmail when you approve — never from Hireschema.
+          <span className="text-ink-800 font-medium">{detail?.hm_name}</span>
+          {detail?.hm_email ? ` (${detail.hm_email})` : ""}. It sends from your Gmail when you
+          approve — never from Hireschema.
         </p>
       </div>
 

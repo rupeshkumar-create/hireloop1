@@ -59,6 +59,8 @@ export function actionMeta(type: string): { label: string; Icon: LucideIcon } {
       return { label: "Scored your job match", Icon: Target };
     case "request_intro":
       return { label: "Requested a warm intro", Icon: Send };
+    case "hm_enrich_queued":
+      return { label: "Requested Apify hiring-manager lookup", Icon: UserPlus };
     case "direct_apply":
       return { label: "Applied to the role", Icon: Briefcase };
     case "save_job":

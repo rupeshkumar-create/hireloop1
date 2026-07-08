@@ -222,7 +222,7 @@ interface ChatInterfaceProps {
    */
   injectedMessage?: { text: string; nonce: number } | null;
   /** When set, watch for the intro request for this job and show the draft inline in chat. */
-  introWatch?: { jobId: string; nonce: number } | null;
+  introWatch?: { jobId: string; nonce: number; introId?: string } | null;
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
@@ -311,7 +311,7 @@ export function ChatInterface({
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
-  const introWatchRef = useRef<{ jobId: string; nonce: number } | null>(null);
+  const introWatchRef = useRef<{ jobId: string; nonce: number; introId?: string } | null>(null);
   const streamingTtsQueueRef = useRef<Promise<void>>(Promise.resolve());
   const jobsAnnouncedRef = useRef(false);
   const emptySttRetryRef = useRef(false);
@@ -323,49 +323,59 @@ export function ChatInterface({
   // inline in chat (polls /intros until the new row appears, then polls detail).
   useEffect(() => {
     if (!introWatch?.jobId || !introWatch?.nonce) return;
-    if (
+    const sameRequest =
       introWatchRef.current?.jobId === introWatch.jobId &&
-      introWatchRef.current?.nonce === introWatch.nonce
-    ) {
+      introWatchRef.current?.nonce === introWatch.nonce;
+    if (sameRequest && introWatchRef.current?.introId === introWatch.introId) {
       return;
     }
     introWatchRef.current = introWatch;
 
     const placeholderId = `intro-watch-${introWatch.jobId}-${introWatch.nonce}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: placeholderId,
-        role: "assistant",
-        content:
-          "Intro requested — I’m now finding the hiring manager contact and drafting the email. I’ll show you the recipient and draft here in a moment.",
-        content_type: "text",
-        created_at: new Date().toISOString(),
-      },
-    ]);
+    if (!sameRequest) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: placeholderId,
+          role: "assistant",
+          content:
+            "Intro requested — I’m now finding the hiring manager contact and drafting the email. I’ll show you the recipient and draft here in a moment.",
+          content_type: "text",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
 
     let cancelled = false;
     const start = Date.now();
     const maxWaitMs = 90_000;
 
-    const tick = async () => {
-      const rows = await fetchIntros({ force: true });
-      if (cancelled) return false;
-      const match = rows.find((r) => r.job_id === introWatch.jobId);
-      if (!match?.id) return false;
-
+    const attachIntro = (introId: string) => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
             ? {
                 ...m,
-                introId: match.id,
+                introId,
                 content:
                   "Intro request created. Here’s the hiring manager contact (once found) and the drafted email. You can approve and send it from your Gmail.",
               }
             : m,
         ),
       );
+    };
+
+    const tick = async () => {
+      if (introWatch.introId) {
+        attachIntro(introWatch.introId);
+        return true;
+      }
+      const rows = await fetchIntros({ force: true });
+      if (cancelled) return false;
+      const match = rows.find((r) => r.job_id === introWatch.jobId);
+      if (!match?.id) return false;
+
+      attachIntro(match.id);
       return true;
     };
 
@@ -2313,7 +2323,7 @@ function InlineIntroDraft({ introId }: { introId: string }) {
         {inProgress && (
           <p className="text-micro text-ink-500">
             {detail?.status === "enriching"
-              ? "Finding and verifying the hiring manager’s email…"
+              ? "Finding the hiring manager email via Apify, then verifying it…"
               : detail?.status === "drafting"
                 ? "Drafting the intro email from your profile…"
                 : "Starting the intro…"}

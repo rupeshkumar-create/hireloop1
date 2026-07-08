@@ -1170,6 +1170,21 @@ async def request_intro(
         result,
         duration_ms,
     )
+    if result.get("hm_enrich_queued"):
+        await _write_action(
+            db,
+            "aarya",
+            user_id,
+            session_id,
+            "hm_enrich_queued",
+            {"job_id": job_id, "hm_id": hiring_manager_id},
+            {
+                "intro_id": result.get("intro_id"),
+                "provider": "apify",
+                "status": "queued",
+            },
+            duration_ms,
+        )
     return result
 
 

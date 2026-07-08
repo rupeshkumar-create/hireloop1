@@ -31,6 +31,8 @@ const STATUS_META: Record<
   pending: { tone: "muted", label: "Pending", Icon: Clock },
   invited: { tone: "accent", label: "Invite sent", Icon: Clock },
   recruiter_notified: { tone: "accent", label: "Notified", Icon: Clock },
+  enriching: { tone: "accent", label: "Finding contact", Icon: Clock },
+  drafting: { tone: "accent", label: "Drafting email", Icon: Clock },
   draft_ready: { tone: "accent", label: "Email drafted", Icon: Clock },
   sent: { tone: "strong", label: "Intro sent", Icon: CheckCircle },
   accepted: { tone: "strong", label: "Accepted", Icon: CheckCircle },
@@ -211,7 +213,9 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
         const canRespond = fromRecruiter && intro.status === "pending";
         const canCancel =
           !fromRecruiter &&
-          ["pending", "invited", "recruiter_notified"].includes(intro.status);
+          ["pending", "invited", "recruiter_notified", "enriching", "drafting", "draft_ready"].includes(
+            intro.status,
+          );
         const canChat = intro.status === "accepted";
         const canMarkReplied =
           !fromRecruiter && ["sent", "opened"].includes(intro.status);
@@ -249,6 +253,11 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
                   {showFull && (
                     <>
                       <IntroStatusTimeline status={intro.status} className="mt-2" />
+                      {intro.direction === "candidate_to_hm" && intro.status === "enriching" && (
+                        <p className="text-micro text-ink-500 mt-1">
+                          Finding the hiring manager email via Apify, then verifying it.
+                        </p>
+                      )}
                       <WarmHandoffCard
                         recruiterName={intro.hm_name}
                         companyName={intro.company_name}
