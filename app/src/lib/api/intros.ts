@@ -36,6 +36,7 @@ export type IntroDetail = IntroRequest & {
   draft_email: string | null;
   error_message: string | null;
   gmail_connected: boolean;
+  hm_email?: string | null;
 };
 
 let _introsCache: IntroRequest[] | null = null;

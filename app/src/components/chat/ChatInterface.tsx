@@ -58,6 +58,7 @@ import {
   Square,
   Volume2,
 } from "@/components/brand/icons";
+import { Button, useToast } from "@/components/ui";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
 import {
@@ -138,6 +139,12 @@ import {
 } from "@/lib/auth/onboarding-complete";
 import { fetchCareerPath } from "@/lib/api/career";
 import {
+  approveIntroSend,
+  fetchIntroDetail,
+  fetchIntros,
+  type IntroDetail,
+} from "@/lib/api/intros";
+import {
   CareerKickoffFlow,
   type KickoffResult,
 } from "./CareerKickoffFlow";
@@ -156,6 +163,8 @@ interface Message {
   applicationKits?: ApplicationKit[];
   /** Assistant reply was read aloud after a voice turn */
   spoken?: boolean;
+  /** When set, render an inline intro draft panel for this intro request. */
+  introId?: string;
 }
 
 type SendOptions = {
@@ -212,6 +221,8 @@ interface ChatInterfaceProps {
    * prompts re-trigger; we only send when the nonce changes.
    */
   injectedMessage?: { text: string; nonce: number } | null;
+  /** When set, watch for the intro request for this job and show the draft inline in chat. */
+  introWatch?: { jobId: string; nonce: number } | null;
   savedJobIds?: Set<string>;
   onSavedChange?: (jobId: string, saved: boolean) => void;
   onRequestIntro?: (job: MatchedJob) => void;
@@ -254,6 +265,7 @@ export function ChatInterface({
   initialVoiceDeepDive = false,
   initialKickoff = false,
   injectedMessage,
+  introWatch = null,
   savedJobIds = new Set(),
   onSavedChange,
   onRequestIntro,
@@ -299,12 +311,83 @@ export function ChatInterface({
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
+  const introWatchRef = useRef<{ jobId: string; nonce: number } | null>(null);
   const streamingTtsQueueRef = useRef<Promise<void>>(Promise.resolve());
   const jobsAnnouncedRef = useRef(false);
   const emptySttRetryRef = useRef(false);
   const hinglishActiveRef = useRef(false);
   /** Live reply-mode for stream TTS — updated synchronously on toggle. */
   const voiceRepliesEnabledRef = useRef(true);
+
+  // When the user requests an intro from a job card, surface the contact + drafted email
+  // inline in chat (polls /intros until the new row appears, then polls detail).
+  useEffect(() => {
+    if (!introWatch?.jobId || !introWatch?.nonce) return;
+    if (
+      introWatchRef.current?.jobId === introWatch.jobId &&
+      introWatchRef.current?.nonce === introWatch.nonce
+    ) {
+      return;
+    }
+    introWatchRef.current = introWatch;
+
+    const placeholderId = `intro-watch-${introWatch.jobId}-${introWatch.nonce}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: placeholderId,
+        role: "assistant",
+        content:
+          "Intro requested — I’m now finding the hiring manager contact and drafting the email. I’ll show you the recipient and draft here in a moment.",
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    let cancelled = false;
+    const start = Date.now();
+    const maxWaitMs = 90_000;
+
+    const tick = async () => {
+      const rows = await fetchIntros({ force: true });
+      if (cancelled) return false;
+      const match = rows.find((r) => r.job_id === introWatch.jobId);
+      if (!match?.id) return false;
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId
+            ? {
+                ...m,
+                introId: match.id,
+                content:
+                  "Intro request created. Here’s the hiring manager contact (once found) and the drafted email. You can approve and send it from your Gmail.",
+              }
+            : m,
+        ),
+      );
+      return true;
+    };
+
+    const interval = window.setInterval(() => {
+      void (async () => {
+        try {
+          if (cancelled) return;
+          const done = await tick();
+          if (done) window.clearInterval(interval);
+          else if (Date.now() - start > maxWaitMs) window.clearInterval(interval);
+        } catch {
+          if (Date.now() - start > maxWaitMs) window.clearInterval(interval);
+        }
+      })();
+    }, 2000);
+
+    void tick().catch(() => undefined);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [introWatch]);
 
   // Session ID: resolved from prop or created lazily on first send.
   // Use a ref so sendMessage always sees the latest value without needing
@@ -2081,6 +2164,8 @@ function MessageBubble({
         )}
       </div>
 
+      {message.introId && !isStreaming && <InlineIntroDraft introId={message.introId} />}
+
       {jobs.length > 0 && !isStreaming && (
         <ChatJobCards
           jobs={jobs}
@@ -2122,6 +2207,139 @@ function MessageBubble({
             Or, answer in your own words below
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+type DraftPayload = {
+  subject?: string;
+  body_html?: string;
+  body_text?: string;
+};
+
+function parseDraft(raw: string | null | undefined): DraftPayload | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as DraftPayload;
+  } catch {
+    return null;
+  }
+}
+
+function InlineIntroDraft({ introId }: { introId: string }) {
+  const { toast } = useToast();
+  const [detail, setDetail] = useState<IntroDetail | null>(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const d = await fetchIntroDetail(introId);
+        if (!cancelled) setDetail(d);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => {
+      void load();
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [introId]);
+
+  const inProgress = ["pending", "enriching", "drafting"].includes(detail?.status ?? "");
+  const draft = parseDraft(detail?.draft_email);
+
+  async function handleSend() {
+    if (!detail?.gmail_connected) {
+      toast.error("Connect Google first so we can send from your Gmail.");
+      return;
+    }
+    setSending(true);
+    try {
+      await approveIntroSend(introId);
+      toast.success("Intro email sent from your Gmail");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="w-full rounded-lg border border-ink-100 bg-paper-0 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 bg-paper-1 border-b border-ink-100 space-y-1">
+        <p className="text-micro font-medium uppercase tracking-wide text-ink-500">
+          Intro email draft
+        </p>
+        <p className="text-small text-ink-700">
+          {detail?.hm_name ? (
+            <>
+              To <span className="font-medium text-ink-900">{detail.hm_name}</span>
+              {detail.hm_email ? (
+                <span className="text-ink-500"> · {detail.hm_email}</span>
+              ) : null}
+            </>
+          ) : (
+            "Finding the hiring manager contact…"
+          )}
+        </p>
+        {inProgress && (
+          <p className="text-micro text-ink-500">
+            {detail?.status === "enriching"
+              ? "Finding and verifying the hiring manager’s email…"
+              : detail?.status === "drafting"
+                ? "Drafting the intro email from your profile…"
+                : "Starting the intro…"}
+          </p>
+        )}
+      </div>
+
+      {draft ? (
+        <>
+          <div className="px-4 py-2 border-b border-ink-100 bg-ink-50/50">
+            <p className="text-micro text-ink-500">Subject</p>
+            <p className="text-small font-medium text-ink-900">
+              {draft.subject ?? "(no subject)"}
+            </p>
+          </div>
+          <div
+            className="px-4 py-3 text-small text-ink-800 leading-relaxed prose prose-sm max-w-none"
+            dangerouslySetInnerHTML={{
+              __html: draft.body_html ?? `<p>${draft.body_text ?? ""}</p>`,
+            }}
+          />
+          <div className="px-4 py-3 border-t border-ink-100 flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              loading={sending}
+              disabled={!detail?.gmail_connected}
+              onClick={() => void handleSend()}
+            >
+              Send from my Gmail
+            </Button>
+            {!detail?.gmail_connected && (
+              <span className="text-micro text-ink-500">
+                Connect Google in Settings to send
+              </span>
+            )}
+          </div>
+        </>
+      ) : (
+        !inProgress && (
+          <div className="px-4 py-3">
+            <p className="text-small text-ink-600">
+              {detail?.error_message ?? "Draft not available yet — check back in a moment."}
+            </p>
+          </div>
+        )
       )}
     </div>
   );

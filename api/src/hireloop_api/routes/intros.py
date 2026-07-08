@@ -50,6 +50,7 @@ class IntroDetail(IntroSummary):
     draft_email: str | None  # JSON string with {subject, body_html, body_text}
     error_message: str | None
     gmail_connected: bool
+    hm_email: str | None = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -123,7 +124,8 @@ async def get_intro(
             j.id AS job_id, j.title AS job_title,
             co.name AS company_name,
             COALESCE(hm.full_name, ru.full_name) AS hm_name,
-            COALESCE(hm.title, rec.title) AS hm_title
+            COALESCE(hm.title, rec.title) AS hm_title,
+            hm.email AS hm_email
         FROM public.intro_requests ir
         JOIN public.jobs j ON j.id = ir.job_id
         LEFT JOIN public.companies co ON co.id = j.company_id
@@ -149,6 +151,7 @@ async def get_intro(
     d["draft_email"] = row["draft_email"]
     d["error_message"] = row["error_message"]
     d["gmail_connected"] = gmail_row is not None
+    d["hm_email"] = row.get("hm_email")
     return d
 
 

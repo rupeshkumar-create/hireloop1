@@ -104,6 +104,7 @@ export function DashboardClient({
   const [savedJobsRefreshKey, setSavedJobsRefreshKey] = useState(0);
   const [kickoffMatchJobs, setKickoffMatchJobs] = useState<MatchedJob[] | null>(null);
   const [kickoffMatchTitle, setKickoffMatchTitle] = useState<string | null>(null);
+  const [introWatch, setIntroWatch] = useState<{ jobId: string; nonce: number } | null>(null);
   // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
   // never has to click "Find jobs" to see them there.
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
@@ -185,9 +186,11 @@ export function DashboardClient({
     syncDashboardUrl(id, jobsTab);
   }
 
-  function sendToChat(text: string) {
+  function sendToChat(text: string): number {
     openPanel(null);
-    setInjected({ text, nonce: Date.now() });
+    const nonce = Date.now();
+    setInjected({ text, nonce });
+    return nonce;
   }
 
   function handleCareerKickoffComplete(result: KickoffResult) {
@@ -208,11 +211,12 @@ export function DashboardClient({
     void saveJob(job.job_id).catch(() => {
       /* Aarya intro path also bookmarks server-side */
     });
-    sendToChat(
+    const nonce = sendToChat(
       `I'd like to request an intro for the "${job.title}" role at ${
         job.company_name ?? "this company"
       } (job ID: ${job.job_id}).`,
     );
+    setIntroWatch({ jobId: job.job_id, nonce });
   }
 
   function handleDirectApply(job: MatchedJob) {
@@ -390,6 +394,7 @@ export function DashboardClient({
             initialVoiceDeepDive={initialVoiceDeepDive}
             initialKickoff={initialKickoff}
             injectedMessage={injected}
+            introWatch={introWatch}
             className="h-full"
             onSessionCreated={(id) => setActiveConvoId(id)}
             savedJobIds={savedJobIds}
