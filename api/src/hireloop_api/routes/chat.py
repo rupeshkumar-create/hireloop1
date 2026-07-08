@@ -1078,7 +1078,6 @@ async def send_message(
                         full_response += content
                         yield sse_text(content)
 
-            user_intent = _detect_likely_intent(body.content)
             if user_intent == "profile_improvement" and _looks_incomplete_profile_reply(
                 full_response
             ):
