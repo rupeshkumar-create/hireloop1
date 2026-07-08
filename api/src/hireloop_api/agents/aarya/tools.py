@@ -172,11 +172,18 @@ def _quality_filter_job_rows(
         score = _assemble_score(cand_row, job_row, embed_skills_sim=None, embed_profile_sim=None)
         if not should_persist_match(cand_row, job_row, score):
             continue
-        row_dict["overall_score"] = score["overall"]
-        row_dict["skills_score"] = round(score["skills_sim"], 4)
-        row_dict["experience_score"] = round(score["exp_score"], 4)
-        row_dict["location_score"] = round(score["loc_score"], 4)
-        row_dict["ctc_score"] = round(score["ctc_score"], 4)
+        # The recompute above is embedding-free (lexical only) and is used ONLY
+        # for the quality gate. If match_scores already holds a stored score
+        # (computed WITH embeddings by the matching engine — the same value the
+        # saved-jobs / feed surfaces show), keep it for display so the same job
+        # never shows two different percentages across screens. Only fall back
+        # to the lexical recompute when there's no stored score yet.
+        if row_dict.get("overall_score") is None:
+            row_dict["overall_score"] = score["overall"]
+            row_dict["skills_score"] = round(score["skills_sim"], 4)
+            row_dict["experience_score"] = round(score["exp_score"], 4)
+            row_dict["location_score"] = round(score["loc_score"], 4)
+            row_dict["ctc_score"] = round(score["ctc_score"], 4)
         row_dict["explanation"] = row_dict.get("explanation") or score["explanation"]
         filtered.append(row_dict)
     if filtered or not lenient:
