@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -40,7 +40,7 @@ function formatAuthSetupError(error: unknown): string {
 }
 
 export function SignupForm() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
   const isSignIn = searchParams.get("mode") === "signin";
@@ -55,9 +55,23 @@ export function SignupForm() {
   const [devEmail, setDevEmail] = useState("");
   const [devPassword, setDevPassword] = useState("");
   const [email, setEmail] = useState("");
+  /** Email the current OTP was issued for — verify against this, not a later edit. */
+  const [otpEmail, setOtpEmail] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
+  // Sync locks: React state updates are too slow to stop double Enter / double-click
+  // from issuing two OTPs (second email silently kills the first code).
+  const otpInFlightRef = useRef(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const resendTimerRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (resendTimerRef.current !== null) {
+        window.clearInterval(resendTimerRef.current);
+      }
+    };
+  }, []);
   useEffect(() => {
     setRole(defaultRole);
     persistSignupRole(defaultRole);
@@ -144,11 +158,12 @@ export function SignupForm() {
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
-    const addr = email.trim();
+    const addr = email.trim().toLowerCase();
     if (!addr) return;
-    // A double-fired send makes Supabase issue a second code that silently
-    // invalidates the first — the user then pastes a dead code.
-    if (loadingAction !== null) return;
+    // Sync lock: a double-fired send issues a second OTP that silently
+    // invalidates the first — the classic "first code fails, second email works".
+    if (otpInFlightRef.current || loadingAction !== null) return;
+    otpInFlightRef.current = true;
     setLoadingAction("email-send");
     setErrorMessage("");
     setInfoMessage("");
@@ -166,68 +181,89 @@ export function SignupForm() {
         setErrorMessage(error.message);
         return;
       }
+      setEmail(addr);
+      setOtpEmail(addr);
+      setOtpCode("");
       setOtpSent(true);
       setInfoMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't send the code.");
     } finally {
+      otpInFlightRef.current = false;
       setLoadingAction(null);
     }
   }
 
-  const [resendCooldown, setResendCooldown] = useState(0);
+  function startResendCooldown() {
+    if (resendTimerRef.current !== null) {
+      window.clearInterval(resendTimerRef.current);
+    }
+    setResendCooldown(30);
+    resendTimerRef.current = window.setInterval(() => {
+      setResendCooldown((c) => {
+        if (c <= 1) {
+          if (resendTimerRef.current !== null) {
+            window.clearInterval(resendTimerRef.current);
+            resendTimerRef.current = null;
+          }
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  }
 
   async function handleResendCode() {
-    if (loadingAction !== null || resendCooldown > 0) return;
+    const addr = (otpEmail || email).trim().toLowerCase();
+    if (!addr || otpInFlightRef.current || loadingAction !== null || resendCooldown > 0) {
+      return;
+    }
+    otpInFlightRef.current = true;
     setLoadingAction("email-send");
     setErrorMessage("");
     setOtpCode("");
     try {
       const redirectTo = `${window.location.origin}/auth/confirm?signup_role=${role}`;
       const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
+        email: addr,
         options: { shouldCreateUser: true, emailRedirectTo: redirectTo },
       });
       if (error) {
         setErrorMessage(error.message);
         return;
       }
-      setInfoMessage("New code sent — only the newest code works.");
-      setResendCooldown(30);
-      const timer = window.setInterval(() => {
-        setResendCooldown((c) => {
-          if (c <= 1) {
-            window.clearInterval(timer);
-            return 0;
-          }
-          return c - 1;
-        });
-      }, 1000);
+      setOtpEmail(addr);
+      setInfoMessage("New code sent — enter only this newest code (older codes no longer work).");
+      startResendCooldown();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn't resend the code.");
     } finally {
+      otpInFlightRef.current = false;
       setLoadingAction(null);
     }
-  }
-
-  async function verifyEmailOtp(token: string) {
-    return verifyEmailCode(supabase, email.trim(), token);
   }
 
   async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
     const token = otpCode.trim();
-    if (token.length < 6) return;
+    const addr = (otpEmail || email).trim().toLowerCase();
+    if (token.length < 6 || !addr) return;
+    if (otpInFlightRef.current || loadingAction !== null) return;
+    otpInFlightRef.current = true;
     setLoadingAction("email-verify");
     setErrorMessage("");
     try {
-      const { error: verifyError, accessToken } = await verifyEmailOtp(token);
+      const { error: verifyError, accessToken } = await verifyEmailCode(
+        supabase,
+        addr,
+        token,
+      );
       if (verifyError || !accessToken) {
         if (verifyError) {
           const lowered = verifyError.toLowerCase();
           setErrorMessage(
             lowered.includes("invalid") || lowered.includes("expired")
-              ? "That code expired or was already used. Tap “Use a different email”, send a fresh code, and enter it within a few minutes — don't open the email link if you're using the code."
+              ? "That code is invalid or was already used. Tap Resend for a fresh code on this email — or use a different email. If you opened the email link, that code is spent; request a new email."
               : `${verifyError} Request a new code from signup if this keeps failing.`,
           );
         } else {
@@ -253,6 +289,7 @@ export function SignupForm() {
       }
       setErrorMessage(formatAuthSetupError(error));
     } finally {
+      otpInFlightRef.current = false;
       setLoadingAction(null);
     }
   }
@@ -395,7 +432,7 @@ export function SignupForm() {
             disabled={!email.trim() || loadingAction !== null}
             className="rounded-lg font-semibold"
           >
-            {loadingAction === "email-send" ? "Sending…" : "Email me a sign-in link"}
+            {loadingAction === "email-send" ? "Sending…" : "Email me a 6-digit code"}
           </Button>
         </form>
       ) : (
@@ -403,13 +440,14 @@ export function SignupForm() {
           <div className="rounded-lg border border-ink-100 bg-paper-1 p-4 text-center">
             <p className="text-small font-medium text-ink-900">Check your email</p>
             <p className="mt-1 text-xs text-ink-500 leading-relaxed">
-              We sent a sign-in link and a <strong>6-digit code</strong> to{" "}
-              <span className="text-ink-800">{email}</span>. Enter the code below (most reliable with
-              temp mail), or use the link and tap <strong>Continue</strong> on the next screen.
+              We sent a <strong>6-digit code</strong> to{" "}
+              <span className="text-ink-800">{otpEmail || email}</span>. Enter it below —
+              that&apos;s the most reliable path. Opening the email&apos;s sign-in link uses the
+              same one-time login and will invalidate this code.
             </p>
             <p className="mt-2 text-[11px] text-ink-400 leading-relaxed">
-              Link says invalid or expired? Request a fresh email — automated scanners often open
-              links before you do. The code still works.
+              Code says invalid? Don&apos;t open the link — tap Resend for a fresh code, or try a
+              different email. Only the newest code works.
             </p>
           </div>
 
@@ -421,6 +459,7 @@ export function SignupForm() {
               onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
               placeholder="6-digit code"
               autoComplete="one-time-code"
+              autoFocus
               required
             />
             <Button
@@ -450,9 +489,17 @@ export function SignupForm() {
           <button
             type="button"
             onClick={() => {
+              if (otpInFlightRef.current) return;
               setOtpSent(false);
+              setOtpEmail("");
               setOtpCode("");
               setInfoMessage("");
+              setErrorMessage("");
+              setResendCooldown(0);
+              if (resendTimerRef.current !== null) {
+                window.clearInterval(resendTimerRef.current);
+                resendTimerRef.current = null;
+              }
             }}
             className="w-full text-xs text-ink-500 hover:text-ink-900"
           >
@@ -462,7 +509,8 @@ export function SignupForm() {
       )}
 
       <p className="text-xs text-ink-500 text-center">
-        Email sign-in sends a secure link to your inbox. Resume upload happens in onboarding.
+        Prefer the email link? Use it <strong>or</strong> the code — not both. Resume upload
+        happens in onboarding.
       </p>
 
       <p className="text-xs text-ink-500 text-center">

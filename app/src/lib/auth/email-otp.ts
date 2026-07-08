@@ -23,60 +23,59 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
-/** Try Supabase email OTP verification (signInWithOtp codes use type "email").
-
- * Do NOT cycle through signup/magiclink after an invalid/expired response —
- * GoTrue caps attempts per token and extra tries burn the code. */
+/**
+ * Verify a numeric email OTP from `signInWithOtp`.
+ *
+ * GoTrue uses type "email" for these codes. Never retry with signup/magiclink
+ * after invalid/expired — each attempt burns the same one-time token, which is
+ * why the first paste often fails and only a second email works.
+ */
 export async function verifyEmailCode(
   supabase: BrowserSupabase,
   email: string,
   token: string,
 ): Promise<VerifyEmailResult> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedToken = token.trim();
+  if (!normalizedEmail || normalizedToken.length < 6) {
+    return { error: "Enter the full code from your email.", accessToken: null };
+  }
+
   try {
     const { data, error } = await withTimeout(
-      supabase.auth.verifyOtp({ email, token, type: "email" }),
+      supabase.auth.verifyOtp({
+        email: normalizedEmail,
+        token: normalizedToken,
+        type: "email",
+      }),
       VERIFY_OTP_TIMEOUT_MS,
       "Verification timed out. Check your connection and try again.",
     );
-    if (!error) {
-      const accessToken = data.session?.access_token ?? null;
-      if (accessToken) {
-        return { error: null, accessToken };
-      }
-      const { data: sessionData } = await withTimeout(
-        supabase.auth.getSession(),
-        5_000,
-        "Session setup timed out. Please try again.",
-      );
-      if (sessionData.session?.access_token) {
-        return { error: null, accessToken: sessionData.session.access_token };
-      }
+    if (error) {
       return {
-        error: "Verified, but no session was created. Please try again.",
+        error: error.message ?? "Invalid or expired code.",
         accessToken: null,
       };
     }
 
-    const msg = error.message ?? "Invalid or expired code.";
-    const lowered = msg.toLowerCase();
-    if (lowered.includes("invalid") || lowered.includes("expired")) {
-      return { error: msg, accessToken: null };
+    const accessToken = data.session?.access_token ?? null;
+    if (accessToken) {
+      return { error: null, accessToken };
     }
 
-    // Rare: wrong OTP type — try signup once (magic links use /auth/confirm, not this form).
-    const fallback = await withTimeout(
-      supabase.auth.verifyOtp({ email, token, type: "signup" }),
-      VERIFY_OTP_TIMEOUT_MS,
-      "Verification timed out. Check your connection and try again.",
+    const { data: sessionData } = await withTimeout(
+      supabase.auth.getSession(),
+      5_000,
+      "Session setup timed out. Please try again.",
     );
-    if (!fallback.error) {
-      const accessToken = fallback.data.session?.access_token ?? null;
-      if (accessToken) {
-        return { error: null, accessToken };
-      }
+    if (sessionData.session?.access_token) {
+      return { error: null, accessToken: sessionData.session.access_token };
     }
 
-    return { error: fallback.error?.message ?? msg, accessToken: null };
+    return {
+      error: "Verified, but no session was created. Please try again.",
+      accessToken: null,
+    };
   } catch (err) {
     const lastError = err instanceof Error ? err.message : "Verification failed.";
     return {
