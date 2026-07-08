@@ -34,6 +34,7 @@ import {
   fetchCareerPath,
   findJobsForPath,
   generateCareerPath,
+  prioritizeCareerPath,
   type CareerPath,
   type CareerStep,
 } from "@/lib/api/career";
@@ -76,6 +77,9 @@ export function CareerPathPanel({
   const [generating, setGenerating] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
+  const [preferredTitle, setPreferredTitle] = useState<string>("");
+  const [customTitle, setCustomTitle] = useState("");
+  const [savingPreferred, setSavingPreferred] = useState(false);
 
   const [jobs, setJobs] = useState<MatchedJob[]>([]);
   const [findingJobs, setFindingJobs] = useState(false);
@@ -99,7 +103,10 @@ export function CareerPathPanel({
     let cancelled = false;
     fetchCareerPath()
       .then((p) => {
-        if (!cancelled) setPath(p);
+        if (cancelled) return;
+        setPath(p);
+        const pick = p?.prioritized_title ?? p?.target_titles?.[0] ?? "";
+        setPreferredTitle(pick);
       })
       .catch((err) => {
         if (!cancelled) setPathError((err as Error).message);
@@ -186,13 +193,15 @@ export function CareerPathPanel({
           (next.updated_at && next.updated_at !== path.updated_at)
         ) {
           setPath(next);
+          const pick = next.prioritized_title ?? next.target_titles?.[0] ?? preferredTitle;
+          setPreferredTitle(pick);
         }
       } catch {
         // best-effort
       }
     }, 30_000);
     return () => window.clearInterval(id);
-  }, [path]);
+  }, [path, preferredTitle]);
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true);
@@ -200,6 +209,7 @@ export function CareerPathPanel({
     try {
       const next = await generateCareerPath();
       setPath(next);
+      setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
       // A regenerated path may target different roles — clear stale results.
       setJobs([]);
       setSearched(false);
@@ -225,6 +235,37 @@ export function CareerPathPanel({
       setFindingJobs(false);
     }
   }, []);
+
+  const handleSavePreferred = useCallback(async () => {
+    const title = preferredTitle.trim();
+    if (!path || !title) return;
+    if (savingPreferred) return;
+    setSavingPreferred(true);
+    setPathError(null);
+    try {
+      const existing = (path.target_titles ?? []).map((t) => t.trim()).filter(Boolean);
+      const selection = [title, ...existing.filter((t) => t.toLowerCase() !== title.toLowerCase())];
+      const updated = await prioritizeCareerPath(title, selection);
+      setPath(updated);
+      setPreferredTitle(updated.prioritized_title ?? title);
+      // Changing the preferred direction changes the job universe — clear stale results.
+      setJobs([]);
+      setSearched(false);
+      setRefreshing(false);
+      setJobsError(null);
+    } catch (err) {
+      setPathError((err as Error).message ?? "Couldn't save your preferred path");
+    } finally {
+      setSavingPreferred(false);
+    }
+  }, [path, preferredTitle, savingPreferred]);
+
+  const handleAddCustom = useCallback(() => {
+    const t = customTitle.trim();
+    if (!t) return;
+    setPreferredTitle(t);
+    setCustomTitle("");
+  }, [customTitle]);
 
   // While the background Apify top-up runs, poll the find-jobs endpoint a few
   // times so fresher roles surface without a manual refresh.
@@ -359,6 +400,88 @@ export function CareerPathPanel({
                 </div>
               </div>
             )}
+
+            {/* Preferred path selector */}
+            <div className="space-y-2 pt-1">
+              <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
+                Preferred path
+              </span>
+              <p className="text-micro text-ink-500 leading-relaxed">
+                Pick the one direction you want to prioritise. We’ll still search similar titles,
+                but this becomes your main track for matching and intros.
+              </p>
+
+              <div className="flex flex-wrap gap-1.5">
+                {path.target_titles.map((title) => {
+                  const active = preferredTitle?.toLowerCase() === title.toLowerCase();
+                  return (
+                    <button
+                      key={title}
+                      type="button"
+                      onClick={() => setPreferredTitle(title)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-micro font-semibold transition-colors",
+                        active
+                          ? "border-ink-900 bg-ink-900 text-paper-0"
+                          : "border-ink-200 bg-paper-0 text-ink-700 hover:border-ink-400",
+                      )}
+                      aria-pressed={active}
+                    >
+                      {title}
+                    </button>
+                  );
+                })}
+                {preferredTitle &&
+                  path.target_titles.every(
+                    (t) => t.toLowerCase() !== preferredTitle.toLowerCase(),
+                  ) && (
+                    <span className="rounded-full border border-ink-900 bg-ink-900 text-paper-0 px-3 py-1 text-micro font-semibold">
+                      {preferredTitle}
+                    </span>
+                  )}
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customTitle}
+                  onChange={(e) => setCustomTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddCustom();
+                    }
+                  }}
+                  placeholder="Or type your own (e.g., Growth Manager)"
+                  className="flex-1 rounded-md border border-ink-100 bg-paper-0 px-3 py-2 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleAddCustom()}
+                  disabled={!customTitle.trim()}
+                >
+                  Add
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleSavePreferred()}
+                  loading={savingPreferred}
+                  disabled={!preferredTitle.trim() || savingPreferred}
+                >
+                  Save preferred path
+                </Button>
+                {path.prioritized_title && (
+                  <span className="text-micro text-ink-400">
+                    Current: {path.prioritized_title}
+                  </span>
+                )}
+              </div>
+            </div>
 
             {/* Actions */}
             <div className="flex flex-wrap items-center gap-2 pt-1">
