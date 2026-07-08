@@ -719,10 +719,15 @@ export function ChatInterface({
     onApplicationKits: (kits) => attachApplicationKitsToLastAssistant(kits),
   });
 
-  // Fallback poll when Realtime is unavailable or between turns.
+  // Fallback poll only while a turn is actively streaming. Keeping this alive
+  // forever across idle tabs creates a DB-acquire herd and can starve auth
+  // bootstrap/profile setup on small production pools.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !isStreaming) return;
+    let inFlight = false;
     const poll = async () => {
+      if (document.visibilityState !== "visible" || inFlight) return;
+      inFlight = true;
       try {
         const res = await apiAuthFetch(
           `/api/v1/chat/sessions/${sessionId}/actions`
@@ -745,9 +750,11 @@ export function ChatInterface({
           attachApplicationKitsToLastAssistant(data.application_kits);
         }
       } catch { /* silent */ }
+      finally {
+        inFlight = false;
+      }
     };
-    const ms = isStreaming ? 4000 : 8000;
-    const id = window.setInterval(poll, ms);
+    const id = window.setInterval(poll, 5000);
     void poll();
     return () => window.clearInterval(id);
   }, [
