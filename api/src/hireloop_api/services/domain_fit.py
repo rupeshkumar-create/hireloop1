@@ -233,7 +233,12 @@ def generic_title_overlap_penalty(candidate_title: str | None, job_title: str | 
     overlap = ta & tb
     if not overlap:
         return 1.0
-    # Only generic tokens in common — not enough to call it a role match.
+    # Only generic tokens in common — not enough to call it a role match,
+    # UNLESS one title is contained in the other (Ops Manager ↔ Ops Manager /
+    # Senior Ops Manager). That IS the role; crushing it left exact matches
+    # at ~0.23 and empty Jobs feeds for ops / manager profiles.
     if overlap <= _GENERIC_FUNCTION and len(overlap) <= 2:
+        if ta == tb or ta.issubset(tb) or tb.issubset(ta):
+            return 1.0
         return 0.35
     return 1.0

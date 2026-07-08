@@ -632,10 +632,39 @@ async def run_background_worker(
     # extra scheduler process. First run ~1 min after boot, then every 15 min.
     sweep_interval_s = 15 * 60
     next_sweep_at = _time.monotonic() + 60
+    # Reclaim jobs left "running" after deploy/crash so one zombie cannot starve
+    # the single-threaded worker forever (Apify + embed jobs can exceed 15m).
+    reclaim_interval_s = 5 * 60
+    next_reclaim_at = _time.monotonic() + 30
+    stuck_running_ttl = timedelta(minutes=20)
 
     while not stop_event.is_set():
         try:
             pool = await get_db_pool(settings)
+            if _time.monotonic() >= next_reclaim_at:
+                next_reclaim_at = _time.monotonic() + reclaim_interval_s
+                async with pool.acquire() as conn:
+                    reclaimed = await conn.fetch(
+                        """
+                        UPDATE public.background_jobs
+                        SET status = 'failed',
+                            last_error = 'reclaimed: stuck running after worker death',
+                            completed_at = NOW(),
+                            updated_at = NOW(),
+                            worker_id = NULL
+                        WHERE status = 'running'
+                          AND started_at < NOW() - $1::interval
+                        RETURNING id
+                        """,
+                        stuck_running_ttl,
+                    )
+                if reclaimed:
+                    logger.warning(
+                        "background_jobs_reclaimed_stuck",
+                        count=len(reclaimed),
+                        ttl_minutes=int(stuck_running_ttl.total_seconds() // 60),
+                    )
+
             job: dict[str, Any] | None = None
             async with pool.acquire() as conn:
                 job = await claim_next_job(conn, worker_id=wid)

@@ -29,7 +29,10 @@ MIN_PERSIST_SCORE = 0.35
 # (skill overlap 0 → the 0.40-weight dimension contributes nothing), and the
 # 0.35 floor silently erased the exact roles the candidate asked for — the
 # recurring "only demo jobs after onboarding" failure.
-PATH_ALIGNED_MIN_PERSIST = 0.22
+# Skill-sparse / mislabeled cold profiles score ~0.18–0.22 against exact title
+# matches (40% skills weight at ~0). Keep this below that band so Ops Manager →
+# Ops Manager still persists; domain + role_signal gates still filter junk.
+PATH_ALIGNED_MIN_PERSIST = 0.18
 PATH_ALIGNED_MIN_AFFINITY = 0.25
 
 # Default relevance floor for candidate feed (API + app).
