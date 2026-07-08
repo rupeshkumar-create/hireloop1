@@ -63,12 +63,11 @@ async def test_candidate_intro_enqueues_hm_enrich_when_stub_created(
         return uuid.uuid4()
 
     # Ensure settings look configured for the enqueue gate.
-    from hireloop_api import config as _config
+    from hireloop_api.config import Settings
 
     monkeypatch.setattr(
-        _config,
-        "get_settings",
-        lambda: _config.Settings(  # type: ignore[call-arg]
+        "hireloop_api.services.intro_service.get_settings",
+        lambda: Settings(  # type: ignore[call-arg]
             _env_file=None,
             environment="test",
             apify_token="test-token",
