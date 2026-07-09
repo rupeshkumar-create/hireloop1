@@ -27,6 +27,8 @@ async def _candidate_id(db: asyncpg.Connection, user_id: str) -> uuid.UUID:
 
 
 def _serialize_kit(row: asyncpg.Record) -> dict:
+    ats = row["ats_report"] if "ats_report" in row.keys() else None
+    dossier = row["dossier"] if "dossier" in row.keys() else None
     return {
         "id": str(row["id"]),
         "job_id": str(row["job_id"]),
@@ -36,6 +38,9 @@ def _serialize_kit(row: asyncpg.Record) -> dict:
         "interview_prep": row["interview_prep"],
         "tailored_resume_id": str(row["tailored_resume_id"]) if row["tailored_resume_id"] else None,
         "mock_interview_id": str(row["mock_interview_id"]) if row["mock_interview_id"] else None,
+        "ats_report": dict(ats) if isinstance(ats, dict) else ats,
+        "dossier": dict(dossier) if isinstance(dossier, dict) else dossier,
+        "reviewer_notes": row.get("reviewer_notes"),
         "created_at": row["created_at"].isoformat(),
         "updated_at": row["updated_at"].isoformat(),
     }
@@ -87,7 +92,9 @@ async def _application_kit_row_for_job(
     return await db.fetchrow(
         """
         SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
-               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
+               k.tailored_resume_id, k.mock_interview_id,
+               k.ats_report, k.dossier, k.reviewer_notes,
+               k.created_at, k.updated_at,
                j.title AS job_title, co.name AS company_name
         FROM public.job_application_kits k
         JOIN public.jobs j ON j.id = k.job_id
@@ -123,7 +130,9 @@ async def list_application_kits(
     rows = await db.fetch(
         """
         SELECT k.id, k.job_id, k.cover_letter, k.interview_prep,
-               k.tailored_resume_id, k.mock_interview_id, k.created_at, k.updated_at,
+               k.tailored_resume_id, k.mock_interview_id,
+               k.ats_report, k.dossier, k.reviewer_notes,
+               k.created_at, k.updated_at,
                j.title AS job_title, co.name AS company_name
         FROM public.job_application_kits k
         JOIN public.jobs j ON j.id = k.job_id

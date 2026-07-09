@@ -43,6 +43,7 @@ from hireloop_api.services.domain_fit import (
     domain_fit_multiplier,
     generic_title_overlap_penalty,
 )
+from hireloop_api.services.fit_dimensions import enrich_score_result
 from hireloop_api.services.job_preferences import (
     REMOTE_PREFERENCE_ONSITE_ONLY,
     normalize_remote_preference,
@@ -674,7 +675,7 @@ def _assemble_score(
         company_name=job_row["company_name"],
         candidate_name=cand_row["full_name"],
     )
-    return {
+    result = {
         "overall": overall,
         "skills_sim": skills_sim,
         "exp_score": exp_score,
@@ -682,6 +683,7 @@ def _assemble_score(
         "ctc_score": ctc_score,
         "explanation": explanation,
     }
+    return enrich_score_result(cand_row, job_row, result, title_aff=title_aff)
 
 
 # ── Main scorer ───────────────────────────────────────────────────────────────
@@ -729,6 +731,7 @@ class MatchingEngine:
                 c.remote_preference,
                 c.open_to_relocation,
                 c.location_scope,
+                c.profile_enrichment,
                 COALESCE(NULLIF(c.market, ''), NULLIF(u.market, ''), 'IN') AS market,
                 ce.profile_embedding,
                 ce.skills_embedding,
@@ -880,15 +883,22 @@ class MatchingEngine:
             INSERT INTO public.match_scores
                 (id, candidate_id, job_id,
                  overall_score, skills_score, experience_score, location_score, ctc_score,
+                 culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                 triage_notes,
                  explanation, bias_audit, computed_at)
             VALUES
-                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
             ON CONFLICT (candidate_id, job_id) DO UPDATE SET
                 overall_score    = EXCLUDED.overall_score,
                 skills_score     = EXCLUDED.skills_score,
                 experience_score = EXCLUDED.experience_score,
                 location_score   = EXCLUDED.location_score,
                 ctc_score        = EXCLUDED.ctc_score,
+                culture_score    = EXCLUDED.culture_score,
+                career_alignment_score = EXCLUDED.career_alignment_score,
+                fit_recommendation = EXCLUDED.fit_recommendation,
+                salary_benchmark = EXCLUDED.salary_benchmark,
+                triage_notes     = EXCLUDED.triage_notes,
                 explanation      = EXCLUDED.explanation,
                 bias_audit       = EXCLUDED.bias_audit,
                 computed_at      = NOW()
@@ -901,6 +911,13 @@ class MatchingEngine:
             round(exp_score, 4),
             round(loc_score, 4),
             round(ctc_score, 4),
+            result.get("culture_score"),
+            result.get("career_alignment_score"),
+            result.get("fit_recommendation"),
+            json.dumps(result.get("salary_benchmark"))
+            if result.get("salary_benchmark")
+            else None,
+            result.get("triage_notes"),
             explanation,
             json.dumps(bias_audit),
         )
@@ -1025,6 +1042,11 @@ class MatchingEngine:
                     round(r["exp_score"], 4),
                     round(r["loc_score"], 4),
                     round(r["ctc_score"], 4),
+                    r.get("culture_score"),
+                    r.get("career_alignment_score"),
+                    r.get("fit_recommendation"),
+                    json.dumps(r.get("salary_benchmark")) if r.get("salary_benchmark") else None,
+                    r.get("triage_notes"),
                     r["explanation"],
                     bias_audit,
                 )
@@ -1049,15 +1071,22 @@ class MatchingEngine:
             INSERT INTO public.match_scores
                 (id, candidate_id, job_id,
                  overall_score, skills_score, experience_score, location_score, ctc_score,
+                 culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                 triage_notes,
                  explanation, bias_audit, computed_at)
             VALUES
-                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
             ON CONFLICT (candidate_id, job_id) DO UPDATE SET
                 overall_score    = EXCLUDED.overall_score,
                 skills_score     = EXCLUDED.skills_score,
                 experience_score = EXCLUDED.experience_score,
                 location_score   = EXCLUDED.location_score,
                 ctc_score        = EXCLUDED.ctc_score,
+                culture_score    = EXCLUDED.culture_score,
+                career_alignment_score = EXCLUDED.career_alignment_score,
+                fit_recommendation = EXCLUDED.fit_recommendation,
+                salary_benchmark = EXCLUDED.salary_benchmark,
+                triage_notes     = EXCLUDED.triage_notes,
                 explanation      = EXCLUDED.explanation,
                 bias_audit       = EXCLUDED.bias_audit,
                 computed_at      = NOW()

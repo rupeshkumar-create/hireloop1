@@ -36,6 +36,7 @@ from hireloop_api.routes.hiring_managers import router as hiring_managers_router
 from hireloop_api.routes.intros import router as intros_router
 from hireloop_api.routes.jobs import router as jobs_router
 from hireloop_api.routes.learning_roadmaps import router as learning_roadmaps_router
+from hireloop_api.routes.markets import router as markets_router
 from hireloop_api.routes.matches import router as matches_router
 from hireloop_api.routes.me import router as me_router
 from hireloop_api.routes.mock_interview import router as mock_interview_router
@@ -134,7 +135,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Hireschema API",
-    description="AI recruiting platform for India — Aarya (candidate) + Nitya (recruiter)",
+    description="AI recruiting platform — Aarya (candidate) + Nitya (recruiter)",
     version="0.1.0",
     lifespan=lifespan,
     docs_url="/api/docs" if not settings.is_production else None,
@@ -206,8 +207,9 @@ app.middleware("http")(rate_limit_middleware)
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-# P01: health
+# P01: health + public market catalog
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(markets_router, prefix="/api/v1")
 
 # P04: auth (LinkedIn OAuth callback + MSG91 SMS OTP)
 app.include_router(auth_router, prefix="/api/v1")

@@ -183,7 +183,7 @@ async def mock_message(
     row = await db.fetchrow(
         """
         SELECT mi.id, mi.conversation_id, mi.role_target, mi.status,
-               mi.seniority, mi.interview_type
+               mi.seniority, mi.interview_type, mi.job_id, c.id AS candidate_id
         FROM public.mock_interviews mi
         JOIN public.candidates c ON c.id = mi.candidate_id
         WHERE mi.id = $1 AND c.user_id = $2
@@ -228,6 +228,27 @@ async def mock_message(
         context_line += f"\nSeniority: {row['seniority']}"
     if row["interview_type"]:
         context_line += f"\nInterview type: {str(row['interview_type']).replace('_', ' ')}"
+    if row.get("job_id"):
+        kit = await db.fetchrow(
+            """
+            SELECT interview_prep, dossier, cover_letter
+            FROM public.job_application_kits
+            WHERE candidate_id = $1::uuid AND job_id = $2::uuid
+            """,
+            row["candidate_id"],
+            row["job_id"],
+        )
+        if kit and kit.get("interview_prep"):
+            prep_excerpt = str(kit["interview_prep"])[:2500]
+            context_line += (
+                "\n\nUse this application-kit prep (what the candidate submitted):\n"
+                f"{prep_excerpt}"
+            )
+        if kit and kit.get("cover_letter"):
+            context_line += (
+                "\n\nCover letter they sent — probe claims from it:\n"
+                f"{str(kit['cover_letter'])[:1200]}"
+            )
     messages = [SystemMessage(content=MOCK_SYSTEM + context_line)]
     for h in history[-30:]:
         if h["role"] == "user":

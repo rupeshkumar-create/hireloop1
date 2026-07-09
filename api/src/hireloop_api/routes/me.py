@@ -14,7 +14,7 @@ import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_optional, get_phone_verified_user
@@ -325,7 +325,7 @@ async def update_my_market(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """
-    Update the user's home market (IN / US / GB).
+    Update the user's home market (ISO country code).
 
     This controls job visibility/scoping. We also mirror the value onto the candidate row.
     """
@@ -1456,6 +1456,145 @@ async def record_job_application(
         status = 404 if "not found" in detail.lower() else 400
         raise HTTPException(status_code=status, detail=detail)
     return result
+
+
+class ApplicationOutcomeRequest(BaseModel):
+    stage: str = Field(
+        ...,
+        description="applied | screening | interview | offer | rejected | ghosted | withdrawn",
+    )
+    notes: str | None = None
+
+
+@router.post("/jobs/{job_id}/outcome", status_code=200)
+async def record_job_outcome(
+    job_id: str,
+    body: ApplicationOutcomeRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Record how an application went — feeds Aarya calibration hints."""
+    from hireloop_api.services.outcome_learning import record_application_outcome
+
+    candidate = await db.fetchrow(
+        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    kit = await db.fetchrow(
+        """
+        SELECT dossier FROM public.job_application_kits
+        WHERE candidate_id = $1::uuid AND job_id = $2::uuid
+        """,
+        candidate["id"],
+        uuid.UUID(job_id),
+    )
+    dossier = kit["dossier"] if kit and kit.get("dossier") else None
+
+    result = await record_application_outcome(
+        db,
+        candidate_id=candidate["id"],
+        job_id=uuid.UUID(job_id),
+        stage=body.stage,
+        notes=body.notes,
+        dossier_snapshot=dict(dossier) if isinstance(dossier, dict) else None,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=str(result["error"]))
+    return result
+
+
+class ProfileEnrichmentRequest(BaseModel):
+    career_goals: list[str] | None = None
+    star_stories: list[str] | None = None
+    work_style: dict[str, Any] | None = None
+    portfolio_urls: list[str] | None = None
+
+
+@router.patch("/profile-enrichment", status_code=200)
+async def update_profile_enrichment(
+    body: ProfileEnrichmentRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Richer candidate model — motivation, STAR bank, work style, portfolio links."""
+    candidate = await db.fetchrow(
+        "SELECT id, profile_enrichment FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    enrich = candidate["profile_enrichment"] if candidate["profile_enrichment"] else {}
+    if not isinstance(enrich, dict):
+        enrich = {}
+    if body.career_goals is not None:
+        enrich["career_goals"] = body.career_goals[:10]
+    if body.star_stories is not None:
+        enrich["star_stories"] = body.star_stories[:12]
+    if body.work_style is not None:
+        enrich["work_style"] = body.work_style
+    if body.portfolio_urls is not None:
+        enrich["portfolio_urls"] = body.portfolio_urls[:5]
+
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET profile_enrichment = $2::jsonb, updated_at = NOW()
+        WHERE id = $1::uuid
+        """,
+        candidate["id"],
+        json.dumps(enrich),
+    )
+    return {"ok": True, "profile_enrichment": enrich}
+
+
+class ExpandProfileRequest(BaseModel):
+    urls: list[str] = Field(default_factory=list, max_length=5)
+
+
+@router.post("/profile/expand", status_code=200)
+async def expand_profile(
+    body: ExpandProfileRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Expand profile from GitHub / portfolio public URLs."""
+    from hireloop_api.services.profile_enrichment import expand_profile_from_urls, merge_enrichment
+
+    candidate = await db.fetchrow(
+        "SELECT id, profile_enrichment, skills FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+        uuid.UUID(str(current_user["id"])),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    patch = await expand_profile_from_urls(body.urls)
+    enrich = merge_enrichment(
+        candidate["profile_enrichment"] if candidate["profile_enrichment"] else {},
+        patch,
+    )
+    new_skills = list(candidate["skills"] or [])
+    for item in patch.get("discovered_skills") or []:
+        sk = item.get("skill")
+        if sk and sk not in new_skills:
+            new_skills.append(sk)
+
+    await db.execute(
+        """
+        UPDATE public.candidates
+        SET profile_enrichment = $2::jsonb,
+            skills = $3::text[],
+            updated_at = NOW()
+        WHERE id = $1::uuid
+        """,
+        candidate["id"],
+        json.dumps(enrich),
+        new_skills[:40],
+    )
+    return {"ok": True, "discovered_skills": patch.get("discovered_skills") or []}
 
 
 @router.post("/onboarding-consent")

@@ -30,12 +30,12 @@ Infra:                   AWS ap-south-1 (ECS Fargate + RDS Postgres read replica
 CDN / WAF:               Cloudflare (non-IN ASN block at WAF level)
 CI/CD:                   GitHub Actions
 
-## R4 — Multi-region marketplace (IN / US / GB v1)
-1. Each user has `market` (IN default); candidates and jobs scoped by market
-2. Phone: IN → +91/MSG91; US → +1/Twilio; GB → +44/Twilio (`phone_verified` gate)
-3. Prices shown in local currency (INR / USD / GBP) per market
+## R4 — Multi-region marketplace (global v1)
+1. Each user has `market` (ISO 3166-1 alpha-2; IN default); candidates and jobs scoped by market
+2. Phone OTP: IN → +91/MSG91 only; other markets — optional, no SMS provider required for MVP
+3. Prices shown in local currency per market (INR, USD, GBP, EUR, AUD, CAD, CHF, AED, SGD)
 4. Job visibility: onsite = same `country_code`; remote = `allowed_regions` or worldwide
-5. AWS ap-south-1 remains primary compute; Cloudflare WAF may still geo-gate marketing site
+5. `ENABLED_MARKETS` controls per-region job ingest; defaults to all supported markets
 
 ## R5 — Intro handshake via DB state only (NO agent-to-agent RPC)
 Flow: candidate clicks "Request Intro" → row in intro_requests table →
@@ -120,9 +120,7 @@ Production DB: real data only.
 11. No synchronous file I/O in FastAPI endpoints
 12. No blocking sleep() in agent loops — use asyncio.sleep()
 13. No direct DB writes from frontend — always via API
-14. No unauthenticated API endpoints except /health and /auth/callback
-15. No SMS to non-+91 numbers
-16. No job listings with country_code != 'IN'
-17. No Cloudflare bypass in production
-18. No OpenRouter calls without model fallback configured
-19. No Deepgram TTS calls without audio timeout guard (max 10s)
+14. No unauthenticated API endpoints except /health, /markets, and /auth/callback
+15. No Cloudflare bypass in production
+16. No OpenRouter calls without model fallback configured
+17. No Deepgram TTS calls without audio timeout guard (max 10s)

@@ -8,7 +8,8 @@ import { CandidateSharingSettings } from "@/components/settings/CandidateSharing
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { TailoredResumeSettings } from "@/components/settings/TailoredResumeSettings";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
-import { SUPPORTED_MARKETS, type MarketCode, marketByCode } from "@/lib/markets";
+import { type MarketCode, marketByCode } from "@/lib/markets";
+import { MarketSelect } from "@/components/market/MarketSelect";
 import {
   Button,
   Card,
@@ -190,21 +191,14 @@ export function SettingsPanel({
           <label htmlFor="settings-market" className="text-small font-medium text-ink-700">
             Home market
           </label>
-          <select
+          <MarketSelect
             id="settings-market"
             value={market}
-            onChange={(e) => setMarket(e.target.value as MarketCode)}
-            className="h-10 w-full rounded-md border border-ink-100 bg-paper-1 px-3 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
-          >
-            {SUPPORTED_MARKETS.map((m) => (
-              <option key={m.code} value={m.code}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+            onChange={setMarket}
+          />
           <p className="text-micro text-ink-500">
-            You can switch markets anytime. If you have a verified phone, it must match the new
-            region (+91 / +1 / +44). Fully remote roles may still show if eligible worldwide.
+            You can switch markets anytime. India (+91) supports SMS verification via MSG91.
+            Fully remote roles may still show when eligible worldwide.
           </p>
         </CardBody>
         <CardFooter>

@@ -19,6 +19,7 @@ import {
   DEFAULT_MATCH_FEED_FILTERS,
   fetchMatchFeed,
   fetchMatchFeedCount,
+  fetchMatchTriage,
   getCachedMatchFeed,
   getCachedMatchFeedCount,
   MATCH_FEED_INVALIDATE_EVENT,
@@ -154,6 +155,8 @@ export function MatchFeed({
   );
   const [offset, setOffset] = useState(initialJobs?.length ?? 0);
   const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
+  const [triageJobs, setTriageJobs] = useState<MatchedJob[]>([]);
+  const [triageLoading, setTriageLoading] = useState(false);
 
   // Filters
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
@@ -254,6 +257,25 @@ export function MatchFeed({
       cancelled = true;
     };
   }, [minScore]);
+
+  useEffect(() => {
+    if (compact || seedJobs?.length) return;
+    let cancelled = false;
+    setTriageLoading(true);
+    fetchMatchTriage(10)
+      .then((data) => {
+        if (!cancelled) setTriageJobs(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTriageJobs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTriageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [compact, seedJobs?.length]);
 
   useEffect(() => {
     setOffset(0);
@@ -456,6 +478,44 @@ export function MatchFeed({
             onAskAarya={onAskAarya}
             isSearching={emptyRefreshCount < 5}
           />
+        )}
+
+        {!compact && !loading && triageJobs.length > 0 && (
+          <div className="space-y-3 mb-4">
+            <div className="flex items-baseline justify-between pt-1">
+              <h4 className="text-small font-semibold text-ink-900">
+                Aarya&apos;s top picks
+                <span className="ml-1.5 text-ink-300 font-normal">{triageJobs.length}</span>
+              </h4>
+              <span className="text-micro text-ink-400">
+                Apply · Stretch · Skip ranked for you
+              </span>
+            </div>
+            {triageLoading ? (
+              <JobCardSkeleton />
+            ) : (
+              <Stagger className="space-y-3">
+                {triageJobs.map((job) => (
+                  <StaggerItem key={`triage-${job.job_id}`}>
+                    <JobCard
+                      job={job}
+                      conversationId={conversationId}
+                      onRequestIntro={onRequestIntro}
+                      onDirectApply={onDirectApply}
+                      applyLocked={applyLocked}
+                      onTailorResume={handlePrepareKit}
+                      tailorStatus={kitByJob[job.job_id] ?? "idle"}
+                      onOpenKitPreview={openKitPreview}
+                      onLearningRoadmap={handleLearningRoadmap}
+                      roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
+                      isSaved={savedJobIds.has(job.job_id)}
+                      onSavedChange={onSavedChange}
+                    />
+                  </StaggerItem>
+                ))}
+              </Stagger>
+            )}
+          </div>
         )}
 
         {visibleCount > 0 &&

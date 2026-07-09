@@ -18,12 +18,17 @@ from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
 from hireloop_api.services.ai_context import compose_candidate_prompt
+from hireloop_api.services.application_dossier import build_dossier_snapshot
+from hireloop_api.services.ats_resume_check import run_ats_check
 from hireloop_api.services.job_present import serialize_job_card
+from hireloop_api.services.kit_reviewer import review_and_revise_kit_text
+from hireloop_api.services.outcome_learning import build_kit_aware_interview_prep
 from hireloop_api.services.resume_tailor import (
     generate_tailored_html,
     resume_summary_line,
     save_tailored_resume,
 )
+from hireloop_api.services.resume_trimmer import trim_resume_html_for_job
 from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
 
 logger = structlog.get_logger()
@@ -318,6 +323,7 @@ async def _ensure_mock_interview(
     *,
     candidate_id: uuid.UUID,
     job_title: str,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     existing = await db.fetchrow(
         """
@@ -348,14 +354,15 @@ async def _ensure_mock_interview(
         """
         INSERT INTO public.mock_interviews (
           id, candidate_id, conversation_id, role_target,
-          interview_type, mode, status
+          interview_type, mode, status, job_id
         )
-        VALUES ($1, $2, $3, $4, 'recruiter_screen', 'chat', 'in_progress')
+        VALUES ($1, $2, $3, $4, 'recruiter_screen', 'chat', 'in_progress', $5::uuid)
         """,
         mock_id,
         candidate_id,
         conv_id,
         job_title,
+        uuid.UUID(job_id) if job_id else None,
     )
     opening = (
         f"Welcome to your mock interview for {job_title}. "
@@ -482,6 +489,12 @@ async def _prepare_application_kit_for_candidate_row(
     if not profile:
         profile = dict(candidate)
         profile["id"] = str(profile["id"])
+    enrich_row = await db.fetchrow(
+        "SELECT profile_enrichment FROM public.candidates WHERE id = $1::uuid",
+        candidate_id,
+    )
+    if enrich_row and enrich_row["profile_enrichment"]:
+        profile["profile_enrichment"] = enrich_row["profile_enrichment"]
     job = dict(job_row)
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []
@@ -490,13 +503,6 @@ async def _prepare_application_kit_for_candidate_row(
     existing_resume = await _fetch_existing_tailored_resume(
         db, candidate_id=candidate_id, job_id=str(job["id"])
     )
-    try:
-        mock = await _ensure_mock_interview(
-            db, candidate_id=candidate_id, job_title=str(job.get("title") or "Role")
-        )
-    except Exception as exc:
-        logger.warning("application_kit_mock_interview_failed", error=str(exc))
-        mock = {"mock_interview_id": None, "path": None}
 
     text_task = asyncio.create_task(
         _generate_text_assets(settings=settings, profile=profile, job=job)
@@ -509,11 +515,25 @@ async def _prepare_application_kit_for_candidate_row(
 
     cover_letter, interview_prep = await text_task
 
+    reviewer_notes = ""
+    cover_letter, interview_prep, reviewer_notes = await review_and_revise_kit_text(
+        settings=settings,
+        profile=profile,
+        job=job,
+        cover_letter=cover_letter,
+        interview_prep=interview_prep,
+    )
+
+    ats_report: dict[str, Any] | None = None
+    trim_meta: dict[str, Any] | None = None
+
     if existing_resume:
         resume = existing_resume
     elif resume_html_task is not None:
         try:
             html = await resume_html_task
+            html, trim_meta = trim_resume_html_for_job(html, job=job)
+            ats_report = run_ats_check(html, profile=profile, job=job)
             resume = await _persist_tailored_resume(
                 db, candidate_id=candidate_id, job=job, html=html
             )
@@ -523,6 +543,46 @@ async def _prepare_application_kit_for_candidate_row(
     else:
         resume = {"resume_id": None, "status": "unavailable", "download_path": None}
 
+    intro_status_row = await db.fetchrow(
+        """
+        SELECT status FROM public.intro_requests
+        WHERE candidate_id = $1::uuid AND job_id = $2::uuid
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        candidate_id,
+        uuid.UUID(job_id),
+    )
+    intro_status = intro_status_row["status"] if intro_status_row else None
+    interview_prep = build_kit_aware_interview_prep(
+        base_prep=interview_prep,
+        dossier=None,
+        job=job,
+        profile=profile,
+        intro_status=intro_status,
+    )
+
+    dossier = build_dossier_snapshot(
+        job=job,
+        cover_letter=cover_letter,
+        interview_prep=interview_prep,
+        resume_id=resume.get("resume_id"),
+        ats_report=ats_report,
+        reviewer_notes=reviewer_notes or None,
+    )
+    if trim_meta:
+        dossier["resume_trim"] = trim_meta
+
+    try:
+        mock = await _ensure_mock_interview(
+            db,
+            candidate_id=candidate_id,
+            job_title=str(job.get("title") or "Role"),
+            job_id=str(job["id"]),
+        )
+    except Exception as exc:
+        logger.warning("application_kit_mock_interview_failed", error=str(exc))
+        mock = {"mock_interview_id": None, "path": None}
+
     tailored_resume_id = resume.get("resume_id")
     mock_interview_id = mock.get("mock_interview_id")
 
@@ -530,9 +590,10 @@ async def _prepare_application_kit_for_candidate_row(
         """
         INSERT INTO public.job_application_kits (
           candidate_id, job_id, cover_letter, interview_prep,
-          tailored_resume_id, mock_interview_id
+          tailored_resume_id, mock_interview_id,
+          ats_report, dossier, reviewer_notes
         )
-        VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::uuid)
+        VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::uuid, $7::jsonb, $8::jsonb, $9)
         ON CONFLICT (candidate_id, job_id) DO UPDATE SET
           cover_letter = EXCLUDED.cover_letter,
           interview_prep = EXCLUDED.interview_prep,
@@ -542,6 +603,9 @@ async def _prepare_application_kit_for_candidate_row(
           mock_interview_id = COALESCE(
             EXCLUDED.mock_interview_id, public.job_application_kits.mock_interview_id
           ),
+          ats_report = COALESCE(EXCLUDED.ats_report, public.job_application_kits.ats_report),
+          dossier = EXCLUDED.dossier,
+          reviewer_notes = COALESCE(EXCLUDED.reviewer_notes, public.job_application_kits.reviewer_notes),
           updated_at = NOW()
         RETURNING id
         """,
@@ -551,6 +615,9 @@ async def _prepare_application_kit_for_candidate_row(
         interview_prep,
         uuid.UUID(tailored_resume_id) if tailored_resume_id else None,
         uuid.UUID(mock_interview_id) if mock_interview_id else None,
+        json.dumps(ats_report) if ats_report else None,
+        json.dumps(dossier),
+        reviewer_notes or None,
     )
 
     card = serialize_job_card(job)
@@ -563,6 +630,9 @@ async def _prepare_application_kit_for_candidate_row(
         "interview_prep": interview_prep,
         "resume": resume,
         "mock_interview": mock,
+        "ats_report": ats_report,
+        "reviewer_notes": reviewer_notes or None,
+        "dossier": dossier,
     }
 
 

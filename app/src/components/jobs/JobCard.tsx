@@ -270,9 +270,21 @@ export function JobCard({
 
       {/* ── Tags row ───────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
-        {job.is_new_for_you && (
-          <Badge tone="accent">
-            New
+        {job.fit_recommendation && (
+          <Badge
+            tone={
+              job.fit_recommendation === "apply"
+                ? "accent"
+                : job.fit_recommendation === "stretch"
+                  ? "strong"
+                  : "muted"
+            }
+          >
+            {job.fit_recommendation === "apply"
+              ? "Apply"
+              : job.fit_recommendation === "stretch"
+                ? "Stretch"
+                : "Skip"}
           </Badge>
         )}
         {job.action_label && (
@@ -308,6 +320,40 @@ export function JobCard({
         {job.is_remote && <Badge>Remote</Badge>}
         {ctcLabel && <Badge tone="accent">{ctcLabel}</Badge>}
       </div>
+
+      {(job.skills_score != null ||
+        job.experience_score != null ||
+        job.career_alignment_score != null) && (
+        <p className="text-micro text-ink-500 mb-2">
+          {job.skills_score != null && (
+            <span>Skills {Math.round(job.skills_score * 100)}</span>
+          )}
+          {job.experience_score != null && (
+            <span>
+              {job.skills_score != null ? " · " : ""}
+              Experience {Math.round(job.experience_score * 100)}
+            </span>
+          )}
+          {job.career_alignment_score != null && (
+            <span>
+              {" · "}Career {Math.round(job.career_alignment_score * 100)}
+            </span>
+          )}
+          {job.culture_score != null && (
+            <span>
+              {" · "}Culture {Math.round(job.culture_score * 100)}
+            </span>
+          )}
+        </p>
+      )}
+
+      {job.triage_notes && !isChat && (
+        <p className="text-micro text-ink-600 mb-2 line-clamp-2">{job.triage_notes}</p>
+      )}
+
+      {job.salary_benchmark?.vs_market_label && !isChat && (
+        <p className="text-micro text-ink-500 mb-2">{job.salary_benchmark.vs_market_label}</p>
+      )}
 
       {/* ── Skills chips (matched skills highlighted) + gaps ───────────── */}
       {job.skills_required.length > 0 &&

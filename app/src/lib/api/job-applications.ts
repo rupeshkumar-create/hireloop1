@@ -26,6 +26,25 @@ export type JobApplicationRecord = {
   status: string;
 };
 
+export async function recordJobOutcome(
+  jobId: string,
+  stage: string,
+  notes?: string,
+): Promise<void> {
+  const res = await apiAuthFetch(`/api/v1/me/jobs/${jobId}/outcome`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stage, notes: notes ?? null }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail ?? `Could not save outcome: ${res.status}`,
+    );
+  }
+}
+
 /** Log a direct application and bookmark the job for the tracker. */
 export async function recordJobApplication(
   jobId: string,

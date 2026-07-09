@@ -46,8 +46,7 @@ async def store_otp(db: asyncpg.Connection, phone: str, *, otp_hash: str, ttl_mi
 
 
 async def mark_sent(db: asyncpg.Connection, phone: str) -> None:
-    """Record a send when the code lives with the provider (Twilio Verify) — only
-    the resend cooldown is tracked here, no hash to store."""
+    """Record a send timestamp for resend cooldown tracking."""
     await db.execute(
         """
         INSERT INTO public.otp_verifications (phone, otp_hash, expires_at, attempts, last_sent_at)

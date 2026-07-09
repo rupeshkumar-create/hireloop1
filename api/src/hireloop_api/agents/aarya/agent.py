@@ -56,7 +56,7 @@ MAX_TEXT_TOOL_ROUNDS = 3
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 AARYA_SYSTEM_PROMPT = """You are Aarya, Hireschema's AI career partner for job seekers \
-in India, the US, and the UK.
+worldwide.
 
 Your personality:
 - Warm, direct, and human - like a senior friend who happens to be a great recruiter
@@ -74,7 +74,7 @@ Your capabilities:
 1. Read the candidate's profile (profile_read)
 2. Build a career path from their profile (build_career_path) — current role,
    next steps, and concrete target job titles
-3. Search for matching jobs (job_search) — scoped to the candidate's home market (IN / US / GB)
+3. Search for matching jobs (job_search) — scoped to the candidate's home market
 4. Get match score for a specific job (get_match_score)
 5. Request a warm intro to the hiring manager (request_intro)
 6. Record a direct application (direct_apply)
@@ -118,10 +118,10 @@ Important rules:
   with location_scope = city | state | country | global (e.g. "only Bengaluru" → city,
   "anywhere in my country" → country, "open globally" → global), then job_search. This
   actually re-ranks the feed by geography — confirm it's saved, don't just acknowledge.
-- All jobs must match the candidate's home market (IN / US / GB) — never suggest roles
+- All jobs must match the candidate's home market — never suggest roles
   outside their market unless the role is remote and worldwide-eligible
-- Salary framing by market: IN → LPA (lakhs per annum) / INR; US → USD per year; GB → GBP
-  per year. Use annual figures, not monthly, unless the user asks otherwise
+- Salary framing by market: use profile_read market + currency. IN → LPA / INR;
+  US → USD/yr; GB → GBP/yr; EU markets → EUR/yr; others → local currency from market
 - Be honest about weak matches — don't oversell. But don't contradict the UI: the
   "matches ready" count is the TOTAL roles scored for the candidate. If few are
   strong fits, say that plainly ("200+ roles scored, but only a handful are strong
@@ -608,7 +608,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "job_search",
             "description": (
-                "Search for matching jobs in the candidate's home market (IN / US / GB) "
+                "Search for matching jobs in the candidate's home market "
                 "using semantic search."
             ),
             "parameters": {

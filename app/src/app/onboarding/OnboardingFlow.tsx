@@ -32,7 +32,7 @@ import {
 } from "@/components/brand/icons";
 import { apiAuthFetch, ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { DIRECT_API_URL } from "@/lib/api/base-url";
-import { fetchMyProfile } from "@/lib/api/profile";
+import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
 } from "@/lib/api/onboardingProfile";
@@ -45,6 +45,8 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
+import { MarketSelect } from "@/components/market/MarketSelect";
+import { marketByCode, type MarketCode } from "@/lib/markets";
 
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
@@ -166,11 +168,18 @@ function ActivationStep({
   const firstName = firstNameFromDisplayName(candidateName) ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [market, setMarket] = useState<MarketCode>("IN");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void inferMarketFromGeo().then((inferred) => {
+      if (inferred) setMarket(marketByCode(inferred).code);
+    });
+  }, []);
 
   const hasResume = resumeFile !== null;
 
@@ -222,8 +231,7 @@ function ActivationStep({
         body: JSON.stringify({
           skipped_voice: true,
           skipped_resume: false,
-          // market intentionally omitted: it is derived from the CV location
-          // (sync on parse) with a browser-geo fallback — no manual picker.
+          market,
         }),
       });
       if (!completeRes.ok) {
@@ -283,6 +291,17 @@ function ActivationStep({
             <p className="text-micro text-ink-400">
               Aarya reads your CV to build your profile and matches. You can refine
               details anytime from the dashboard.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="onboarding-market" className="text-small font-medium text-ink-700">
+              Home job market
+            </label>
+            <MarketSelect id="onboarding-market" value={market} onChange={setMarket} />
+            <p className="text-micro text-ink-400">
+              Where you want to work. We auto-detect from your location when possible;
+              you can change this anytime in Settings.
             </p>
           </div>
 

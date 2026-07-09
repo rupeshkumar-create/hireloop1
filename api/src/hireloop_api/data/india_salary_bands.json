@@ -1,0 +1,15 @@
+{
+  "currency": "INR",
+  "unit": "LPA",
+  "bands": [
+    {"seniority": "junior", "city": "bengaluru", "role_keywords": ["customer success", "csm"], "min": 6, "max": 12, "median": 9},
+    {"seniority": "mid", "city": "bengaluru", "role_keywords": ["customer success", "csm"], "min": 10, "max": 18, "median": 14},
+    {"seniority": "senior", "city": "bengaluru", "role_keywords": ["customer success", "csm"], "min": 16, "max": 28, "median": 22},
+    {"seniority": "junior", "city": "bengaluru", "role_keywords": ["software", "engineer", "developer"], "min": 8, "max": 16, "median": 12},
+    {"seniority": "mid", "city": "bengaluru", "role_keywords": ["software", "engineer", "developer"], "min": 14, "max": 28, "median": 20},
+    {"seniority": "senior", "city": "bengaluru", "role_keywords": ["software", "engineer", "developer"], "min": 24, "max": 45, "median": 32},
+    {"seniority": "mid", "city": "mumbai", "role_keywords": ["operations", "manager"], "min": 12, "max": 22, "median": 16},
+    {"seniority": "mid", "city": "default", "role_keywords": ["manager", "lead"], "min": 10, "max": 24, "median": 16},
+    {"seniority": "mid", "city": "default", "role_keywords": ["default"], "min": 8, "max": 20, "median": 12}
+  ]
+}

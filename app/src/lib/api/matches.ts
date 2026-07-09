@@ -36,6 +36,17 @@ export type MatchedJob = {
   experience_score: number | null;
   location_score: number | null;
   ctc_score: number | null;
+  culture_score?: number | null;
+  career_alignment_score?: number | null;
+  fit_recommendation?: "apply" | "stretch" | "skip" | null;
+  salary_benchmark?: {
+    market_median?: number;
+    vs_market?: string;
+    vs_market_label?: string;
+    unit?: string;
+    currency?: string;
+  } | null;
+  triage_notes?: string | null;
   explanation: string | null;
   computed_at: string;
   // Retention: job is new to this candidate (not previously surfaced).
@@ -128,6 +139,17 @@ export const MATCH_FEED_RELEVANCE_FLOOR = 0.38;
 const MATCH_FEED_FETCH_TIMEOUT_MS = 45_000;
 
 // ── API calls ─────────────────────────────────────────────────────────────────
+
+export async function fetchMatchTriage(limit = 10): Promise<MatchedJob[]> {
+  const res = await apiAuthFetch(`/api/v1/matches/triage?limit=${limit}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Match triage failed: ${res.status}`);
+  }
+  return res.json() as Promise<MatchedJob[]>;
+}
 
 export async function fetchMatchFeed(
   filters: MatchFeedFilters = {},

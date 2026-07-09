@@ -41,11 +41,11 @@ export function Footer() {
               </span>
             </div>
             <p className="text-sm text-ink-500 leading-relaxed max-w-xs">
-              India&apos;s first AI recruiting platform. Aarya finds you the right job.
-              Nitya finds companies the right talent. Built for Bharat.
+              AI recruiting for candidates and recruiters worldwide. Aarya finds you the
+              right job. Nitya finds companies the right talent.
             </p>
             <div className="mt-6 space-y-1">
-              <p className="text-xs text-ink-700">🇮🇳 India-only platform (+91)</p>
+              <p className="text-xs text-ink-700">12 markets · remote roles worldwide</p>
               <p className="text-xs text-ink-700">DPDP Act 2023 compliant</p>
               <p className="text-xs text-ink-700">AWS ap-south-1 (Mumbai)</p>
             </div>

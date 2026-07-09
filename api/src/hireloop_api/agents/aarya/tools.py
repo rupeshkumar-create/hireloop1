@@ -32,7 +32,7 @@ import structlog
 
 from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market, fetch_user_market
-from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.markets import MARKET_LABELS, job_visible_for_market_sql
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_jobs import (
     job_matches_path_titles,
@@ -306,11 +306,10 @@ async def profile_read(
 
 
 VALID_LOCATION_SCOPES = ("city", "state", "country", "global")
-_MARKET_COUNTRY_LABELS = {"IN": "India", "US": "the US", "GB": "the UK"}
 
 
 def location_scope_labels(market: str = "IN") -> dict[str, str]:
-    country = _MARKET_COUNTRY_LABELS.get(market, "your country")
+    country = MARKET_LABELS.get(market, "your country")
     return {
         "city": "roles in your city",
         "state": "roles across your state/region",

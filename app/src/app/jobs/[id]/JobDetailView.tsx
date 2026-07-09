@@ -26,7 +26,7 @@ import {
 } from "@/components/brand/icons";
 import { fetchSingleMatch, type MatchedJob } from "@/lib/api/matches";
 import { fetchSavedJobIds, saveJob, unsaveJob } from "@/lib/api/saved-jobs";
-import { recordJobApplication } from "@/lib/api/job-applications";
+import { recordJobApplication, recordJobOutcome } from "@/lib/api/job-applications";
 import { BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
@@ -314,6 +314,11 @@ function JobDetailBody({
   onApply: () => void;
   onSaveToggle: () => void;
 }) {
+  const [outcomeStage, setOutcomeStage] = useState("");
+  const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [outcomeSaving, setOutcomeSaving] = useState(false);
+  const { toast } = useToast();
+
   const ctcLabel = formatSalaryRange(job.ctc_min, job.ctc_max, {
     currency: job.salary_currency,
   });
@@ -333,6 +338,8 @@ function JobDetailBody({
     { label: "Skills", value: job.skills_score },
     { label: "Experience", value: job.experience_score },
     { label: "Location", value: job.location_score },
+    { label: "Culture", value: job.culture_score ?? null },
+    { label: "Career fit", value: job.career_alignment_score ?? null },
     { label: "Compensation", value: job.ctc_score },
   ].filter((b) => b.value !== null);
 
@@ -504,6 +511,62 @@ function JobDetailBody({
           )}
         </div>
       )}
+
+      {job.triage_notes && (
+        <p className="text-small text-ink-600 bg-paper-1 border border-ink-100 rounded-lg px-3 py-2">
+          {job.triage_notes}
+        </p>
+      )}
+
+      {job.salary_benchmark?.vs_market_label && (
+        <p className="text-small text-ink-600">
+          Pay insight: {job.salary_benchmark.vs_market_label}
+        </p>
+      )}
+
+      <div className="rounded-xl border border-ink-100 bg-paper-1 p-4 space-y-3">
+        <p className="text-small font-semibold text-ink-900">How did this go?</p>
+        <p className="text-micro text-ink-500">
+          Helps Aarya learn which roles work for you — stored in your application dossier.
+        </p>
+        <select
+          value={outcomeStage}
+          onChange={(e) => setOutcomeStage(e.target.value)}
+          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-small"
+          aria-label="Application outcome"
+        >
+          <option value="">Select outcome…</option>
+          <option value="applied">Applied</option>
+          <option value="screening">Screening call</option>
+          <option value="interview">Interview</option>
+          <option value="offer">Offer</option>
+          <option value="rejected">Rejected</option>
+          <option value="ghosted">No response</option>
+          <option value="withdrawn">Withdrawn</option>
+        </select>
+        <textarea
+          value={outcomeNotes}
+          onChange={(e) => setOutcomeNotes(e.target.value)}
+          placeholder="Optional notes (what went well, what to improve)"
+          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-small min-h-[72px]"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!outcomeStage || outcomeSaving}
+          loading={outcomeSaving}
+          onClick={() => {
+            if (!outcomeStage) return;
+            setOutcomeSaving(true);
+            void recordJobOutcome(job.job_id, outcomeStage, outcomeNotes || undefined)
+              .then(() => toast.success("Outcome saved — Aarya will use this to improve picks"))
+              .catch((e: Error) => toast.error(e.message))
+              .finally(() => setOutcomeSaving(false));
+          }}
+        >
+          Save outcome
+        </Button>
+      </div>
 
       {/* Actions — assets first (prepare the AI kit), then the warm intro. */}
       <div className="space-y-2 pt-4 border-t border-ink-100">

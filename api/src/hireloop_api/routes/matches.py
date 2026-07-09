@@ -382,6 +382,11 @@ class MatchedJob(BaseModel):
     experience_score: float | None
     location_score: float | None
     ctc_score: float | None
+    culture_score: float | None = None
+    career_alignment_score: float | None = None
+    fit_recommendation: str | None = None
+    salary_benchmark: dict | None = None
+    triage_notes: str | None = None
     explanation: str | None
     # None for pool jobs not yet scored for this candidate (LEFT JOIN) — a
     # required str here turned that into a response-validation 500.
@@ -1047,6 +1052,11 @@ async def _fetch_cached_match_rows(
             ms.experience_score,
             ms.location_score,
             ms.ctc_score,
+            ms.culture_score,
+            ms.career_alignment_score,
+            ms.fit_recommendation,
+            ms.salary_benchmark,
+            ms.triage_notes,
             ms.explanation,
             ms.llm_rationale,
             ms.llm_rationale_at,
@@ -1516,6 +1526,75 @@ def _serialize_fallback_match_row(
     }
 
 
+# ── Triage shortlist (/rank) ───────────────────────────────────────────────────
+
+
+@router.get("/triage", response_model=list[MatchedJob])
+async def get_match_triage(
+    limit: int = Query(default=10, ge=1, le=20),
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> list[dict]:
+    """Aarya's ranked top picks — apply / stretch / skip with per-job notes."""
+    candidate = await db.fetchrow(
+        """
+        SELECT c.id, c.current_title, c.current_company, c.looking_for, c.headline, c.summary,
+               c.years_experience, c.skills,
+               c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
+               c.remote_preference, c.open_to_relocation, c.location_scope,
+               c.aarya_state, c.market, c.profile_enrichment,
+               (
+                   SELECT cp.target_titles
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS target_titles,
+               (
+                   SELECT cp.prioritized_title
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS prioritized_title
+        FROM public.candidates c
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        uuid.UUID(current_user["id"]),
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+    candidate = await _candidate_with_intelligence(db, candidate)
+
+    market = await fetch_candidate_market(db, candidate["id"])
+    rows = await _fetch_cached_match_rows(
+        db,
+        candidate_id=candidate["id"],
+        min_score=0.35,
+        limit=limit * 3,
+        offset=0,
+        remote_preference="any",
+        market=market,
+    )
+    serialized = _serialize_current_quality_cached_rows(
+        rows,
+        candidate=dict(candidate),
+        min_score=0.35,
+    )
+    # Prefer apply, then stretch; skip last.
+    order = {"apply": 0, "stretch": 1, "skip": 2}
+    serialized.sort(
+        key=lambda r: (
+            order.get(str(r.get("fit_recommendation") or "stretch"), 1),
+            -(r.get("overall_score") or 0),
+        )
+    )
+    picks = [r for r in serialized if r.get("fit_recommendation") != "skip"][:limit]
+    if len(picks) < min(3, limit):
+        picks = serialized[:limit]
+    return picks[:limit]
+
+
 # ── Single match score ────────────────────────────────────────────────────────
 
 
@@ -1554,7 +1633,10 @@ async def get_single_match(
             j.ctc_min, j.ctc_max, j.salary_currency, j.skills_required, j.apply_url,
             j.description, j.requirements, j.scraped_at,
             ms.overall_score, ms.skills_score, ms.experience_score,
-            ms.location_score, ms.ctc_score, ms.explanation, ms.computed_at
+            ms.location_score, ms.ctc_score,
+            ms.culture_score, ms.career_alignment_score, ms.fit_recommendation,
+            ms.salary_benchmark, ms.triage_notes,
+            ms.explanation, ms.computed_at
     """
     row = await db.fetchrow(
         f"""

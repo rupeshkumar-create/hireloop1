@@ -2,8 +2,8 @@
 Authentication routes — phone collection and optional OTP.
 
 Flow:
-  1. POST /api/v1/auth/save-phone   → saves +91 number (onboarding; sets phone_verified)
-  2. POST /api/v1/auth/send-otp     → optional OTP via MSG91 SMS
+  1. POST /api/v1/auth/save-phone   → saves phone for supported market (onboarding)
+  2. POST /api/v1/auth/send-otp     → optional OTP via MSG91 SMS (+91 / India only)
   3. POST /api/v1/auth/verify-otp   → optional OTP verification
   4. GET  /api/v1/auth/me           → returns current user profile
 
@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import asyncpg
-import httpx
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator, model_validator
@@ -182,108 +181,21 @@ async def _send_msg91_sms_otp(phone: str, otp: str, settings: Settings) -> None:
         )
 
 
-def _is_twilio_verify_configured(settings: Settings) -> bool:
-    return bool(
-        settings.twilio_account_sid
-        and settings.twilio_auth_token
-        and settings.twilio_verify_service_sid
-    )
-
-
 def _is_msg91_configured(settings: Settings) -> bool:
     return bool(settings.msg91_auth_key and settings.msg91_otp_template_id)
-
-
-def _is_twilio_trial_destination_error(exc: HTTPException) -> bool:
-    """Twilio trial accounts can only send SMS to Console-verified numbers."""
-    return (
-        exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        and isinstance(exc.detail, str)
-        and "trial account" in exc.detail.lower()
-        and "verified" in exc.detail.lower()
-    )
 
 
 def _select_otp_provider(
     settings: Settings,
     market: str = "IN",
-) -> Literal["msg91", "twilio", "local", "unconfigured"]:
+) -> Literal["msg91", "local", "unconfigured"]:
+    """MSG91 for India; local dev OTP elsewhere when ENVIRONMENT=development."""
     m = normalize_market(market)
     if m == "IN" and _is_msg91_configured(settings):
         return "msg91"
-    if _is_twilio_verify_configured(settings):
-        return "twilio"
     if settings.is_development:
         return "local"
     return "unconfigured"
-
-
-async def _send_twilio_verify_otp(phone: str, settings: Settings) -> None:
-    """Send OTP via Twilio Verify SMS."""
-    service_sid = settings.twilio_verify_service_sid
-    url = f"https://verify.twilio.com/v2/Services/{service_sid}/Verifications"
-    data = {"To": phone, "Channel": "sms"}
-
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        resp = await client.post(
-            url,
-            data=data,
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
-        )
-        if resp.status_code not in (200, 201):
-            logger.error("twilio_verify_send_failed", status=resp.status_code, body=resp.text)
-            # Surface Twilio's reason when we can — the most common one in dev/
-            # staging is a trial account that can only SMS pre-verified numbers
-            # (code 21608), which is otherwise an opaque "try again" dead end.
-            twilio_code = None
-            twilio_msg = None
-            try:
-                payload = resp.json()
-                twilio_code = payload.get("code")
-                twilio_msg = payload.get("message")
-            except ValueError as exc:
-                logger.warning("twilio_verify_error_parse_failed", error=str(exc))
-
-            if twilio_code == 21608:
-                detail = (
-                    "This number isn't authorised on our SMS trial account. "
-                    "Use a verified test number, or contact support to enable "
-                    "this number."
-                )
-            else:
-                detail = twilio_msg or "Failed to send OTP. Please try again."
-
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=detail,
-            )
-
-
-async def _verify_twilio_otp(phone: str, otp: str, settings: Settings) -> None:
-    """Verify OTP via Twilio Verify SMS."""
-    service_sid = settings.twilio_verify_service_sid
-    url = f"https://verify.twilio.com/v2/Services/{service_sid}/VerificationCheck"
-    data = {"To": phone, "Code": otp}
-
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        resp = await client.post(
-            url,
-            data=data,
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
-        )
-        if resp.status_code not in (200, 201):
-            logger.error("twilio_verify_check_failed", status=resp.status_code, body=resp.text)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OTP.",
-            )
-
-        payload = resp.json()
-        if payload.get("status") != "approved":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OTP.",
-            )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -612,11 +524,10 @@ async def send_otp(
     db: asyncpg.Connection = Depends(get_db),
 ) -> SendOTPResponse:
     """
-    Send OTP to an Indian mobile number.
-    Priority:
-      1) MSG91 SMS OTP (if configured; required for India production)
-      2) Twilio Verify (temporary fallback if MSG91 is missing)
-      3) Local dev OTP fallback only when no provider is configured
+    Send OTP for phone verification.
+
+    India (+91): MSG91 SMS when configured.
+    Other markets / dev: local OTP logged in API when ENVIRONMENT=development.
     Rate limited: max 3 OTP sends per phone per hour (enforced by Cloudflare WAF + this code).
     """
     phone = body.phone
@@ -638,25 +549,11 @@ async def send_otp(
     if provider == "unconfigured":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OTP provider is not configured. Please contact support.",
+            detail=(
+                "SMS OTP is only available for India (+91) right now. "
+                "You can continue without phone verification."
+            ),
         )
-
-    if provider == "twilio":
-        try:
-            await _send_twilio_verify_otp(phone, settings)
-            logger.info("otp_sent_twilio", phone_last4=phone[-4:])
-            await otp_store.mark_sent(db, phone)
-            return SendOTPResponse(
-                message="OTP sent successfully",
-                expires_in_seconds=OTP_TTL_MINUTES * 60,
-                resend_available_in_seconds=OTP_RESEND_COOLDOWN_SECONDS,
-                delivery_channel="sms",
-            )
-        except HTTPException as exc:
-            if not (settings.is_development and _is_twilio_trial_destination_error(exc)):
-                raise
-            logger.warning("twilio_trial_blocked_using_dev_otp", phone_last4=phone[-4:])
-            provider = "local"
 
     # Generate cryptographically secure 6-digit OTP
     otp = str(secrets.randbelow(900000) + 100000)  # 100000-999999
@@ -699,45 +596,41 @@ async def verify_otp(
     """
     phone = body.phone
     market = normalize_market(body.market)
-    provider = _select_otp_provider(settings, market)
-    if provider == "twilio":
-        await _verify_twilio_otp(phone, body.otp, settings)
-    else:
-        stored = await otp_store.get_active(db, phone)
-        if not stored:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No OTP found for this number. Please request a new one.",
-            )
+    stored = await otp_store.get_active(db, phone)
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No OTP found for this number. Please request a new one.",
+        )
 
-        # Check expiry
-        if datetime.now(UTC) > stored["expires_at"]:
-            await otp_store.clear(db, phone)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OTP has expired. Please request a new one.",
-            )
-
-        # Check attempts (brute-force protection)
-        attempts = await otp_store.increment_attempts(db, phone)
-        if attempts > MAX_OTP_ATTEMPTS:
-            await otp_store.clear(db, phone)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many failed attempts. Please request a new OTP.",
-            )
-
-        # Verify hash (timing-safe)
-        if not hmac.compare_digest(
-            _hash_otp(body.otp, phone, settings.secret_key), stored["otp_hash"]
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OTP.",
-            )
-
-        # OTP valid — clean up store
+    # Check expiry
+    if datetime.now(UTC) > stored["expires_at"]:
         await otp_store.clear(db, phone)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP has expired. Please request a new one.",
+        )
+
+    # Check attempts (brute-force protection)
+    attempts = await otp_store.increment_attempts(db, phone)
+    if attempts > MAX_OTP_ATTEMPTS:
+        await otp_store.clear(db, phone)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Please request a new OTP.",
+        )
+
+    # Verify hash (timing-safe)
+    if not hmac.compare_digest(
+        _hash_otp(body.otp, phone, settings.secret_key), stored["otp_hash"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid OTP.",
+        )
+
+    # OTP valid — clean up store
+    await otp_store.clear(db, phone)
 
     user_id = uuid.UUID(str(current_user["id"]))
 

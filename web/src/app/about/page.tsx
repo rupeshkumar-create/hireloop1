@@ -4,14 +4,14 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "About Hireschema",
   description:
-    "Hireschema is an AI recruiting platform — inspired by Jack & Jill (London) but built for India, the US, and the UK with local compliance and market-aware matching.",
+    "Hireschema is an AI recruiting platform for candidates and recruiters worldwide — market-aware matching, local salaries, and warm intros.",
 };
 
 const VALUES = [
   {
-    icon: "🇮🇳",
+    icon: "🌍",
     title: "Market-first",
-    desc: "Each candidate has a home market (IN / US / GB). Jobs, salaries, and phone verification are scoped to that region — not a one-size-fits-all US product retrofitted.",
+    desc: "Each candidate has a home market (ISO country). Jobs, salaries, and ingest are scoped to that region — plus worldwide remote roles when eligible.",
   },
   {
     icon: "🤝",

@@ -27,6 +27,9 @@ SUPPORTED_MARKETS: frozenset[str] = frozenset(
 )
 DEFAULT_MARKET = "IN"
 
+# All actively supported markets — used as the default ENABLED_MARKETS value.
+ALL_SUPPORTED_MARKET_CODES: tuple[str, ...] = tuple(sorted(SUPPORTED_MARKETS))
+
 MARKET_CURRENCIES: dict[str, str] = {
     "IN": "INR",
     "US": "USD",
@@ -195,6 +198,19 @@ _LOCATION_MARKET_HINTS: tuple[tuple[str, str], ...] = (
 
 _US_STATE_RE = re.compile(r",\s*([A-Z]{2})\s*(?:,|$)")
 _GB_POSTCODE_RE = re.compile(r"\b([A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2})\b", re.I)
+
+
+def market_catalog() -> list[dict[str, str]]:
+    """Ordered market metadata for API + admin surfaces."""
+    return [
+        {
+            "code": code,
+            "label": MARKET_LABELS[code],
+            "currency": MARKET_CURRENCIES[code],
+            "dial": dial_prefix_for_market(code),
+        }
+        for code in sorted(SUPPORTED_MARKETS)
+    ]
 
 
 def normalize_market(code: str | None, *, enabled: frozenset[str] | None = None) -> str:

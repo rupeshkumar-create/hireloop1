@@ -9,6 +9,8 @@ from typing import ClassVar, Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from hireloop_api.markets import ALL_SUPPORTED_MARKET_CODES
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -225,14 +227,10 @@ class Settings(BaseSettings):
     allow_phone_save_bypass: bool = False
 
     # ── Multi-region markets ─────────────────────────────────────────────────
-    # Comma-separated ISO codes. Default IN-only until ingest + UX are ready per market.
-    enabled_markets: list[str] = ["IN", "US", "GB"]
+    # Comma-separated ISO codes. Defaults to all supported markets.
+    enabled_markets: list[str] = list(ALL_SUPPORTED_MARKET_CODES)
     default_market: str = "IN"
 
-    # ── Twilio Verify (optional OTP provider) ────────────────────────────────
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_verify_service_sid: str = ""
     # Temporary MVP/dev bypass: keep OTP enforcement configurable while LinkedIn
     # + resume onboarding is being tested. Production should set this to true.
     require_phone_verification: bool = False
