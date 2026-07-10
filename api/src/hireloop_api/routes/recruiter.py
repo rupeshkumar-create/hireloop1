@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,11 @@ from hireloop_api.agents.nitya.recruiter_chat import (
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_current_user, get_db, get_recruiter_user
 from hireloop_api.services.public_role import public_role_path
+from hireloop_api.services.recruiter_nudges import compute_recruiter_nudges
+from hireloop_api.services.role_inbound import add_external_candidate, create_inbound_applicant
+from hireloop_api.services.role_interview_kit import generate_interview_kit
+from hireloop_api.services.role_jd_bias import scan_jd_bias
+from hireloop_api.services.role_market_intel import compute_role_market_intel
 from hireloop_api.services.recruiter_search import (
     is_role_published,
     list_recruiter_candidates,
@@ -58,6 +63,9 @@ _JSONB_COLS = (
     "nice_to_haves",
     "evaluation_criteria",
     "calibration_candidates",
+    "jd_bias_report",
+    "interview_kit",
+    "market_intel_cache",
 )
 
 
@@ -147,6 +155,7 @@ class UpdateRoleRequest(BaseModel):
     must_haves: list[str] | None = None
     nice_to_haves: list[str] | None = None
     status: str | None = Field(default=None, pattern="^(draft|hiring|paused|closed)$")
+    calendly_url: str | None = Field(default=None, max_length=2048)
 
 
 class NityaMessageRequest(BaseModel):
@@ -156,10 +165,27 @@ class NityaMessageRequest(BaseModel):
 
 
 class PipelineMoveRequest(BaseModel):
-    stage: str = Field(
-        ...,
+    stage: str | None = Field(
+        default=None,
         pattern="^(search|shortlisted|intro_requested|intro_made|interview|offer|hired|archived)$",
     )
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class CalibrationEntry(BaseModel):
+    candidate_id: uuid.UUID | None = None
+    inbound_applicant_id: uuid.UUID | None = None
+    verdict: str = Field(..., pattern="^(ideal|borderline|reject)$")
+
+
+class SetCalibrationRequest(BaseModel):
+    entries: list[CalibrationEntry] = Field(..., min_length=1, max_length=5)
+
+
+class AddExternalCandidateRequest(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=200)
+    email: str | None = Field(default=None, max_length=320)
+    linkedin_url: str | None = Field(default=None, max_length=2048)
 
 
 class RunSearchRequest(BaseModel):
@@ -802,7 +828,11 @@ async def get_role(
         raise HTTPException(404, "Role not found")
     serialized = _serialize_role(row)
     pipeline_count = await db.fetchval(
-        "SELECT COUNT(*) FROM public.role_pipeline WHERE role_id = $1",
+        """
+        SELECT
+          (SELECT COUNT(*) FROM public.role_pipeline WHERE role_id = $1)
+          + (SELECT COUNT(*) FROM public.role_inbound_applicants WHERE role_id = $1)
+        """,
         role_id,
     )
     serialized["pipeline_count"] = int(pipeline_count or 0)
@@ -844,6 +874,7 @@ async def update_role(
           must_haves = COALESCE($12::jsonb, must_haves),
           nice_to_haves = COALESCE($13::jsonb, nice_to_haves),
           status = COALESCE($14, status),
+          calendly_url = COALESCE($15, calendly_url),
           updated_at = NOW()
         WHERE id = $1 AND recruiter_id = $2
         """,
@@ -861,6 +892,7 @@ async def update_role(
         json.dumps(body.must_haves) if body.must_haves is not None else None,
         json.dumps(body.nice_to_haves) if body.nice_to_haves is not None else None,
         body.status,
+        body.calendly_url,
     )
 
     re_extract = False
@@ -1526,16 +1558,37 @@ async def get_pipeline(
         SELECT p.id, p.stage, p.match_score, p.criterion_scores, p.notes,
                p.activity_status, p.is_public_search, p.moved_at,
                c.id AS candidate_id,
+               'platform'::text AS source_type,
+               NULL::uuid AS inbound_applicant_id,
                CASE WHEN p.stage IN ('intro_made', 'hired')
                     THEN u.full_name ELSE 'Candidate' END AS display_name,
                CASE WHEN p.stage IN ('intro_made', 'hired') THEN u.email ELSE NULL END AS email,
-               c.headline, c.current_title, c.years_experience
+               c.headline, c.current_title, c.years_experience,
+               NULL::text[] AS skills_matched, NULL::text[] AS skills_gap
         FROM public.role_pipeline p
         JOIN public.candidates c ON c.id = p.candidate_id
         JOIN public.users u ON u.id = c.user_id
         JOIN public.roles r ON r.id = p.role_id
         WHERE p.role_id = $1 AND r.recruiter_id = $2
-        ORDER BY p.match_score DESC NULLS LAST
+
+        UNION ALL
+
+        SELECT ia.id, ia.stage, ia.match_score, ia.criterion_scores, ia.notes,
+               'active'::text AS activity_status, FALSE AS is_public_search, ia.moved_at,
+               NULL::uuid AS candidate_id,
+               'inbound'::text AS source_type,
+               ia.id AS inbound_applicant_id,
+               ia.full_name AS display_name,
+               ia.email,
+               ia.parsed_profile->>'headline' AS headline,
+               ia.parsed_profile->>'current_title' AS current_title,
+               (ia.parsed_profile->>'years_experience')::smallint AS years_experience,
+               ia.skills_matched, ia.skills_gap
+        FROM public.role_inbound_applicants ia
+        JOIN public.roles r ON r.id = ia.role_id
+        WHERE ia.role_id = $1 AND r.recruiter_id = $2
+
+        ORDER BY match_score DESC NULLS LAST
         """,
         role_id,
         recruiter["id"],
@@ -1552,22 +1605,76 @@ async def move_pipeline_candidate(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     recruiter = current_user["recruiter"]
-    result = await db.execute(
-        """
-        UPDATE public.role_pipeline p SET
-          stage = $4,
-          moved_at = NOW(),
-          updated_at = NOW()
-        FROM public.roles r
-        WHERE p.id = $1 AND p.role_id = $2 AND r.id = p.role_id AND r.recruiter_id = $3
-        """,
-        pipeline_id,
-        role_id,
-        recruiter["id"],
-        body.stage,
-    )
+    if not body.stage and body.notes is None:
+        raise HTTPException(400, "Provide stage and/or notes to update")
+
+    updated_stage = body.stage
+    if body.stage:
+        result = await db.execute(
+            """
+            UPDATE public.role_pipeline p SET
+              stage = $4,
+              notes = COALESCE($5, notes),
+              moved_at = NOW(),
+              updated_at = NOW()
+            FROM public.roles r
+            WHERE p.id = $1 AND p.role_id = $2 AND r.id = p.role_id AND r.recruiter_id = $3
+            """,
+            pipeline_id,
+            role_id,
+            recruiter["id"],
+            body.stage,
+            body.notes,
+        )
+    else:
+        result = await db.execute(
+            """
+            UPDATE public.role_pipeline p SET
+              notes = $4,
+              updated_at = NOW()
+            FROM public.roles r
+            WHERE p.id = $1 AND p.role_id = $2 AND r.id = p.role_id AND r.recruiter_id = $3
+            """,
+            pipeline_id,
+            role_id,
+            recruiter["id"],
+            body.notes,
+        )
+
     if result == "UPDATE 0":
-        raise HTTPException(404, "Pipeline entry not found")
+        if body.stage:
+            result = await db.execute(
+                """
+                UPDATE public.role_inbound_applicants ia SET
+                  stage = $4,
+                  notes = COALESCE($5, notes),
+                  moved_at = NOW(),
+                  updated_at = NOW()
+                FROM public.roles r
+                WHERE ia.id = $1 AND ia.role_id = $2 AND r.id = ia.role_id AND r.recruiter_id = $3
+                """,
+                pipeline_id,
+                role_id,
+                recruiter["id"],
+                body.stage,
+                body.notes,
+            )
+        else:
+            result = await db.execute(
+                """
+                UPDATE public.role_inbound_applicants ia SET
+                  notes = $4,
+                  updated_at = NOW()
+                FROM public.roles r
+                WHERE ia.id = $1 AND ia.role_id = $2 AND r.id = ia.role_id AND r.recruiter_id = $3
+                """,
+                pipeline_id,
+                role_id,
+                recruiter["id"],
+                body.notes,
+            )
+        if result == "UPDATE 0":
+            raise HTTPException(404, "Pipeline entry not found")
 
     if body.stage == "hired":
         pipe = await db.fetchrow(
@@ -1578,18 +1685,19 @@ async def move_pipeline_candidate(
             "SELECT company_id FROM public.roles WHERE id = $1",
             role_id,
         )
-        if pipe and role:
+        if pipe and pipe.get("candidate_id") and role:
             await db.execute(
                 """
                 INSERT INTO public.placements (role_id, candidate_id, company_id, status)
                 VALUES ($1, $2, $3, 'hired_unbilled')
+                ON CONFLICT DO NOTHING
                 """,
                 role_id,
                 pipe["candidate_id"],
                 role["company_id"],
             )
 
-    return {"ok": True, "stage": body.stage}
+    return {"ok": True, "stage": updated_stage}
 
 
 # ── Publish a role into the candidate jobs feed + recruiter→candidate intros ──
@@ -1739,6 +1847,225 @@ async def recruiter_respond_intro(
         )
 
     return {"intro_id": str(intro_id), "status": new_status}
+
+
+# ── Recruiter package layers (intelligence, triage, ops) ─────────────────────
+
+
+async def _fetch_role_for_recruiter(
+    db: asyncpg.Connection,
+    *,
+    role_id: uuid.UUID,
+    recruiter_id: uuid.UUID,
+) -> asyncpg.Record | None:
+    return await db.fetchrow(
+        """
+        SELECT r.*, co.name AS company_name
+        FROM public.roles r
+        LEFT JOIN public.companies co ON co.id = r.company_id
+        WHERE r.id = $1 AND r.recruiter_id = $2 AND r.deleted_at IS NULL
+        """,
+        role_id,
+        recruiter_id,
+    )
+
+
+@router.get("/nudges")
+async def recruiter_nudges(
+    role_id: uuid.UUID | None = None,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    nudges = await compute_recruiter_nudges(
+        db,
+        recruiter_id=str(recruiter["id"]),
+        role_id=str(role_id) if role_id else None,
+    )
+    return {"nudges": nudges}
+
+
+@router.post("/roles/{role_id}/jd-bias-check")
+async def role_jd_bias_check(
+    role_id: uuid.UUID,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+    report = scan_jd_bias(row.get("jd_text"))
+    await db.execute(
+        """
+        UPDATE public.roles SET jd_bias_report = $2::jsonb, updated_at = NOW()
+        WHERE id = $1
+        """,
+        role_id,
+        json.dumps(report),
+    )
+    updated = await db.fetchrow("SELECT * FROM public.roles WHERE id = $1", role_id)
+    return {"report": report, "role": _serialize_role(updated)}
+
+
+@router.get("/roles/{role_id}/salary-suggestion")
+async def role_salary_suggestion(
+    role_id: uuid.UUID,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+    role_dict = dict(row)
+    intel = await compute_role_market_intel(db, role_dict, market="IN")
+    return {
+        "comp_min": role_dict.get("comp_min"),
+        "comp_max": role_dict.get("comp_max"),
+        "suggestion": intel.get("comp"),
+    }
+
+
+@router.get("/roles/{role_id}/market-intel")
+async def role_market_intel(
+    role_id: uuid.UUID,
+    refresh: bool = False,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+    role_dict = dict(row)
+    cache = role_dict.get("market_intel_cache")
+    if isinstance(cache, str):
+        try:
+            cache = json.loads(cache)
+        except (ValueError, TypeError):
+            cache = None
+    if cache and not refresh:
+        return {"intel": cache, "cached": True}
+
+    intel = await compute_role_market_intel(db, role_dict, market="IN")
+    await db.execute(
+        """
+        UPDATE public.roles
+        SET market_intel_cache = $2::jsonb, market_intel_cached_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+        """,
+        role_id,
+        json.dumps(intel),
+    )
+    return {"intel": intel, "cached": False}
+
+
+@router.get("/roles/{role_id}/interview-kit")
+async def role_interview_kit(
+    role_id: uuid.UUID,
+    refresh: bool = False,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+    role_dict = dict(row)
+    kit = role_dict.get("interview_kit")
+    if isinstance(kit, str):
+        try:
+            kit = json.loads(kit)
+        except (ValueError, TypeError):
+            kit = None
+    if kit and not refresh:
+        return {"kit": kit, "cached": True}
+
+    kit = generate_interview_kit(role_dict)
+    await db.execute(
+        """
+        UPDATE public.roles SET interview_kit = $2::jsonb, updated_at = NOW()
+        WHERE id = $1
+        """,
+        role_id,
+        json.dumps(kit),
+    )
+    return {"kit": kit, "cached": False}
+
+
+@router.put("/roles/{role_id}/calibration")
+async def set_role_calibration(
+    role_id: uuid.UUID,
+    body: SetCalibrationRequest,
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+
+    entries = []
+    for e in body.entries:
+        entry: dict[str, Any] = {"verdict": e.verdict}
+        if e.candidate_id:
+            entry["candidate_id"] = str(e.candidate_id)
+        if e.inbound_applicant_id:
+            entry["inbound_applicant_id"] = str(e.inbound_applicant_id)
+        entries.append(entry)
+
+    await db.execute(
+        """
+        UPDATE public.roles SET calibration_candidates = $2::jsonb, updated_at = NOW()
+        WHERE id = $1
+        """,
+        role_id,
+        json.dumps(entries),
+    )
+    updated = await db.fetchrow("SELECT * FROM public.roles WHERE id = $1", role_id)
+    return {"calibration": entries, "role": _serialize_role(updated)}
+
+
+@router.post("/roles/{role_id}/applicants", status_code=201)
+async def add_role_applicant(
+    role_id: uuid.UUID,
+    full_name: str = Form(...),
+    email: str | None = Form(default=None),
+    linkedin_url: str | None = Form(default=None),
+    resume: UploadFile | None = File(default=None),
+    current_user: dict = Depends(get_recruiter_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """Recruiter adds external candidate — scored and added to pipeline."""
+    recruiter = current_user["recruiter"]
+    row = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
+    if not row:
+        raise HTTPException(404, "Role not found")
+
+    resume_bytes = None
+    filename = "resume.pdf"
+    mime_type = None
+    if resume and resume.filename:
+        resume_bytes = await resume.read()
+        filename = resume.filename
+        mime_type = resume.content_type
+
+    try:
+        result = await add_external_candidate(
+            db,
+            role_id=role_id,
+            recruiter_id=recruiter["id"],
+            full_name=full_name.strip(),
+            email=email,
+            linkedin_url=linkedin_url,
+            resume_bytes=resume_bytes,
+            filename=filename,
+            mime_type=mime_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return result
 
 
 @router.get("/invite/{token}")

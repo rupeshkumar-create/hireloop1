@@ -38,6 +38,86 @@ export type RecruiterRole = {
   public_listing_enabled?: boolean;
   public_role_url?: string | null;
   company_name?: string | null;
+  calendly_url?: string | null;
+  jd_bias_report?: JdBiasReport | null;
+  interview_kit?: InterviewKit | null;
+  calibration_candidates?: CalibrationEntry[] | null;
+};
+
+export type JdBiasIssue = {
+  category: string;
+  phrase: string;
+  message: string;
+  suggestion: string;
+};
+
+export type JdBiasReport = {
+  passed: boolean;
+  score: number;
+  issues: JdBiasIssue[];
+  summary: string;
+};
+
+export type CalibrationEntry = {
+  candidate_id?: string;
+  inbound_applicant_id?: string;
+  verdict: "ideal" | "borderline" | "reject";
+};
+
+export type InterviewKit = {
+  role_title: string;
+  summary: string;
+  stages: Array<{
+    name: string;
+    duration_minutes: number;
+    goal: string;
+    questions: string[];
+  }>;
+  scorecard: Array<{
+    criterion: string;
+    weight: number;
+    rubric: Record<string, string>;
+  }>;
+  nice_to_probe: string[];
+  red_flags: string[];
+};
+
+export type MarketIntel = {
+  market: string;
+  role_title: string;
+  total_similar_roles: number;
+  comp: Record<string, unknown>;
+  competitors: Array<{ company_name: string; open_roles: number }>;
+  skills_in_demand: string[];
+  skill_gaps: Array<{ skill: string; pct_of_similar_roles: number; message: string }>;
+  grounded: boolean;
+};
+
+export type RecruiterNudge = {
+  type: string;
+  severity: string;
+  count: number;
+  message: string;
+  action: string;
+  href: string;
+};
+
+export type PipelineRow = {
+  id: string;
+  stage: string;
+  match_score: number | null;
+  display_name: string;
+  headline: string | null;
+  current_title: string | null;
+  years_experience: number | null;
+  moved_at: string;
+  notes?: string | null;
+  source_type?: "platform" | "inbound";
+  candidate_id?: string | null;
+  inbound_applicant_id?: string | null;
+  skills_matched?: string[] | null;
+  skills_gap?: string[] | null;
+  email?: string | null;
 };
 
 export type CreateRolePayload = {
@@ -92,6 +172,7 @@ export type UpdateRolePayload = Partial<{
   must_haves: string[];
   nice_to_haves: string[];
   status: string;
+  calendly_url: string;
 }>;
 
 export type NityaChatResponse = {
@@ -384,11 +465,80 @@ export async function publishRole(roleId: string): Promise<{
 export async function movePipelineCandidate(
   roleId: string,
   pipelineId: string,
-  stage: string
+  payload: { stage?: string; notes?: string }
 ): Promise<{ ok: boolean }> {
   return apiFetch(`/api/v1/recruiter/roles/${roleId}/pipeline/${pipelineId}`, {
     method: "PATCH",
-    body: JSON.stringify({ stage }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPipeline(roleId: string): Promise<PipelineRow[]> {
+  return apiFetch<PipelineRow[]>(`/api/v1/recruiter/roles/${roleId}/pipeline`, {
+    cache: "no-store",
+  });
+}
+
+export async function runJdBiasCheck(roleId: string): Promise<{ report: JdBiasReport; role: RecruiterRole }> {
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/jd-bias-check`, { method: "POST" });
+}
+
+export async function fetchSalarySuggestion(roleId: string): Promise<{
+  comp_min: number | null;
+  comp_max: number | null;
+  suggestion: Record<string, unknown>;
+}> {
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/salary-suggestion`);
+}
+
+export async function fetchMarketIntel(
+  roleId: string,
+  refresh = false
+): Promise<{ intel: MarketIntel; cached: boolean }> {
+  const qs = refresh ? "?refresh=true" : "";
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/market-intel${qs}`);
+}
+
+export async function fetchInterviewKit(
+  roleId: string,
+  refresh = false
+): Promise<{ kit: InterviewKit; cached: boolean }> {
+  const qs = refresh ? "?refresh=true" : "";
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/interview-kit${qs}`);
+}
+
+export async function setRoleCalibration(
+  roleId: string,
+  entries: CalibrationEntry[]
+): Promise<{ calibration: CalibrationEntry[]; role: RecruiterRole }> {
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/calibration`, {
+    method: "PUT",
+    body: JSON.stringify({ entries }),
+  });
+}
+
+export async function fetchRecruiterNudges(roleId?: string): Promise<{ nudges: RecruiterNudge[] }> {
+  const qs = roleId ? `?role_id=${encodeURIComponent(roleId)}` : "";
+  return apiFetch(`/api/v1/recruiter/nudges${qs}`, { cache: "no-store" });
+}
+
+export async function addExternalApplicant(
+  roleId: string,
+  payload: {
+    full_name: string;
+    email?: string;
+    linkedin_url?: string;
+    resume?: File;
+  }
+): Promise<{ applicant_id: string; full_name: string; match_score: number | null }> {
+  const form = new FormData();
+  form.set("full_name", payload.full_name);
+  if (payload.email) form.set("email", payload.email);
+  if (payload.linkedin_url) form.set("linkedin_url", payload.linkedin_url);
+  if (payload.resume) form.set("resume", payload.resume);
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/applicants`, {
+    method: "POST",
+    body: form,
   });
 }
 

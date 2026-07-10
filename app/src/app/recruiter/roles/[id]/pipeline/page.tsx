@@ -3,23 +3,19 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Kanban, Loader2 } from "@/components/brand/icons";
+import { ExternalLink, Kanban, Loader2 } from "@/components/brand/icons";
+import { AddExternalCandidateForm } from "@/components/recruiter/AddExternalCandidateForm";
+import { RecruiterNudgesPanel } from "@/components/recruiter/RecruiterNudgesPanel";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { ScoreDot } from "@/components/ui/ScoreDot";
 import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
-import { apiFetch } from "@/lib/api/client";
-import { getRole, movePipelineCandidate, type RecruiterRole } from "@/lib/api/recruiter";
-
-type PipelineRow = {
-  id: string;
-  stage: string;
-  match_score: number | null;
-  display_name: string;
-  headline: string | null;
-  current_title: string | null;
-  years_experience: number | null;
-  moved_at: string;
-};
+import {
+  fetchPipeline,
+  getRole,
+  movePipelineCandidate,
+  type PipelineRow,
+  type RecruiterRole,
+} from "@/lib/api/recruiter";
 
 const STAGES = [
   "search",
@@ -42,22 +38,34 @@ const STAGE_LABEL: Record<string, string> = {
   archived: "Archived",
 };
 
+const NEXT_STAGE: Partial<Record<string, string>> = {
+  search: "shortlisted",
+  shortlisted: "intro_requested",
+  intro_requested: "intro_made",
+  intro_made: "interview",
+  interview: "offer",
+  offer: "hired",
+};
+
 export default function PipelinePage() {
   const { id } = useParams<{ id: string }>();
   const [role, setRole] = useState<RecruiterRole | null>(null);
   const [rows, setRows] = useState<PipelineRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [moving, setMoving] = useState<string | null>(null);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, pipeline] = await Promise.all([
-        getRole(id),
-        apiFetch<PipelineRow[]>(`/api/v1/recruiter/roles/${id}/pipeline`),
-      ]);
+      const [r, pipeline] = await Promise.all([getRole(id), fetchPipeline(id)]);
       setRole(r);
       setRows(pipeline);
+      const drafts: Record<string, string> = {};
+      for (const row of pipeline) {
+        if (row.notes) drafts[row.id] = row.notes;
+      }
+      setNoteDrafts(drafts);
     } finally {
       setLoading(false);
     }
@@ -67,24 +75,35 @@ export default function PipelinePage() {
     void load();
   }, [load]);
 
-  // Keep pipeline cards fresh when candidates update their profiles.
   useEffect(() => {
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
-    const id = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void load();
     }, 30_000);
     return () => {
       window.removeEventListener("focus", onFocus);
-      window.clearInterval(id);
+      window.clearInterval(timer);
     };
   }, [load]);
 
   async function advance(pipelineId: string, stage: string) {
     setMoving(pipelineId);
     try {
-      await movePipelineCandidate(id, pipelineId, stage);
+      await movePipelineCandidate(id, pipelineId, { stage });
+      await load();
+    } finally {
+      setMoving(null);
+    }
+  }
+
+  async function saveNotes(pipelineId: string) {
+    setMoving(pipelineId);
+    try {
+      await movePipelineCandidate(id, pipelineId, {
+        notes: noteDrafts[pipelineId] ?? "",
+      });
       await load();
     } finally {
       setMoving(null);
@@ -99,7 +118,12 @@ export default function PipelinePage() {
 
   return (
     <div className="flex flex-col h-full bg-paper-0">
-      <RoleWorkspaceTabs roleId={id} active="pipeline" title={role?.title ?? null} publicRoleUrl={role?.public_role_url ?? null} />
+      <RoleWorkspaceTabs
+        roleId={id}
+        active="pipeline"
+        title={role?.title ?? null}
+        publicRoleUrl={role?.public_role_url ?? null}
+      />
       <header className="shrink-0 border-b border-ink-100 px-4 py-3">
         <div className="max-w-5xl mx-auto flex items-center gap-3">
           <div className="flex-1 min-w-0">
@@ -110,8 +134,17 @@ export default function PipelinePage() {
               {rows.length} candidate{rows.length !== 1 ? "s" : ""} across stages
             </p>
           </div>
+          <Link href={`/recruiter/roles/${id}/ops`}>
+            <Button variant="ghost" size="sm">
+              Add external
+            </Button>
+          </Link>
         </div>
       </header>
+
+      <div className="max-w-5xl mx-auto w-full px-4 py-4">
+        <RecruiterNudgesPanel roleId={id} compact />
+      </div>
 
       <div className="flex-1 overflow-x-auto overflow-y-auto p-4">
         {loading ? (
@@ -119,18 +152,21 @@ export default function PipelinePage() {
             <Loader2 className="h-6 w-6 animate-spin text-ink-300" />
           </div>
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={<Kanban strokeWidth={1.5} />}
-            title="No candidates in pipeline"
-            description="Ask Nitya to search for candidates on the intake chat."
-            action={
-              <Link href={`/recruiter/roles/${id}/intake`}>
-                <Button variant="primary" size="sm">
-                  Open Nitya chat
-                </Button>
-              </Link>
-            }
-          />
+          <div className="max-w-md mx-auto space-y-6">
+            <EmptyState
+              icon={<Kanban strokeWidth={1.5} />}
+              title="No candidates in pipeline"
+              description="Run a Nitya search, add external profiles, or share your public role link for inbound applicants."
+              action={
+                <Link href={`/recruiter/roles/${id}/intake`}>
+                  <Button variant="primary" size="sm">
+                    Open Nitya chat
+                  </Button>
+                </Link>
+              }
+            />
+            <AddExternalCandidateForm roleId={id} onAdded={() => void load()} />
+          </div>
         ) : (
           <div className="max-w-5xl mx-auto grid gap-4 md:grid-cols-3 lg:grid-cols-4">
             {grouped.map(({ stage, label, items }) => (
@@ -140,48 +176,81 @@ export default function PipelinePage() {
                   <Badge tone="muted">{items.length}</Badge>
                 </div>
                 <div className="space-y-2">
-                  {items.map((row) => (
-                    <Card key={row.id}>
-                      <CardBody className="space-y-2 !p-3">
-                        <p className="text-small font-medium text-ink-900 truncate">
-                          {row.display_name}
-                        </p>
-                        <p className="text-micro text-ink-500 truncate">
-                          {row.current_title ?? row.headline ?? "—"}
-                        </p>
-                        {row.match_score != null && (
-                          <div className="flex items-center gap-2 text-micro text-ink-500">
-                            <ScoreDot value={row.match_score} size="sm" />
-                            {row.years_experience != null && (
-                              <span>{row.years_experience}y exp</span>
+                  {items.map((row) => {
+                    const next = NEXT_STAGE[stage];
+                    return (
+                      <Card key={row.id}>
+                        <CardBody className="space-y-2 !p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-small font-medium text-ink-900 truncate">
+                              {row.display_name}
+                            </p>
+                            {row.source_type === "inbound" && (
+                              <Badge tone="accent" className="shrink-0 text-[10px]">
+                                Inbound
+                              </Badge>
                             )}
                           </div>
-                        )}
-                        {stage === "search" && (
+                          <p className="text-micro text-ink-500 truncate">
+                            {row.current_title ?? row.headline ?? "—"}
+                          </p>
+                          {row.match_score != null && (
+                            <div className="flex items-center gap-2 text-micro text-ink-500">
+                              <ScoreDot value={row.match_score} size="sm" />
+                              {row.years_experience != null && (
+                                <span>{row.years_experience}y exp</span>
+                              )}
+                            </div>
+                          )}
+                          {row.skills_gap && row.skills_gap.length > 0 && (
+                            <p className="text-micro text-ink-500 line-clamp-2">
+                              Gaps: {row.skills_gap.slice(0, 3).join(", ")}
+                            </p>
+                          )}
+                          <textarea
+                            value={noteDrafts[row.id] ?? ""}
+                            onChange={(e) =>
+                              setNoteDrafts((d) => ({ ...d, [row.id]: e.target.value }))
+                            }
+                            placeholder="Notes…"
+                            rows={2}
+                            className="w-full rounded border border-ink-100 bg-paper-0 px-2 py-1 text-micro text-ink-800 resize-none"
+                          />
                           <Button
-                            variant="secondary"
+                            variant="ghost"
                             size="sm"
                             className="w-full"
                             loading={moving === row.id}
-                            onClick={() => void advance(row.id, "shortlisted")}
+                            onClick={() => void saveNotes(row.id)}
                           >
-                            Shortlist
+                            Save notes
                           </Button>
-                        )}
-                        {stage === "shortlisted" && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="w-full"
-                            loading={moving === row.id}
-                            onClick={() => void advance(row.id, "intro_requested")}
-                          >
-                            Mark intro requested
-                          </Button>
-                        )}
-                      </CardBody>
-                    </Card>
-                  ))}
+                          {stage === "interview" && role?.calendly_url && (
+                            <a
+                              href={role.calendly_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center justify-center gap-1 text-micro text-accent hover:underline"
+                            >
+                              Schedule interview
+                              <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
+                            </a>
+                          )}
+                          {next && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="w-full"
+                              loading={moving === row.id}
+                              onClick={() => void advance(row.id, next)}
+                            >
+                              → {STAGE_LABEL[next]}
+                            </Button>
+                          )}
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
                 </div>
               </section>
             ))}

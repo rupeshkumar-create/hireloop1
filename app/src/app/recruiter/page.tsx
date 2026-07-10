@@ -31,6 +31,7 @@ import {
 import { Badge, Button, Card, CardBody, EmptyState, useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
+import { RecruiterNudgesPanel } from "@/components/recruiter/RecruiterNudgesPanel";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 
 const ROLE_STATUS_TONE: Record<string, "muted" | "strong" | "accent"> = {
@@ -274,6 +275,8 @@ export default function RecruiterDashboardPage() {
       )}
 
       {!loading && roles.length === 0 && !error && <FirstRoleHero />}
+
+      <RecruiterNudgesPanel />
 
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatCard

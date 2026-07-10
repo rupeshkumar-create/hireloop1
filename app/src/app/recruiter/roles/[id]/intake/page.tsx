@@ -304,7 +304,7 @@ export default function RoleIntakePage() {
   async function handleShortlist(candidate: RankedCandidate) {
     if (!candidate.pipeline_id) return;
     try {
-      await movePipelineCandidate(id, candidate.pipeline_id, "shortlisted");
+      await movePipelineCandidate(id, candidate.pipeline_id, { stage: "shortlisted" });
       setMessages((m) =>
         m.map((msg) => {
           if (!msg.candidates) return msg;
@@ -329,7 +329,7 @@ export default function RoleIntakePage() {
   async function handlePass(candidate: RankedCandidate) {
     if (!candidate.pipeline_id) return;
     try {
-      await movePipelineCandidate(id, candidate.pipeline_id, "archived");
+      await movePipelineCandidate(id, candidate.pipeline_id, { stage: "archived" });
       setMessages((m) =>
         m.map((msg) => {
           if (!msg.candidates) return msg;

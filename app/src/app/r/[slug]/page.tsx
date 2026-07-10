@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Briefcase, Building2, MapPin } from "@/components/brand/icons";
+import { Briefcase, Building2, CheckCircle, MapPin } from "@/components/brand/icons";
 import { getApiBaseUrl } from "@/lib/api/base-url";
-import { Button, Card, CardBody } from "@/components/ui";
+import { Button, Card, CardBody, Field, Input } from "@/components/ui";
 import { formatSalaryRange } from "@/lib/salary";
 
 type PublicRole = {
+  role_id: string;
+  job_id: string | null;
   slug: string;
   title: string;
   company_name: string | null;
@@ -32,6 +34,14 @@ export default function PublicRolePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [resume, setResume] = useState<File | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [matchScore, setMatchScore] = useState<number | null>(null);
+
   useEffect(() => {
     if (!slug) return;
     setLoading(true);
@@ -49,6 +59,36 @@ export default function PublicRolePage() {
       .catch((err) => setError((err as Error).message))
       .finally(() => setLoading(false));
   }, [slug]);
+
+  async function submitApplication(e: React.FormEvent) {
+    e.preventDefault();
+    if (!resume || !fullName.trim() || !email.trim()) {
+      setApplyError("Name, email, and resume are required.");
+      return;
+    }
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const form = new FormData();
+      form.set("full_name", fullName.trim());
+      form.set("email", email.trim());
+      form.set("resume", resume);
+      const res = await fetch(
+        `${getApiBaseUrl()}/api/v1/public/roles/${encodeURIComponent(slug)}/apply`,
+        { method: "POST", body: form },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((body as { detail?: string }).detail ?? "Application failed");
+      }
+      setApplied(true);
+      setMatchScore((body as { match_score?: number }).match_score ?? null);
+    } catch (err) {
+      setApplyError((err as Error).message);
+    } finally {
+      setApplying(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -72,6 +112,10 @@ export default function PublicRolePage() {
   const compLabel = formatSalaryRange(role.comp_min, role.comp_max, {
     market: role.market,
   });
+
+  const signupHref = role.job_id
+    ? `/signup?role=candidate&job_id=${encodeURIComponent(role.job_id)}&role_slug=${encodeURIComponent(slug)}`
+    : `/signup?role=candidate&role_slug=${encodeURIComponent(slug)}`;
 
   return (
     <div className="min-h-screen bg-paper-0">
@@ -136,32 +180,73 @@ export default function PublicRolePage() {
           </section>
         )}
 
-        {role.nice_to_haves.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-h3 font-semibold text-ink-900">Nice-to-haves</h2>
-            <div className="flex flex-wrap gap-1.5">
-              {role.nice_to_haves.map((s) => (
-                <span
-                  key={s}
-                  className="rounded-full border border-ink-100 bg-paper-1 px-2.5 py-1 text-micro text-ink-700"
-                >
-                  {s}
-                </span>
-              ))}
+        {applied ? (
+          <div className="rounded-xl border border-success/30 bg-success/5 px-5 py-4 space-y-2">
+            <div className="flex items-center gap-2 text-small font-medium text-ink-900">
+              <CheckCircle className="h-4 w-4 text-success" strokeWidth={1.5} />
+              Application submitted
             </div>
-          </section>
+            <p className="text-small text-ink-700">
+              The hiring team will review your profile against this role.
+              {matchScore != null && (
+                <> Initial fit score: {Math.round(matchScore * 100)}%.</>
+              )}
+            </p>
+            <Link href={signupHref} className="text-small text-accent hover:underline inline-block">
+              Join Hireschema for warm intros and more roles →
+            </Link>
+          </div>
+        ) : (
+          <Card>
+            <CardBody>
+              <h2 className="text-h3 font-semibold text-ink-900 mb-1">Apply to this role</h2>
+              <p className="text-micro text-ink-500 mb-4">
+                Upload your resume — we score it against the hiring brief instantly.
+              </p>
+              <form onSubmit={(e) => void submitApplication(e)} className="space-y-3">
+                <Field label="Full name" htmlFor="apply-name">
+                  <Input
+                    id="apply-name"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="Email" htmlFor="apply-email">
+                  <Input
+                    id="apply-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="Resume (PDF or DOCX)" htmlFor="apply-resume">
+                  <input
+                    id="apply-resume"
+                    type="file"
+                    accept=".pdf,.doc,.docx"
+                    required
+                    className="text-micro text-ink-700"
+                    onChange={(e) => setResume(e.target.files?.[0] ?? null)}
+                  />
+                </Field>
+                {applyError && (
+                  <p className="text-micro text-destructive">{applyError}</p>
+                )}
+                <Button type="submit" variant="primary" size="sm" loading={applying} fullWidth>
+                  Submit application
+                </Button>
+              </form>
+              <p className="text-micro text-ink-500 mt-4 text-center">
+                Already on Hireschema?{" "}
+                <Link href={signupHref} className="text-accent hover:underline">
+                  Sign in to request a warm intro
+                </Link>
+              </p>
+            </CardBody>
+          </Card>
         )}
-
-        <div className="rounded-xl border border-accent/30 bg-accent/5 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <p className="text-small text-ink-800">
-            Interested in this role? Join Hireschema to request a warm intro.
-          </p>
-          <Link href="/signup?role=candidate">
-            <Button variant="primary" size="sm">
-              Apply via Hireschema
-            </Button>
-          </Link>
-        </div>
 
         <p className="text-micro text-ink-500 text-center pt-2">
           This is a live listing from a Hireschema recruiter.

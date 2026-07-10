@@ -26,6 +26,8 @@ import { getCachedProfile } from "@/lib/api/profile";
 import { marketByCode, type MarketCode } from "@/lib/markets";
 import { compFieldLabel, profileSalaryFromStorage, profileSalaryToStorage } from "@/lib/salary";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
+import { RoleBiasCheckPanel } from "@/components/recruiter/RoleBiasCheckPanel";
+import { RoleSalarySuggestionPanel } from "@/components/recruiter/RoleSalarySuggestionPanel";
 import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
 import { Button, Card, CardBody, CardHeader, Field, Input } from "@/components/ui";
 
@@ -158,6 +160,26 @@ export default function RoleBriefPage() {
         </div>
 
         {readiness && <RoleReadinessBar readiness={readiness} />}
+
+        <RoleSalarySuggestionPanel
+          roleId={id}
+          market={market}
+          onApply={(min, max) => {
+            setCompMin(String(min));
+            setCompMax(String(max));
+          }}
+        />
+
+        <RoleBiasCheckPanel
+          roleId={id}
+          report={role?.jd_bias_report ?? null}
+          onUpdated={() => {
+            void getRole(id).then((r) => {
+              hydrate(r);
+              if (r.readiness) setReadiness(r.readiness);
+            });
+          }}
+        />
 
         <Card className="shadow-2">
           <CardHeader

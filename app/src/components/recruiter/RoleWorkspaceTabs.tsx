@@ -13,11 +13,13 @@ import { ArrowLeft } from "@/components/brand/icons";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import { cn } from "@/lib/utils";
 
-export type RoleTab = "chat" | "brief" | "pipeline";
+export type RoleTab = "chat" | "brief" | "market" | "ops" | "pipeline";
 
 const TABS: { id: RoleTab; label: string; path: string; hint: string }[] = [
   { id: "chat", label: "Nitya chat", path: "intake", hint: "Refine the role and search candidates" },
   { id: "brief", label: "Brief", path: "brief", hint: "Edit title, JD, comp, must-haves" },
+  { id: "market", label: "Market", path: "market", hint: "Comp bands, competitors, skill gaps" },
+  { id: "ops", label: "Hiring ops", path: "ops", hint: "Interview kit, scheduling, nudges" },
   { id: "pipeline", label: "Pipeline", path: "pipeline", hint: "Track candidates across stages" },
 ];
 

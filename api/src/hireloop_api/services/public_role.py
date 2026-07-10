@@ -137,8 +137,14 @@ async def fetch_public_role(db: asyncpg.Connection, slug: str) -> dict[str, Any]
                r.location_city, r.location_state, r.remote_policy,
                r.must_haves, r.nice_to_haves, r.candidate_pitch,
                r.hiring_brief, r.status, r.public_slug, r.public_listing_enabled,
-               r.updated_at,
-               c.name AS company_name, c.logo_url AS company_logo_url
+               r.updated_at, r.recruiter_id,
+               c.name AS company_name, c.logo_url AS company_logo_url,
+               (
+                 SELECT j.id FROM public.jobs j
+                 WHERE j.role_id = r.id AND j.deleted_at IS NULL
+                 ORDER BY j.is_active DESC, j.created_at DESC
+                 LIMIT 1
+               ) AS job_id
         FROM public.roles r
         JOIN public.companies c ON c.id = r.company_id
         WHERE r.public_slug = $1
@@ -170,6 +176,8 @@ async def fetch_public_role(db: asyncpg.Connection, slug: str) -> dict[str, Any]
     )
 
     return {
+        "role_id": str(row["id"]),
+        "job_id": str(row["job_id"]) if row.get("job_id") else None,
         "slug": slug,
         "title": row["title"],
         "company_name": row.get("company_name"),

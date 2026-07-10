@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,7 @@ from hireloop_api.services.public_profile_chat import (
     stream_public_profile_message,
 )
 from hireloop_api.services.public_role import fetch_public_role
+from hireloop_api.services.role_inbound import create_inbound_applicant, parse_resume_bytes
 
 logger = structlog.get_logger()
 
@@ -138,3 +139,45 @@ async def get_public_role(slug: str, db=Depends(get_db)) -> dict:
     if not role:
         raise HTTPException(status_code=404, detail="Role not found or not published.")
     return role
+
+
+@router.post("/roles/{slug}/apply", status_code=201)
+async def apply_to_public_role(
+    slug: str,
+    full_name: str = Form(...),
+    email: str = Form(...),
+    resume: UploadFile = File(...),
+    db=Depends(get_db),
+) -> dict:
+    """Inbound apply from public role page — resume parsed and scored vs brief."""
+    role = await fetch_public_role(db, slug)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found or not published.")
+
+    file_bytes = await resume.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(400, detail="Resume must be under 10MB")
+
+    parsed = parse_resume_bytes(
+        file_bytes,
+        filename=resume.filename or "resume.pdf",
+        mime_type=resume.content_type,
+    )
+    if not full_name.strip() and parsed.get("full_name"):
+        full_name = str(parsed["full_name"])
+
+    try:
+        result = await create_inbound_applicant(
+            db,
+            role_id=uuid.UUID(role["role_id"]),
+            full_name=full_name.strip(),
+            email=email.strip(),
+            parsed_profile=parsed,
+            source="public_apply",
+        )
+    except ValueError as exc:
+        if str(exc) == "duplicate_apply":
+            raise HTTPException(409, detail="You already applied to this role.") from exc
+        raise HTTPException(400, detail=str(exc)) from exc
+
+    return result

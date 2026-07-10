@@ -92,7 +92,7 @@ def _lpa_to_inr(lpa: int | float | str | None) -> int | None:
 
 
 def compute_role_readiness(role: dict[str, Any]) -> dict[str, Any]:
-    """Title · JD · Comp · Location checklist for the brief UI."""
+    """Title · JD · Comp · Location · Bias checklist for the brief UI."""
     has_title = bool((role.get("title") or "").strip())
     jd = (role.get("jd_text") or "").strip()
     has_jd = len(jd) >= 40
@@ -102,11 +102,27 @@ def compute_role_readiness(role: dict[str, Any]) -> dict[str, Any]:
         "remote",
         "flex",
     )
+    bias_report = role.get("jd_bias_report")
+    if isinstance(bias_report, str):
+        try:
+            bias_report = json.loads(bias_report)
+        except (ValueError, TypeError):
+            bias_report = None
+    has_bias_check = isinstance(bias_report, dict) and bias_report.get("passed") is True
+    calibration = role.get("calibration_candidates") or []
+    if isinstance(calibration, str):
+        try:
+            calibration = json.loads(calibration)
+        except (ValueError, TypeError):
+            calibration = []
+    has_calibration = isinstance(calibration, list) and len(calibration) >= 1
     items = [
         {"key": "title", "label": "Title", "done": has_title},
         {"key": "jd", "label": "JD", "done": has_jd},
         {"key": "comp", "label": "Comp", "done": has_comp},
         {"key": "location", "label": "Location", "done": has_location},
+        {"key": "bias", "label": "Bias check", "done": has_bias_check},
+        {"key": "calibration", "label": "Calibration", "done": has_calibration},
     ]
     done_count = sum(1 for i in items if i["done"])
     return {
@@ -114,7 +130,7 @@ def compute_role_readiness(role: dict[str, Any]) -> dict[str, Any]:
         "done_count": done_count,
         "total": len(items),
         "ready_for_search": has_title and (has_jd or has_comp),
-        "ready_to_publish": has_title and has_jd and has_comp and has_location,
+        "ready_to_publish": has_title and has_jd and has_comp and has_location and has_bias_check,
     }
 
 
