@@ -377,7 +377,9 @@ async def main() -> None:
 
     settings = get_settings()
     if settings.environment == "production" and not args.allow_production:
-        print("Refusing to purge: ENVIRONMENT=production (pass --allow-production)", file=sys.stderr)
+        print(
+            "Refusing to purge: ENVIRONMENT=production (pass --allow-production)", file=sys.stderr
+        )
         raise SystemExit(1)
 
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")

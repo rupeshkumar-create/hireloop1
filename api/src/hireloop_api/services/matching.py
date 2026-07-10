@@ -880,7 +880,11 @@ class MatchingEngine:
 
         bias_audit = _bias_audit()
         job_version = 1
-        intent_version = int(cand_row.get("intent_version") or 1) if cand_row.get("intent_version") is not None else 1
+        intent_version = (
+            int(cand_row.get("intent_version") or 1)
+            if cand_row.get("intent_version") is not None
+            else 1
+        )
         title_aff = result.get("title_aff")
         profile_sim = result.get("profile_sim") or 0.0
         lexical_skills = result.get("lexical_skills")

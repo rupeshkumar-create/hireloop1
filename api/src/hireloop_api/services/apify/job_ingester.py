@@ -330,9 +330,7 @@ def derive_ingest_locations(
                     # inject safe market metros once.
                     if market not in fallback_added_markets:
                         fallback_added_markets.add(market)
-                        for default_loc in MARKET_SCRAPE_LOCATIONS.get(market, [])[
-                            :max_locations
-                        ]:
+                        for default_loc in MARKET_SCRAPE_LOCATIONS.get(market, [])[:max_locations]:
                             _add(default_loc)
                     # Otherwise: ignore this invalid location string.
             else:
@@ -1047,8 +1045,10 @@ class JobIngester:
             skills=list(row["skills"] or []),
         )
         variants = build_title_query_variants(queries)
-        raw_locations = requested_locations or list(row["target_locations"] or []) or (
-            [p for p in [row["location_city"], row["location_state"]] if p] or None
+        raw_locations = (
+            requested_locations
+            or list(row["target_locations"] or [])
+            or ([p for p in [row["location_city"], row["location_state"]] if p] or None)
         )
         locations = derive_ingest_locations(raw_locations, self._settings)
         candidate_time_range = time_range or (

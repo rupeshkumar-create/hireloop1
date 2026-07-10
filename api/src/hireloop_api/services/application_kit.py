@@ -56,10 +56,8 @@ def _kit_system_prompt(market: str) -> str:
         comp_hint = "Use INR/LPA and India notice-period norms when relevant."
     else:
         comp_hint = f"Use {currency} annual salary framing for {label}; avoid India-only LPA unless the role is IN-based."
-    return (
-        f"{KIT_SYSTEM_BASE}\n"
-        f"Candidate home market: {label} ({m}). {comp_hint}"
-    )
+    return f"{KIT_SYSTEM_BASE}\nCandidate home market: {label} ({m}). {comp_hint}"
+
 
 # Application kits run two LLM jobs (text assets + resume HTML). Use the fast
 # fallback model and a lower token cap — quality is fine for structured outputs.

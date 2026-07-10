@@ -970,7 +970,11 @@ async def job_search(
             recall_pools.append(("token", token_filtered))
 
     # Hybrid retrieval pools (P1): FTS, trigram, role-family, live vectors
-    search_query = query_text.strip() or (prioritized_title or "") or (target_titles[0] if target_titles else "")
+    search_query = (
+        query_text.strip()
+        or (prioritized_title or "")
+        or (target_titles[0] if target_titles else "")
+    )
     if search_query:
         fts_rows = await fetch_fts_job_pool(
             db,
@@ -1009,7 +1013,9 @@ async def job_search(
             recall_pools.append(("trigram", tri_filtered))
 
     if candidate:
-        role_id = resolve_role_id(prioritized_title or (target_titles[0] if target_titles else None))
+        role_id = resolve_role_id(
+            prioritized_title or (target_titles[0] if target_titles else None)
+        )
         if role_id:
             role_rows = await fetch_role_family_pool(
                 db,
@@ -1139,8 +1145,8 @@ async def job_search(
         )
         rows = apply_behavior_multiplier([dict(r) for r in rows], behavior)
         rows.sort(
-            key=lambda item: -float(
-                item.get("_behavior_adjusted_score") or item.get("_retrieval_score") or 0.0
+            key=lambda item: (
+                -float(item.get("_behavior_adjusted_score") or item.get("_retrieval_score") or 0.0)
             )
         )
         rows = rows[:limit]
@@ -1202,7 +1208,11 @@ async def job_search(
     # Best-effort: never fail the tool due to retention writes.
     if candidate is not None and job_cards:
         try:
-            job_uuids = [uuid.UUID(str(j.get("job_id") or j.get("id"))) for j in job_cards if (j.get("job_id") or j.get("id"))]
+            job_uuids = [
+                uuid.UUID(str(j.get("job_id") or j.get("id")))
+                for j in job_cards
+                if (j.get("job_id") or j.get("id"))
+            ]
             if job_uuids:
                 await db.execute(
                     """

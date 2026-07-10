@@ -100,7 +100,7 @@ def render_first_job_found_email(
     body = (
         paragraph(f"Hi {name},")
         + paragraph(
-            f"Great news — we found your <strong>first matching role</strong> on Hireschema:"
+            "Great news — we found your <strong>first matching role</strong> on Hireschema:"
         )
         + paragraph(
             f"<strong style='font-size:17px;'>{title}</strong> at {company} "
@@ -236,7 +236,9 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
     cat = normalize_category(category)
     name = escape(str(data.get("full_name") or "there"))
     cta_url = str(data.get("cta_url") or "https://www.hireschema.com/dashboard")
-    app_base = cta_url.split("/dashboard")[0] if "/dashboard" in cta_url else "https://www.hireschema.com"
+    app_base = (
+        cta_url.split("/dashboard")[0] if "/dashboard" in cta_url else "https://www.hireschema.com"
+    )
 
     if cat == "job_match_alerts":
         jobs = data.get("jobs") or []
@@ -272,18 +274,21 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
         body = paragraph(msg) + muted_paragraph(f"<strong>{job}</strong> at {company} · {hm}")
         return (
             f"Intro update — {data.get('job_title', 'your role')}",
-            brand_shell(f"Intro update, {name}", body, cta_url, "View intro status", app_base=app_base),
+            brand_shell(
+                f"Intro update, {name}", body, cta_url, "View intro status", app_base=app_base
+            ),
         )
 
     if cat == "interview_reminders":
         when = escape(str(data.get("scheduled_label") or data.get("scheduled_at") or "soon"))
         session = escape(str(data.get("session_label") or "AI career call"))
-        body = (
-            paragraph(f"Your <strong>{session}</strong> with Aarya is scheduled for <strong>{when}</strong>.")
-            + muted_paragraph("Join from Hireschema — voice or text, your choice.")
-        )
+        body = paragraph(
+            f"Your <strong>{session}</strong> with Aarya is scheduled for <strong>{when}</strong>."
+        ) + muted_paragraph("Join from Hireschema — voice or text, your choice.")
         is_reminder = bool(data.get("is_reminder"))
-        subject = f"Reminder: {session} tomorrow" if is_reminder else f"Booked: {session} with Aarya"
+        subject = (
+            f"Reminder: {session} tomorrow" if is_reminder else f"Booked: {session} with Aarya"
+        )
         heading = f"Reminder, {name}" if is_reminder else f"You're booked, {name}"
         return subject, brand_shell(heading, body, cta_url, "Open Hireschema", app_base=app_base)
 
@@ -291,40 +296,48 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
         matches = int(data.get("match_count") or 0)
         intros = int(data.get("intro_count") or 0)
         actions = int(data.get("actions_count") or 0)
-        body = (
-            paragraph("Here's what Aarya did for you this week:")
-            + bullet_list(
-                [
-                    f"{matches} new job match{'es' if matches != 1 else ''}",
-                    f"{intros} intro update{'s' if intros != 1 else ''}",
-                    f"{actions} action{'s' if actions != 1 else ''} on your profile",
-                ]
-            )
+        body = paragraph("Here's what Aarya did for you this week:") + bullet_list(
+            [
+                f"{matches} new job match{'es' if matches != 1 else ''}",
+                f"{intros} intro update{'s' if intros != 1 else ''}",
+                f"{actions} action{'s' if actions != 1 else ''} on your profile",
+            ]
         )
         return (
             "Your weekly career digest from Aarya",
-            brand_shell(f"Weekly digest for {name}", body, cta_url, "Open dashboard", app_base=app_base),
+            brand_shell(
+                f"Weekly digest for {name}", body, cta_url, "Open dashboard", app_base=app_base
+            ),
         )
 
     if cat == "profile_views":
         viewer = escape(str(data.get("viewer_label") or "A recruiter"))
-        body = (
-            paragraph(f"{viewer} viewed your public Hireschema profile.")
-            + muted_paragraph("Keep your headline and skills fresh so you stand out.")
+        body = paragraph(f"{viewer} viewed your public Hireschema profile.") + muted_paragraph(
+            "Keep your headline and skills fresh so you stand out."
         )
         return (
             "Someone viewed your Hireschema profile",
-            brand_shell(f"Your profile was viewed, {name}", body, cta_url, "View your profile", app_base=app_base),
+            brand_shell(
+                f"Your profile was viewed, {name}",
+                body,
+                cta_url,
+                "View your profile",
+                app_base=app_base,
+            ),
         )
 
     if cat == "application_updates":
         job = escape(str(data.get("job_title") or "a role"))
         company = escape(str(data.get("company_name") or "a company"))
         status = escape(str(data.get("status_label") or data.get("status") or "updated"))
-        body = paragraph(f"Application for <strong>{job}</strong> at {company}: <strong>{status}</strong>.")
+        body = paragraph(
+            f"Application for <strong>{job}</strong> at {company}: <strong>{status}</strong>."
+        )
         return (
             f"Application update — {data.get('job_title', 'your role')}",
-            brand_shell(f"Application update, {name}", body, cta_url, "View pipeline", app_base=app_base),
+            brand_shell(
+                f"Application update, {name}", body, cta_url, "View pipeline", app_base=app_base
+            ),
         )
 
     if cat == "platform_updates":
@@ -336,7 +349,11 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
             "We've shipped improvements to job matching, intros, and your Aarya chat experience."
         )
         cta_label = str(data.get("cta_label") or "See what's new")
-        return str(data.get("subject") or headline), brand_shell(headline, body, cta_url, cta_label, app_base=app_base)
+        return str(data.get("subject") or headline), brand_shell(
+            headline, body, cta_url, cta_label, app_base=app_base
+        )
 
     body = paragraph(escape(str(data.get("body", "You have a new notification on Hireschema."))))
-    return "Update from Hireschema", brand_shell(f"Hi {name}", body, cta_url, "Open Hireschema", app_base=app_base)
+    return "Update from Hireschema", brand_shell(
+        f"Hi {name}", body, cta_url, "Open Hireschema", app_base=app_base
+    )

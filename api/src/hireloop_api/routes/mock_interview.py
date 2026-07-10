@@ -54,7 +54,9 @@ def _mock_system_prompt(market: str) -> str:
     if m == "IN":
         local = "Use INR/LPA, notice period, and Indian employers where relevant."
     else:
-        local = f"Candidate is based in {label}; use {currency} salary framing, not India LPA defaults."
+        local = (
+            f"Candidate is based in {label}; use {currency} salary framing, not India LPA defaults."
+        )
     return f"{MOCK_SYSTEM_BASE}\n{local}"
 
 
@@ -254,8 +256,7 @@ async def mock_message(
         if kit and kit.get("interview_prep"):
             prep_excerpt = str(kit["interview_prep"])[:2500]
             context_line += (
-                "\n\nUse this application-kit prep (what the candidate submitted):\n"
-                f"{prep_excerpt}"
+                f"\n\nUse this application-kit prep (what the candidate submitted):\n{prep_excerpt}"
             )
         if kit and kit.get("cover_letter"):
             context_line += (

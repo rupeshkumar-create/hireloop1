@@ -17,7 +17,7 @@ from hireloop_api.services.email.lifecycle_templates import (
     render_recruiter_approach_candidate_email,
     render_recruiter_intro_request_email,
 )
-from hireloop_api.services.email.transactional import _send_html_email, _html_email_configured
+from hireloop_api.services.email.transactional import _html_email_configured, _send_html_email
 
 logger = structlog.get_logger()
 
@@ -76,7 +76,9 @@ async def _send_once(
         try:
             await _mark_sent(db, user_id, purpose)
         except Exception as exc:
-            logger.warning("lifecycle_email_consent_log_failed", purpose=purpose, error=str(exc)[:200])
+            logger.warning(
+                "lifecycle_email_consent_log_failed", purpose=purpose, error=str(exc)[:200]
+            )
     return {"sent": bool(sent)}
 
 
@@ -149,9 +151,7 @@ async def notify_intro_requested_to_candidate(
         app_base_url=_app_base(settings),
     )
     if _html_email_configured(settings):
-        sent = await _send_html_email(
-            settings, to_email=row["email"], subject=subject, html=html
-        )
+        sent = await _send_html_email(settings, to_email=row["email"], subject=subject, html=html)
         if sent:
             return {"sent": True}
     return await send_category_email(

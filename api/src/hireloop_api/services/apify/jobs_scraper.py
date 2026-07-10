@@ -395,10 +395,7 @@ class ApifyJobsScraper:
         )
         job_url = str(job_url)
         stable_id = (
-            raw.get("job_id")
-            or raw.get("jobId")
-            or raw.get("id")
-            or self._extract_job_id(job_url)
+            raw.get("job_id") or raw.get("jobId") or raw.get("id") or self._extract_job_id(job_url)
         )
         apify_job_id = f"gj_{stable_id}" if stable_id else f"gj_{uuid.uuid4()}"
 

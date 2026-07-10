@@ -85,11 +85,15 @@ def brand_shell(
 
 
 def paragraph(text: str) -> str:
-    return f"<p style='font-size:15px;line-height:1.65;margin:0 0 12px;color:{CHARCOAL};'>{text}</p>"
+    return (
+        f"<p style='font-size:15px;line-height:1.65;margin:0 0 12px;color:{CHARCOAL};'>{text}</p>"
+    )
 
 
 def muted_paragraph(text: str) -> str:
-    return f"<p style='font-size:14px;line-height:1.6;margin:0 0 12px;color:{INK_MUTED};'>{text}</p>"
+    return (
+        f"<p style='font-size:14px;line-height:1.6;margin:0 0 12px;color:{INK_MUTED};'>{text}</p>"
+    )
 
 
 def bullet_list(items: list[str]) -> str:

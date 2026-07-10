@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from hireloop_api.services.apify.jobs_scraper import (
+    _MARKET_GOOGLE_CONFIG,
     DEFAULT_MAX_PAGINATION,
     ApifyJobsScraper,
-    _MARKET_GOOGLE_CONFIG,
 )
 
 

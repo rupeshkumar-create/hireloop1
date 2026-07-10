@@ -451,7 +451,9 @@ async def bootstrap_user(
         logger.warning("oauth_email_confirm_failed", user_id=str(user_id), error=str(exc)[:200])
 
     # Welcome email once per account (deduped in consent_log).
-    welcome_email = current_user.get("email") or (supabase_user.get("email") if supabase_user else None)
+    welcome_email = current_user.get("email") or (
+        supabase_user.get("email") if supabase_user else None
+    )
     if welcome_email:
         await _send_signup_welcome_email(
             db,
@@ -614,9 +616,7 @@ async def verify_otp(
         )
 
     # Verify hash (timing-safe)
-    if not hmac.compare_digest(
-        _hash_otp(body.otp, phone, settings.secret_key), stored["otp_hash"]
-    ):
+    if not hmac.compare_digest(_hash_otp(body.otp, phone, settings.secret_key), stored["otp_hash"]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OTP.",

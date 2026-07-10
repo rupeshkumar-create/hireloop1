@@ -477,9 +477,7 @@ def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
     assert "Payroll" not in q
     assert "Employee Relations" not in q
     assert all(
-        " " in title
-        or title.lower()
-        in {"founder", "recruiter", "designer", "analyst", "engineer"}
+        " " in title or title.lower() in {"founder", "recruiter", "designer", "analyst", "engineer"}
         for title in q
     )
 

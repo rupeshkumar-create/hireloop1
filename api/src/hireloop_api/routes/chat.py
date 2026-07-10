@@ -196,7 +196,9 @@ def _build_application_kit_reply(result: dict) -> str:
     if failed:
         first_error = failed[0] if isinstance(failed[0], dict) else {}
         message = str(first_error.get("error") or "the kit could not be prepared")
-        return f"I couldn't prepare that application kit yet: {message}. Please try again in a moment."
+        return (
+            f"I couldn't prepare that application kit yet: {message}. Please try again in a moment."
+        )
 
     return "I couldn't prepare that application kit yet. Please try again in a moment."
 
@@ -470,9 +472,7 @@ async def _enqueue_live_job_ingest_for_search(
     )
 
 
-async def _enqueue_background_match_embed(
-    db: asyncpg.Connection, candidate_id: str
-) -> None:
+async def _enqueue_background_match_embed(db: asyncpg.Connection, candidate_id: str) -> None:
     """Queue full embed + score instead of blocking chat on score_candidate(100)."""
     from hireloop_api.services.background_jobs import MATCH_EMBED_CANDIDATE, enqueue_job
 
@@ -952,9 +952,7 @@ async def send_message(
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
     application_kit_job_ids = (
-        _extract_application_kit_job_ids(body.content)
-        if user_intent == "job_application"
-        else []
+        _extract_application_kit_job_ids(body.content) if user_intent == "job_application" else []
     )
 
     logger.info(
@@ -1041,9 +1039,7 @@ async def send_message(
                         apify_configured=bool(settings.apify_token),
                     )
                 )
-                initial_state["prefetched_jobs"] = (
-                    stream_jobs if include_prefetch else []
-                )
+                initial_state["prefetched_jobs"] = stream_jobs if include_prefetch else []
 
             if user_intent == "job_search":
                 if include_prefetch and stream_jobs:
@@ -1075,9 +1071,7 @@ async def send_message(
                 yield sse_status(
                     tool_status_label("prepare_application_kit", voice_mode=voice_mode),
                     spoken_filler=(
-                        tool_status_spoken_filler("prepare_application_kit")
-                        if voice_mode
-                        else None
+                        tool_status_spoken_filler("prepare_application_kit") if voice_mode else None
                     ),
                     eta_sec=tool_status_eta("prepare_application_kit"),
                     hinglish_hint=hinglish,

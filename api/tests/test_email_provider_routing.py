@@ -73,7 +73,9 @@ async def test_notifications_send_html_uses_resend_only() -> None:
             new_callable=AsyncMock,
         ) as smtp_send,
     ):
-        sent = await _send_html(settings, to_email="user@example.com", subject="Test", html="<p>hi</p>")
+        sent = await _send_html(
+            settings, to_email="user@example.com", subject="Test", html="<p>hi</p>"
+        )
 
     assert sent is True
     resend_send.assert_awaited_once()

@@ -201,17 +201,16 @@ async def send_recruiter_invite_email(
 
     template_id = settings.sg_template_recruiter_invite or settings.sg_template_intro_status
     subject = f"{candidate_name} wants an intro — {job_title}"
-    body_html = (
-        paragraph(
-            f"<strong>{candidate_name}</strong> requested an intro for "
-            f"<strong>{job_title}</strong> on Hireschema."
-        )
-        + paragraph(
-            "You're not on Hireschema yet — accept the invite to view their profile "
-            "and start a conversation."
-        )
+    body_html = paragraph(
+        f"<strong>{candidate_name}</strong> requested an intro for "
+        f"<strong>{job_title}</strong> on Hireschema."
+    ) + paragraph(
+        "You're not on Hireschema yet — accept the invite to view their profile "
+        "and start a conversation."
     )
-    app_base = cta_url.split("/recruiter")[0] if "/recruiter" in cta_url else "https://www.hireschema.com"
+    app_base = (
+        cta_url.split("/recruiter")[0] if "/recruiter" in cta_url else "https://www.hireschema.com"
+    )
     html = brand_shell(
         f"Hi {invited_name or 'there'}, a candidate wants to connect",
         body_html,

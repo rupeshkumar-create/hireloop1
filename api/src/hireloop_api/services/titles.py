@@ -37,8 +37,18 @@ _SENIORITY_WORDS = frozenset(_SENIORITY_RANK.keys()) | frozenset(
 
 _STOPWORDS = frozenset(
     {
-        "a", "an", "the", "and", "or", "of", "for", "to", "in", "at",
-        "team", "leader",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "for",
+        "to",
+        "in",
+        "at",
+        "team",
+        "leader",
     }
 )
 
@@ -79,7 +89,15 @@ _SPECIALTY_COMPATIBILITY: dict[str, frozenset[str]] = {
 
 # Commercial function families — related but NOT identical
 _COMMERCIAL_FUNCTIONS = frozenset(
-    {"sales", "business_development", "growth_marketing", "revenue_operations", "partnerships", "customer_success", "gotomarket_strategy"}
+    {
+        "sales",
+        "business_development",
+        "growth_marketing",
+        "revenue_operations",
+        "partnerships",
+        "customer_success",
+        "gotomarket_strategy",
+    }
 )
 
 _COMMERCIAL_RELATED: dict[str, frozenset[str]] = {
@@ -177,7 +195,17 @@ _FAMILY_PATTERNS: list[tuple[str, frozenset[str]]] = [
 ]
 
 _ENGINEERING_SPECIALTIES = frozenset(
-    {"backend", "frontend", "mobile", "fullstack", "devops", "quality", "reliability", "platform", "api"}
+    {
+        "backend",
+        "frontend",
+        "mobile",
+        "fullstack",
+        "devops",
+        "quality",
+        "reliability",
+        "platform",
+        "api",
+    }
 )
 _SCIENCE_TOKENS = frozenset({"scientist", "machine", "learning", "science", "data"})
 
@@ -501,9 +529,7 @@ def occupation_families_compatible(candidate_titles: list[str], job_title: str |
             pass  # same family OK
         else:
             # Any intent title with strong family match to job?
-            any_close = any(
-                (title_affinity(t, job_title) or 0.0) >= 0.45 for t in candidate_titles
-            )
+            any_close = any((title_affinity(t, job_title) or 0.0) >= 0.45 for t in candidate_titles)
             if not any_close:
                 return False
 
@@ -512,7 +538,10 @@ def occupation_families_compatible(candidate_titles: list[str], job_title: str |
     for title in candidate_titles:
         sig = parse_title(title)
         req_specialties.update(sig.specialties)
-        if sig.family_id in ("data_science", "data_analytics") or sig.residual_tokens & _SCIENCE_TOKENS:
+        if (
+            sig.family_id in ("data_science", "data_analytics")
+            or sig.residual_tokens & _SCIENCE_TOKENS
+        ):
             candidate_science = True
 
     if req_specialties and job_sig.specialties:
@@ -532,7 +561,13 @@ def occupation_families_compatible(candidate_titles: list[str], job_title: str |
             "data_science",
             "data_analytics",
         }
-        non_tech_families = {"nursing", "human_resources", "finance", "merchandising", "category_management"}
+        non_tech_families = {
+            "nursing",
+            "human_resources",
+            "finance",
+            "merchandising",
+            "category_management",
+        }
         cand_eng = any(f in engineering_families for f in intent_families)
         job_non_tech = job_sig.family_id in non_tech_families
         job_eng = job_sig.family_id in engineering_families
@@ -568,9 +603,7 @@ def evidence_titles(candidate: dict[str, Any]) -> list[str]:
     """Historical/current titles — transferability only, not primary gates."""
     out: list[str] = []
     seen: set[str] = set()
-    for raw in (
-        [candidate.get("current_title"), *(candidate.get("previous_titles") or [])]
-    ):
+    for raw in [candidate.get("current_title"), *(candidate.get("previous_titles") or [])]:
         if not raw:
             continue
         cleaned = str(raw).strip()

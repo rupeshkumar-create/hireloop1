@@ -106,11 +106,7 @@ async def resolve_bucket_for_candidate(
     primary = None
     alternates: list[str] = []
     if row:
-        primary = (
-            row.get("prioritized_title")
-            or row.get("looking_for")
-            or row.get("current_title")
-        )
+        primary = row.get("prioritized_title") or row.get("looking_for") or row.get("current_title")
         alternates = list(row.get("target_titles") or [])
 
     role_id = resolve_role_id(str(primary) if primary else None) or "general"

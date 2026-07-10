@@ -11,9 +11,18 @@ from hireloop_api.services.resume_trimmer import trim_resume_html_for_job
 
 
 def test_fit_recommendation_apply_vs_skip() -> None:
-    assert compute_fit_recommendation(overall=0.7, loc_score=0.8, skills_sim=0.6, culture_score=0.7) == "apply"
-    assert compute_fit_recommendation(overall=0.5, loc_score=0.8, skills_sim=0.5, culture_score=0.6) == "stretch"
-    assert compute_fit_recommendation(overall=0.5, loc_score=0.1, skills_sim=0.5, culture_score=0.6) == "skip"
+    assert (
+        compute_fit_recommendation(overall=0.7, loc_score=0.8, skills_sim=0.6, culture_score=0.7)
+        == "apply"
+    )
+    assert (
+        compute_fit_recommendation(overall=0.5, loc_score=0.8, skills_sim=0.5, culture_score=0.6)
+        == "stretch"
+    )
+    assert (
+        compute_fit_recommendation(overall=0.5, loc_score=0.1, skills_sim=0.5, culture_score=0.6)
+        == "skip"
+    )
 
 
 def test_enrich_score_result_adds_dimensions() -> None:
@@ -52,8 +61,17 @@ def test_ats_check_finds_contact_and_gaps() -> None:
     <h2>Core Skills</h2>
     <p>Python, SQL, React</p>
     """
-    profile = {"full_name": "Asha Rao", "email": "asha@example.com", "phone": "+919876543210", "skills": ["Python", "SQL"]}
-    job = {"title": "Data Engineer", "skills_required": ["Python", "Spark"], "description": "Need Spark and SQL"}
+    profile = {
+        "full_name": "Asha Rao",
+        "email": "asha@example.com",
+        "phone": "+919876543210",
+        "skills": ["Python", "SQL"],
+    }
+    job = {
+        "title": "Data Engineer",
+        "skills_required": ["Python", "Spark"],
+        "description": "Need Spark and SQL",
+    }
     report = run_ats_check(html, profile=profile, job=job)
     assert report["contact_ok"] is True
     assert "spark" in report["keywords_gap"] or "Spark" in str(report["keywords_gap"])
@@ -68,6 +86,10 @@ def test_resume_trimmer_drops_low_relevance_bullets() -> None:
     <li>Built Python ETL pipelines for analytics</li>
     </ul>
     """
-    job = {"title": "Senior React Engineer", "skills_required": ["React", "TypeScript"], "description": "React frontend"}
+    job = {
+        "title": "Senior React Engineer",
+        "skills_required": ["React", "TypeScript"],
+        "description": "React frontend",
+    }
     _trimmed, meta = trim_resume_html_for_job(html, job=job, max_words=8)
     assert meta["trimmed"] is True or meta["words_after"] <= meta["words_before"]

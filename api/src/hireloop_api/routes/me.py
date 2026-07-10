@@ -328,7 +328,9 @@ async def get_return_summary(
     """Read-only return visit stats for proactive Aarya copy (before visit is recorded)."""
     from hireloop_api.services.retention import fetch_return_summary
 
-    return await fetch_return_summary(db, user_id=uuid.UUID(str(current_user["id"])), settings=settings)
+    return await fetch_return_summary(
+        db, user_id=uuid.UUID(str(current_user["id"])), settings=settings
+    )
 
 
 class WebPushSubscriptionRequest(BaseModel):

@@ -141,9 +141,7 @@ async def test_candidate_intro_backfills_simple_draft_for_existing_hm_intro() ->
 def test_aarya_request_intro_tool_only_requires_job_id() -> None:
     from hireloop_api.agents.aarya.agent import TOOL_DEFINITIONS
 
-    request_intro = next(
-        t for t in TOOL_DEFINITIONS if t["function"]["name"] == "request_intro"
-    )
+    request_intro = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "request_intro")
 
     assert request_intro["function"]["parameters"]["required"] == ["job_id"]
 

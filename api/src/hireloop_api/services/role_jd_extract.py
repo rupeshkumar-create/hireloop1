@@ -412,9 +412,7 @@ def _normalize_extraction(
 
     company_raw = data.get("company_name")
     company_name = (
-        company_raw.strip()[:120]
-        if isinstance(company_raw, str) and company_raw.strip()
-        else None
+        company_raw.strip()[:120] if isinstance(company_raw, str) and company_raw.strip() else None
     )
 
     return {

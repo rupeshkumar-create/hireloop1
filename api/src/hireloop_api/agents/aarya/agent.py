@@ -608,8 +608,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "job_search",
             "description": (
-                "Search for matching jobs in the candidate's home market "
-                "using semantic search."
+                "Search for matching jobs in the candidate's home market using semantic search."
             ),
             "parameters": {
                 "type": "object",

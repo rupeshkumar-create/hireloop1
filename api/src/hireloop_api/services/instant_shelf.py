@@ -39,8 +39,7 @@ async def fetch_instant_shelf(
         return []
 
     query = (
-        str(candidate["looking_for"] or "").strip()
-        or str(candidate["current_title"] or "").strip()
+        str(candidate["looking_for"] or "").strip() or str(candidate["current_title"] or "").strip()
     )
     cards: list[dict[str, Any]] = []
     if query:
