@@ -28,4 +28,7 @@ def test_render_job_match_single() -> None:
 
 def test_pref_defaults_opt_in() -> None:
     assert _pref_channel_allowed({}, "job_match_alerts", "email") is True
-    assert _pref_channel_allowed({"job_match_alerts": {"email": False}}, "job_match_alerts", "email") is False
+    assert (
+        _pref_channel_allowed({"job_match_alerts": {"email": False}}, "job_match_alerts", "email")
+        is False
+    )

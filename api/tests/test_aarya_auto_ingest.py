@@ -209,7 +209,7 @@ async def test_empty_search_with_career_path_enqueues_path_ingest_even_when_flag
     assert fired["payload"] == {
         "candidate_id": str(_CAND_ID),
         "derive_from_candidate": True,
-        "force_refresh": True,
+        "force_refresh": False,
         "user_id": _USER_ID,
         "session_id": session_id,
     }

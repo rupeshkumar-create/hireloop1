@@ -630,7 +630,9 @@ async def create_recruiter_intro(
             """,
             recruiter["id"],
         )
-        from hireloop_api.services.email.lifecycle_emails import notify_recruiter_approach_to_candidate
+        from hireloop_api.services.email.lifecycle_emails import (
+            notify_recruiter_approach_to_candidate,
+        )
 
         settings = get_settings()
         await notify_recruiter_approach_to_candidate(

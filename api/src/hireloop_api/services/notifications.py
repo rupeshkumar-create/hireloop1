@@ -22,7 +22,6 @@ from hireloop_api.services.email.notification_templates import (
 )
 from hireloop_api.services.email.resend_service import ResendService
 from hireloop_api.services.email.sendgrid_service import SendGridService
-from hireloop_api.services.email.smtp_service import SmtpService
 from hireloop_api.services.whatsapp.msg91 import Msg91Client, resolve_msg91_template_name
 
 logger = structlog.get_logger()
@@ -44,8 +43,7 @@ def _app_base(settings: Settings) -> str:
 
 
 def _email_provider_configured(settings: Settings) -> bool:
-    smtp = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
-    return smtp or bool(settings.resend_api_key)
+    return bool((settings.resend_api_key or "").strip())
 
 
 def _sendgrid_usable(settings: Settings) -> bool:
@@ -58,27 +56,15 @@ def _sendgrid_usable(settings: Settings) -> bool:
 
 
 async def _send_html(settings: Settings, *, to_email: str, subject: str, html: str) -> bool:
-    if settings.smtp_host and settings.smtp_user and settings.smtp_password:
-        svc = SmtpService(
-            host=settings.smtp_host,
-            port=settings.smtp_port,
-            user=settings.smtp_user,
-            password=settings.smtp_password,
-            from_email=settings.smtp_from or settings.smtp_user,
-            from_name=settings.resend_from_name,
-        )
-        if await svc.send(to_email=to_email, subject=subject, html=html):
-            return True
-        logger.info("smtp_send_fallback_resend", to_domain=to_email.split("@")[-1] if "@" in to_email else "")
-    if settings.resend_api_key:
-        svc = ResendService(
-            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
-        )
-        try:
-            return await svc.send(to_email=to_email, subject=subject, html=html)
-        finally:
-            await svc.close()
-    return False
+    if not settings.resend_api_key:
+        return False
+    svc = ResendService(
+        settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+    )
+    try:
+        return await svc.send(to_email=to_email, subject=subject, html=html)
+    finally:
+        await svc.close()
 
 
 def default_notification_prefs(*, marketing_emails: bool = True) -> dict[str, dict[str, bool]]:
@@ -214,7 +200,7 @@ async def send_category_email(
     if _email_provider_configured(settings):
         sent = await _send_html(settings, to_email=to_email, subject=subject, html=html)
         if sent:
-            return {"sent": True, "provider": "resend_or_smtp"}
+            return {"sent": True, "provider": "resend"}
 
     if _sendgrid_usable(settings) and template_id:
         svc = SendGridService(

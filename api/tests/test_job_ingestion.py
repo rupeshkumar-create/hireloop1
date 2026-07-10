@@ -64,24 +64,18 @@ def test_google_jobs_input_uses_johnvc_schema() -> None:
         query="Customer Success Manager",
         location="Bengaluru, India",
         max_results=100,
-        country="in",
+        market="IN",
     )
 
-    assert payload == {
-        "query": "Customer Success Manager",
-        "location": "Bengaluru, India",
-        "country": "in",
-        "language": "None",
-        "google_domain": "google.com",
-        "num_results": 100,
-        "max_pagination": 0,
-        "include_lrad": False,
-        "lrad_value": "0",
-        "max_delay": 1,
-        "output_file": "",
-        "cleanup_results": True,
-    }
-    assert scraper._google_country_code("GB") == "uk"
+    assert payload["query"] == "Customer Success Manager"
+    assert payload["location"] == "Bengaluru, India"
+    assert payload["country"] == "in"
+    assert payload["language"] == "en"
+    assert payload["google_domain"] == "google.co.in"
+    assert payload["num_results"] == 100
+    assert payload["max_pagination"] == 3
+    assert payload["cleanup_results"] is True
+    assert scraper._google_country_code("GB") == "gb"
 
 
 def test_google_jobs_normalises_valid_india_job() -> None:
@@ -483,9 +477,7 @@ def test_derive_ingest_queries_uses_skill_domains_for_thin_titles() -> None:
     assert "Payroll" not in q
     assert "Employee Relations" not in q
     assert all(
-        " " in title
-        or title.lower()
-        in {"founder", "recruiter", "designer", "analyst", "engineer"}
+        " " in title or title.lower() in {"founder", "recruiter", "designer", "analyst", "engineer"}
         for title in q
     )
 
@@ -511,6 +503,7 @@ async def test_ingest_for_candidate_scopes_to_career_path() -> None:
         max_results_per_query,
         time_range,
         description_search=None,
+        force_refresh=False,
     ):
         calls.append({"queries": queries, "locations": locations})
         return {"inserted": 0}
@@ -575,6 +568,7 @@ async def test_ingest_for_candidate_uses_candidate_intelligence_plan(monkeypatch
         max_results_per_query,
         time_range,
         description_search=None,
+        force_refresh=False,
     ):
         calls.append({"queries": queries, "locations": locations})
         return {"inserted": 0}
@@ -650,6 +644,7 @@ async def test_ingest_for_candidate_runs_title_variants_as_separate_searches(
         max_results_per_query,
         time_range,
         description_search=None,
+        force_refresh=False,
     ):
         calls.append({"queries": queries, "locations": locations, "time_range": time_range})
         return {

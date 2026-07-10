@@ -73,9 +73,7 @@ def test_commercial_function_overlap_counts_generic_overlap_still_penalised() ->
     # Exact / contained Ops Manager titles must NOT be crushed — that left the
     # Jobs feed empty for centre-ops candidates despite Apify inserts.
     assert generic_title_overlap_penalty("Operations Manager", "Operations Manager") == 1.0
-    assert (
-        generic_title_overlap_penalty("Senior Operations Manager", "Operations Manager") == 1.0
-    )
+    assert generic_title_overlap_penalty("Senior Operations Manager", "Operations Manager") == 1.0
 
 
 def test_saas_gtm_vs_accor_hotel_score_is_low() -> None:

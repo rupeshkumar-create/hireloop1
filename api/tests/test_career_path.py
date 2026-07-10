@@ -47,7 +47,7 @@ def test_career_path_prompt_is_market_aware_for_uk_candidates() -> None:
 def test_career_path_prompt_blocks_generic_team_lead_titles() -> None:
     prompt = build_career_path_system_prompt("IN")
 
-    assert "Do NOT emit bare generic titles like \"Team Lead\"" in prompt
+    assert 'Do NOT emit bare generic titles like "Team Lead"' in prompt
     assert "Implementation Team Lead" in prompt
 
 

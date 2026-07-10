@@ -265,7 +265,9 @@ async def run_jd_backfill_for_job(
     after = _description_len(job.get("description"))
 
     enriched = False
-    if after >= THIN_JD_MIN_CHARS and (not job.get("skills_required") or len(job["skills_required"]) < 2):
+    if after >= THIN_JD_MIN_CHARS and (
+        not job.get("skills_required") or len(job["skills_required"]) < 2
+    ):
         from hireloop_api.services.jd_enrichment import enrich_job_description
 
         payload = await enrich_job_description(

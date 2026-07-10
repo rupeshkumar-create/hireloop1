@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from hireloop_api.services.role_interview_kit import generate_interview_kit
 from hireloop_api.services.role_jd_bias import scan_jd_bias
 
@@ -20,9 +18,7 @@ def test_scan_jd_bias_passes_clean_jd() -> None:
 
 
 def test_scan_jd_bias_flags_gendered_language() -> None:
-    report = scan_jd_bias(
-        "Looking for a rockstar ninja developer. He must be young and energetic."
-    )
+    report = scan_jd_bias("Looking for a rockstar ninja developer. He must be young and energetic.")
     assert report["passed"] is False
     assert len(report["issues"]) >= 2
     categories = {i["category"] for i in report["issues"]}

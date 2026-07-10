@@ -675,23 +675,31 @@ async def job_search(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """
-    Semantic job search using pgvector cosine similarity + pre-computed match scores.
-    Falls back to trigram keyword search if embeddings haven't been generated yet.
-
-    Priority order:
-      1. If the candidate has pre-computed match scores → return top-ranked subset
-         filtered by the query (fast, personalized)
-      2. If job_embeddings exist → cosine similarity on title_embedding against
-         an ad-hoc query embedding
-      3. Full-text / ILIKE fallback (always works, even on fresh installs)
+    Hybrid job search: multi-pool recall (precomputed, FTS, trigram, vector, role)
+    fused with RRF, then feature-based rerank and behavior adjustments.
     """
     import time
 
+    from hireloop_api.services.behavior_ranking import (
+        apply_behavior_multiplier,
+        fetch_job_behavior_signals,
+    )
+    from hireloop_api.services.job_lexical_search import (
+        fetch_fts_job_pool,
+        fetch_role_family_pool,
+        fetch_trigram_title_pool,
+    )
     from hireloop_api.services.job_recall_pipeline import union_and_rank_recall_pools
+    from hireloop_api.services.job_relevance_pipeline import filter_and_rerank_jobs
     from hireloop_api.services.job_search_refresh import (
         compute_job_search_fetch_limit,
         exclude_job_rows,
     )
+    from hireloop_api.services.job_vector_search import (
+        fetch_responsibility_vector_pool,
+        fetch_title_vector_pool,
+    )
+    from hireloop_api.services.occupation_taxonomy import resolve_role_id
 
     t0 = time.monotonic()
 
@@ -961,7 +969,106 @@ async def job_search(
         if token_filtered:
             recall_pools.append(("token", token_filtered))
 
-    # Step 3: exact title/city can still be too brittle for generalist titles
+    # Hybrid retrieval pools (P1): FTS, trigram, role-family, live vectors
+    search_query = (
+        query_text.strip()
+        or (prioritized_title or "")
+        or (target_titles[0] if target_titles else "")
+    )
+    if search_query:
+        fts_rows = await fetch_fts_job_pool(
+            db,
+            query=search_query,
+            market=market,
+            remote_clause=remote_clause,
+            fetch_limit=150,
+            skills_filter=skills_filter,
+            location_city=location_city,
+        )
+        fts_filtered = _quality_filter_job_rows(
+            fts_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+            **path_filter_kwargs,
+        )
+        if fts_filtered:
+            recall_pools.append(("fts", fts_filtered))
+
+        tri_rows = await fetch_trigram_title_pool(
+            db,
+            query=search_query,
+            market=market,
+            remote_clause=remote_clause,
+            fetch_limit=50,
+            skills_filter=skills_filter,
+            location_city=location_city,
+        )
+        tri_filtered = _quality_filter_job_rows(
+            tri_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+            **path_filter_kwargs,
+        )
+        if tri_filtered:
+            recall_pools.append(("trigram", tri_filtered))
+
+    if candidate:
+        role_id = resolve_role_id(
+            prioritized_title or (target_titles[0] if target_titles else None)
+        )
+        if role_id:
+            role_rows = await fetch_role_family_pool(
+                db,
+                role_id=role_id,
+                market=market,
+                remote_clause=remote_clause,
+                fetch_limit=150,
+                location_city=location_city,
+            )
+            role_filtered = _quality_filter_job_rows(
+                role_rows,
+                candidate=candidate_profile,
+                target_titles=target_titles,
+                **path_filter_kwargs,
+            )
+            if role_filtered:
+                recall_pools.append(("role_family", role_filtered))
+
+        vec_title_rows = await fetch_title_vector_pool(
+            db,
+            candidate_id=uuid.UUID(str(candidate["id"])),
+            market=market,
+            remote_clause=remote_clause,
+            fetch_limit=150,
+            location_city=location_city,
+        )
+        vec_title_filtered = _quality_filter_job_rows(
+            vec_title_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+            **path_filter_kwargs,
+        )
+        if vec_title_filtered:
+            recall_pools.append(("vector_title", vec_title_filtered))
+
+        vec_resp_rows = await fetch_responsibility_vector_pool(
+            db,
+            candidate_id=uuid.UUID(str(candidate["id"])),
+            market=market,
+            remote_clause=remote_clause,
+            fetch_limit=150,
+            location_city=location_city,
+        )
+        vec_resp_filtered = _quality_filter_job_rows(
+            vec_resp_rows,
+            candidate=candidate_profile,
+            target_titles=target_titles,
+            **path_filter_kwargs,
+        )
+        if vec_resp_filtered:
+            recall_pools.append(("vector_responsibility", vec_resp_filtered))
+
+    # Step 3: broader market pool only when hybrid pools are thin
     # ("Assistant Manager", "Senior Executive") or sparse city feeds. Pull a
     # broader visible market pool, score it against the CV, and keep the best
     # profile-fit roles so Aarya always has cards before narrating a dry feed.
@@ -1023,6 +1130,31 @@ async def job_search(
         rows = exclude_job_rows(
             [dict(r) for r in rows],
             exclude_job_ids=exclude_ids,
+            limit=fetch_limit,
+        )
+
+    # Feature rerank + behavior signals (P0/P2)
+    if candidate and rows:
+        cand_dict = dict(candidate)
+        cand_dict["prioritized_title"] = prioritized_title
+        cand_dict["target_titles"] = target_titles
+        rows = filter_and_rerank_jobs(cand_dict, [dict(r) for r in rows], limit=fetch_limit)
+        job_ids = [str(r.get("id") or r.get("job_id") or "") for r in rows]
+        behavior = await fetch_job_behavior_signals(
+            db, candidate_id=uuid.UUID(str(candidate["id"])), job_ids=job_ids
+        )
+        rows = apply_behavior_multiplier([dict(r) for r in rows], behavior)
+        rows.sort(
+            key=lambda item: (
+                -float(item.get("_behavior_adjusted_score") or item.get("_retrieval_score") or 0.0)
+            )
+        )
+        rows = rows[:limit]
+
+    if rows:
+        rows = exclude_job_rows(
+            [dict(r) for r in rows],
+            exclude_job_ids=exclude_ids,
             limit=limit,
         )
 
@@ -1068,7 +1200,7 @@ async def job_search(
             "limit": limit,
             "remote_preference": pref,
         },
-        {"count": len(results), "jobs": job_cards, "remote_preference": pref},
+        {"count": len(job_cards), "jobs": job_cards, "remote_preference": pref},
         duration_ms,
     )
 
@@ -1076,7 +1208,11 @@ async def job_search(
     # Best-effort: never fail the tool due to retention writes.
     if candidate is not None and job_cards:
         try:
-            job_uuids = [uuid.UUID(str(j.get("job_id") or j.get("id"))) for j in job_cards if (j.get("job_id") or j.get("id"))]
+            job_uuids = [
+                uuid.UUID(str(j.get("job_id") or j.get("id")))
+                for j in job_cards
+                if (j.get("job_id") or j.get("id"))
+            ]
             if job_uuids:
                 await db.execute(
                     """
@@ -1099,7 +1235,7 @@ async def job_search(
     # live openings. Career-path users get a path-scoped ingest regardless of
     # the old generic auto-ingest flag; generic fallbacks still respect the flag
     # to avoid broad Apify spend.
-    if not results and settings is not None and settings.apify_token and candidate is not None:
+    if not job_cards and settings is not None and settings.apify_token and candidate is not None:
         from hireloop_api.services.background_jobs import (
             AARYA_AUTO_INGEST,
             CAREER_PATH_INGEST,
@@ -1114,7 +1250,7 @@ async def job_search(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
-                    "force_refresh": True,
+                    "force_refresh": False,
                     "user_id": user_id,
                     "session_id": session_id,
                 },
@@ -1132,7 +1268,7 @@ async def job_search(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
-                    "force_refresh": True,
+                    "force_refresh": False,
                     "user_id": user_id,
                     "session_id": session_id,
                 },
@@ -1151,14 +1287,14 @@ async def job_search(
                     "candidate_id": candidate_id,
                     "user_id": user_id,
                     "session_id": session_id,
-                    "force_refresh": True,
+                    "force_refresh": False,
                 },
                 idempotency_key=f"aarya_auto_ingest:{candidate_id}",
             )
             logger.info("aarya_auto_ingest_enqueued", candidate_id=candidate_id)
 
     return {
-        "count": len(results),
+        "count": len(job_cards),
         "job_cards": job_cards,
         "matches": results,
     }

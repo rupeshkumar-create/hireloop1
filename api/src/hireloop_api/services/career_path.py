@@ -89,9 +89,8 @@ def build_career_path_system_prompt(market: str | None = None) -> str:
         "US": "US job-board titles",
         "GB": "UK job-board titles",
     }.get(m, f"{market_label} job-board titles")
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{market_label}", market_label)
-        .replace("{job_board_phrase}", board_phrase)
+    return _SYSTEM_PROMPT_TEMPLATE.replace("{market_label}", market_label).replace(
+        "{job_board_phrase}", board_phrase
     )
 
 

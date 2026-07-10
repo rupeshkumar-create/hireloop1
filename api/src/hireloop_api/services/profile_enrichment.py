@@ -105,7 +105,9 @@ async def expand_profile_from_urls(
                         text = res.text[:5000].lower()
                         for kw in ("react", "python", "typescript", "aws", "kubernetes", "sql"):
                             if kw in text:
-                                discovered_skills.append({"skill": kw, "source": f"portfolio:{url}"})
+                                discovered_skills.append(
+                                    {"skill": kw, "source": f"portfolio:{url}"}
+                                )
                         sources.append({"type": "portfolio", "url": url})
                 except Exception as exc:
                     logger.warning("portfolio_expand_failed", error=str(exc)[:120])

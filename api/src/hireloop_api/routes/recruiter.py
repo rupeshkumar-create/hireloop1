@@ -31,10 +31,6 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_current_user, get_db, get_recruiter_user
 from hireloop_api.services.public_role import public_role_path
 from hireloop_api.services.recruiter_nudges import compute_recruiter_nudges
-from hireloop_api.services.role_inbound import add_external_candidate, create_inbound_applicant
-from hireloop_api.services.role_interview_kit import generate_interview_kit
-from hireloop_api.services.role_jd_bias import scan_jd_bias
-from hireloop_api.services.role_market_intel import compute_role_market_intel
 from hireloop_api.services.recruiter_search import (
     is_role_published,
     list_recruiter_candidates,
@@ -42,6 +38,9 @@ from hireloop_api.services.recruiter_search import (
     search_candidates_for_role,
     shortlist_top_candidates,
 )
+from hireloop_api.services.role_inbound import add_external_candidate
+from hireloop_api.services.role_interview_kit import generate_interview_kit
+from hireloop_api.services.role_jd_bias import scan_jd_bias
 from hireloop_api.services.role_jd_extract import (
     apply_extraction_to_role,
     compute_role_readiness,
@@ -53,6 +52,7 @@ from hireloop_api.services.role_jd_fetch import (
     fetch_role_from_url,
     merge_import_warnings,
 )
+from hireloop_api.services.role_market_intel import compute_role_market_intel
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/recruiter", tags=["recruiter"])

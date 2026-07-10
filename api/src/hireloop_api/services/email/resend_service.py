@@ -1,9 +1,8 @@
 """
 Resend transactional email client.
 
-Preferred provider for product emails (welcome, job-match alerts). Sends plain
-HTML — no template IDs to manage. Best-effort: callers treat a False return as
-"not sent" and never let email failures break the request/job.
+Preferred provider for API product emails (welcome, notifications, recruiter
+alerts). Signup OTP/magic-link email is sent by Supabase Auth (Gmail SMTP).
 """
 
 from __future__ import annotations

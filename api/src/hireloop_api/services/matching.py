@@ -54,7 +54,7 @@ from hireloop_api.services.match_quality import (
 )
 from hireloop_api.services.skills import canonical_skill
 from hireloop_api.services.test_jobs import ensure_test_match_scores
-from hireloop_api.services.titles import canonical_title_tokens, title_affinity
+from hireloop_api.services.titles import canonical_title_tokens, intent_titles, title_affinity
 
 logger = structlog.get_logger()
 
@@ -581,18 +581,17 @@ def _assemble_score(
         list(cand_row["skills"] or []),
         list(job_row["skills_required"] or []),
     )
-    # Career-path aware: a job aligned with the candidate's current role OR any of
-    # their career-path target titles boosts the profile dimension.
-    candidate_titles = [
-        t
-        for t in [
-            cand_row.get("current_title"),
-            cand_row.get("looking_for"),
-            cand_row.get("prioritized_title"),
-            *(cand_row.get("target_titles") or []),
+    # Intent-first: career-path target titles drive matching, not current role alone.
+    candidate_titles = intent_titles(dict(cand_row))
+    if not candidate_titles:
+        candidate_titles = [
+            t
+            for t in [
+                cand_row.get("current_title"),
+                cand_row.get("looking_for"),
+            ]
+            if t
         ]
-        if t
-    ]
     title_aff = _best_title_affinity(job_row["title"], candidate_titles)
 
     skills_sim = _blend_skills(
@@ -682,6 +681,9 @@ def _assemble_score(
         "loc_score": loc_score,
         "ctc_score": ctc_score,
         "explanation": explanation,
+        "title_aff": title_aff,
+        "profile_sim": profile_sim,
+        "lexical_skills": lexical_skills,
     }
     return enrich_score_result(cand_row, job_row, result, title_aff=title_aff)
 
@@ -877,50 +879,129 @@ class MatchingEngine:
             return overall
 
         bias_audit = _bias_audit()
-
-        await self._db.execute(
-            """
-            INSERT INTO public.match_scores
-                (id, candidate_id, job_id,
-                 overall_score, skills_score, experience_score, location_score, ctc_score,
-                 culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
-                 triage_notes,
-                 explanation, bias_audit, computed_at)
-            VALUES
-                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
-            ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-                overall_score    = EXCLUDED.overall_score,
-                skills_score     = EXCLUDED.skills_score,
-                experience_score = EXCLUDED.experience_score,
-                location_score   = EXCLUDED.location_score,
-                ctc_score        = EXCLUDED.ctc_score,
-                culture_score    = EXCLUDED.culture_score,
-                career_alignment_score = EXCLUDED.career_alignment_score,
-                fit_recommendation = EXCLUDED.fit_recommendation,
-                salary_benchmark = EXCLUDED.salary_benchmark,
-                triage_notes     = EXCLUDED.triage_notes,
-                explanation      = EXCLUDED.explanation,
-                bias_audit       = EXCLUDED.bias_audit,
-                computed_at      = NOW()
-            """,
-            uuid.uuid4(),
-            candidate_id,
-            job_id,
-            overall,
-            round(skills_sim, 4),
-            round(exp_score, 4),
-            round(loc_score, 4),
-            round(ctc_score, 4),
-            result.get("culture_score"),
-            result.get("career_alignment_score"),
-            result.get("fit_recommendation"),
-            json.dumps(result.get("salary_benchmark"))
-            if result.get("salary_benchmark")
-            else None,
-            result.get("triage_notes"),
-            explanation,
-            json.dumps(bias_audit),
+        job_version = 1
+        intent_version = (
+            int(cand_row.get("intent_version") or 1)
+            if cand_row.get("intent_version") is not None
+            else 1
         )
+        title_aff = result.get("title_aff")
+        profile_sim = result.get("profile_sim") or 0.0
+        lexical_skills = result.get("lexical_skills")
+        feature_payload = {
+            "title_affinity": round(float(title_aff or 0.0), 4),
+            "skills_sim": round(skills_sim, 4),
+            "profile_sim": round(float(profile_sim), 4),
+            "ranking_model": "v2_feature_rerank",
+        }
+
+        try:
+            await self._db.execute(
+                """
+                INSERT INTO public.match_scores
+                    (id, candidate_id, job_id,
+                     overall_score, skills_score, experience_score, location_score, ctc_score,
+                     culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                     triage_notes,
+                     explanation, bias_audit, computed_at,
+                     candidate_intent_version, job_version, retrieval_version,
+                     ranking_model_version, title_score, required_skill_score,
+                     responsibility_score, seniority_score, explanation_json)
+                VALUES
+                    ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW(),
+                     $16, $17, 1, 'v2_feature_rerank', $18, $19, $20, $21, $22::jsonb)
+                ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+                    overall_score    = EXCLUDED.overall_score,
+                    skills_score     = EXCLUDED.skills_score,
+                    experience_score = EXCLUDED.experience_score,
+                    location_score   = EXCLUDED.location_score,
+                    ctc_score        = EXCLUDED.ctc_score,
+                    culture_score    = EXCLUDED.culture_score,
+                    career_alignment_score = EXCLUDED.career_alignment_score,
+                    fit_recommendation = EXCLUDED.fit_recommendation,
+                    salary_benchmark = EXCLUDED.salary_benchmark,
+                    triage_notes     = EXCLUDED.triage_notes,
+                    explanation      = EXCLUDED.explanation,
+                    bias_audit       = EXCLUDED.bias_audit,
+                    computed_at      = NOW(),
+                    candidate_intent_version = EXCLUDED.candidate_intent_version,
+                    job_version      = EXCLUDED.job_version,
+                    title_score      = EXCLUDED.title_score,
+                    required_skill_score = EXCLUDED.required_skill_score,
+                    responsibility_score = EXCLUDED.responsibility_score,
+                    seniority_score  = EXCLUDED.seniority_score,
+                    explanation_json = EXCLUDED.explanation_json,
+                    ranking_model_version = EXCLUDED.ranking_model_version
+                """,
+                uuid.uuid4(),
+                candidate_id,
+                job_id,
+                overall,
+                round(skills_sim, 4),
+                round(exp_score, 4),
+                round(loc_score, 4),
+                round(ctc_score, 4),
+                result.get("culture_score"),
+                result.get("career_alignment_score"),
+                result.get("fit_recommendation"),
+                json.dumps(result.get("salary_benchmark"))
+                if result.get("salary_benchmark")
+                else None,
+                result.get("triage_notes"),
+                explanation,
+                json.dumps(bias_audit),
+                intent_version,
+                job_version,
+                round(float(title_aff or 0.0), 4),
+                round(float(lexical_skills or 0.0), 4) if lexical_skills is not None else None,
+                round(float(profile_sim), 4),
+                round(exp_score, 4),
+                json.dumps(feature_payload),
+            )
+        except Exception:
+            await self._db.execute(
+                """
+                INSERT INTO public.match_scores
+                    (id, candidate_id, job_id,
+                     overall_score, skills_score, experience_score, location_score, ctc_score,
+                     culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                     triage_notes,
+                     explanation, bias_audit, computed_at)
+                VALUES
+                    ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
+                ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+                    overall_score    = EXCLUDED.overall_score,
+                    skills_score     = EXCLUDED.skills_score,
+                    experience_score = EXCLUDED.experience_score,
+                    location_score   = EXCLUDED.location_score,
+                    ctc_score        = EXCLUDED.ctc_score,
+                    culture_score    = EXCLUDED.culture_score,
+                    career_alignment_score = EXCLUDED.career_alignment_score,
+                    fit_recommendation = EXCLUDED.fit_recommendation,
+                    salary_benchmark = EXCLUDED.salary_benchmark,
+                    triage_notes     = EXCLUDED.triage_notes,
+                    explanation      = EXCLUDED.explanation,
+                    bias_audit       = EXCLUDED.bias_audit,
+                    computed_at      = NOW()
+                """,
+                uuid.uuid4(),
+                candidate_id,
+                job_id,
+                overall,
+                round(skills_sim, 4),
+                round(exp_score, 4),
+                round(loc_score, 4),
+                round(ctc_score, 4),
+                result.get("culture_score"),
+                result.get("career_alignment_score"),
+                result.get("fit_recommendation"),
+                json.dumps(result.get("salary_benchmark"))
+                if result.get("salary_benchmark")
+                else None,
+                result.get("triage_notes"),
+                explanation,
+                json.dumps(bias_audit),
+            )
 
         # P19: notify on new strong match (first time or material score bump)
         should_notify = prior_score is None or (overall - prior_score) >= 0.08
@@ -1023,7 +1104,13 @@ class MatchingEngine:
             pool_jobs = pool_jobs[:limit]
 
         bias_audit = json.dumps(_bias_audit())
+        intent_version = (
+            int(cand_row.get("intent_version") or 1)
+            if cand_row.get("intent_version") is not None
+            else 1
+        )
         records: list[tuple] = []
+        versioned_records: list[tuple] = []
         drop_job_ids: list[str] = []
         for j in pool_jobs:
             es = max(0.0, float(j["skills_sim"])) if j["skills_sim"] is not None else None
@@ -1051,6 +1138,41 @@ class MatchingEngine:
                     bias_audit,
                 )
             )
+            title_aff = r.get("title_aff")
+            profile_sim = r.get("profile_sim") or 0.0
+            lexical_skills = r.get("lexical_skills")
+            feature_payload = {
+                "title_affinity": round(float(title_aff or 0.0), 4),
+                "skills_sim": round(r["skills_sim"], 4),
+                "profile_sim": round(float(profile_sim), 4),
+                "ranking_model": "v2_feature_rerank",
+            }
+            versioned_records.append(
+                (
+                    uuid.uuid4(),
+                    candidate_id,
+                    str(j["id"]),
+                    r["overall"],
+                    round(r["skills_sim"], 4),
+                    round(r["exp_score"], 4),
+                    round(r["loc_score"], 4),
+                    round(r["ctc_score"], 4),
+                    r.get("culture_score"),
+                    r.get("career_alignment_score"),
+                    r.get("fit_recommendation"),
+                    json.dumps(r.get("salary_benchmark")) if r.get("salary_benchmark") else None,
+                    r.get("triage_notes"),
+                    r["explanation"],
+                    bias_audit,
+                    intent_version,
+                    1,
+                    round(float(title_aff or 0.0), 4),
+                    round(float(lexical_skills or 0.0), 4) if lexical_skills is not None else None,
+                    round(float(profile_sim), 4),
+                    round(r["exp_score"], 4),
+                    json.dumps(feature_payload),
+                )
+            )
 
         if drop_job_ids:
             await self._db.execute(
@@ -1066,33 +1188,74 @@ class MatchingEngine:
             logger.info("score_candidate_done", candidate_id=candidate_id, scored=0)
             return 0
 
-        await self._db.executemany(
-            """
-            INSERT INTO public.match_scores
-                (id, candidate_id, job_id,
-                 overall_score, skills_score, experience_score, location_score, ctc_score,
-                 culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
-                 triage_notes,
-                 explanation, bias_audit, computed_at)
-            VALUES
-                ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
-            ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-                overall_score    = EXCLUDED.overall_score,
-                skills_score     = EXCLUDED.skills_score,
-                experience_score = EXCLUDED.experience_score,
-                location_score   = EXCLUDED.location_score,
-                ctc_score        = EXCLUDED.ctc_score,
-                culture_score    = EXCLUDED.culture_score,
-                career_alignment_score = EXCLUDED.career_alignment_score,
-                fit_recommendation = EXCLUDED.fit_recommendation,
-                salary_benchmark = EXCLUDED.salary_benchmark,
-                triage_notes     = EXCLUDED.triage_notes,
-                explanation      = EXCLUDED.explanation,
-                bias_audit       = EXCLUDED.bias_audit,
-                computed_at      = NOW()
-            """,
-            records,
-        )
+        try:
+            await self._db.executemany(
+                """
+                INSERT INTO public.match_scores
+                    (id, candidate_id, job_id,
+                     overall_score, skills_score, experience_score, location_score, ctc_score,
+                     culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                     triage_notes,
+                     explanation, bias_audit, computed_at,
+                     candidate_intent_version, job_version, retrieval_version,
+                     ranking_model_version, title_score, required_skill_score,
+                     responsibility_score, seniority_score, explanation_json)
+                VALUES
+                    ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW(),
+                     $16, $17, 1, 'v2_feature_rerank', $18, $19, $20, $21, $22::jsonb)
+                ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+                    overall_score    = EXCLUDED.overall_score,
+                    skills_score     = EXCLUDED.skills_score,
+                    experience_score = EXCLUDED.experience_score,
+                    location_score   = EXCLUDED.location_score,
+                    ctc_score        = EXCLUDED.ctc_score,
+                    culture_score    = EXCLUDED.culture_score,
+                    career_alignment_score = EXCLUDED.career_alignment_score,
+                    fit_recommendation = EXCLUDED.fit_recommendation,
+                    salary_benchmark = EXCLUDED.salary_benchmark,
+                    triage_notes     = EXCLUDED.triage_notes,
+                    explanation      = EXCLUDED.explanation,
+                    bias_audit       = EXCLUDED.bias_audit,
+                    computed_at      = NOW(),
+                    candidate_intent_version = EXCLUDED.candidate_intent_version,
+                    job_version      = EXCLUDED.job_version,
+                    title_score      = EXCLUDED.title_score,
+                    required_skill_score = EXCLUDED.required_skill_score,
+                    responsibility_score = EXCLUDED.responsibility_score,
+                    seniority_score  = EXCLUDED.seniority_score,
+                    explanation_json = EXCLUDED.explanation_json,
+                    ranking_model_version = EXCLUDED.ranking_model_version
+                """,
+                versioned_records,
+            )
+        except Exception:
+            await self._db.executemany(
+                """
+                INSERT INTO public.match_scores
+                    (id, candidate_id, job_id,
+                     overall_score, skills_score, experience_score, location_score, ctc_score,
+                     culture_score, career_alignment_score, fit_recommendation, salary_benchmark,
+                     triage_notes,
+                     explanation, bias_audit, computed_at)
+                VALUES
+                    ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
+                ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+                    overall_score    = EXCLUDED.overall_score,
+                    skills_score     = EXCLUDED.skills_score,
+                    experience_score = EXCLUDED.experience_score,
+                    location_score   = EXCLUDED.location_score,
+                    ctc_score        = EXCLUDED.ctc_score,
+                    culture_score    = EXCLUDED.culture_score,
+                    career_alignment_score = EXCLUDED.career_alignment_score,
+                    fit_recommendation = EXCLUDED.fit_recommendation,
+                    salary_benchmark = EXCLUDED.salary_benchmark,
+                    triage_notes     = EXCLUDED.triage_notes,
+                    explanation      = EXCLUDED.explanation,
+                    bias_audit       = EXCLUDED.bias_audit,
+                    computed_at      = NOW()
+                """,
+                records,
+            )
 
         logger.info("score_candidate_done", candidate_id=candidate_id, scored=len(records))
         return len(records)
