@@ -19,7 +19,12 @@ from hireloop_api.services.domain_fit import (
 )
 from hireloop_api.services.skills import canonical_skill
 from hireloop_api.services.test_jobs import is_test_job
-from hireloop_api.services.titles import canonical_title_tokens, title_affinity
+from hireloop_api.services.titles import (
+    best_intent_title_affinity,
+    canonical_title_tokens,
+    intent_titles,
+    title_affinity,
+)
 
 # Minimum overall score to write match_scores (below → row deleted / skipped).
 MIN_PERSIST_SCORE = 0.35
@@ -48,14 +53,15 @@ MIN_DOMAIN_MULTIPLIER_POOL = 0.25
 
 
 def candidate_role_titles(cand_row: Mapping[str, Any]) -> list[str]:
-    """Current role + prioritized search + career-path targets for persona pooling."""
+    """Intent titles first; fall back to current role + career-path targets."""
+    intents = intent_titles(dict(cand_row))
+    if intents:
+        return intents
     titles: list[str] = []
     if cand_row.get("current_title"):
         titles.append(str(cand_row["current_title"]))
     if cand_row.get("looking_for"):
         titles.append(str(cand_row["looking_for"]))
-    if cand_row.get("prioritized_title"):
-        titles.append(str(cand_row["prioritized_title"]))
     for raw in cand_row.get("target_titles") or []:
         if raw:
             titles.append(str(raw))
@@ -150,8 +156,9 @@ def should_persist_match(
         return True
 
     overall = float(result.get("overall") or 0.0)
-    candidate_titles = candidate_role_titles(cand_row)
-    title_aff = _best_title_affinity(job_row.get("title"), candidate_titles)
+    title_aff = best_intent_title_affinity(job_row.get("title"), dict(cand_row))
+    if title_aff <= 0.0:
+        title_aff = _best_title_affinity(job_row.get("title"), candidate_role_titles(cand_row))
     path_aligned = title_aff is not None and title_aff >= PATH_ALIGNED_MIN_AFFINITY
     floor = PATH_ALIGNED_MIN_PERSIST if path_aligned else MIN_PERSIST_SCORE
     if overall < floor:

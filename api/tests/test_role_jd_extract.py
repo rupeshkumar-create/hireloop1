@@ -13,9 +13,10 @@ def test_compute_role_readiness_full() -> None:
             "jd_text": "x" * 50,
             "comp_min": 2_500_000,
             "location_city": "Bengaluru",
+            "jd_bias_report": {"passed": True},
         }
     )
-    assert readiness["done_count"] == 4
+    assert readiness["done_count"] == 5
     assert readiness["ready_for_search"] is True
     assert readiness["ready_to_publish"] is True
 

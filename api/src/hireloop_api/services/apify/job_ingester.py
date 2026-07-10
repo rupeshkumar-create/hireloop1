@@ -905,10 +905,42 @@ class JobIngester:
         """
         Scrape jobs scoped to ONE candidate's career path — their target titles
         (where they want to go), falling back to current title / skills — and the
-        path's target locations. This is the live counterpart of the on-demand
-        "find jobs for my path" flow, so a designer's scrape pulls design roles
-        rather than generic defaults.
+        path's target locations. Uses shared inventory buckets when fresh.
         """
+        from hireloop_api.services.job_search_buckets import (
+            bucket_needs_refresh,
+            resolve_bucket_for_candidate,
+        )
+
+        market_row = await self._db.fetchrow(
+            "SELECT market, location_city FROM public.candidates WHERE id = $1::uuid",
+            uuid.UUID(str(candidate_id)),
+        )
+        market = (market_row.get("market") if market_row else None) or "IN"
+        location = market_row.get("location_city") if market_row else None
+
+        bucket, role_id, _bucket_queries = await resolve_bucket_for_candidate(
+            self._db,
+            candidate_id=str(candidate_id),
+            market=market,
+            location=location,
+        )
+        try:
+            needs_refresh = force_refresh or await bucket_needs_refresh(self._db, bucket=bucket)
+        except Exception:
+            needs_refresh = force_refresh
+        if not needs_refresh:
+            logger.info("ingest_skipped_fresh_bucket", bucket=bucket, candidate_id=candidate_id)
+            return {
+                "ok": True,
+                "deduped": True,
+                "bucket": bucket,
+                "skipped": "fresh_bucket",
+                "inserted": 0,
+                "updated": 0,
+                "raw_items": 0,
+            }
+
         try:
             snapshot = await load_candidate_intelligence(self._db, candidate_id)
         except Exception as exc:
@@ -938,7 +970,7 @@ class JobIngester:
                 planner="candidate_intelligence",
                 planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
             )
-            return await self._ingest_candidate_title_variants(
+            stats = await self._ingest_candidate_title_variants(
                 variants=variants,
                 locations=locations,
                 max_results_per_query=max_results_per_query,
@@ -948,6 +980,15 @@ class JobIngester:
                 planner_diagnostics=plan.diagnostics.model_dump(mode="json"),
                 force_refresh=force_refresh,
             )
+            await self._record_candidate_bucket_success(
+                bucket=bucket,
+                role_id=role_id,
+                market=market,
+                location=location,
+                stats=stats,
+            )
+            stats["bucket"] = bucket
+            return stats
 
         row = await self._db.fetchrow(
             """
@@ -1019,7 +1060,7 @@ class JobIngester:
             queries=queries,
             locations=locations,
         )
-        return await self._ingest_candidate_title_variants(
+        stats = await self._ingest_candidate_title_variants(
             variants=variants,
             locations=locations,
             max_results_per_query=max_results_per_query,
@@ -1028,6 +1069,41 @@ class JobIngester:
             progress_callback=progress_callback,
             force_refresh=force_refresh,
         )
+        await self._record_candidate_bucket_success(
+            bucket=bucket,
+            role_id=role_id,
+            market=market,
+            location=location,
+            stats=stats,
+        )
+        stats["bucket"] = bucket
+        return stats
+
+    async def _record_candidate_bucket_success(
+        self,
+        *,
+        bucket: str,
+        role_id: str,
+        market: str,
+        location: str | None,
+        stats: dict[str, Any],
+    ) -> None:
+        from hireloop_api.services.job_search_buckets import record_bucket_success
+
+        try:
+            active_count = int(stats.get("inserted") or 0) + int(stats.get("updated") or 0)
+            if active_count <= 0 and not stats.get("raw_items"):
+                return
+            await record_bucket_success(
+                self._db,
+                bucket=bucket,
+                role_id=role_id,
+                market=market,
+                location=location,
+                active_count=max(active_count, int(stats.get("raw_items") or 0)),
+            )
+        except Exception as exc:
+            logger.warning("bucket_success_record_failed", bucket=bucket, error=str(exc)[:200])
 
     async def _ingest_candidate_title_variants(
         self,
@@ -1079,6 +1155,7 @@ class JobIngester:
                 locations=locations,
                 max_results_per_query=max_results_per_query,
                 time_range=time_range,
+                force_refresh=force_refresh,
             )
             _merge_candidate_ingest_stats(aggregate, variant=variant, stats=stats)
             await _emit_ingest_progress(
@@ -1147,6 +1224,16 @@ class JobIngester:
 
         for rec in records:
             try:
+                from hireloop_api.services.job_search_buckets import canonical_job_fingerprint
+                from hireloop_api.services.occupation_taxonomy import resolve_role_id
+
+                rec_role_id = resolve_role_id(rec.title)
+                fingerprint = canonical_job_fingerprint(
+                    company_name=rec.company_name,
+                    title=rec.title,
+                    location=rec.location_city,
+                    description_prefix=(rec.description or "")[:200],
+                )
                 if jd_backfilled < _MAX_JD_ENRICH_PER_INGEST and self._settings:
                     did_jd = await self._maybe_backfill_jd(rec)
                     if did_jd:
@@ -1165,6 +1252,21 @@ class JobIngester:
                 # Cross-source / re-scrape dedup: the same posting surfaced under a
                 # different apify_job_id (e.g. another run or source) but the same
                 # apply_url must NOT create a duplicate row daily/weekly.
+                # Cross-source canonical dedup by fingerprint
+                if existing is None and fingerprint:
+                    dup_fp = await self._db.fetchrow(
+                        "SELECT id FROM public.jobs "
+                        "WHERE canonical_fingerprint = $1 AND deleted_at IS NULL LIMIT 1",
+                        fingerprint,
+                    )
+                    if dup_fp is not None:
+                        await self._upsert_job_source(
+                            job_id=dup_fp["id"],
+                            rec=rec,
+                        )
+                        skipped += 1
+                        continue
+
                 if existing is None and rec.apply_url:
                     dup = await self._db.fetchrow(
                         "SELECT id FROM public.jobs "
@@ -1177,7 +1279,7 @@ class JobIngester:
                         continue
 
                 if existing is None:
-                    # INSERT new job
+                    job_uuid = uuid.uuid4()
                     await self._db.execute(
                         """
                         INSERT INTO public.jobs (
@@ -1187,13 +1289,16 @@ class JobIngester:
                             is_remote, employment_type, seniority,
                             ctc_min, ctc_max, skills_required,
                             apify_job_id, apply_url, source,
-                            is_active, scraped_at, expires_at, raw_data
+                            role_id, canonical_fingerprint,
+                            is_active, scraped_at, expires_at, raw_data,
+                            last_seen_at, enrichment_status
                         ) VALUES (
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                            $13, $14, $15, $16, $17, $18, TRUE, $19, $20, $21::jsonb
+                            $13, $14, $15, $16, $17, $18, $19, $20,
+                            TRUE, $21, $22, $23::jsonb, $21, 'provisional'
                         )
                         """,
-                        uuid.uuid4(),
+                        job_uuid,
                         rec.title,
                         rec.description,
                         rec.requirements,
@@ -1211,10 +1316,13 @@ class JobIngester:
                         rec.apify_job_id,
                         rec.apply_url,
                         rec.source,
+                        rec_role_id,
+                        fingerprint,
                         datetime.now(UTC),
                         rec.expires_at or datetime.now(UTC) + timedelta(days=30),
                         json.dumps(rec.raw_data),
                     )
+                    await self._upsert_job_source(job_id=job_uuid, rec=rec)
                     inserted += 1
                 else:
                     # UPDATE if re-scraped (refreshes skills, description, active status)
@@ -1225,9 +1333,13 @@ class JobIngester:
                             description = COALESCE($3, description),
                             skills_required = $4,
                             apply_url = COALESCE($5, apply_url),
+                            role_id = COALESCE($6, role_id),
+                            canonical_fingerprint = COALESCE($7, canonical_fingerprint),
                             is_active = TRUE,
-                            scraped_at = $6,
-                            expires_at = $7,
+                            scraped_at = $8,
+                            last_seen_at = $8,
+                            expires_at = $9,
+                            job_version = job_version + 1,
                             updated_at = NOW()
                         WHERE apify_job_id = $1
                         """,
@@ -1236,9 +1348,12 @@ class JobIngester:
                         rec.description,
                         rec.skills_required,
                         rec.apply_url,
+                        rec_role_id,
+                        fingerprint,
                         datetime.now(UTC),
                         rec.expires_at or datetime.now(UTC) + timedelta(days=30),
                     )
+                    await self._upsert_job_source(job_id=existing["id"], rec=rec)
                     updated += 1
 
                 await self._maybe_enqueue_firecrawl_jd_backfill(rec)
@@ -1248,6 +1363,32 @@ class JobIngester:
                 skipped += 1
 
         return inserted, updated, skipped
+
+    async def _upsert_job_source(self, *, job_id: uuid.UUID, rec: JobRecord) -> None:
+        """Track provider-level apply URLs for canonical jobs."""
+        provider_id = rec.apify_job_id
+        if not provider_id:
+            return
+        try:
+            await self._db.execute(
+                """
+                INSERT INTO public.job_sources
+                  (job_id, provider, provider_job_id, source_name, apply_url, last_verified_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                ON CONFLICT (provider, provider_job_id) WHERE provider_job_id IS NOT NULL
+                DO UPDATE SET
+                  apply_url = COALESCE(EXCLUDED.apply_url, job_sources.apply_url),
+                  last_verified_at = NOW(),
+                  updated_at = NOW()
+                """,
+                job_id,
+                rec.source or "google_jobs",
+                provider_id,
+                rec.source,
+                rec.apply_url,
+            )
+        except Exception as exc:
+            logger.debug("job_source_upsert_skipped", error=str(exc)[:120])
 
     async def _maybe_backfill_jd(self, rec: JobRecord) -> bool:
         """Free-path JD backfill during ingest (Greenhouse/Lever/JSON-LD)."""

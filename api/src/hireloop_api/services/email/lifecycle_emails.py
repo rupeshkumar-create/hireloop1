@@ -1,5 +1,5 @@
 """
-Send lifecycle emails via Resend/SMTP with consent_log deduplication.
+Send lifecycle emails via Resend with consent_log deduplication.
 """
 
 from __future__ import annotations

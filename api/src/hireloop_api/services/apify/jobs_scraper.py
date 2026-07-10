@@ -119,8 +119,16 @@ DEFAULT_GOOGLE_JOBS_ACTOR = "johnvc/Google-Jobs-Scraper"
 DEFAULT_LINKEDIN_JOBS_ACTOR = DEFAULT_GOOGLE_JOBS_ACTOR
 APIFY_API_BASE = "https://api.apify.com/v2"
 
-# Back-compat alias — prefer MARKET_SCRAPE_LOCATIONS from markets.py
-INDIA_LOCATIONS = MARKET_SCRAPE_LOCATIONS["IN"]
+# Market-specific Google Jobs actor configuration (johnvc/Google-Jobs-Scraper)
+_MARKET_GOOGLE_CONFIG: dict[str, dict[str, str]] = {
+    "IN": {"country": "in", "language": "en", "google_domain": "google.co.in"},
+    "US": {"country": "us", "language": "en", "google_domain": "google.com"},
+    "GB": {"country": "gb", "language": "en", "google_domain": "google.co.uk"},
+    "DE": {"country": "de", "language": "de", "google_domain": "google.de"},
+    "FR": {"country": "fr", "language": "fr", "google_domain": "google.fr"},
+}
+
+DEFAULT_MAX_PAGINATION = 3
 
 # Role categories to scrape — expand in P24 for programmatic SEO
 SEARCH_QUERIES = [
@@ -206,7 +214,7 @@ class ApifyJobsScraper:
                     query=q,
                     location=self._coerce_market_location(loc, market),
                     max_results=rows,
-                    country=self._google_country_code(market),
+                    market=market,
                 )
                 dataset_id = await self.wait_for_run(run_id)
                 items = await self.fetch_dataset(dataset_id, limit=rows)
@@ -232,37 +240,40 @@ class ApifyJobsScraper:
         query: str,
         location: str | None,
         max_results: int,
-        country: str = "in",
+        market: str = "IN",
     ) -> dict[str, Any]:
-        return {
+        cfg = _MARKET_GOOGLE_CONFIG.get(market.upper(), _MARKET_GOOGLE_CONFIG["IN"])
+        payload: dict[str, Any] = {
             "query": query,
             "location": location or "",
-            "country": country or "None",
-            "language": "None",
-            "google_domain": "google.com",
+            "country": cfg["country"],
+            "language": cfg["language"],
+            "google_domain": cfg["google_domain"],
             "num_results": max(10, min(int(max_results), 1000)),
-            "max_pagination": 0,
-            "include_lrad": False,
-            "lrad_value": "0",
-            "max_delay": 1,
-            "output_file": "",
+            "max_pagination": DEFAULT_MAX_PAGINATION,
             "cleanup_results": True,
+            "max_delay": 1,
         }
+        if location:
+            payload["include_lrad"] = True
+            payload["lrad_value"] = "40"
+        return payload
 
     @staticmethod
     def _google_country_code(market: str) -> str:
-        """Map internal ISO-ish market codes to johnvc/Google-Jobs-Scraper country values."""
-        return {"IN": "in", "US": "us", "GB": "uk"}.get(market.upper(), "None")
+        """Map internal market codes to johnvc/Google-Jobs-Scraper country values."""
+        cfg = _MARKET_GOOGLE_CONFIG.get(market.upper(), _MARKET_GOOGLE_CONFIG["IN"])
+        return cfg["country"]
 
     async def _trigger_run_google_jobs(
-        self, *, query: str, location: str | None, max_results: int, country: str
+        self, *, query: str, location: str | None, max_results: int, market: str
     ) -> str:
         """Trigger johnvc/Google-Jobs-Scraper for one query/location pair."""
         input_data = self._build_google_jobs_input(
             query=query,
             location=location,
             max_results=max_results,
-            country=country,
+            market=market,
         )
 
         async with httpx.AsyncClient(timeout=30.0) as client:

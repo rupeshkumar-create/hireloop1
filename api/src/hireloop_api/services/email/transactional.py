@@ -16,7 +16,6 @@ import structlog
 from hireloop_api.config import Settings
 from hireloop_api.services.email.resend_service import ResendService
 from hireloop_api.services.email.sendgrid_service import SendGridService
-from hireloop_api.services.email.smtp_service import SmtpService
 from hireloop_api.services.email.welcome_templates import render_welcome_email
 
 logger = structlog.get_logger()
@@ -35,39 +34,25 @@ def _sendgrid_usable(settings: Settings) -> bool:
 
 
 def _html_email_configured(settings: Settings) -> bool:
-    """True when we can send a raw-HTML email (SMTP or Resend)."""
-    smtp = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
-    return smtp or bool(settings.resend_api_key)
+    """True when Resend is configured for API transactional/notification email."""
+    return bool((settings.resend_api_key or "").strip())
 
 
 async def _send_html_email(settings: Settings, *, to_email: str, subject: str, html: str) -> bool:
-    """Send one HTML email via the best configured provider.
+    """Send one HTML email via Resend (primary API provider).
 
-    Tries SMTP first when configured, then Resend if SMTP fails or is absent.
-    Best-effort; returns False if no provider succeeds.
+    Signup/OTP magic-link email is sent by Supabase Auth (Gmail SMTP in the
+    Supabase dashboard), not through this path.
     """
-    if settings.smtp_host and settings.smtp_user and settings.smtp_password:
-        svc = SmtpService(
-            host=settings.smtp_host,
-            port=settings.smtp_port,
-            user=settings.smtp_user,
-            password=settings.smtp_password,
-            from_email=settings.smtp_from,
-            from_name=settings.resend_from_name,
-        )
-        if await svc.send(to_email=to_email, subject=subject, html=html):
-            return True
-        logger.info("smtp_send_fallback_resend", to_domain=to_email.split("@")[-1] if "@" in to_email else "")
-
-    if settings.resend_api_key:
-        svc = ResendService(
-            settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
-        )
-        try:
-            return await svc.send(to_email=to_email, subject=subject, html=html)
-        finally:
-            await svc.close()
-    return False
+    if not settings.resend_api_key:
+        return False
+    svc = ResendService(
+        settings.resend_api_key, settings.resend_from_email, settings.resend_from_name
+    )
+    try:
+        return await svc.send(to_email=to_email, subject=subject, html=html)
+    finally:
+        await svc.close()
 
 
 def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> str:
@@ -118,9 +103,9 @@ async def maybe_send_signup_confirmation(
 ) -> dict[str, Any]:
     """
     Welcome email for a new user (once per account) — candidate vs recruiter templates.
-    Best-effort via Resend/SMTP; SendGrid template fallback when configured.
+    Best-effort via Resend; SendGrid template fallback when configured.
     """
-    use_html = _html_email_configured(settings)  # SMTP (free, any recipient) or Resend
+    use_html = _html_email_configured(settings)
     use_sendgrid = _sendgrid_usable(settings) and bool(settings.sg_template_signup_confirmation)
     if not (use_html or use_sendgrid):
         logger.warning(
@@ -290,9 +275,7 @@ async def send_job_match_alert(
     """Email a candidate a digest of their strongest new matches (Resend + prefs)."""
     from hireloop_api.services.notifications import send_category_email
 
-    if not settings.resend_api_key and not (
-        settings.smtp_host and settings.smtp_user and settings.smtp_password
-    ):
+    if not settings.resend_api_key:
         return {"sent": False, "skipped": "email_unconfigured"}
 
     row = await db.fetchrow(

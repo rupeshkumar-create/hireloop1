@@ -1,7 +1,7 @@
 """
 Hireschema branded HTML email shell — logo, lime CTA, charcoal typography.
 
-All product emails (Resend / SMTP) should render through ``brand_shell``.
+All product emails (Resend) should render through ``brand_shell``.
 """
 
 from __future__ import annotations
