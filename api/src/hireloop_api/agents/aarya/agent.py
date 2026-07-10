@@ -887,6 +887,7 @@ def build_aarya_graph(settings: Settings) -> Any:
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.3,
             max_tokens=max_tokens,
+            request_timeout=settings.openrouter_request_timeout_sec,
             default_headers={
                 "HTTP-Referer": "https://hireschema.com",
                 "X-Title": "Hireschema - Aarya Career AI",
@@ -900,6 +901,7 @@ def build_aarya_graph(settings: Settings) -> Any:
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.3,
             max_tokens=max_tokens,
+            request_timeout=settings.openrouter_request_timeout_sec,
             default_headers={
                 "HTTP-Referer": "https://hireschema.com",
                 "X-Title": "Hireschema - Aarya Career AI",

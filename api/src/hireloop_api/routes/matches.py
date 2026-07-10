@@ -393,6 +393,7 @@ class MatchedJob(BaseModel):
     computed_at: str | None = None
     # Retention: jobs the candidate hasn't been shown before.
     is_new_for_you: bool = False
+    is_new_since_visit: bool = False
     first_seen_at: str | None = None
     # Skill detail: which required skills the candidate has vs is missing.
     skills_matched: list[str] = []
@@ -563,8 +564,14 @@ async def get_match_feed(
                 await _enqueue_candidate_match_scoring(db, candidate["id"])
         _first_score_locks.pop(str(candidate["id"]), None)
 
+    last_visit = candidate.get("last_visit_at")
     result = _market_feed_items(
-        _serialize_current_quality_cached_rows(rows, candidate=dict(candidate), min_score=min_score)
+        _serialize_current_quality_cached_rows(
+            rows,
+            candidate=dict(candidate),
+            min_score=min_score,
+            last_visit_at=last_visit,
+        )
     )
     if not result:
         result = await _supplement_market_feed(
@@ -713,6 +720,21 @@ async def get_match_feed(
             item["first_seen_at"] = (
                 first_seen.isoformat() if hasattr(first_seen, "isoformat") else None
             )
+            if "is_new_since_visit" not in item:
+                lv = candidate.get("last_visit_at")
+                if lv is None:
+                    item["is_new_since_visit"] = jid not in seen_map
+                else:
+                    ct_raw = item.get("computed_at")
+                    try:
+                        ct = (
+                            datetime.fromisoformat(str(ct_raw).replace("Z", "+00:00"))
+                            if ct_raw
+                            else None
+                        )
+                        item["is_new_since_visit"] = bool(ct and ct > lv)
+                    except (TypeError, ValueError):
+                        item["is_new_since_visit"] = False
         if job_uuids:
             await db.execute(
                 """
@@ -1061,6 +1083,7 @@ async def _fetch_cached_match_rows(
             ms.llm_rationale,
             ms.llm_rationale_at,
             ms.computed_at,
+            j.scraped_at,
             cji.first_seen_at,
             -- Action-state: surface what the candidate (or Aarya) has already done
             -- for this role, so an acted-on match no longer looks untouched.
@@ -1169,6 +1192,7 @@ def _serialize_cached_match_row(
     *,
     candidate: dict | None = None,
     current_quality: dict | None = None,
+    last_visit_at: datetime | None = None,
 ) -> dict:
     data = dict(row)
     first_seen = data.get("first_seen_at")
@@ -1188,6 +1212,17 @@ def _serialize_cached_match_row(
         application_status=application_status,
     )
 
+    computed_ts = computed_at
+    scraped_ts = data.get("scraped_at")
+    fresh_ts = computed_ts
+    if scraped_ts and (fresh_ts is None or scraped_ts > fresh_ts):
+        fresh_ts = scraped_ts
+    is_new_since_visit = False
+    if last_visit_at is None:
+        is_new_since_visit = first_seen is None
+    elif fresh_ts is not None and hasattr(fresh_ts, "timestamp"):
+        is_new_since_visit = fresh_ts > last_visit_at
+
     item = {
         **data,
         "job_id": str(row["job_id"]),
@@ -1195,6 +1230,7 @@ def _serialize_cached_match_row(
         "computed_at": computed_at.isoformat() if computed_at else None,
         "first_seen_at": first_seen.isoformat() if hasattr(first_seen, "isoformat") else None,
         "is_new_for_you": first_seen is None,
+        "is_new_since_visit": is_new_since_visit,
         "action_state": action_state,
         "action_label": action_label,
         # Internal flag (stripped before the response): True when a fresh LLM
@@ -1220,6 +1256,7 @@ def _serialize_current_quality_cached_rows(
     *,
     candidate: dict,
     min_score: float,
+    last_visit_at: datetime | None = None,
 ) -> list[dict]:
     """Serialize cached match_scores only if they still pass current quality gates.
 
@@ -1233,7 +1270,12 @@ def _serialize_current_quality_cached_rows(
         if current is None or current["overall"] < min_score:
             continue
         result.append(
-            _serialize_cached_match_row(row, candidate=candidate, current_quality=current)
+            _serialize_cached_match_row(
+                row,
+                candidate=candidate,
+                current_quality=current,
+                last_visit_at=last_visit_at,
+            )
         )
     return result
 

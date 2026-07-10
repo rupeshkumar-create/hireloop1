@@ -15,9 +15,11 @@ import { type MatchedJob } from "@/lib/api/matches";
 import { createCandidateIntro, fetchIntros } from "@/lib/api/intros";
 import { fetchSavedJobIds, saveJob, subscribeSavedJobs } from "@/lib/api/saved-jobs";
 import { fetchMatchFeed, invalidateMatchFeedCache } from "@/lib/api/matches";
+import { fetchReturnSummary, markVisit } from "@/lib/api/retention";
 import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
+import { consumeStarterJobs } from "@/lib/auth/starter-jobs";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { cn } from "@/lib/utils";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
@@ -103,10 +105,27 @@ export function DashboardClient({
   // Jobs Aarya surfaced in chat — mirrored into the Matches sidebar so the user
   // never has to click "Find jobs" to see them there.
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
+  const [returnMessage, setReturnMessage] = useState<string | null>(null);
 
-  // Retention: update last visit so Matches can label "New for you".
+  // Retention: return summary before visit bump; visit after feed so "since last visit" works.
   useEffect(() => {
-    void apiAuthFetch("/api/v1/me/visit", { method: "POST" }).catch(() => undefined);
+    void fetchReturnSummary()
+      .then((summary) => {
+        if (summary.proactive_message) setReturnMessage(summary.proactive_message);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // Instant shelf from complete-onboarding — show jobs before kickoff/chat.
+  useEffect(() => {
+    const starter = consumeStarterJobs();
+    if (!starter?.length) return;
+    setChatJobs(starter);
+    const title =
+      starter[0]?.title?.trim() ||
+      starter.find((j) => j.title?.trim())?.title?.trim() ||
+      null;
+    if (title) setKickoffMatchTitle(title);
   }, []);
 
   // Allow deep-linking into an intro request from places like /jobs/[id].
@@ -201,7 +220,11 @@ export function DashboardClient({
     void fetchMyProfile().catch(() => {});
     void inferMarketFromGeo().catch(() => {});
     invalidateMatchFeedCache();
-    void fetchMatchFeed(undefined, { force: true }).catch(() => {});
+    void fetchMatchFeed(undefined, { force: true })
+      .catch(() => {})
+      .finally(() => {
+        markVisit();
+      });
     void fetchIntros()
       .then((rows) => {
         if (!cancelled) {
@@ -472,6 +495,7 @@ export function DashboardClient({
             onRequestIntro={handleRequestIntro}
             onCareerKickoffComplete={handleCareerKickoffComplete}
             onJobsFound={setChatJobs}
+            returnWelcomeMessage={returnMessage}
           />
         </div>
         </div>

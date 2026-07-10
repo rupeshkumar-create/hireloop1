@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     # Emergency retry budget when OpenRouter says the account can only afford a
     # small completion. 256 is intentionally below the 268-token example error.
     openrouter_low_credit_max_tokens: int = 256
+    # Fail fast on hung OpenRouter calls instead of hitting client idle timeouts.
+    openrouter_request_timeout_sec: float = 25.0
     # Opt-in: generate Aarya's per-card "why you fit" rationale on the match feed
     # via an LLM call (top of the first screen only). Off by default so it never
     # fires in tests/dev without an explicit MATCH_RATIONALE_ENABLED=true.

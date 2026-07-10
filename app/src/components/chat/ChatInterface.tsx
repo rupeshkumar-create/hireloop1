@@ -239,6 +239,8 @@ interface ChatInterfaceProps {
    * Report jobs surfaced in chat (job_search results) so the parent can mirror
    * them into the Matches sidebar without the user clicking "Find jobs".
    */
+  /** Proactive Aarya welcome on return visit (from GET /me/return-summary). */
+  returnWelcomeMessage?: string | null;
   onJobsFound?: (jobs: MatchedJob[]) => void;
 }
 
@@ -280,12 +282,14 @@ export function ChatInterface({
   onRequestIntro,
   onCareerKickoffComplete,
   onJobsFound,
+  returnWelcomeMessage,
 }: ChatInterfaceProps) {
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
   const [kickoffActive, setKickoffActive] = useState(
     () => initialKickoff && !hasCareerKickoffDone(),
   );
   const kickoffPromptQueuedRef = useRef(false);
+  const returnWelcomeShownRef = useRef(false);
   const [input, setInput]             = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming]  = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -555,6 +559,22 @@ export function ChatInterface({
       setKickoffActive(false);
     }
   }, [authUserId, kickoffActive]);
+
+  useEffect(() => {
+    const msg = returnWelcomeMessage?.trim();
+    if (!msg || kickoffActive || returnWelcomeShownRef.current) return;
+    returnWelcomeShownRef.current = true;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `return-welcome-${Date.now()}`,
+        role: "assistant",
+        content: msg,
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }, [returnWelcomeMessage, kickoffActive]);
 
   useEffect(() => {
     voiceRepliesEnabledRef.current = replyMode === "voice";
@@ -1587,7 +1607,17 @@ export function ChatInterface({
     clearCareerKickoffProgress();
     clearClientOnboardingComplete();
     setKickoffActive(false);
-  }, [authUserId]);
+    void fetchMyProfile()
+      .then((profile) => {
+        const title =
+          profile?.candidate?.looking_for?.trim() ||
+          profile?.candidate?.current_title?.trim();
+        if (title) {
+          void sendMessage(`Find ${title} roles in my market.`);
+        }
+      })
+      .catch(() => undefined);
+  }, [authUserId, sendMessage]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 

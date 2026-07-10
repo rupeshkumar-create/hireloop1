@@ -48,7 +48,7 @@ export async function warmupChatContext(
     const [profileRes, intelRes, apiWarmup, pathRes] = await Promise.allSettled([
       fetchMyProfile(),
       fetchCareerIntelligence(),
-      prefetchAaryaWarmup({ includeJobs: false }),
+      prefetchAaryaWarmup({ includeJobs: true }),
       fetchCareerPath().catch(() => null),
     ]);
 

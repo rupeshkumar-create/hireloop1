@@ -521,6 +521,13 @@ export function CareerKickoffFlow({
           >
             Continue to career paths
           </Button>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="w-full text-center text-small text-ink-500 hover:text-ink-900 transition-colors"
+          >
+            Skip — show me jobs now
+          </button>
         </>
       )}
 

@@ -47,6 +47,7 @@ LINKDAPI_ENRICH = "linkdapi_enrich"
 HM_ENRICH = "hm_enrich"
 INTERVIEW_REMINDER = "interview_reminder"
 AARYA_WEEKLY_DIGEST = "aarya_weekly_digest"
+AARYA_DAILY_DIGEST = "aarya_daily_digest"
 FIRECRAWL_JD_BACKFILL = "firecrawl_jd_backfill"
 FIRECRAWL_COMPANY_INTEL = "firecrawl_company_intel"
 
@@ -63,6 +64,7 @@ _INTERACTIVE_JOB_KINDS = frozenset(
         TAILORED_RESUME,
         CAREER_PATH_RESUMES,
         LEARNING_ROADMAP,
+        AARYA_DAILY_DIGEST,
     }
 )
 # Heavy kinds run on the single heavy lane so they cannot block interactive kits.
@@ -533,6 +535,18 @@ async def _handle_job_ingest(settings: Settings, payload: dict[str, Any]) -> Non
             time_range=str(payload.get("time_range") or settings.google_jobs_time_range),
             force_refresh=bool(payload.get("force_refresh")),
         )
+    # R2: fresh inventory → re-embed jobs + recompute scores so day-2 feeds update.
+    try:
+        async with pool.acquire() as conn:
+            await enqueue_job(
+                conn,
+                kind=MATCH_EMBED_ALL,
+                payload={},
+                idempotency_key=f"post_ingest_embed:{datetime.now(UTC).strftime('%Y-%m-%d')}",
+                run_after=datetime.now(UTC) + timedelta(minutes=5),
+            )
+    except Exception as exc:
+        logger.warning("post_ingest_embed_enqueue_failed", error=str(exc)[:200])
 
 
 async def _handle_linkdapi_enrich(settings: Settings, payload: dict[str, Any]) -> None:
@@ -574,6 +588,17 @@ async def _handle_aarya_weekly_digest(settings: Settings, payload: dict[str, Any
     async with pool.acquire() as conn:
         await send_weekly_digest(conn, settings, user_id=user_id)
         await schedule_weekly_digest(conn, user_id=user_id, first_run_days=7)
+
+
+async def _handle_aarya_daily_digest(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.retention import schedule_daily_digest, send_daily_match_digest
+
+    user_id = str(payload["user_id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        await send_daily_match_digest(conn, settings, user_id=user_id)
+        await schedule_daily_digest(conn, user_id=user_id, first_run_hours=24)
 
 
 async def _handle_firecrawl_jd_backfill(settings: Settings, payload: dict[str, Any]) -> None:
@@ -636,6 +661,7 @@ _HANDLERS: dict[str, Handler] = {
     HM_ENRICH: _handle_hm_enrich,
     INTERVIEW_REMINDER: _handle_interview_reminder,
     AARYA_WEEKLY_DIGEST: _handle_aarya_weekly_digest,
+    AARYA_DAILY_DIGEST: _handle_aarya_daily_digest,
     FIRECRAWL_JD_BACKFILL: _handle_firecrawl_jd_backfill,
     FIRECRAWL_COMPANY_INTEL: _handle_firecrawl_company_intel,
 }
@@ -796,9 +822,11 @@ async def run_background_worker(
             if _time.monotonic() >= next_sweep_at:
                 next_sweep_at = _time.monotonic() + sweep_interval_s
                 from hireloop_api.services.intro_followups import run_intro_followup_sweep
+                from hireloop_api.services.retention import run_retention_sweep
 
                 async with pool.acquire() as conn:
                     nudged = await run_intro_followup_sweep(conn, settings)
+                    retention = await run_retention_sweep(conn, settings)
                     # Bounded retention for the parse cache (hash-keyed, so it
                     # can't be purged per-account — the TTL bounds it instead).
                     await conn.execute(
@@ -807,6 +835,8 @@ async def run_background_worker(
                     )
                 if nudged:
                     logger.info("intro_followup_sweep_done", nudged=nudged)
+                if any(retention.values()):
+                    logger.info("retention_sweep_done", **retention)
         except Exception as exc:
             logger.error("background_worker_poll_error", error=str(exc)[:300])
 

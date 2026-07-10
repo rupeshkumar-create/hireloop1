@@ -304,8 +304,9 @@ async def get_access_status(
 async def mark_visit(
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Track candidate returns so the UI can surface fresh jobs."""
+    """Track candidate returns. Call after match feed loads so ``last_visit_at`` stays meaningful."""
     user_id = uuid.UUID(str(current_user["id"]))
     await db.execute(
         """
@@ -316,6 +317,52 @@ async def mark_visit(
         user_id,
     )
     return {"ok": True}
+
+
+@router.get("/return-summary")
+async def get_return_summary(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Read-only return visit stats for proactive Aarya copy (before visit is recorded)."""
+    from hireloop_api.services.retention import fetch_return_summary
+
+    return await fetch_return_summary(db, user_id=uuid.UUID(str(current_user["id"])), settings=settings)
+
+
+class WebPushSubscriptionRequest(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+    user_agent: str | None = None
+
+
+@router.post("/web-push/subscribe")
+async def subscribe_web_push(
+    body: WebPushSubscriptionRequest,
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """R3 stub: register a web push endpoint for match alerts (delivery wired later)."""
+    user_id = uuid.UUID(str(current_user["id"]))
+    await db.execute(
+        """
+        INSERT INTO public.web_push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
+        VALUES ($1::uuid, $2, $3, $4, $5)
+        ON CONFLICT (user_id, endpoint) DO UPDATE
+        SET p256dh = EXCLUDED.p256dh,
+            auth = EXCLUDED.auth,
+            user_agent = EXCLUDED.user_agent,
+            updated_at = NOW()
+        """,
+        user_id,
+        body.endpoint.strip(),
+        body.p256dh.strip(),
+        body.auth.strip(),
+        body.user_agent,
+    )
+    return {"ok": True, "subscribed": True}
 
 
 @router.patch("/market")
@@ -1705,8 +1752,10 @@ async def record_onboarding_consent(
             )
             try:
                 from hireloop_api.services.notifications import schedule_weekly_digest
+                from hireloop_api.services.retention import schedule_daily_digest
 
                 await schedule_weekly_digest(db, user_id=str(user_id), first_run_days=7)
+                await schedule_daily_digest(db, user_id=str(user_id), first_run_hours=24)
             except Exception as exc:
                 logger.warning("weekly_digest_schedule_failed", error=str(exc)[:200])
             if enrichment.get("linkedin_enrichment_scheduled") and enrichment.get("linkedin_url"):
@@ -1736,6 +1785,7 @@ async def complete_onboarding(
     request: Request,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Mark candidate onboarding wizard complete (server-side gate)."""
     user_id = uuid.UUID(str(current_user["id"]))
@@ -1861,8 +1911,36 @@ async def complete_onboarding(
                 },
                 idempotency_key=f"onboarding_path_ingest:{candidate_id}",
             )
+        try:
+            from hireloop_api.services.retention import schedule_daily_digest
 
-    return {"ok": True, "onboarding_complete": True, "market": market}
+            await schedule_daily_digest(db, user_id=str(user_id), first_run_hours=24)
+        except Exception as exc:
+            logger.warning("daily_digest_schedule_failed", error=str(exc)[:200])
+
+    starter_jobs: list[dict] = []
+    try:
+        from hireloop_api.services.instant_shelf import fetch_instant_shelf
+
+        starter_jobs = await fetch_instant_shelf(
+            db,
+            user_id=str(user_id),
+            settings=settings,
+            limit=10,
+        )
+    except Exception as exc:
+        logger.warning(
+            "onboarding_instant_shelf_failed",
+            user_id=str(user_id),
+            error=str(exc)[:200],
+        )
+
+    return {
+        "ok": True,
+        "onboarding_complete": True,
+        "market": market,
+        "starter_jobs": starter_jobs,
+    }
 
 
 @router.get("/notification-prefs")

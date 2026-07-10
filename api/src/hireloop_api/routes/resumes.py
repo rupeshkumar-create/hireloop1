@@ -92,6 +92,7 @@ class ResumeStatusResponse(BaseModel):
 class ApplyToProfileResponse(BaseModel):
     message: str
     fields_updated: list[str]
+    starter_jobs: list[dict] = []
 
 
 async def _ensure_candidate_for_resume_upload(
@@ -859,7 +860,25 @@ async def apply_to_profile(
         idempotency_key=f"aarya_auto_ingest:{candidate_id}",
     )
 
+    starter_jobs: list[dict] = []
+    try:
+        from hireloop_api.services.instant_shelf import fetch_instant_shelf
+
+        starter_jobs = await fetch_instant_shelf(
+            db,
+            user_id=user_id,
+            settings=settings,
+            limit=10,
+        )
+    except Exception as exc:
+        logger.warning(
+            "apply_profile_instant_shelf_failed",
+            candidate_id=candidate_id,
+            error=str(exc)[:200],
+        )
+
     return ApplyToProfileResponse(
         message=f"Profile updated with {len(fields_updated)} fields from your resume.",
         fields_updated=fields_updated,
+        starter_jobs=starter_jobs,
     )

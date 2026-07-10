@@ -49,6 +49,8 @@ export type MatchedJob = {
   triage_notes?: string | null;
   explanation: string | null;
   computed_at: string;
+  // Retention: jobs new since the candidate's last dashboard visit.
+  is_new_since_visit?: boolean;
   // Retention: job is new to this candidate (not previously surfaced).
   is_new_for_you?: boolean;
   first_seen_at?: string | null;

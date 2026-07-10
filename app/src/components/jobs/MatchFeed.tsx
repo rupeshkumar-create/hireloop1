@@ -86,6 +86,13 @@ const NEW_SECTION: FeedSection = {
   jobs: [],
 };
 
+const SINCE_VISIT_SECTION: FeedSection = {
+  key: "_since_visit",
+  label: "New since your last visit",
+  description: "Posted or ranked since you were last here.",
+  jobs: [],
+};
+
 /** Group jobs into ordered confidence-tier sections; untiered (load-more) last. */
 function groupByTier(jobs: MatchedJob[]): FeedSection[] {
   const buckets = new Map<string, MatchedJob[]>();
@@ -107,9 +114,11 @@ function groupByTier(jobs: MatchedJob[]): FeedSection[] {
 
 function groupWithNewSection(jobs: MatchedJob[], options: { enabled: boolean }): FeedSection[] {
   if (!options.enabled) return groupByTier(jobs);
-  const fresh = jobs.filter((j) => Boolean(j.is_new_for_you));
-  const rest = jobs.filter((j) => !j.is_new_for_you);
+  const sinceVisit = jobs.filter((j) => Boolean(j.is_new_since_visit));
+  const fresh = jobs.filter((j) => Boolean(j.is_new_for_you) && !j.is_new_since_visit);
+  const rest = jobs.filter((j) => !j.is_new_for_you && !j.is_new_since_visit);
   const out: FeedSection[] = [];
+  if (sinceVisit.length) out.push({ ...SINCE_VISIT_SECTION, jobs: sinceVisit });
   if (fresh.length) out.push({ ...NEW_SECTION, jobs: fresh });
   out.push(...groupByTier(rest));
   return out;

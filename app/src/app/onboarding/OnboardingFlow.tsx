@@ -38,6 +38,8 @@ import {
 } from "@/lib/api/onboardingProfile";
 import { invalidateProfileCache } from "@/lib/api/profile";
 import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
+import { storeStarterJobs } from "@/lib/auth/starter-jobs";
+import type { MatchedJob } from "@/lib/api/matches";
 import { createClient } from "@/lib/supabase/client";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { FadeUp } from "@/components/ui/motion";
@@ -234,9 +236,15 @@ function ActivationStep({
           market,
         }),
       });
+      const completeData = (await completeRes.json().catch(() => ({}))) as {
+        detail?: string;
+        starter_jobs?: MatchedJob[];
+      };
       if (!completeRes.ok) {
-        const data = (await completeRes.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail ?? "Couldn't finish activation.");
+        throw new Error(completeData.detail ?? "Couldn't finish activation.");
+      }
+      if (completeData.starter_jobs?.length) {
+        storeStarterJobs(completeData.starter_jobs);
       }
 
       invalidateProfileCache();

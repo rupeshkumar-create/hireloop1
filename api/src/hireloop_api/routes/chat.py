@@ -59,7 +59,6 @@ from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
 )
-from hireloop_api.services.matching import MatchingEngine
 from hireloop_api.services.memory import (
     CandidateMemoryService,
     format_known_facts,
@@ -471,6 +470,117 @@ async def _enqueue_live_job_ingest_for_search(
     )
 
 
+async def _enqueue_background_match_embed(
+    db: asyncpg.Connection, candidate_id: str
+) -> None:
+    """Queue full embed + score instead of blocking chat on score_candidate(100)."""
+    from hireloop_api.services.background_jobs import MATCH_EMBED_CANDIDATE, enqueue_job
+
+    ms_count = await db.fetchval(
+        """
+        SELECT count(*) FROM public.match_scores
+        WHERE candidate_id = $1::uuid
+        """,
+        uuid.UUID(candidate_id),
+    )
+    if ms_count:
+        return
+    await enqueue_job(
+        db,
+        kind=MATCH_EMBED_CANDIDATE,
+        payload={"candidate_id": candidate_id},
+        idempotency_key=f"chat_match_embed:{candidate_id}",
+    )
+
+
+def _build_job_search_deterministic_reply(
+    *,
+    search_title: str | None,
+    search_city: str | None,
+    job_cards: list[dict],
+    fresh_jobs: bool,
+    apify_configured: bool,
+) -> tuple[str | None, bool]:
+    """Return (assistant_reply, background_ingest_pending) for explicit job search."""
+    if search_title is None:
+        return None, False
+    location_text = f" in {search_city}" if search_city else ""
+    if job_cards:
+        if fresh_jobs:
+            return (
+                f"Here are more roles for {search_title or 'your profile'}{location_text} — "
+                "new matches you haven't seen in this chat yet.",
+                False,
+            )
+        return (
+            f"I found matching roles for {search_title or 'your profile'}{location_text}. "
+            "I’ve added the best matches below — use Save, Request intro, or Apply on any card.",
+            False,
+        )
+    if apify_configured:
+        return (
+            f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
+            "but I couldn’t find live matches yet. "
+            "I’m pulling fresh openings in the background — try again in a minute, "
+            "or widen the role title or location.",
+            True,
+        )
+    return (
+        f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
+        "but I couldn’t find live matches yet. "
+        "Try widening the role title or location and I’ll search again.",
+        False,
+    )
+
+
+async def _resolve_turn_job_cards(
+    pool: asyncpg.Pool,
+    *,
+    wants_jobs: bool,
+    user_intent: str,
+    search_title: str | None,
+    search_city: str | None,
+    candidate_id: str,
+    user_id: str,
+    conversation_id: str,
+    settings: Settings,
+    exclude_job_ids: list[str],
+    prefetched_seed: list[dict],
+) -> list[dict]:
+    """Run job_search after the first SSE byte for job-intent turns."""
+    if not wants_jobs:
+        return []
+    if user_intent == "job_search" and search_title:
+        async with pool.acquire() as db:
+            js_kwargs: dict[str, object] = {"query_text": search_title}
+            if search_city:
+                js_kwargs["location_city"] = search_city
+            if exclude_job_ids:
+                js_kwargs["exclude_job_ids"] = exclude_job_ids
+            try:
+                js_result = await aarya_tools.job_search(
+                    db,
+                    user_id,
+                    conversation_id,
+                    settings=settings,
+                    **js_kwargs,
+                )
+                if isinstance(js_result, dict) and js_result.get("job_cards"):
+                    return list(js_result["job_cards"])
+            except Exception as exc:
+                logger.warning(
+                    "stream_job_search_failed",
+                    candidate_id=candidate_id,
+                    error=str(exc)[:200],
+                )
+    if prefetched_seed:
+        return prefetched_seed
+    if user_intent == "job_search":
+        async with pool.acquire() as db:
+            return await _prefetch_top_jobs(db, candidate_id, limit=10)
+    return []
+
+
 @router.get("/warmup")
 async def chat_warmup(
     include_jobs: bool = Query(default=False),
@@ -680,7 +790,6 @@ async def send_message(
         )
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
-        prefetched_jobs = await _prefetch_top_jobs(db, candidate_id, limit=5)
 
         user_msg_id = str(uuid.uuid4())
         await db.execute(
@@ -734,24 +843,11 @@ async def send_message(
 
         user_intent = _detect_likely_intent(body.content)
         wants_jobs = user_intent == "job_search" or bool(career_path_just_prioritized)
+        prefetched_jobs: list[dict] = []
+        if wants_jobs and user_intent != "job_search":
+            prefetched_jobs = await _prefetch_top_jobs(db, candidate_id, limit=5)
         if wants_jobs:
-            ms_count = await db.fetchval(
-                """
-                SELECT count(*) FROM public.match_scores
-                WHERE candidate_id = $1::uuid
-                """,
-                uuid.UUID(candidate_id),
-            )
-            if not ms_count:
-                try:
-                    engine = MatchingEngine(db)
-                    await engine.score_candidate(candidate_id, limit=100)
-                except Exception as exc:
-                    logger.warning(
-                        "pre_job_search_scoring_failed",
-                        candidate_id=candidate_id,
-                        error=str(exc)[:200],
-                    )
+            await _enqueue_background_match_embed(db, candidate_id)
 
         search_title = resolve_job_search_query(
             body.content,
@@ -796,61 +892,8 @@ async def send_message(
                         search_title=search_title,
                         error=str(exc)[:200],
                     )
-            try:
-                js_kwargs: dict[str, object] = {
-                    "query_text": search_title,
-                }
-                if city:
-                    js_kwargs["location_city"] = city
-                if exclude_job_ids:
-                    js_kwargs["exclude_job_ids"] = exclude_job_ids
-                js_result = await aarya_tools.job_search(
-                    db,
-                    str(current_user["id"]),
-                    conversation_id,
-                    settings=settings,
-                    **js_kwargs,
-                )
-                if isinstance(js_result, dict) and js_result.get("job_cards"):
-                    prefetched_jobs = list(js_result["job_cards"])
-            except Exception as exc:
-                logger.warning(
-                    "pre_turn_job_search_failed",
-                    candidate_id=candidate_id,
-                    error=str(exc)[:200],
-                )
 
-        if wants_jobs and not prefetched_jobs and settings.apify_token:
-            from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
-
-            try:
-                await enqueue_job(
-                    db,
-                    kind=CAREER_PATH_INGEST,
-                    payload={
-                        "candidate_id": candidate_id,
-                        "derive_from_candidate": True,
-                        "force_refresh": True,
-                        "user_id": str(current_user["id"]),
-                        "session_id": conversation_id,
-                        **(
-                            {"requested_titles": [search_title]}
-                            if search_title and search_title.strip()
-                            else {}
-                        ),
-                    },
-                    idempotency_key=(
-                        _job_ingest_search_key(candidate_id, search_title)
-                        if search_title and search_title.strip()
-                        else f"career_path_ingest:{candidate_id}"
-                    ),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "pre_turn_career_ingest_enqueue_failed",
-                    candidate_id=candidate_id,
-                    error=str(exc)[:200],
-                )
+        # job_search runs after the first SSE byte (stream-first) — see event_stream.
 
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
@@ -908,44 +951,11 @@ async def send_message(
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
-    deterministic_job_reply: str | None = None
-    background_ingest_pending = False
     application_kit_job_ids = (
         _extract_application_kit_job_ids(body.content)
         if user_intent == "job_application"
         else []
     )
-    if search_title is not None and user_intent == "job_search":
-        location_text = f" in {search_city}" if search_city else ""
-        if prefetched_jobs:
-            if fresh_jobs:
-                deterministic_job_reply = (
-                    f"Here are more roles for {search_title or 'your profile'}{location_text} — "
-                    "new matches you haven't seen in this chat yet."
-                )
-            else:
-                deterministic_job_reply = (
-                    f"I found matching roles for {search_title or 'your profile'}{location_text}. "
-                    "I’ve added the best matches below — use Save, Request intro, or Apply on any card."
-                )
-        else:
-            # Only promise a background pull when a path/generic ingest can
-            # actually run; otherwise the copy overpromises.
-            will_background_ingest = bool(settings.apify_token)
-            background_ingest_pending = will_background_ingest
-            if will_background_ingest:
-                deterministic_job_reply = (
-                    f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
-                    "but I couldn’t find live matches yet. "
-                    "I’m pulling fresh openings in the background — try again in a minute, "
-                    "or widen the role title or location."
-                )
-            else:
-                deterministic_job_reply = (
-                    f"I searched for {search_title or 'roles matching your profile'}{location_text}, "
-                    "but I couldn’t find live matches yet. "
-                    "Try widening the role title or location and I’ll search again."
-                )
 
     logger.info(
         "aarya_turn_start",
@@ -957,15 +967,86 @@ async def send_message(
     async def event_stream() -> AsyncIterator[str]:
         full_response = ""
         last_msg_id: str | None = None
+        stream_jobs = list(prefetched_jobs)
+        deterministic_job_reply: str | None = None
+        background_ingest_pending = False
         try:
+            first_status = (
+                "Searching jobs…"
+                if user_intent == "job_search"
+                else ("Thinking… (~3s)…" if voice_mode else "Thinking…")
+            )
             yield sse_status(
-                "Thinking… (~3s)…" if voice_mode else "Thinking…",
+                first_status,
                 spoken_filler="One moment." if voice_mode else None,
-                eta_sec=3,
+                eta_sec=3 if user_intent != "job_search" else 5,
                 hinglish_hint=hinglish,
             )
+
+            if wants_jobs and user_intent == "job_search":
+                stream_jobs = await _resolve_turn_job_cards(
+                    pool,
+                    wants_jobs=wants_jobs,
+                    user_intent=user_intent,
+                    search_title=search_title,
+                    search_city=search_city,
+                    candidate_id=candidate_id,
+                    user_id=str(current_user["id"]),
+                    conversation_id=conversation_id,
+                    settings=settings,
+                    exclude_job_ids=exclude_job_ids,
+                    prefetched_seed=prefetched_jobs,
+                )
+                if not stream_jobs and settings.apify_token:
+                    from hireloop_api.services.background_jobs import (
+                        CAREER_PATH_INGEST,
+                        enqueue_job,
+                    )
+
+                    try:
+                        async with pool.acquire() as db:
+                            await enqueue_job(
+                                db,
+                                kind=CAREER_PATH_INGEST,
+                                payload={
+                                    "candidate_id": candidate_id,
+                                    "derive_from_candidate": True,
+                                    "force_refresh": True,
+                                    "user_id": str(current_user["id"]),
+                                    "session_id": conversation_id,
+                                    **(
+                                        {"requested_titles": [search_title]}
+                                        if search_title and search_title.strip()
+                                        else {}
+                                    ),
+                                },
+                                idempotency_key=(
+                                    _job_ingest_search_key(candidate_id, search_title)
+                                    if search_title and search_title.strip()
+                                    else f"career_path_ingest:{candidate_id}"
+                                ),
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "stream_career_ingest_enqueue_failed",
+                            candidate_id=candidate_id,
+                            error=str(exc)[:200],
+                        )
+                deterministic_job_reply, background_ingest_pending = (
+                    _build_job_search_deterministic_reply(
+                        search_title=search_title,
+                        search_city=search_city,
+                        job_cards=stream_jobs,
+                        fresh_jobs=fresh_jobs,
+                        apify_configured=bool(settings.apify_token),
+                    )
+                )
+                initial_state["prefetched_jobs"] = (
+                    stream_jobs if include_prefetch else []
+                )
+
             if user_intent == "job_search":
-                if include_prefetch and prefetched_jobs:
+                if include_prefetch and stream_jobs:
                     yield sse_status(
                         "Ranking your best matches…",
                         eta_sec=5,
@@ -982,14 +1063,14 @@ async def send_message(
                         eta_sec=90,
                         hinglish_hint=hinglish,
                     )
-                else:
+                elif wants_jobs:
                     yield sse_status(
                         "Searching roles in your market…",
                         eta_sec=15,
                         hinglish_hint=hinglish,
                     )
-            if include_prefetch and prefetched_jobs:
-                yield sse_jobs(prefetched_jobs)
+            if include_prefetch and stream_jobs:
+                yield sse_jobs(stream_jobs)
             if application_kit_job_ids:
                 yield sse_status(
                     tool_status_label("prepare_application_kit", voice_mode=voice_mode),
@@ -1001,15 +1082,25 @@ async def send_message(
                     eta_sec=tool_status_eta("prepare_application_kit"),
                     hinglish_hint=hinglish,
                 )
+                from hireloop_api.services.background_jobs import APPLICATION_KIT, enqueue_job
+
                 async with pool.acquire() as db:
-                    result = await aarya_tools.prepare_application_kit(
-                        db,
-                        str(current_user["id"]),
-                        conversation_id,
-                        settings,
-                        job_ids=application_kit_job_ids,
-                    )
-                full_response = _build_application_kit_reply(result)
+                    for job_id in application_kit_job_ids:
+                        await enqueue_job(
+                            db,
+                            kind=APPLICATION_KIT,
+                            payload={
+                                "candidate_id": candidate_id,
+                                "job_id": job_id,
+                            },
+                            idempotency_key=f"application_kit:{candidate_id}:{job_id}",
+                            max_attempts=3,
+                        )
+                full_response = (
+                    "I'm building your application kit in the background — "
+                    "I'll add the cards here as soon as they're ready. "
+                    "You can also open the Jobs panel in a minute to download everything."
+                )
                 yield sse_text(full_response)
                 try:
                     await _persist_assistant_reply(
