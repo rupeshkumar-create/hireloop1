@@ -209,29 +209,31 @@ async def send_recruiter_invite_email(
     job_title: str,
     cta_url: str,
 ) -> bool:
-    """
-    Invite an unregistered hiring manager to view a candidate intro (R9 transactional).
+    """Invite an unregistered hiring manager to view a candidate intro (R9 transactional)."""
+    from hireloop_api.services.email.brand_email import brand_shell, paragraph
 
-    Prefer Resend/SMTP HTML — same provider as Supabase Auth signup OTP when
-    ``RESEND_API_KEY`` + ``RESEND_FROM_EMAIL`` match the Supabase custom SMTP setup.
-    SendGrid templates are used only when a real API key and template ID exist.
-    """
     template_id = settings.sg_template_recruiter_invite or settings.sg_template_intro_status
     subject = f"{candidate_name} wants an intro — {job_title}"
     body_html = (
-        f"<p style='font-size:14px;line-height:1.6'><strong>{candidate_name}</strong> "
-        f"requested an intro for <strong>{job_title}</strong> on Hireschema.</p>"
-        "<p style='font-size:14px;line-height:1.6'>You're not on Hireschema yet — "
-        "accept the invite to view their profile and start a conversation.</p>"
+        paragraph(
+            f"<strong>{candidate_name}</strong> requested an intro for "
+            f"<strong>{job_title}</strong> on Hireschema."
+        )
+        + paragraph(
+            "You're not on Hireschema yet — accept the invite to view their profile "
+            "and start a conversation."
+        )
     )
-    html = _email_shell(
+    app_base = cta_url.split("/recruiter")[0] if "/recruiter" in cta_url else "https://www.hireschema.com"
+    html = brand_shell(
         f"Hi {invited_name or 'there'}, a candidate wants to connect",
         body_html,
         cta_url,
         "View candidate & accept invite",
+        app_base=app_base,
+        preheader=f"{candidate_name} requested an intro for {job_title}.",
     )
 
-    # Same path as signup OTP: Resend (or custom SMTP) from rupesh.kumar@candidate.ly, etc.
     if _html_email_configured(settings):
         sent = await _send_html_email(
             settings,

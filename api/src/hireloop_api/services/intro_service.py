@@ -111,7 +111,36 @@ def _app_base_url() -> str:
     for origin in origins:
         if origin.startswith("http") and "localhost" not in origin:
             return origin.rstrip("/")
-    return "https://hireschema.com"
+    return "https://www.hireschema.com"
+
+
+async def _confirm_intro_to_candidate(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    job: asyncpg.Record,
+) -> None:
+    """Best-effort branded email when a candidate requests an intro."""
+    try:
+        from hireloop_api.services.email.lifecycle_emails import notify_intro_requested_to_candidate
+
+        company_name = None
+        if job["company_id"]:
+            co = await db.fetchrow(
+                "SELECT name FROM public.companies WHERE id = $1::uuid",
+                job["company_id"],
+            )
+            company_name = co["name"] if co else None
+        settings = get_settings()
+        await notify_intro_requested_to_candidate(
+            db,
+            settings,
+            user_id=user_id,
+            job_title=str(job["title"] or "this role"),
+            company_name=company_name,
+        )
+    except Exception as exc:
+        logger.warning("intro_confirmation_email_failed", error=str(exc)[:200])
 
 
 async def _candidate_by_user(db: asyncpg.Connection, user_id: str) -> asyncpg.Record | None:
@@ -174,64 +203,17 @@ async def _notify_registered_recruiter_intro(
     candidate_name: str | None,
     job_title: str | None,
 ) -> bool:
-    """
-    Transactional email when a candidate requests an in-app intro (R9).
-    Degrades gracefully when SendGrid is not configured.
-    """
-    row = await db.fetchrow(
-        """
-        SELECT u.email, u.full_name
-        FROM public.recruiters r
-        JOIN public.users u ON u.id = r.user_id
-        WHERE r.id = $1::uuid AND r.deleted_at IS NULL
-        """,
-        recruiter_id,
-    )
-    if not row or not row["email"]:
-        return False
+    """Transactional email when a candidate requests an in-app intro (Resend HTML)."""
+    from hireloop_api.services.email.lifecycle_emails import send_recruiter_intro_request_email
 
     settings = get_settings()
-    api_key = getattr(settings, "sendgrid_api_key", "") or ""
-    template_id = (getattr(settings, "sg_template_recruiter_intro_request", "") or "") or (
-        getattr(settings, "sg_template_intro_status", "") or ""
+    return await send_recruiter_intro_request_email(
+        db,
+        settings,
+        recruiter_id=recruiter_id,
+        candidate_name=candidate_name,
+        job_title=job_title,
     )
-    cta_url = f"{_app_base_url()}/recruiter/inbox"
-    if not api_key or not template_id:
-        logger.info(
-            "recruiter_intro_notify_skipped",
-            reason="sendgrid_unconfigured",
-            recruiter_id=str(recruiter_id),
-            cta_url=cta_url,
-        )
-        return False
-
-    try:
-        from hireloop_api.services.email.sendgrid_service import SendGridService
-
-        svc = SendGridService(
-            api_key,
-            settings.sendgrid_from_email,
-            settings.sendgrid_from_name,
-        )
-        try:
-            sent = await svc.send_recruiter_intro_request(
-                to_email=row["email"],
-                recruiter_name=row["full_name"],
-                template_id=template_id,
-                candidate_name=candidate_name or "A candidate",
-                job_title=job_title or "your role",
-                cta_url=cta_url,
-            )
-        finally:
-            await svc.close()
-        return bool(sent)
-    except Exception as exc:
-        logger.error(
-            "recruiter_intro_notify_failed",
-            recruiter_id=str(recruiter_id),
-            error=str(exc),
-        )
-        return False
 
 
 async def create_candidate_intro(
@@ -317,6 +299,7 @@ async def create_candidate_intro(
                 candidate_name=candidate["full_name"],
                 job_title=job["title"],
             )
+            await _confirm_intro_to_candidate(db, user_id=user_id, job=job)
             return {
                 "intro_id": str(intro_id),
                 "status": "pending",
@@ -395,6 +378,7 @@ async def create_candidate_intro(
             candidate_name=candidate["full_name"],
             job=job,
         )
+        await _confirm_intro_to_candidate(db, user_id=user_id, job=job)
         return {
             "intro_id": str(intro_id),
             "status": "pending",
@@ -513,6 +497,7 @@ async def create_candidate_intro(
         )
     except Exception as exc:
         logger.debug("firecrawl_company_intel_enqueue_skipped", error=str(exc)[:120])
+    await _confirm_intro_to_candidate(db, user_id=user_id, job=job)
     hm_enrich_queued = hm_enrich_job_id is not None
     return {
         "intro_id": str(intro_id),
@@ -625,6 +610,39 @@ async def create_recruiter_intro(
         uuid.UUID(str(role_id)),
         uuid.UUID(str(candidate_id)),
     )
+
+    try:
+        job_row = await db.fetchrow(
+            """
+            SELECT j.title, c.name AS company_name
+            FROM public.jobs j
+            LEFT JOIN public.companies c ON c.id = j.company_id
+            WHERE j.id = $1::uuid
+            """,
+            job_id,
+        )
+        recruiter_user = await db.fetchrow(
+            """
+            SELECT u.full_name
+            FROM public.recruiters r
+            JOIN public.users u ON u.id = r.user_id
+            WHERE r.id = $1::uuid
+            """,
+            recruiter["id"],
+        )
+        from hireloop_api.services.email.lifecycle_emails import notify_recruiter_approach_to_candidate
+
+        settings = get_settings()
+        await notify_recruiter_approach_to_candidate(
+            db,
+            settings,
+            candidate_id=uuid.UUID(str(candidate_id)),
+            job_title=str(job_row["title"] if job_row else "a role"),
+            company_name=job_row["company_name"] if job_row else None,
+            recruiter_name=recruiter_user["full_name"] if recruiter_user else None,
+        )
+    except Exception as exc:
+        logger.warning("recruiter_approach_email_failed", error=str(exc)[:200])
 
     return {
         "intro_id": str(intro_id),

@@ -455,25 +455,51 @@ async def notify_job_match(
     }
 
     channels = ["in_app"]
+    first_job_email_sent = False
     if row["email"]:
-        email_result = await send_category_email(
-            db,
-            settings,
-            user_id=user_id,
-            category="job_match_alerts",
-            to_email=row["email"],
-            to_name=row["full_name"],
-            template_data={
-                "full_name": row["full_name"] or "there",
-                "job_title": title,
-                "company_name": company,
-                "score_pct": pct,
-                "cta_url": deep_link,
-            },
-            template_id=settings.sg_template_job_match_alert,
+        match_count = await db.fetchval(
+            """
+            SELECT count(*)::int FROM public.match_scores
+            WHERE candidate_id = $1::uuid AND overall_score >= $2
+            """,
+            uuid.UUID(candidate_id),
+            MATCH_NOTIFY_MIN_SCORE,
         )
-        if email_result.get("sent"):
-            channels.append("email")
+        if match_count == 1:
+            from hireloop_api.services.email.lifecycle_emails import send_first_job_found_email
+
+            first_result = await send_first_job_found_email(
+                db,
+                settings,
+                candidate_id=candidate_id,
+                job_id=job_id,
+                job_title=title,
+                company_name=company_name,
+                overall_score=overall_score,
+            )
+            if first_result.get("sent"):
+                channels.append("email")
+                first_job_email_sent = True
+
+        if not first_job_email_sent:
+            email_result = await send_category_email(
+                db,
+                settings,
+                user_id=user_id,
+                category="job_match_alerts",
+                to_email=row["email"],
+                to_name=row["full_name"],
+                template_data={
+                    "full_name": row["full_name"] or "there",
+                    "job_title": title,
+                    "company_name": company,
+                    "score_pct": pct,
+                    "cta_url": deep_link,
+                },
+                template_id=settings.sg_template_job_match_alert,
+            )
+            if email_result.get("sent"):
+                channels.append("email")
 
     wa_result = await send_whatsapp_if_allowed(
         db,
