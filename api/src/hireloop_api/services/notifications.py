@@ -67,7 +67,9 @@ async def _send_html(settings: Settings, *, to_email: str, subject: str, html: s
             from_email=settings.smtp_from or settings.smtp_user,
             from_name=settings.resend_from_name,
         )
-        return await svc.send(to_email=to_email, subject=subject, html=html)
+        if await svc.send(to_email=to_email, subject=subject, html=html):
+            return True
+        logger.info("smtp_send_fallback_resend", to_domain=to_email.split("@")[-1] if "@" in to_email else "")
     if settings.resend_api_key:
         svc = ResendService(
             settings.resend_api_key, settings.resend_from_email, settings.resend_from_name

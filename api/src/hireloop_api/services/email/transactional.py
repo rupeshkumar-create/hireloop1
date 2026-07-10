@@ -43,9 +43,8 @@ def _html_email_configured(settings: Settings) -> bool:
 async def _send_html_email(settings: Settings, *, to_email: str, subject: str, html: str) -> bool:
     """Send one HTML email via the best configured provider.
 
-    Order: generic SMTP (free, e.g. Gmail — delivers to any recipient) → Resend
-    (free tier mails only the account owner). Best-effort; returns False if no
-    provider is configured or the send fails.
+    Tries SMTP first when configured, then Resend if SMTP fails or is absent.
+    Best-effort; returns False if no provider succeeds.
     """
     if settings.smtp_host and settings.smtp_user and settings.smtp_password:
         svc = SmtpService(
@@ -56,7 +55,10 @@ async def _send_html_email(settings: Settings, *, to_email: str, subject: str, h
             from_email=settings.smtp_from,
             from_name=settings.resend_from_name,
         )
-        return await svc.send(to_email=to_email, subject=subject, html=html)
+        if await svc.send(to_email=to_email, subject=subject, html=html):
+            return True
+        logger.info("smtp_send_fallback_resend", to_domain=to_email.split("@")[-1] if "@" in to_email else "")
+
     if settings.resend_api_key:
         svc = ResendService(
             settings.resend_api_key, settings.resend_from_email, settings.resend_from_name

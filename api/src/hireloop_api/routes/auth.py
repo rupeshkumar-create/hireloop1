@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator, model_validator
 
 from hireloop_api.config import Settings, get_settings
@@ -33,7 +33,6 @@ from hireloop_api.deps import (
     get_current_user_with_supabase,
     get_db,
     get_db_optional,
-    get_db_pool,
     get_supabase_identity,
 )
 from hireloop_api.markets import normalize_market, validate_e164_phone
@@ -201,40 +200,39 @@ def _select_otp_provider(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
-async def _bootstrap_welcome_email(
+async def _send_signup_welcome_email(
+    db: asyncpg.Connection,
+    settings: Settings,
+    *,
     user_id: uuid.UUID,
     email: str | None,
     full_name: str | None,
     role: str,
 ) -> None:
-    """Fire-and-forget welcome email — must not block bootstrap response."""
-    settings = get_settings()
+    """Best-effort welcome email — must not block bootstrap or /me."""
     try:
-        pool = await get_db_pool(settings)
-        async with pool.acquire() as conn:
-            await ensure_default_notification_prefs(conn, user_id)
-            result = await maybe_send_signup_confirmation(
-                conn,
-                settings,
-                user_id=user_id,
-                email=email,
-                full_name=full_name,
-                role=role,
+        await ensure_default_notification_prefs(db, user_id)
+        result = await maybe_send_signup_confirmation(
+            db,
+            settings,
+            user_id=user_id,
+            email=email,
+            full_name=full_name,
+            role=role,
+        )
+        if not result.get("sent"):
+            logger.info(
+                "signup_welcome_email",
+                user_id=str(user_id),
+                **{k: result[k] for k in ("skipped",) if k in result},
             )
-            if not result.get("sent"):
-                logger.info(
-                    "bootstrap_welcome_email",
-                    user_id=str(user_id),
-                    **{k: result[k] for k in ("skipped",) if k in result},
-                )
     except Exception as exc:
-        logger.warning("signup_welcome_email_failed", error=str(exc)[:200])
+        logger.warning("signup_welcome_email_failed", user_id=str(user_id), error=str(exc)[:200])
 
 
 @router.post("/bootstrap", status_code=200)
 async def bootstrap_user(
     body: BootstrapRequest,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user_with_supabase),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
@@ -452,23 +450,18 @@ async def bootstrap_user(
     except Exception as exc:
         logger.warning("oauth_email_confirm_failed", user_id=str(user_id), error=str(exc)[:200])
 
-    # Welcome email once per account (deduped in consent_log) — also backfills seeded
-    # demo users who already had a candidate/recruiter row but never received welcome.
-    if current_user.get("email"):
-        try:
-            await ensure_default_notification_prefs(db, user_id)
-        except Exception as exc:
-            logger.warning(
-                "notification_prefs_seed_failed",
-                user_id=str(user_id),
-                error=str(exc)[:200],
-            )
-        background_tasks.add_task(
-            _bootstrap_welcome_email,
-            user_id,
-            current_user.get("email"),
-            current_user.get("full_name"),
-            effective_role,
+    # Welcome email once per account (deduped in consent_log).
+    welcome_email = current_user.get("email") or (supabase_user.get("email") if supabase_user else None)
+    if welcome_email:
+        await _send_signup_welcome_email(
+            db,
+            settings,
+            user_id=user_id,
+            email=welcome_email,
+            full_name=current_user.get("full_name")
+            or (supabase_user.get("user_metadata") or {}).get("full_name")
+            or (supabase_user.get("user_metadata") or {}).get("name"),
+            role=effective_role,
         )
 
     # `is_new_user` lets /auth/callback route first-time candidates into the
@@ -886,10 +879,23 @@ async def save_phone(
 async def get_me(
     current_user: dict[str, Any] = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Return current user profile."""
     user_id = uuid.UUID(str(current_user["id"]))
     has_candidate, has_recruiter = await user_profile_flags(db, user_id)
+
+    # Backfill welcome email if bootstrap background send was missed (deduped).
+    if current_user.get("email"):
+        await _send_signup_welcome_email(
+            db,
+            settings,
+            user_id=user_id,
+            email=current_user.get("email"),
+            full_name=current_user.get("full_name"),
+            role=str(current_user.get("role") or "candidate"),
+        )
+
     return {
         "id": str(current_user["id"]),
         "email": current_user["email"],
