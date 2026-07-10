@@ -76,3 +76,4 @@ infra/*.tfvars
 
 # Railway importer scratch dirs (use api/railway.ts instead)
 api/.railway-config-pull-*/
+.railway/migration-*.json

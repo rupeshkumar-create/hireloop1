@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Deploy the FastAPI backend to Railway (truthful-forgiveness / hireloop1).
+# Deploy the FastAPI backend to Railway (hireschema-api / hireloop1).
 # Must run from monorepo root — the service Root Directory is api/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-RAILWAY_PROJECT_ID="7f42f8d6-2192-4a15-912e-3d79a1869885"
-RAILWAY_ENVIRONMENT_ID="38fa0ffc-f032-4ed0-8ef8-1be3e7fee969"
-RAILWAY_SERVICE_ID="3e2955b3-628f-4855-8462-ccb93a258dc4"
+RAILWAY_PROJECT_ID="12e57bc0-382e-4743-8d49-3f764f166dc2"
+RAILWAY_ENVIRONMENT_ID="8bf81d4b-026d-4abe-8d8d-c22162ef783c"
+RAILWAY_SERVICE_ID="83b20792-09a5-4a7f-9a67-99374d2cf552"
 RAILWAY_DASHBOARD_URL="https://railway.com/project/${RAILWAY_PROJECT_ID}/service/${RAILWAY_SERVICE_ID}?environmentId=${RAILWAY_ENVIRONMENT_ID}"
 
 mkdir -p .railway

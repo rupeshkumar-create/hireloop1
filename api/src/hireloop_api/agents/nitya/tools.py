@@ -75,6 +75,7 @@ async def lookup_intro_request(
             j.id AS job_id, j.title AS job_title, j.description AS job_desc,
             j.seniority, j.ctc_min, j.ctc_max,
             co.name AS company_name,
+            co.id AS company_id,
             -- Hiring manager
             hm.id AS hm_id, hm.full_name AS hm_name, hm.title AS hm_title,
             hm.email AS hm_email, hm.email_verified,
@@ -97,6 +98,8 @@ async def lookup_intro_request(
         result["candidate_id"] = str(result["candidate_id"])
         result["job_id"] = str(result["job_id"])
         result["hm_id"] = str(result["hm_id"])
+        if result.get("company_id"):
+            result["company_id"] = str(result["company_id"])
         result["created_at"] = result["created_at"].isoformat()
         result["skills"] = list(result.get("skills") or [])
 
@@ -182,6 +185,18 @@ async def draft_intro_email(
 
     skills_str = ", ".join(skills[:8]) if skills else "various technologies"
 
+    company_research = ""
+    company_id = intro_context.get("company_id")
+    if company_id:
+        row = await db.fetchrow(
+            "SELECT apify_data FROM public.companies WHERE id = $1::uuid",
+            uuid.UUID(str(company_id)),
+        )
+        if row:
+            from hireloop_api.services.firecrawl.company_intel import get_company_intel_snippet
+
+            company_research = get_company_intel_snippet(row["apify_data"])
+
     system = SystemMessage(
         content="""You are Nitya, Hireschema's recruiter AI.
 Draft a warm, personalised cold intro email from the candidate to the hiring manager.
@@ -210,6 +225,7 @@ Experience: {years_exp} years
 
 Role: {job_title} at {company_name}
 Hiring Manager: {hm_name}{f", {hm_title}" if hm_title else ""}
+{f"Company research (from public web):{chr(10)}{company_research[:900]}" if company_research else ""}
 
 Make it feel like the candidate wrote it themselves after researching the company.
 """

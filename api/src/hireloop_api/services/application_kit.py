@@ -536,6 +536,10 @@ async def _prepare_application_kit_for_candidate_row(
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []
 
+    from hireloop_api.services.firecrawl.jd_fetcher import backfill_job_description
+
+    job = await backfill_job_description(db, job, settings, persist=True)
+
     # DB setup (fast) before parallel LLM work — asyncpg connections are not concurrent-safe.
     existing_resume = await _fetch_existing_tailored_resume(
         db, candidate_id=candidate_id, job_id=str(job["id"])

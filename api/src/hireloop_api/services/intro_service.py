@@ -503,6 +503,16 @@ async def create_candidate_intro(
             )
     except Exception as exc:  # enqueue is best-effort; Nitya may still handle it via NOTIFY
         logger.info("hm_enrich_enqueue_skipped", hm_id=str(hiring_manager_id), error=str(exc))
+    try:
+        from hireloop_api.services.firecrawl.company_intel import enqueue_company_intel_if_needed
+
+        await enqueue_company_intel_if_needed(
+            db,
+            company_id=job.get("company_id"),
+            settings=get_settings(),
+        )
+    except Exception as exc:
+        logger.debug("firecrawl_company_intel_enqueue_skipped", error=str(exc)[:120])
     hm_enrich_queued = hm_enrich_job_id is not None
     return {
         "intro_id": str(intro_id),

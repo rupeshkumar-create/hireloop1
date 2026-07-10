@@ -47,6 +47,8 @@ LINKDAPI_ENRICH = "linkdapi_enrich"
 HM_ENRICH = "hm_enrich"
 INTERVIEW_REMINDER = "interview_reminder"
 AARYA_WEEKLY_DIGEST = "aarya_weekly_digest"
+FIRECRAWL_JD_BACKFILL = "firecrawl_jd_backfill"
+FIRECRAWL_COMPANY_INTEL = "firecrawl_company_intel"
 
 Handler = Callable[[Settings, dict[str, Any]], Awaitable[None]]
 
@@ -574,6 +576,26 @@ async def _handle_aarya_weekly_digest(settings: Settings, payload: dict[str, Any
         await schedule_weekly_digest(conn, user_id=user_id, first_run_days=7)
 
 
+async def _handle_firecrawl_jd_backfill(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.firecrawl.jd_fetcher import run_jd_backfill_for_job
+
+    job_id = str(payload["job_id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        await run_jd_backfill_for_job(conn, job_id=job_id, settings=settings)
+
+
+async def _handle_firecrawl_company_intel(settings: Settings, payload: dict[str, Any]) -> None:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.firecrawl.company_intel import fetch_company_intel
+
+    company_id = str(payload["company_id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        await fetch_company_intel(conn, company_id=company_id, settings=settings)
+
+
 async def _handle_hm_enrich(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.deps import get_db_pool
     from hireloop_api.services.apify.hm_enricher import HMEnricher
@@ -614,6 +636,8 @@ _HANDLERS: dict[str, Handler] = {
     HM_ENRICH: _handle_hm_enrich,
     INTERVIEW_REMINDER: _handle_interview_reminder,
     AARYA_WEEKLY_DIGEST: _handle_aarya_weekly_digest,
+    FIRECRAWL_JD_BACKFILL: _handle_firecrawl_jd_backfill,
+    FIRECRAWL_COMPANY_INTEL: _handle_firecrawl_company_intel,
 }
 
 

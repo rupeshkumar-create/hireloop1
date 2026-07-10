@@ -19,6 +19,13 @@ export function isValidLinkedInUrl(url: string): boolean {
   return LINKEDIN_IN_RE.test(url.trim());
 }
 
+/** LinkedIn vanity slug from a profile URL, e.g. `rupesh-kumar`. */
+export function linkedInProfileId(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null;
+  const match = url.trim().match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  return match?.[1] ?? null;
+}
+
 /** Save the LinkedIn profile URL; the server enriches via Apify/LinkDAPI. */
 export async function saveLinkedInUrl(url: string): Promise<void> {
   const res = await apiAuthFetch("/api/v1/me/linkedin", {

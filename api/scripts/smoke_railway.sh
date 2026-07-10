@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Smoke-test the production Railway API (truthful-forgiveness / hireloop1).
-# Service: https://railway.com/project/7f42f8d6-2192-4a15-912e-3d79a1869885/service/3e2955b3-628f-4855-8462-ccb93a258dc4?environmentId=38fa0ffc-f032-4ed0-8ef8-1be3e7fee969
+# Service: https://railway.com/project/12e57bc0-382e-4743-8d49-3f764f166dc2/service/83b20792-09a5-4a7f-9a67-99374d2cf552?environmentId=8bf81d4b-026d-4abe-8d8d-c22162ef783c
 # Usage: ./scripts/smoke_railway.sh [RAILWAY_URL] [VERCEL_APP_URL]
 set -euo pipefail
 
-RAILWAY_HOST="${RAILWAY_HOST:-hireloop1-production.up.railway.app}"
+RAILWAY_HOST="${RAILWAY_HOST:-hireloop1-production-b8f8.up.railway.app}"
 RAILWAY_URL="${1:-https://${RAILWAY_HOST}}"
 VERCEL_URL="${2:-https://www.hireschema.com}"
 

@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     # No-cookie LinkedIn profile actor for candidate onboarding (R16).
     apify_linkedin_profile_actor: str = "dev_fusion/linkedin-profile-scraper"
 
+    # ── Firecrawl (web depth layer — JD backfill, company intel, portfolios) ─
+    # Complements Apify discovery: scrape apply_url / company sites to markdown.
+    # https://firecrawl.dev — set API key to enable; off when empty.
+    firecrawl_api_key: str = ""
+    firecrawl_enabled: bool = True
+
     # ── Legacy Fantastic.jobs env names ───────────────────────────────────────
     # Retained only so existing production env vars do not fail settings parsing.
     # Job ingestion ignores these and calls johnvc/Google-Jobs-Scraper instead.

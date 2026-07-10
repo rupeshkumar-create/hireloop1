@@ -10,13 +10,59 @@ from typing import Any
 import httpx
 import structlog
 
+from hireloop_api.config import Settings, get_settings
+
 logger = structlog.get_logger()
 
 _GITHUB_USER_RE = re.compile(r"github\.com/([A-Za-z0-9_-]+)/?", re.IGNORECASE)
 
 
-async def expand_profile_from_urls(urls: list[str]) -> dict[str, Any]:
+async def _expand_portfolio_firecrawl(url: str, settings: Settings) -> list[dict[str, str]]:
+    from hireloop_api.services.firecrawl.client import client_from_settings
+    from hireloop_api.services.firecrawl.url_policy import validate_firecrawl_url
+
+    client = client_from_settings(settings)
+    if client is None:
+        return []
+    try:
+        safe_url = validate_firecrawl_url(url)
+        result = await client.scrape_markdown(safe_url)
+    except Exception as exc:
+        logger.info("firecrawl_portfolio_failed", error=str(exc)[:120])
+        return []
+    finally:
+        await client.close()
+
+    text = str(result.get("markdown") or "").lower()
+    discovered: list[dict[str, str]] = []
+    for kw in (
+        "react",
+        "python",
+        "typescript",
+        "javascript",
+        "aws",
+        "kubernetes",
+        "sql",
+        "node",
+        "java",
+        "go",
+        "rust",
+        "docker",
+        "figma",
+        "product management",
+    ):
+        if kw in text:
+            discovered.append({"skill": kw, "source": f"portfolio:{url}"})
+    return discovered
+
+
+async def expand_profile_from_urls(
+    urls: list[str],
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Best-effort enrichment from public profile links."""
+    settings = settings or get_settings()
     discovered_skills: list[dict[str, str]] = []
     sources: list[dict[str, str]] = []
 
@@ -47,8 +93,12 @@ async def expand_profile_from_urls(urls: list[str]) -> dict[str, Any]:
                     logger.warning("github_expand_failed", error=str(exc)[:120])
                 continue
 
-            # Generic portfolio — fetch title/meta only
             if url.startswith("http"):
+                fc_skills = await _expand_portfolio_firecrawl(url, settings)
+                if fc_skills:
+                    discovered_skills.extend(fc_skills)
+                    sources.append({"type": "portfolio", "url": url, "via": "firecrawl"})
+                    continue
                 try:
                     res = await client.get(url, follow_redirects=True)
                     if res.status_code < 400:

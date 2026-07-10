@@ -1143,9 +1143,15 @@ class JobIngester:
         """
         inserted = updated = skipped = 0
         enriched = 0
+        jd_backfilled = 0
 
         for rec in records:
             try:
+                if jd_backfilled < _MAX_JD_ENRICH_PER_INGEST and self._settings:
+                    did_jd = await self._maybe_backfill_jd(rec)
+                    if did_jd:
+                        jd_backfilled += 1
+
                 if enriched < _MAX_JD_ENRICH_PER_INGEST:
                     did = await self._maybe_enrich_record(rec)
                     if did:
@@ -1235,11 +1241,49 @@ class JobIngester:
                     )
                     updated += 1
 
+                await self._maybe_enqueue_firecrawl_jd_backfill(rec)
+
             except Exception as exc:
                 logger.warning("job_upsert_failed", apify_id=rec.apify_job_id, error=str(exc))
                 skipped += 1
 
         return inserted, updated, skipped
+
+    async def _maybe_backfill_jd(self, rec: JobRecord) -> bool:
+        """Free-path JD backfill during ingest (Greenhouse/Lever/JSON-LD)."""
+        if not self._settings:
+            return False
+        from hireloop_api.services.firecrawl.jd_fetcher import enrich_job_record_from_url
+
+        return await enrich_job_record_from_url(
+            rec,
+            self._settings,
+            db=self._db,
+            allow_firecrawl=False,
+        )
+
+    async def _maybe_enqueue_firecrawl_jd_backfill(self, rec: JobRecord) -> None:
+        if not self._settings:
+            return
+        from hireloop_api.services.firecrawl.jd_fetcher import (
+            _enqueue_jd_backfill_job,
+            is_thin_description,
+        )
+        from hireloop_api.services.firecrawl.url_policy import is_scrapable_job_url
+
+        if not is_thin_description(rec.description) or not is_scrapable_job_url(rec.apply_url):
+            return
+        row = await self._db.fetchrow(
+            "SELECT id FROM public.jobs WHERE apify_job_id = $1",
+            rec.apify_job_id,
+        )
+        if not row:
+            return
+        await _enqueue_jd_backfill_job(
+            self._db,
+            job_id=str(row["id"]),
+            settings=self._settings,
+        )
 
     async def _maybe_enrich_record(self, rec: JobRecord) -> bool:
         """Fill missing skills/seniority from JD via LLM (ingest-time, capped)."""
