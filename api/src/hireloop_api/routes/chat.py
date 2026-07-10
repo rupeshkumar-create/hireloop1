@@ -37,7 +37,7 @@ from hireloop_api.deps import (
     serialize_row,
 )
 from hireloop_api.market_db import fetch_candidate_market
-from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.markets import currency_for_market, job_visible_for_market_sql, normalize_market
 from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
@@ -216,8 +216,15 @@ def _looks_incomplete_profile_reply(text: str) -> bool:
     return len(t) < 60
 
 
-def _build_profile_gap_reply(open_questions: list[str]) -> str:
+def _build_profile_gap_reply(open_questions: list[str], *, market: str = "IN") -> str:
     """Deterministic fallback when the LLM omits post-profile_read advice."""
+    m = normalize_market(market)
+    currency = currency_for_market(m)
+    salary_line = (
+        "1. Add your expected CTC range (LPA) so I can filter salary-fit roles.\n"
+        if m == "IN"
+        else f"1. Add your expected salary ({currency}/yr) so I can filter salary-fit roles.\n"
+    )
     if open_questions:
         lines = [
             "**What I found**",
@@ -240,11 +247,11 @@ def _build_profile_gap_reply(open_questions: list[str]) -> str:
         "**What I found**\n"
         "Your profile has the basics, but key matching fields are still empty.\n\n"
         "**What I recommend**\n"
-        "1. Add your expected CTC range (LPA) so I can filter salary-fit roles.\n"
+        f"{salary_line}"
         "2. List your top skills so semantic matching works better.\n"
         "3. Add notice period and preferred work mode (remote/hybrid/onsite).\n\n"
         "**What you can do next**\n"
-        "Tell me your target CTC and notice period — I'll update your profile."
+        "Tell me your target salary and notice period — I'll update your profile."
     )
 
 
@@ -659,6 +666,7 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Conversation not found")
 
         candidate_id = str(convo["candidate_id"])
+        candidate_market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
         memory_summary = await CandidateMemoryService.get_memory_summary(db, candidate_id)
         career_facts = await CandidateMemoryService.get_career_facts(db, candidate_id)
         display_name = await resolve_candidate_display_name(
@@ -1081,7 +1089,7 @@ async def send_message(
             if user_intent == "profile_improvement" and _looks_incomplete_profile_reply(
                 full_response
             ):
-                fallback = _build_profile_gap_reply(open_questions)
+                fallback = _build_profile_gap_reply(open_questions, market=candidate_market)
                 prefix = "\n\n" if full_response.strip() else ""
                 full_response = (
                     f"{full_response.rstrip()}{prefix}{fallback}"

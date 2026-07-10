@@ -62,7 +62,7 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 ## S02 — Phone OTP Verification (optional)  ✅ 🧪
 
-> Optional phone verification per market: IN (+91/MSG91), US (+1/Twilio), GB (+44/Twilio).
+> Optional phone verification: India (+91/MSG91) when configured. Other markets can use the app without SMS OTP.
 > Not required for signup — available in Settings when configured.
 
 **What's built:**
@@ -73,15 +73,14 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 **How to test:**
 ```
 1. Sign up via LinkedIn → complete onboarding (no phone step)
-2. Optional: verify phone from Settings when MSG91/Twilio keys are set
+2. Optional: verify phone from Settings when MSG91 keys are set (India +91 only)
 3. OTP received via SMS (dev: logged in API when ENVIRONMENT=development)
 ```
 
 **Env needed:**
 ```
-ENABLED_MARKETS=IN,US,GB
-MSG91_AUTH_KEY=...          # IN OTP
-TWILIO_VERIFY_SERVICE_SID=... # US/GB OTP (when configured)
+ENABLED_MARKETS=IN,US,GB,AT,DE,FR,AE,AU,CA,CH,NL,SG
+MSG91_AUTH_KEY=...          # IN OTP (+91 only)
 ```
 
 **DB check:**

@@ -118,14 +118,10 @@ across devices/accents). The recruiter-style mock-interview call reuses this.
 MSG91_AUTH_KEY=...
 MSG91_SENDER_ID=HLLOOP
 MSG91_WHATSAPP_NUMBER=...
-REQUIRE_PHONE_VERIFICATION=false   # ⚙️ prod should be true once a provider is live
-# Optional alternative OTP provider:
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_VERIFY_SERVICE_SID=...
+REQUIRE_PHONE_VERIFICATION=false   # ⚙️ prod should be true once MSG91 is live for +91
 ```
-🟢 Currently the phone number is captured but **not verified/sent** (MSG91 + Twilio both need a paid
-upgrade). WhatsApp notifications (P19) wait on the same MSG91 upgrade.
+🟢 Phone OTP is **India (+91) via MSG91 only**. Other markets use the app without SMS verification.
+WhatsApp notifications (P19) wait on MSG91 WABA approval.
 
 ## Supporting enrichment
 

@@ -16,7 +16,12 @@ from langchain_openai import ChatOpenAI
 
 from hireloop_api.config import Settings
 from hireloop_api.market_db import fetch_candidate_market
-from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.markets import (
+    MARKET_LABELS,
+    currency_for_market,
+    job_visible_for_market_sql,
+    normalize_market,
+)
 from hireloop_api.services.ai_context import compose_candidate_prompt
 from hireloop_api.services.application_dossier import build_dossier_snapshot
 from hireloop_api.services.ats_resume_check import run_ats_check
@@ -33,14 +38,28 @@ from hireloop_api.services.tailored_resume_profile import load_tailored_resume_p
 
 logger = structlog.get_logger()
 
-KIT_SYSTEM = """You prepare India job application assets for one candidate and one role.
+KIT_SYSTEM_BASE = """You prepare job application assets for one candidate and one role.
 Return ONLY valid JSON (no markdown fences):
 {
-  "cover_letter": "2-3 para formal cover letter; India context (LPA if relevant); truthful only",
+  "cover_letter": "2-3 para formal cover letter; use the candidate's home market context; truthful only",
   "interview_prep": "Markdown with ## Likely questions, ## STAR stories to rehearse,
    ## Role-specific talking points, ## Questions to ask the interviewer"
 }
 Never invent employers, degrees, dates, titles, or metrics the candidate does not have."""
+
+
+def _kit_system_prompt(market: str) -> str:
+    m = normalize_market(market)
+    label = MARKET_LABELS.get(m, m)
+    currency = currency_for_market(m)
+    if m == "IN":
+        comp_hint = "Use INR/LPA and India notice-period norms when relevant."
+    else:
+        comp_hint = f"Use {currency} annual salary framing for {label}; avoid India-only LPA unless the role is IN-based."
+    return (
+        f"{KIT_SYSTEM_BASE}\n"
+        f"Candidate home market: {label} ({m}). {comp_hint}"
+    )
 
 # Application kits run two LLM jobs (text assets + resume HTML). Use the fast
 # fallback model and a lower token cap — quality is fine for structured outputs.
@@ -89,11 +108,23 @@ def _fallback_cover_letter(profile: dict[str, Any], job: dict[str, Any]) -> str:
     )
 
 
-def _fallback_interview_prep(job: dict[str, Any]) -> str:
+def _fallback_interview_prep(job: dict[str, Any], *, market: str = "IN") -> str:
     title = job.get("title") or "this role"
     company = job.get("company_name") or "the company"
     skills = job.get("skills_required") or []
     skill_line = ", ".join(skills[:6]) if skills else "the core skills in the JD"
+    m = normalize_market(market)
+    currency = currency_for_market(m)
+    comp_line = (
+        "- Quantify impact in INR/LPA and timelines where possible.\n"
+        if m == "IN"
+        else f"- Quantify impact in {currency} and timelines where possible.\n"
+    )
+    location_line = (
+        "- How is this team structured locally?"
+        if m != "IN"
+        else "- How is this team structured in India?"
+    )
     return (
         f"## Likely questions\n"
         f"- Walk me through your experience relevant to {title}.\n"
@@ -105,10 +136,10 @@ def _fallback_interview_prep(job: dict[str, Any]) -> str:
         f"- One failure/learning story.\n\n"
         f"## Role-specific talking points\n"
         f"- Mirror vocabulary from the job description honestly.\n"
-        f"- Quantify impact in INR/LPA and timelines where possible.\n\n"
+        f"{comp_line}\n"
         f"## Questions to ask them\n"
         f"- What does success look like in the first 90 days?\n"
-        f"- How is this team structured in India?"
+        f"{location_line}"
     )
 
 
@@ -174,7 +205,8 @@ def normalize_application_text_assets(
 ) -> tuple[str, str]:
     """Validate and repair LLM-generated application-kit text before persistence."""
     fallback_cover = _fallback_cover_letter(profile, job)
-    fallback_prep = _fallback_interview_prep(job)
+    market = normalize_market(str(profile.get("market") or "IN"))
+    fallback_prep = _fallback_interview_prep(job, market=market)
     cover = _clean_generated_text(cover_letter)
     if not _is_useful_cover_letter(cover):
         cover = fallback_cover
@@ -189,7 +221,10 @@ async def _generate_text_assets(
     job: dict[str, Any],
 ) -> tuple[str, str]:
     if not settings.openrouter_api_key:
-        return _fallback_cover_letter(profile, job), _fallback_interview_prep(job)
+        market = normalize_market(str(profile.get("market") or "IN"))
+        return _fallback_cover_letter(profile, job), _fallback_interview_prep(job, market=market)
+
+    market = normalize_market(str(profile.get("market") or "IN"))
 
     llm = _kit_llm(
         settings,
@@ -202,7 +237,9 @@ async def _generate_text_assets(
         task_prompt=f"Job:\n{json.dumps(job, default=str)[:6000]}",
     )
     try:
-        resp = await llm.ainvoke([SystemMessage(content=KIT_SYSTEM), HumanMessage(content=prompt)])
+        resp = await llm.ainvoke(
+            [SystemMessage(content=_kit_system_prompt(market)), HumanMessage(content=prompt)]
+        )
         raw = resp.content if isinstance(resp.content, str) else str(resp.content)
         raw = raw.strip()
         if raw.startswith("```"):
@@ -217,7 +254,7 @@ async def _generate_text_assets(
         )
     except Exception as exc:
         logger.warning("application_kit_llm_failed", error=str(exc))
-        return _fallback_cover_letter(profile, job), _fallback_interview_prep(job)
+        return _fallback_cover_letter(profile, job), _fallback_interview_prep(job, market=market)
 
 
 async def _fetch_existing_tailored_resume(

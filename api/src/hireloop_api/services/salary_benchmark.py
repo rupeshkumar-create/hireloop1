@@ -10,6 +10,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from hireloop_api.markets import normalize_market
+
 _DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "india_salary_bands.json"
 
 
@@ -55,7 +57,13 @@ def lookup_salary_benchmark(
     job_row: Mapping[str, Any],
     cand_row: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Return market band + comparison to job CTC when possible."""
+    """Return market band + comparison to job CTC when possible (India bands v1)."""
+    market = normalize_market(
+        str((cand_row or {}).get("market") or job_row.get("country_code") or "IN")
+    )
+    if market != "IN":
+        return None
+
     data = _load_bands()
     bands = data.get("bands") or []
     if not bands:

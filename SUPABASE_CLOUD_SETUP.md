@@ -153,7 +153,7 @@ cd app && pnpm dev   # http://localhost:3001
 
 1. Open `http://localhost:3001/signup` → Continue with LinkedIn.
 2. After redirect, `/onboarding` → upload CV, pick market, accept terms → `/dashboard`.
-3. Optional: verify phone from Settings when MSG91/Twilio keys are configured.
+3. Optional: verify phone from Settings when MSG91 keys are configured (India +91).
 
 API calls from the browser must send **`Authorization: Bearer <supabase_access_token>`** (handled by `apiAuthFetch` in the app).
 

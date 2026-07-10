@@ -17,19 +17,20 @@ from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.markets import MARKET_LABELS, currency_for_market, normalize_market
 from hireloop_api.services.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/mock-interview", tags=["mock-interview"])
 
-MOCK_SYSTEM = """You are a professional interviewer running a realistic mock interview for an \
-Indian candidate.
+MOCK_SYSTEM_BASE = """You are a professional interviewer running a realistic mock interview.
 
 How to run it:
 - Ask ONE question at a time, tailored to the target role, seniority, and interview type. Mix
   behavioural (STAR) and role-specific / technical questions.
 - After each answer give 2-3 sentences of specific, constructive feedback, then ask the next one.
-- Use Indian context (INR/LPA, notice period, Indian companies) where it fits. Stay in character.
+- Use the candidate's home market context (local salary norms, notice period, companies) where it fits.
+  Stay in character.
 - Run about 5-6 questions. After the last question's feedback — OR as soon as the candidate says
   they want to stop — WRAP UP.
 
@@ -43,8 +44,18 @@ token <end> followed by ONLY a JSON object with EXACTLY these keys (no extra tex
   "communication": "<one line on clarity and structure>",
   "technical_accuracy": "<one line on role/technical depth>"
 }
-Scoring guide: 8-10 strong, 6-7 solid, below 6 needs work. Be honest and encouraging.
-"""
+Scoring guide: 8-10 strong, 6-7 solid, below 6 needs work. Be honest and encouraging."""
+
+
+def _mock_system_prompt(market: str) -> str:
+    m = normalize_market(market)
+    label = MARKET_LABELS.get(m, m)
+    currency = currency_for_market(m)
+    if m == "IN":
+        local = "Use INR/LPA, notice period, and Indian employers where relevant."
+    else:
+        local = f"Candidate is based in {label}; use {currency} salary framing, not India LPA defaults."
+    return f"{MOCK_SYSTEM_BASE}\n{local}"
 
 
 def _normalize_feedback(raw: Any) -> dict[str, Any]:
@@ -183,9 +194,11 @@ async def mock_message(
     row = await db.fetchrow(
         """
         SELECT mi.id, mi.conversation_id, mi.role_target, mi.status,
-               mi.seniority, mi.interview_type, mi.job_id, c.id AS candidate_id
+               mi.seniority, mi.interview_type, mi.job_id, c.id AS candidate_id,
+               COALESCE(NULLIF(c.market, ''), NULLIF(u.market, ''), 'IN') AS market
         FROM public.mock_interviews mi
         JOIN public.candidates c ON c.id = mi.candidate_id
+        JOIN public.users u ON u.id = c.user_id AND u.deleted_at IS NULL
         WHERE mi.id = $1 AND c.user_id = $2
         """,
         mock_id,
@@ -249,7 +262,8 @@ async def mock_message(
                 "\n\nCover letter they sent — probe claims from it:\n"
                 f"{str(kit['cover_letter'])[:1200]}"
             )
-    messages = [SystemMessage(content=MOCK_SYSTEM + context_line)]
+    market = normalize_market(str(row.get("market") or "IN"))
+    messages = [SystemMessage(content=_mock_system_prompt(market) + context_line)]
     for h in history[-30:]:
         if h["role"] == "user":
             messages.append(HumanMessage(content=h["content"]))

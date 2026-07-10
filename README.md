@@ -99,13 +99,13 @@ Current phase: **P01 — Repo & CI scaffold** `in_progress`
 | WhatsApp | MSG91 |
 | Infra | AWS ap-south-1, ECS Fargate, Cloudflare WAF |
 
-## Multi-region marketplace (IN / US / GB)
+## Multi-region marketplace (global)
 
-Candidates and jobs are scoped by `market`:
-- Phone: IN → +91/MSG91; US → +1/Twilio; GB → +44/Twilio (`phone_verified` gate)
-- Salaries in local currency (INR / USD / GBP)
+Candidates and jobs are scoped by `market` (12 supported ISO countries):
+- Phone OTP: India (+91) via MSG91 only; optional in Settings
+- Salaries in local currency (INR, USD, GBP, EUR, AUD, CAD, CHF, AED, SGD)
 - Job visibility: onsite = same country; remote = `allowed_regions` or worldwide
-- Primary compute: AWS ap-south-1; Cloudflare WAF for rate limits + security headers
+- `ENABLED_MARKETS` controls per-region job ingest on the API
 
 ## License
 
