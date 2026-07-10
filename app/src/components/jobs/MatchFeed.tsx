@@ -13,13 +13,15 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, SlidersHorizontal } from "@/components/brand/icons";
+import { AlertCircle, RefreshCw, SlidersHorizontal } from "@/components/brand/icons";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MATCH_FEED_FILTERS,
   fetchMatchFeed,
   fetchMatchFeedCount,
+  fetchMatchHistory,
   fetchMatchTriage,
+  findNewMatches,
   getCachedMatchFeed,
   getCachedMatchFeedCount,
   MATCH_FEED_INVALIDATE_EVENT,
@@ -64,6 +66,26 @@ const SENIORITY_OPTIONS = [
 ];
 
 const PAGE_SIZE = MATCH_FEED_PAGE_SIZE;
+
+function formatHistoryDate(job: MatchedJob): string | null {
+  const raw = job.last_seen_at ?? job.first_seen_at ?? job.computed_at;
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function historyDateLabel(job: MatchedJob): string | null {
+  const formatted = formatHistoryDate(job);
+  if (!formatted) return null;
+  if (job.last_seen_at) return `Last seen ${formatted}`;
+  if (job.first_seen_at) return `First seen ${formatted}`;
+  return `Matched ${formatted}`;
+}
 
 // Confidence tiers (mirrors the backend ranking thresholds). Grouping the feed
 // into these sections is what makes the first screen read as *curated* rather
@@ -166,6 +188,11 @@ export function MatchFeed({
   const [emptyRefreshCount, setEmptyRefreshCount] = useState(0);
   const [triageJobs, setTriageJobs] = useState<MatchedJob[]>([]);
   const [triageLoading, setTriageLoading] = useState(false);
+  const [historyJobs, setHistoryJobs] = useState<MatchedJob[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [findingNew, setFindingNew] = useState(false);
+  const [findNewMessage, setFindNewMessage] = useState<string | null>(null);
+  const [refreshingNew, setRefreshingNew] = useState(false);
 
   // Filters
   const [minScore, setMinScore] = useState(MATCH_FEED_RELEVANCE_FLOOR);
@@ -287,6 +314,71 @@ export function MatchFeed({
   }, [compact, seedJobs?.length]);
 
   useEffect(() => {
+    if (!compact) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    fetchMatchHistory({ min_score: 0, limit: 100 })
+      .then((data) => {
+        if (!cancelled) setHistoryJobs(data);
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryJobs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [compact, jobs.length, emptyRefreshCount]);
+
+  const handleFindNewJobs = useCallback(async () => {
+    setFindingNew(true);
+    setFindNewMessage(null);
+    setError(null);
+    try {
+      const result = await findNewMatches();
+      setFindNewMessage(result.message);
+      setRefreshingNew(result.refreshing);
+      if (result.jobs.length > 0) {
+        setJobs((prev) => dedupeJobs([...result.jobs, ...prev]));
+        setEmptyRefreshCount(0);
+      }
+      const history = await fetchMatchHistory({ min_score: 0, limit: 100 });
+      setHistoryJobs(history);
+      void fetchMatchFeed(DEFAULT_MATCH_FEED_FILTERS, { force: true }).catch(() => undefined);
+    } catch (err) {
+      setError((err as Error).message ?? "Couldn't find new jobs");
+    } finally {
+      setFindingNew(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!refreshingNew) return;
+    let attempts = 0;
+    const id = window.setInterval(async () => {
+      attempts += 1;
+      try {
+        const result = await findNewMatches();
+        if (result.jobs.length > 0) {
+          setJobs((prev) => dedupeJobs([...result.jobs, ...prev]));
+          setEmptyRefreshCount(0);
+        }
+        setFindNewMessage(result.message);
+        if (!result.refreshing || attempts >= 6) {
+          setRefreshingNew(false);
+          const history = await fetchMatchHistory({ min_score: 0, limit: 100 });
+          setHistoryJobs(history);
+        }
+      } catch {
+        if (attempts >= 6) setRefreshingNew(false);
+      }
+    }, 12_000);
+    return () => window.clearInterval(id);
+  }, [refreshingNew]);
+
+  useEffect(() => {
     setOffset(0);
     setHasMore(true);
     setEmptyRefreshCount(0);
@@ -352,7 +444,30 @@ export function MatchFeed({
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
-      {compact && countLabel ? (
+      {compact ? (
+        <div className="mb-3 shrink-0 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            {countLabel ? (
+              <p className="text-micro text-ink-500">{countLabel}</p>
+            ) : (
+              <span />
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleFindNewJobs()}
+              loading={findingNew || refreshingNew}
+              leftIcon={<RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />}
+              className="shrink-0"
+            >
+              Find new jobs
+            </Button>
+          </div>
+          {findNewMessage ? (
+            <p className="text-micro text-ink-500">{findNewMessage}</p>
+          ) : null}
+        </div>
+      ) : countLabel ? (
         <p className="text-micro text-ink-500 mb-3 shrink-0">{countLabel}</p>
       ) : null}
       {matchSourceBadge === "linkedin" && (
@@ -588,6 +703,47 @@ export function MatchFeed({
             </Button>
           </div>
         )}
+
+        {compact && (historyLoading || historyJobs.length > 0) ? (
+          <div className="mt-6 pt-4 border-t border-ink-100 space-y-3">
+            <div className="flex items-baseline justify-between">
+              <h4 className="text-small font-semibold text-ink-900">
+                Job history
+                {!historyLoading && (
+                  <span className="ml-1.5 text-ink-300 font-normal">
+                    {historyJobs.length}
+                  </span>
+                )}
+              </h4>
+              <span className="text-micro text-ink-400">Newest first</span>
+            </div>
+            {historyLoading ? (
+              <JobCardSkeleton />
+            ) : (
+              <Stagger className="space-y-3">
+                {historyJobs.map((job) => (
+                  <StaggerItem key={`history-${job.job_id}`}>
+                    <JobCard
+                      job={job}
+                      conversationId={conversationId}
+                      onRequestIntro={onRequestIntro}
+                      onDirectApply={onDirectApply}
+                      applyLocked={applyLocked}
+                      onTailorResume={handlePrepareKit}
+                      tailorStatus={kitByJob[job.job_id] ?? "idle"}
+                      onOpenKitPreview={openKitPreview}
+                      onLearningRoadmap={handleLearningRoadmap}
+                      roadmapStatus={roadmapByJob[job.job_id] ?? "idle"}
+                      isSaved={savedJobIds.has(job.job_id)}
+                      onSavedChange={onSavedChange}
+                      historyDateLabel={historyDateLabel(job)}
+                    />
+                  </StaggerItem>
+                ))}
+              </Stagger>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <ResumePreviewModal
