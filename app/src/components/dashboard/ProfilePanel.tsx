@@ -563,7 +563,7 @@ export function ProfilePanel({
 
                 {profile?.candidate?.skills && profile.candidate.skills.length > 0 && (
                   <div className="space-y-1.5 pt-1">
-                    <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">
+                    <span className="text-micro text-ink-500 font-medium tracking-wide">
                       Skills
                     </span>
                     <div className="flex flex-wrap gap-1.5">
@@ -804,7 +804,7 @@ export function ProfilePanel({
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block space-y-1">
-      <span className="text-micro text-ink-500 font-medium uppercase tracking-wide">{label}</span>
+      <span className="text-micro text-ink-500 font-medium tracking-wide">{label}</span>
       {children}
     </label>
   );

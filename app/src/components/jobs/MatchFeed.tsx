@@ -472,18 +472,11 @@ export function MatchFeed({
       ) : null}
       {matchSourceBadge === "linkedin" && (
         <p className="text-micro text-ink-500 mb-3 shrink-0">
-          <span className="inline-flex items-center rounded-full bg-ink-100 px-2 py-0.5 font-medium text-ink-700">
-            Based on LinkedIn
-          </span>
-          {" "}— upload a CV to sharpen scores.
+          Based on LinkedIn — upload a CV to sharpen scores.
         </p>
       )}
       {seedJobs?.length && !compact ? (
         <p className="text-micro text-ink-500 mb-3 shrink-0">
-          <span className="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 font-medium text-ink-800">
-            From Aarya
-          </span>
-          {" "}
           {seedTitle
             ? `Including Aarya's jobs for ${seedTitle}.`
             : "Including the roles Aarya just found in chat."}
@@ -611,9 +604,6 @@ export function MatchFeed({
                 Aarya&apos;s top picks
                 <span className="ml-1.5 text-ink-300 font-normal">{triageJobs.length}</span>
               </h4>
-              <span className="text-micro text-ink-400">
-                Apply · Stretch · Skip ranked for you
-              </span>
             </div>
             {triageLoading ? (
               <JobCardSkeleton />
@@ -646,18 +636,13 @@ export function MatchFeed({
           sections.map((section) => (
             <div key={section.key} className="space-y-3">
               {showHeaders && (
-                <div className="flex items-baseline justify-between pt-1">
+                <div className="pt-1">
                   <h4 className="text-small font-semibold text-ink-900">
                     {section.label}
                     <span className="ml-1.5 text-ink-300 font-normal">
                       {section.jobs.length}
                     </span>
                   </h4>
-                  {section.description && (
-                    <span className="text-micro text-ink-400">
-                      {section.description}
-                    </span>
-                  )}
                 </div>
               )}
               <Stagger className="space-y-3">

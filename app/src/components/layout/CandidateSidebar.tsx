@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * CandidateSidebar — minimal left rail: Chat · Matches · Intros · Profile.
+ * CandidateSidebar — Chat · Matches · Intros · Profile, plus a single More menu.
  */
 
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { HelpCircle, LogOut, Settings, Shield } from "@/components/brand/icons";
+import { HelpCircle, LogOut, MoreHorizontal, Settings, Shield } from "@/components/brand/icons";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { RAIL_ITEMS } from "@/lib/dashboard/rail-items";
 import type { PanelId } from "@/lib/dashboard/panel-types";
@@ -60,14 +61,20 @@ export function CandidateSidebar({
   const settingsActive = linkMode
     ? pathname === "/settings" || pathname?.includes("panel=settings")
     : activePanel === "settings";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  const utilityClass = (active: boolean) =>
-    cn(
-      "flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-fast",
-      active
-        ? "bg-ink-900 text-paper-0"
-        : "text-ink-500 hover:bg-ink-50 hover:text-ink-900",
-    );
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   const railClass = (active: boolean) =>
     cn(
@@ -128,59 +135,104 @@ export function CandidateSidebar({
         })}
       </nav>
 
-      <div className="mt-2 flex flex-col items-center gap-1">
-        <RoleSwitchButton to="recruiter" target="/recruiter/inbox" variant="icon" />
-        <NotificationDrawer pendingIntros={pendingIntros} />
-        {showAdminLink && (
-          <Link href="/admin" title="Admin" aria-label="Admin" className={utilityClass(false)}>
-            <Shield className="h-[18px] w-[18px]" strokeWidth={1.5} />
-          </Link>
-        )}
-        {linkMode ? (
-          <Link
-            href="/dashboard?panel=settings"
-            title="Settings"
-            aria-label="Settings"
-            aria-current={settingsActive ? "page" : undefined}
-            className={utilityClass(settingsActive)}
-          >
-            <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
-          </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onTogglePanel?.("settings")}
-            aria-pressed={settingsActive}
-            title="Settings"
-            aria-label="Settings"
-            className={utilityClass(settingsActive)}
-          >
-            <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} />
-          </button>
-        )}
-        <a
-          href="https://hireschema.com/help"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Help"
-          aria-label="Help"
-          className={utilityClass(false)}
+      <div className="relative mt-2" ref={menuRef}>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label="More"
+          aria-expanded={menuOpen}
+          title="More"
+          className={railClass(menuOpen || settingsActive)}
         >
-          <HelpCircle className="h-[18px] w-[18px]" strokeWidth={1.5} />
-        </a>
-        {onSignOut && (
-          <button
-            type="button"
-            onClick={onSignOut}
-            disabled={signingOut}
-            title="Sign out"
-            aria-label="Sign out"
-            className={cn(utilityClass(false), "disabled:opacity-50")}
-          >
-            <LogOut className="h-[18px] w-[18px]" strokeWidth={1.5} />
-          </button>
+          <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.5} />
+        </button>
+
+        {menuOpen && (
+          <div className="absolute bottom-0 left-full z-30 ml-2 w-52 rounded-lg border border-ink-100 bg-paper-1 py-1 shadow-2 animate-fade-in">
+            <div className="px-2 py-1.5">
+              <RoleSwitchButton to="recruiter" target="/recruiter/inbox" variant="row" />
+            </div>
+            <div className="border-t border-ink-100 px-1 py-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setNotifOpen(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50"
+              >
+                Notifications
+                {pendingIntros && (
+                  <span className="ml-auto h-2 w-2 rounded-full bg-accent" />
+                )}
+              </button>
+            </div>
+            {showAdminLink && (
+              <Link
+                href="/admin"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-small text-ink-800 hover:bg-ink-50"
+              >
+                <Shield className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Admin
+              </Link>
+            )}
+            {linkMode ? (
+              <Link
+                href="/dashboard?panel=settings"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-small text-ink-800 hover:bg-ink-50"
+              >
+                <Settings className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Settings
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onTogglePanel?.("settings");
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50"
+              >
+                <Settings className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Settings
+              </button>
+            )}
+            <a
+              href="https://hireschema.com/help"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-small text-ink-800 hover:bg-ink-50"
+            >
+              <HelpCircle className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+              Help
+            </a>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onSignOut();
+                }}
+                disabled={signingOut}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50 disabled:opacity-50"
+              >
+                <LogOut className="h-4 w-4 text-ink-400" strokeWidth={1.5} />
+                Sign out
+              </button>
+            )}
+          </div>
         )}
       </div>
+
+      <NotificationDrawer
+        pendingIntros={pendingIntros}
+        open={notifOpen}
+        onOpenChange={setNotifOpen}
+        hideTrigger
+      />
     </aside>
   );
 }

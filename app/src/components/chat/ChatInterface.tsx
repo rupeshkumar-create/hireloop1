@@ -1758,9 +1758,9 @@ export function ChatInterface({
             </div>
           )}
 
-          {isUploading && <AgentThinkingIndicator variant="processing" />}
+          {isUploading && !showKickoff && <AgentThinkingIndicator variant="processing" />}
 
-          {isStreaming && !streamingContent && !isUploading && (
+          {isStreaming && !streamingContent && !isUploading && !showKickoff && (
             <AgentThinkingIndicator
               actions={actions}
               actionBaseline={turnActionBaseline}
@@ -1769,7 +1769,7 @@ export function ChatInterface({
             />
           )}
 
-          {jobDiscoveryActive && !isStreaming && (
+          {jobDiscoveryActive && !isStreaming && !showKickoff && (
             <AgentThinkingIndicator
               variant="jobDiscovery"
               actions={actions}
@@ -2442,7 +2442,7 @@ function MessageBubble({
   return (
     <div className="space-y-3 animate-fade-in">
       {/* Action timeline — shown above the reply that followed the actions */}
-      {actionCount > 0 && (
+      {actionCount > 0 && !isStreaming && (
         <ActivityTimeline
           count={actionCount}
           actions={actions}

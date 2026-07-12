@@ -28,7 +28,6 @@ import { SettingsPanel } from "@/components/dashboard/SettingsPanel";
 import { TopNav } from "@/components/dashboard/TopNav";
 import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
-import { ChatPeekStrip } from "@/components/dashboard/ChatPeekStrip";
 import { type JobsTab, type PanelId, type ProfileTabId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
 import { useToast } from "@/components/ui";
 import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
@@ -501,10 +500,6 @@ export function DashboardClient({
         </div>
       </main>
       </div>
-
-      {activePanel && (
-        <ChatPeekStrip onOpenChat={openChat} />
-      )}
 
       <CandidateMobileNav
         activePanel={activePanel}

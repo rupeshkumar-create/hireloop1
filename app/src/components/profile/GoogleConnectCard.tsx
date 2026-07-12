@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, Check, Mail } from "@/components/brand/icons";
-
-import { Badge, Button, Card, CardBody, CardHeader, useToast } from "@/components/ui";
+import { Check } from "@/components/brand/icons";
+import { Button, useToast } from "@/components/ui";
 import {
   disconnectGoogle,
   fetchGoogleStatus,
@@ -12,10 +11,8 @@ import {
 } from "@/lib/api/gmail";
 
 /**
- * Connect-Google card for the profile Overview tab. One consent grants:
- *   • gmail.send       → Aarya sends HM intros from the candidate's own Gmail (P13)
- *   • calendar.events  → voice-session bookings get a real Calendar event + Meet (P07)
- * Optional: nothing breaks if the candidate skips it (in-app intros + slots still work).
+ * Optional Google connect row for profile Overview.
+ * One consent: gmail.send + calendar.events.
  */
 export function GoogleConnectCard() {
   const { toast } = useToast();
@@ -27,7 +24,7 @@ export function GoogleConnectCard() {
     try {
       setStatus(await fetchGoogleStatus());
     } catch {
-      /* leave previous state; the card just shows the connect CTA */
+      /* leave previous state */
     } finally {
       setLoading(false);
     }
@@ -35,7 +32,6 @@ export function GoogleConnectCard() {
 
   useEffect(() => {
     void refresh();
-    // Surface the post-OAuth redirect (?gmail=connected) once, then clean the URL.
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("gmail") === "connected") {
@@ -45,7 +41,7 @@ export function GoogleConnectCard() {
         window.history.replaceState(
           {},
           "",
-          window.location.pathname + (qs ? `?${qs}` : "")
+          window.location.pathname + (qs ? `?${qs}` : ""),
         );
       }
     }
@@ -55,7 +51,7 @@ export function GoogleConnectCard() {
   async function handleConnect() {
     setBusy(true);
     try {
-      await startGoogleConnect(); // navigates away on success
+      await startGoogleConnect();
     } catch (e) {
       setBusy(false);
       toast.error(e instanceof Error ? e.message : "Couldn't start Google sign-in");
@@ -79,52 +75,40 @@ export function GoogleConnectCard() {
   const calendarMissing = connected && !status?.calendar_enabled;
 
   return (
-    <Card>
-      <CardHeader
-        title="Connect Google"
-        description="Optional. Lets Aarya send intros from your own Gmail and add a Google Meet link when you book a call. Send-only — Hireschema never reads your mail or calendar."
-      />
-      <CardBody className="!pt-0 space-y-3">
+    <div className="flex flex-col gap-2 rounded-lg border border-ink-100 bg-paper-1 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-small font-medium text-ink-900">Google</p>
+        <p className="text-micro text-ink-500">
+          Optional — send intros from your Gmail and add Meet links for booked calls.
+        </p>
         {loading ? (
-          <p className="text-small text-ink-400">Checking connection…</p>
+          <p className="mt-1 text-micro text-ink-400">Checking…</p>
         ) : connected ? (
+          <p className="mt-1 flex items-center gap-1.5 text-micro text-ink-700">
+            <Check className="h-3.5 w-3.5" strokeWidth={2} />
+            Connected{status?.gmail_email ? ` as ${status.gmail_email}` : ""}
+            {calendarMissing ? " · reconnect for Calendar" : ""}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {loading ? null : connected ? (
           <>
-            <div className="flex items-center gap-2 text-small text-ink-700">
-              <Check className="h-4 w-4 text-ink-900" strokeWidth={2} />
-              Connected{status?.gmail_email ? ` as ${status.gmail_email}` : ""}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge tone={status?.send_enabled ? "strong" : "muted"}>
-                <Mail className="h-3 w-3" strokeWidth={1.5} />
-                {status?.send_enabled ? "Intro emails on" : "Intro emails off"}
-              </Badge>
-              <Badge tone={status?.calendar_enabled ? "strong" : "muted"}>
-                <Calendar className="h-3 w-3" strokeWidth={1.5} />
-                {status?.calendar_enabled ? "Calendar on" : "Calendar off"}
-              </Badge>
-            </div>
             {calendarMissing && (
-              <p className="text-micro text-ink-500">
-                Reconnect to enable calendar invites + Meet links for booked calls.
-              </p>
-            )}
-            <div className="flex gap-2">
-              {calendarMissing && (
-                <Button variant="primary" size="sm" loading={busy} onClick={() => void handleConnect()}>
-                  Reconnect
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" loading={busy} onClick={() => void handleDisconnect()}>
-                Disconnect
+              <Button variant="secondary" size="sm" loading={busy} onClick={() => void handleConnect()}>
+                Reconnect
               </Button>
-            </div>
+            )}
+            <Button variant="ghost" size="sm" loading={busy} onClick={() => void handleDisconnect()}>
+              Disconnect
+            </Button>
           </>
         ) : (
-          <Button variant="primary" size="sm" loading={busy} onClick={() => void handleConnect()}>
-            Connect Google
+          <Button variant="secondary" size="sm" loading={busy} onClick={() => void handleConnect()}>
+            Connect
           </Button>
         )}
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }

@@ -144,10 +144,6 @@ export function ActivityTimeline({
 
       {open && (
         <div className="ml-1.5 rounded-lg border border-ink-100 bg-paper-1 p-3 animate-slide-up">
-          <p className="mb-2.5 text-micro uppercase text-ink-400">
-            Recent activity
-          </p>
-
           {actions.length === 0 ? (
             <div className="flex items-center gap-2 text-small text-ink-500">
               <CheckCircle className="h-3.5 w-3.5 text-accent" strokeWidth={1.5} />

@@ -67,9 +67,12 @@ export function JobsPanel({
     setTab("matches");
   }, [kickoffJobs?.length, kickoffTitle]);
 
+  // One helper strip at a time: boosters when gated, else queue status.
+  const showBoosters = Boolean(showProfileBoosters);
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      {showProfileBoosters && (
+      {showBoosters && (
         <div className="p-5 pb-0 shrink-0">
           <ProfileBoosters
             hasResume={hasResume ?? false}
@@ -155,12 +158,14 @@ export function JobsPanel({
         )}
       </div>
 
-      <JobsQueueStatusBar
-        savedCount={savedJobIds.size}
-        kitsReadyCount={kitsReadyCount}
-        pendingIntros={pendingIntros}
-        onOpenSaved={() => selectTab("saved")}
-      />
+      {!showBoosters && (
+        <JobsQueueStatusBar
+          savedCount={savedJobIds.size}
+          kitsReadyCount={kitsReadyCount}
+          pendingIntros={pendingIntros}
+          onOpenSaved={() => selectTab("saved")}
+        />
+      )}
     </div>
   );
 }

@@ -1,39 +1,29 @@
 "use client";
 
 /**
- * JobCard — DESIGN.md compliant card for the match feed.
- *
- * Layout (visual):
- *   ┌──────────────────────────────────────────────────┐
- *   │  [Logo] Company · Location              ● 82%    │
- *   │  Title                                           │
- *   │  Seniority · Employment type · Remote · CTC      │
- *   │  React  TypeScript  Postgres  +3 more            │
- *   │  Aarya's match explanation, 1-2 lines.           │
- *   │  ─────────────────────────────────────────────   │
- *   │  [✉]  [↗]  [📄]  [🎓]  [♡]                       │
- *   └──────────────────────────────────────────────────┘
- *
- * All visual chrome from <Card>. Buttons from <Button>. Score from <ScoreDot>.
+ * JobCard — minimal match row.
+ * Title, company, one fit score, salary/location, one primary CTA.
+ * Detail (skills, scores, explanation) lives behind “Why this match”.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { saveJob, unsaveJob } from "@/lib/api/saved-jobs";
 import {
-  ArrowUpRight,
   Check,
+  ChevronDown,
   ExternalLink,
   FileText,
   GraduationCap,
   Heart,
   Loader2,
+  MoreHorizontal,
   Send,
 } from "@/components/brand/icons";
 import { BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/salary";
 import type { MatchedJob } from "@/lib/api/matches";
-import { Avatar, Badge, Button, Card, ScoreDot, useToast } from "@/components/ui";
+import { Avatar, Button, Card, ScoreDot, useToast } from "@/components/ui";
 
 interface JobCardProps {
   job: MatchedJob;
@@ -58,28 +48,6 @@ interface JobCardProps {
   className?: string;
 }
 
-// ── Seniority / type labels ──────────────────────────────────────────────────
-
-const SENIORITY_LABELS: Record<string, string> = {
-  intern: "Intern",
-  junior: "Junior",
-  mid: "Mid-level",
-  senior: "Senior",
-  lead: "Lead",
-  director: "Director",
-  vp: "VP",
-  c_level: "C-Level",
-};
-
-const EMP_LABELS: Record<string, string> = {
-  full_time: "Full-time",
-  contract: "Contract",
-  internship: "Internship",
-  part_time: "Part-time",
-};
-
-// ── Main component ───────────────────────────────────────────────────────────
-
 export function JobCard({
   job,
   onRequestIntro,
@@ -100,6 +68,9 @@ export function JobCard({
 }: JobCardProps) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [introSent, setIntroSent] = useState(
     () => job.action_state === "intro" || Boolean(job.action_label?.toLowerCase().includes("intro")),
   );
@@ -111,7 +82,6 @@ export function JobCard({
   const isChat = variant === "chat";
 
   const tailoring = tailorStatus === "loading";
-  // Matches API may already know the kit exists even if local kitByJob is idle.
   const tailoredReady =
     tailorStatus === "ready" ||
     (tailorStatus === "idle" && job.action_state === "kit_ready");
@@ -125,7 +95,29 @@ export function JobCard({
   const locationLabel =
     [job.location_city, job.location_state]
       .filter(Boolean)
-      .join(", ") || (job.is_remote ? null : "Onsite");
+      .join(", ") || (job.is_remote ? "Remote" : null);
+
+  const metaLine = [ctcLabel, locationLabel].filter(Boolean).join(" · ");
+
+  const statusLabel =
+    historyDateLabel ??
+    job.action_label ??
+    (job.fit_recommendation === "stretch"
+      ? "Stretch"
+      : job.fit_recommendation === "skip"
+        ? "Skip"
+        : null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   const handleIntro = () => {
     if (applyLocked) {
@@ -158,6 +150,7 @@ export function JobCard({
   };
 
   const handleRoadmap = () => {
+    setMenuOpen(false);
     if (roadmapReady) {
       onLearningRoadmap?.(job);
       return;
@@ -167,6 +160,7 @@ export function JobCard({
   };
 
   const handleTailor = () => {
+    setMenuOpen(false);
     if (tailoredReady) {
       onOpenKitPreview?.(job, "resume");
       return;
@@ -178,13 +172,13 @@ export function JobCard({
   const handleSaveToggle = async () => {
     if (saving) return;
     setSaving(true);
+    setMenuOpen(false);
     const next = !isSaved;
-    // Optimistic: flip the heart immediately via parent state, revert on error.
     onSavedChange?.(job.job_id, next);
     try {
       if (next) {
         await saveJob(job.job_id);
-        toast.success("Saved — open Saved tab below to build your application");
+        toast.success("Saved — open Saved tab to build your application");
       } else {
         await unsaveJob(job.job_id);
         toast.success("Removed from saved");
@@ -197,48 +191,37 @@ export function JobCard({
     }
   };
 
-  const tierBandClass =
-    job.tier === "strong"
-      ? "bg-accent"
-      : job.tier === "good"
-        ? "bg-amber-400"
-        : "bg-ink-200";
+  const hasWhyDetail = Boolean(
+    job.explanation ||
+      job.triage_notes ||
+      job.skills_required.length > 0 ||
+      job.skills_score != null ||
+      job.experience_score != null ||
+      job.career_alignment_score != null ||
+      job.salary_benchmark?.vs_market_label,
+  );
 
-  // Freshness builds trust in the feed — a dated job reads as real.
-  const postedAgo = (() => {
-    if (!job.posted_at) return null;
-    const days = Math.floor((Date.now() - new Date(job.posted_at).getTime()) / 86400000);
-    if (Number.isNaN(days) || days < 0) return null;
-    if (days === 0) return "Posted today";
-    if (days === 1) return "Posted yesterday";
-    if (days <= 30) return `Posted ${days}d ago`;
-    return null; // older than a month — hide rather than advertise staleness
-  })();
+  const primaryLabel = introSent
+    ? "Intro requested"
+    : applied
+      ? "Applied"
+      : "Request intro";
 
   return (
     <Card
       className={cn(
         "relative overflow-hidden hover:shadow-2 transition-shadow duration-fast",
         isChat ? "p-4" : "p-5",
-        className
+        className,
       )}
     >
-      <div
-        className={cn("absolute left-0 top-0 bottom-0 w-1", tierBandClass)}
-        aria-hidden
-      />
-
       {applyLocked && (
-        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-micro text-amber-900">
-          Upload a resume or add city + expected CTC to apply or request intros.
-        </div>
+        <p className="mb-3 text-micro text-amber-900">
+          Add a resume or city + expected CTC to apply or request intros.
+        </p>
       )}
-      {/* ── Top row: company + title + score ──────────────────────────── */}
-      {/* The title/company block is a real link to the full job detail page,
-          opened in a new tab so the user keeps their chat / feed context. Using
-          an <a target="_blank"> (not an onClick) means cmd/middle-click and
-          "open in new tab" all work natively. */}
-      <div className="flex items-start justify-between gap-3 mb-3">
+
+      <div className="flex items-start justify-between gap-3">
         <a
           href={`/jobs/${job.job_id}`}
           target="_blank"
@@ -254,15 +237,7 @@ export function JobCard({
             className="rounded-md"
           />
           <div className="min-w-0">
-            <p className="text-small text-ink-500 truncate">
-              {job.company_name ?? "Company"}
-              {locationLabel && (
-                <>
-                  {" "}
-                  <span className="text-ink-300">·</span> {locationLabel}
-                </>
-              )}
-            </p>
+            <p className="text-small text-ink-500 truncate">{job.company_name ?? "Company"}</p>
             <h3 className="text-h3 text-ink-900 leading-tight truncate mt-0.5 group-hover:underline underline-offset-2 decoration-ink-300">
               {job.title}
             </h3>
@@ -271,297 +246,215 @@ export function JobCard({
         <ScoreDot value={job.overall_score} size={isChat ? "sm" : "md"} label="match" />
       </div>
 
-      {/* ── Tags row ───────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-1.5 mb-3">
-        {job.fit_recommendation && (
-          <Badge
-            tone={
-              job.fit_recommendation === "apply"
-                ? "accent"
-                : job.fit_recommendation === "stretch"
-                  ? "strong"
-                  : "muted"
-            }
-          >
-            {job.fit_recommendation === "apply"
-              ? "Apply"
-              : job.fit_recommendation === "stretch"
-                ? "Stretch"
-                : "Skip"}
-          </Badge>
-        )}
-        {job.action_label && (
-          <Badge tone="accent">
-            <Check className="h-3 w-3 mr-0.5 inline" strokeWidth={2.5} />
-            {job.action_label}
-          </Badge>
-        )}
-        {historyDateLabel ? (
-          <Badge tone="muted">{historyDateLabel}</Badge>
-        ) : (
-          postedAgo && <Badge tone="muted">{postedAgo}</Badge>
-        )}
-        {(job.tier || job.tier_label) && (
-          <Badge
-            tone={
-              job.tier === "strong"
-                ? "accent"
-                : job.tier === "good"
-                  ? "strong"
-                  : "muted"
-            }
-          >
-            {job.tier === "strong"
-              ? "Strong match"
-              : job.tier === "good"
-                ? "Promising"
-                : (job.tier_label ?? "Worth exploring")}
-          </Badge>
-        )}
-        {job.seniority && (
-          <Badge>{SENIORITY_LABELS[job.seniority] ?? job.seniority}</Badge>
-        )}
-        {job.employment_type && (
-          <Badge>{EMP_LABELS[job.employment_type] ?? job.employment_type}</Badge>
-        )}
-        {job.is_remote && <Badge>Remote</Badge>}
-        {ctcLabel && <Badge tone="accent">{ctcLabel}</Badge>}
-      </div>
-
-      {(job.skills_score != null ||
-        job.experience_score != null ||
-        job.career_alignment_score != null) && (
-        <p className="text-micro text-ink-500 mb-2">
-          {job.skills_score != null && (
-            <span>Skills {Math.round(job.skills_score * 100)}</span>
-          )}
-          {job.experience_score != null && (
-            <span>
-              {job.skills_score != null ? " · " : ""}
-              Experience {Math.round(job.experience_score * 100)}
-            </span>
-          )}
-          {job.career_alignment_score != null && (
-            <span>
-              {" · "}Career {Math.round(job.career_alignment_score * 100)}
-            </span>
-          )}
-          {job.culture_score != null && (
-            <span>
-              {" · "}Culture {Math.round(job.culture_score * 100)}
-            </span>
-          )}
+      {(metaLine || statusLabel) && (
+        <p className="mt-2 text-small text-ink-500 truncate">
+          {metaLine}
+          {metaLine && statusLabel ? " · " : null}
+          {statusLabel}
         </p>
       )}
 
-      {job.triage_notes && !isChat && (
-        <p className="text-micro text-ink-600 mb-2 line-clamp-2">{job.triage_notes}</p>
-      )}
+      {hasWhyDetail && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (isChat && onWhyFit && !whyOpen) onWhyFit(job);
+              setWhyOpen((v) => !v);
+            }}
+            className="inline-flex items-center gap-1 text-small text-ink-600 hover:text-ink-900 transition-colors"
+            aria-expanded={whyOpen}
+          >
+            Why this match
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 transition-transform", whyOpen && "rotate-180")}
+              strokeWidth={1.5}
+            />
+          </button>
 
-      {job.salary_benchmark?.vs_market_label && !isChat && (
-        <p className="text-micro text-ink-500 mb-2">{job.salary_benchmark.vs_market_label}</p>
-      )}
-
-      {/* ── Skills chips (matched skills highlighted) + gaps ───────────── */}
-      {job.skills_required.length > 0 &&
-        (() => {
-          const matched = new Set(job.skills_matched ?? []);
-          const gaps = job.skills_gap ?? [];
-          const hasMatchData = (job.skills_matched?.length ?? 0) > 0 || gaps.length > 0;
-          // Show matched skills first so the candidate sees their fit up front.
-          const ordered = hasMatchData
-            ? [...job.skills_required].sort(
-                (a, b) => Number(matched.has(b)) - Number(matched.has(a))
-              )
-            : job.skills_required;
-          return (
-            <div className="mb-3 space-y-2">
-              {hasMatchData && (
-                <p className="text-micro font-medium text-ink-600">
-                  ✓ {matched.size} matching skill{matched.size !== 1 ? "s" : ""}
-                  {gaps.length > 0 && (
-                    <span className="font-normal text-ink-400">
-                      {" "}
-                      · {gaps.length} to grow into
+          {whyOpen && (
+            <div className="mt-2 space-y-2 border-t border-ink-100 pt-2 animate-fade-in">
+              {(job.skills_score != null ||
+                job.experience_score != null ||
+                job.career_alignment_score != null) && (
+                <p className="text-micro text-ink-500">
+                  {job.skills_score != null && (
+                    <span>Skills {Math.round(job.skills_score * 100)}</span>
+                  )}
+                  {job.experience_score != null && (
+                    <span>
+                      {job.skills_score != null ? " · " : ""}
+                      Experience {Math.round(job.experience_score * 100)}
+                    </span>
+                  )}
+                  {job.career_alignment_score != null && (
+                    <span>
+                      {" · "}Career {Math.round(job.career_alignment_score * 100)}
+                    </span>
+                  )}
+                  {job.culture_score != null && (
+                    <span>
+                      {" · "}Culture {Math.round(job.culture_score * 100)}
                     </span>
                   )}
                 </p>
               )}
-              <div className="flex flex-wrap gap-1">
-                {ordered.slice(0, 5).map((skill) => {
-                  const isMatch = matched.has(skill);
+
+              {job.triage_notes && (
+                <p className="text-micro text-ink-600 line-clamp-3">{job.triage_notes}</p>
+              )}
+
+              {job.salary_benchmark?.vs_market_label && (
+                <p className="text-micro text-ink-500">{job.salary_benchmark.vs_market_label}</p>
+              )}
+
+              {job.skills_required.length > 0 &&
+                (() => {
+                  const matched = new Set(job.skills_matched ?? []);
+                  const gaps = job.skills_gap ?? [];
+                  const hasMatchData =
+                    (job.skills_matched?.length ?? 0) > 0 || gaps.length > 0;
+                  const ordered = hasMatchData
+                    ? [...job.skills_required].sort(
+                        (a, b) => Number(matched.has(b)) - Number(matched.has(a)),
+                      )
+                    : job.skills_required;
                   return (
-                    <span
-                      key={skill}
-                      className={cn(
-                        "inline-flex items-center gap-1 text-small px-2 py-0.5 rounded-sm",
-                        isMatch
-                          ? "text-ink-900 bg-ink-100 font-medium"
-                          : "text-ink-500 bg-ink-50"
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap gap-1">
+                        {ordered.slice(0, 5).map((skill) => {
+                          const isMatch = matched.has(skill);
+                          return (
+                            <span
+                              key={skill}
+                              className={cn(
+                                "inline-flex items-center gap-1 text-small px-2 py-0.5 rounded-sm",
+                                isMatch
+                                  ? "text-ink-900 bg-ink-100 font-medium"
+                                  : "text-ink-500 bg-ink-50",
+                              )}
+                            >
+                              {isMatch && <Check className="h-3 w-3" strokeWidth={2.5} />}
+                              {skill}
+                            </span>
+                          );
+                        })}
+                        {job.skills_required.length > 5 && (
+                          <span className="text-small text-ink-300 px-1 py-0.5">
+                            +{job.skills_required.length - 5} more
+                          </span>
+                        )}
+                      </div>
+                      {gaps.length > 0 && (
+                        <p className="text-micro text-ink-500">
+                          Worth building: {gaps.slice(0, 4).join(", ")}
+                          {gaps.length > 4 ? ` +${gaps.length - 4} more` : ""}
+                        </p>
                       )}
-                    >
-                      {isMatch && <Check className="h-3 w-3" strokeWidth={2.5} />}
-                      {skill}
-                    </span>
+                    </div>
                   );
-                })}
-                {job.skills_required.length > 5 && (
-                  <span className="text-small text-ink-300 px-1 py-0.5">
-                    +{job.skills_required.length - 5} more
-                  </span>
-                )}
-              </div>
-              {gaps.length > 0 && (
-                <p className="text-micro text-ink-500">
-                  <span className="font-medium text-ink-600">Worth building: </span>
-                  {gaps.slice(0, 4).join(", ")}
-                  {gaps.length > 4 ? ` +${gaps.length - 4} more` : ""}
+                })()}
+
+              {job.explanation && (
+                <p className="text-small text-ink-500 leading-relaxed line-clamp-3">
+                  {job.explanation}
                 </p>
               )}
             </div>
-          );
-        })()}
-
-      {/* ── Explanation ────────────────────────────────────────────────── */}
-      {job.explanation && (
-        <p className="text-small text-ink-500 leading-relaxed mb-4 line-clamp-2">
-          {job.explanation}
-        </p>
+          )}
+        </div>
       )}
 
-      {isChat && onWhyFit && (
-        <button
-          type="button"
-          onClick={() => onWhyFit(job)}
-          className="text-micro text-accent hover:underline mb-3 -mt-2"
-        >
-          Why is this a fit?
-        </button>
-      )}
-
-      {/* ── Actions (icon-only; labels on hover via title / aria-label) ── */}
-      <div className="flex items-center gap-2 pt-3 border-t border-ink-100">
+      <div className="mt-4 flex items-center gap-2 pt-3 border-t border-ink-100">
         <Button
-          variant={introSent ? "secondary" : "primary"}
+          variant={introSent || applied ? "secondary" : "primary"}
           size="sm"
           onClick={handleIntro}
           disabled={introSent}
-          aria-label={introSent ? "Intro requested" : "Request intro"}
-          title={
-            applyLocked
-              ? "Upload a resume or add city + CTC to request intros"
-              : introSent
-                ? "Intro requested"
-                : "Request intro"
-          }
-          className="shrink-0 px-2"
+          className="shrink-0"
           leftIcon={
-            introSent ? (
+            introSent || applied ? (
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
             ) : (
               <Send className="h-3.5 w-3.5" strokeWidth={1.5} />
             )
           }
-        />
+        >
+          {primaryLabel}
+        </Button>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleApply}
-          disabled={!applyLocked && !job.apply_url && !applied}
-          aria-label={applied ? "Applied" : "Apply"}
-          title={
-            applyLocked
-              ? "Upload a resume or add city + CTC to apply"
-              : applied
-                ? "Applied"
-                : "Apply"
-          }
-          className="shrink-0 px-2"
-          leftIcon={
-            applied ? (
-              <Check className="h-3.5 w-3.5" strokeWidth={2} />
-            ) : (
-              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-            )
-          }
-        />
-
-        {!isChat && (
+        <div className="relative ml-auto" ref={menuRef}>
           <Button
-            variant="secondary"
+            variant="ghost"
             size="sm"
-            onClick={handleTailor}
-            disabled={tailoring || (!onTailorResume && !tailoredReady)}
-            aria-label={
-              tailoring
-                ? "Generating application kit"
-                : tailoredReady
-                  ? "Preview application kit"
-                  : "Generate application kit"
-            }
-            title={
-              tailoredReady
-                ? "Preview resume, cover letter, and interview prep"
-                : "Generate resume, cover letter, and interview prep"
-            }
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="More actions"
+            aria-expanded={menuOpen}
             className="shrink-0 px-2"
-            leftIcon={
-              tailoring ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
-              ) : tailoredReady ? (
-                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
-              ) : (
-                <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
-              )
-            }
+            leftIcon={<MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />}
           />
-        )}
-
-        {!isChat && onLearningRoadmap && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleRoadmap}
-            disabled={roadmapBuilding}
-            aria-label={
-              roadmapBuilding
-                ? "Building learning roadmap"
-                : roadmapReady
-                  ? "Open learning roadmap"
-                  : "Generate learning roadmap"
-            }
-            title="Generate a personal AI learning roadmap for this role"
-            className="shrink-0 px-2"
-            leftIcon={
-              roadmapBuilding ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
-              ) : roadmapReady ? (
-                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
-              ) : (
-                <GraduationCap className="h-3.5 w-3.5" strokeWidth={1.5} />
-              )
-            }
-          />
-        )}
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void handleSaveToggle()}
-          disabled={saving}
-          aria-label={isSaved ? "Remove from saved" : "Save job"}
-          aria-pressed={isSaved}
-          title={isSaved ? "Saved" : "Save job"}
-          className={cn("shrink-0 px-2 ml-auto", isSaved && BTN_CHIP_ACTIVE)}
-          leftIcon={
-            <Heart
-              className="h-3.5 w-3.5"
-              strokeWidth={1.5}
-              fill={isSaved ? "currentColor" : "none"}
-            />
-          }
-        />
+          {menuOpen && (
+            <div className="absolute right-0 bottom-full mb-1 z-20 min-w-[11rem] rounded-lg border border-ink-100 bg-paper-1 py-1 shadow-2 animate-fade-in">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  handleApply();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50"
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-ink-400" strokeWidth={1.5} />
+                {applied ? "Open apply link" : "Apply"}
+              </button>
+              {!isChat && (
+                <button
+                  type="button"
+                  onClick={handleTailor}
+                  disabled={tailoring || (!onTailorResume && !tailoredReady)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50 disabled:opacity-50"
+                >
+                  {tailoring ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-400" strokeWidth={1.5} />
+                  ) : (
+                    <FileText className="h-3.5 w-3.5 text-ink-400" strokeWidth={1.5} />
+                  )}
+                  {tailoredReady ? "Preview kit" : "Application kit"}
+                </button>
+              )}
+              {!isChat && onLearningRoadmap && (
+                <button
+                  type="button"
+                  onClick={handleRoadmap}
+                  disabled={roadmapBuilding}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink-800 hover:bg-ink-50 disabled:opacity-50"
+                >
+                  {roadmapBuilding ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-400" strokeWidth={1.5} />
+                  ) : (
+                    <GraduationCap className="h-3.5 w-3.5 text-ink-400" strokeWidth={1.5} />
+                  )}
+                  {roadmapReady ? "Open roadmap" : "Learning roadmap"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleSaveToggle()}
+                disabled={saving}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-small hover:bg-ink-50",
+                  isSaved ? "text-ink-900" : "text-ink-800",
+                )}
+              >
+                <Heart
+                  className={cn("h-3.5 w-3.5", isSaved ? BTN_CHIP_ACTIVE : "text-ink-400")}
+                  strokeWidth={1.5}
+                  fill={isSaved ? "currentColor" : "none"}
+                />
+                {isSaved ? "Unsave" : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </Card>
   );

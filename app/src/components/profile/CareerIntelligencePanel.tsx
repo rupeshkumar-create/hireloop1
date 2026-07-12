@@ -386,6 +386,7 @@ export function CareerIntelligencePanel({
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     const m = getCachedProfile()?.user?.market;
@@ -572,22 +573,11 @@ export function CareerIntelligencePanel({
 
   // ── Hero headline values ───────────────────────────────────────────────────
   const primaryArchetype = i.career_dna?.primary_archetype;
-  const secondaryArchetype = i.career_dna?.secondary_archetype;
-  const completeness =
-    i.data_completeness !== null && i.data_completeness !== undefined
-      ? Math.min(100, Math.round(i.data_completeness))
-      : null;
   const marketValue = formatCompensationAmount(
     i.compensation?.current_market_value,
     salaryOpts,
   );
   const nextRole = i.prediction?.most_likely_next_role?.outcome;
-  const nextRoleConf = pct(i.prediction?.most_likely_next_role?.confidence);
-  const momentum =
-    i.trajectory?.career_momentum_score !== null &&
-    i.trajectory?.career_momentum_score !== undefined
-      ? `${i.trajectory.career_momentum_score}/100`
-      : null;
   const totalYears =
     i.experience?.total_years !== null && i.experience?.total_years !== undefined
       ? `${i.experience.total_years} yrs`
@@ -638,112 +628,77 @@ export function CareerIntelligencePanel({
 
   return (
     <div className="space-y-4">
-      {/* ── Hero ──────────────────────────────────────────────────────────── */}
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              {primaryArchetype && (
-                <Badge tone="strong">{primaryArchetype}</Badge>
-              )}
-              {secondaryArchetype && <Badge>{secondaryArchetype}</Badge>}
-              {completeness !== null && (
-                <Badge tone="accent">{completeness}% complete</Badge>
-              )}
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={generating}
-              leftIcon={
-                <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />
-              }
-              onClick={() => void regenerate()}
-              className="shrink-0"
-            >
-              {generating ? "Refreshing…" : "Refresh"}
-            </Button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Stat label="Market value" value={marketValue} />
-            <Stat
-              label="Likely next role"
-              value={
-                nextRole
-                  ? nextRoleConf
-                    ? `${nextRole} · ${nextRoleConf}`
-                    : nextRole
-                  : null
-              }
-            />
-            <Stat label="Career momentum" value={momentum} />
-            <Stat label="Experience" value={totalYears} />
-          </div>
-
-          {onAskAarya && (nextRole || marketValue || hasGaps) && (
-            <div className="flex flex-wrap gap-2">
-              {nextRole && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() =>
-                    onAskAarya(
-                      `Find me current jobs matching the "${nextRole}" direction in my market, strongest fit first.`,
-                    )
-                  }
-                >
-                  See matching roles
-                </Button>
-              )}
-              {marketValue && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    onAskAarya(
-                      `Based on my market value of ${marketValue}, find me roles that pay in that range.`,
-                    )
-                  }
-                >
-                  Roles at my market value
-                </Button>
-              )}
-              {hasGaps && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    onAskAarya(
-                      "Based on my career intelligence, what are my biggest gaps and a concrete plan to close them?",
-                    )
-                  }
-                >
-                  Plan my gaps
-                </Button>
-              )}
-            </div>
-          )}
-
-          {i.career_dna?.rationale && (
-            <p className="text-small text-ink-600 leading-relaxed">
-              {i.career_dna.rationale}
+      {/* ── Short summary — depth opens on demand ───────────────────────── */}
+      <div className="rounded-lg border border-ink-100 bg-paper-1 p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            {primaryArchetype ? (
+              <p className="text-h3 font-semibold text-ink-900">{primaryArchetype}</p>
+            ) : (
+              <p className="text-h3 font-semibold text-ink-900">Career intelligence</p>
+            )}
+            <p className="text-small text-ink-500">
+              {[
+                nextRole ? `Likely next: ${nextRole}` : null,
+                marketValue ? `Market value ${marketValue}` : null,
+                totalYears,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Building from your profile."}
             </p>
-          )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={generating}
+            leftIcon={<RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />}
+            onClick={() => void regenerate()}
+            className="shrink-0"
+            aria-label={generating ? "Refreshing" : "Refresh"}
+          />
+        </div>
 
-          {i.updated_at && (
-            <p className="text-micro text-ink-400">
-              Updated {new Date(i.updated_at).toLocaleDateString("en-IN")}
-            </p>
-          )}
-        </CardBody>
-      </Card>
+        {onAskAarya && nextRole && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() =>
+              onAskAarya(
+                `Find me current jobs matching the "${nextRole}" direction in my market, strongest fit first.`,
+              )
+            }
+          >
+            See matching roles
+          </Button>
+        )}
+
+        {i.career_dna?.rationale && (
+          <p className="text-small text-ink-600 leading-relaxed line-clamp-2">
+            {i.career_dna.rationale}
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((v) => !v)}
+          className="inline-flex items-center gap-1 text-small text-ink-600 hover:text-ink-900"
+          aria-expanded={detailsOpen}
+        >
+          {detailsOpen ? "Hide details" : "Show full intelligence"}
+          <ChevronDown
+            className={cn("h-3.5 w-3.5 transition-transform", detailsOpen && "rotate-180")}
+            strokeWidth={1.5}
+          />
+        </button>
+      </div>
 
       {error && <p className="text-small text-destructive">{error}</p>}
 
+      {detailsOpen && (
+      <div className="space-y-4 animate-fade-in">
       {/* ── Group 1: Who you are ──────────────────────────────────────────── */}
       {hasWho && (
-        <CollapsibleGroup title="Who you are" defaultOpen>
+        <CollapsibleGroup title="Who you are">
           {/* Career DNA */}
           {i.career_dna?.archetype_scores && hasScoreMap(i.career_dna.archetype_scores) && (
             <Layer title="Career DNA">
@@ -1349,6 +1304,8 @@ export function CareerIntelligencePanel({
         <p className="text-micro text-ink-300 text-center pt-1">
           Generated by {i.model}
         </p>
+      )}
+      </div>
       )}
     </div>
   );

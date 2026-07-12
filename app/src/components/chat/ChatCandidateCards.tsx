@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Briefcase, Check, MapPin, User } from "@/components/brand/icons";
-import { Badge, Button, ScoreDot } from "@/components/ui";
+import { MapPin, User } from "@/components/brand/icons";
+import { Button, ScoreDot } from "@/components/ui";
 import { formatCompRange } from "@/lib/api/recruiter";
 import type { RankedCandidate, SearchMeta } from "@/lib/api/recruiter";
 import { getCachedProfile } from "@/lib/api/profile";
 import { marketByCode, type MarketCode } from "@/lib/markets";
-import { cn } from "@/lib/utils";
 
 type ChatCandidateCardsProps = {
   candidates: RankedCandidate[];
@@ -27,17 +26,6 @@ function candidateLabel(c: RankedCandidate): string {
 function formatLocation(c: RankedCandidate): string | null {
   const parts = [c.location_city, c.location_state].filter(Boolean);
   return parts.length ? parts.join(", ") : null;
-}
-
-function formatRemotePref(pref: string | null | undefined): string | null {
-  if (!pref || pref === "any") return null;
-  if (pref === "remote_only") return "Remote only";
-  if (pref === "onsite_only") return "On-site only";
-  return pref.replace(/_/g, " ");
-}
-
-function formatSkillLabel(skill: string): string {
-  return skill.replace(/-/g, " ");
 }
 
 const STAGE_LABEL: Record<string, string> = {
@@ -96,19 +84,11 @@ export function ChatCandidateCards({
           const canIntro = ["search", "shortlisted"].includes(c.stage ?? "search");
           const introBusy = introingId === c.candidate_id;
           const location = formatLocation(c);
-          const remoteLabel = formatRemotePref(c.remote_preference);
           const expectedComp = formatCompRange(
             c.expected_ctc_min,
             c.expected_ctc_max,
             { market },
           );
-          const currentComp = formatCompRange(c.current_ctc, c.current_ctc, {
-            market,
-          });
-          const skills = (c.skills ?? []).slice(0, 6);
-          const matched = new Set(c.skills_matched ?? []);
-          const gaps = c.skills_gap ?? [];
-
           return (
             <div
               key={c.candidate_id}
@@ -137,77 +117,26 @@ export function ChatCandidateCards({
                   </div>
 
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-micro text-ink-500">
-                    {c.years_experience != null && (
-                      <span>{c.years_experience} yrs exp</span>
-                    )}
                     {location && (
                       <span className="inline-flex items-center gap-1">
                         <MapPin className="h-3 w-3 shrink-0" strokeWidth={1.5} />
                         {location}
                       </span>
                     )}
-                    {remoteLabel && <span>{remoteLabel}</span>}
-                    {c.notice_period_days != null && (
-                      <span>{c.notice_period_days}d notice</span>
-                    )}
+                    {expectedComp !== "Not set" && <span>{expectedComp}</span>}
+                    <span>{STAGE_LABEL[c.stage ?? "search"] ?? c.stage}</span>
                   </div>
-
-                  {(currentComp !== "Not set" || expectedComp !== "Not set") && (
-                    <p className="mt-1.5 text-micro text-ink-500 inline-flex items-center gap-1">
-                      <Briefcase className="h-3 w-3 shrink-0" strokeWidth={1.5} />
-                      {currentComp !== "Not set" ? `Current ${currentComp}` : null}
-                      {currentComp !== "Not set" && expectedComp !== "Not set"
-                        ? " · "
-                        : null}
-                      {expectedComp !== "Not set" ? `Expecting ${expectedComp}` : null}
-                    </p>
-                  )}
-
-                  {skills.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {matched.size > 0 && (
-                        <p className="text-micro font-medium text-ink-600">
-                          ✓ {matched.size} skills matched
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-1">
-                        {skills.map((skill) => (
-                          <span
-                            key={skill}
-                            className={cn(
-                              "inline-flex items-center gap-0.5 text-micro px-1.5 py-0.5 rounded-sm capitalize",
-                              matched.has(skill)
-                                ? "bg-ink-100 text-ink-900 font-medium"
-                                : "bg-ink-50 text-ink-500"
-                            )}
-                          >
-                            {matched.has(skill) && (
-                              <Check className="h-2.5 w-2.5" strokeWidth={2.5} />
-                            )}
-                            {formatSkillLabel(skill)}
-                          </span>
-                        ))}
-                      </div>
-                      {gaps.length > 0 && (
-                        <p className="text-micro text-ink-500">
-                          Gaps: {gaps.slice(0, 4).join(", ")}
-                          {gaps.length > 4 ? ` +${gaps.length - 4}` : ""}
-                        </p>
-                      )}
-                    </div>
-                  )}
 
                   {c.match_explanation && (
-                    <p className="mt-2 text-micro text-ink-500 leading-relaxed line-clamp-3">
-                      {c.match_explanation}
-                    </p>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-micro text-ink-600 hover:text-ink-900">
+                        Why this match
+                      </summary>
+                      <p className="mt-1 text-micro text-ink-500 leading-relaxed line-clamp-3">
+                        {c.match_explanation}
+                      </p>
+                    </details>
                   )}
-
-                  <div className="mt-2">
-                    <Badge tone="muted" className="text-micro capitalize">
-                      {STAGE_LABEL[c.stage ?? "search"] ?? c.stage}
-                    </Badge>
-                  </div>
                 </div>
               </div>
 

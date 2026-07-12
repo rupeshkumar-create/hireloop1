@@ -239,6 +239,7 @@ export default function RecruiterDashboardPage() {
     }
   }
 
+  const [statsOpen, setStatsOpen] = useState(false);
   const stats = data?.stats;
 
   return (
@@ -247,14 +248,11 @@ export default function RecruiterDashboardPage() {
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-micro font-medium uppercase tracking-wide text-ink-400">
-            Recruiter workspace
-          </p>
-          <h1 className="text-h2 font-semibold text-ink-900 mt-0.5">
-            {companyName ?? "Dashboard"}
+          <h1 className="text-h2 font-semibold text-ink-900">
+            {companyName ?? "Hiring"}
           </h1>
           <p className="text-small text-ink-500 mt-1">
-            Your roles, Nitya chats, and candidate search in one place.
+            Chat with Nitya and manage your roles.
           </p>
         </div>
         <Link href="/recruiter/roles/new" className="shrink-0">
@@ -276,91 +274,9 @@ export default function RecruiterDashboardPage() {
 
       {!loading && roles.length === 0 && !error && <FirstRoleHero />}
 
-      <RecruiterNudgesPanel />
-
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <StatCard
-          label="Active roles"
-          value={stats?.active_roles ?? 0}
-          href="/recruiter/roles"
-          Icon={Briefcase}
-        />
-        <StatCard
-          label="In pipeline"
-          value={stats?.pipeline_total ?? 0}
-          href="/recruiter/roles"
-          Icon={Users}
-        />
-        <StatCard
-          label="Pending intros"
-          value={stats?.pending_intros ?? 0}
-          href="/recruiter/inbox"
-          Icon={Inbox}
-        />
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-h3 font-semibold text-ink-900">Find candidates</h2>
-        </div>
-        <Card>
-          <CardBody className="space-y-3">
-            <form onSubmit={(e) => void runSearch(e)} className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Search
-                  className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400"
-                  strokeWidth={1.5}
-                />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by name, title, company, or skill…"
-                  className={cn(
-                    "w-full rounded-md border border-ink-100 bg-paper-1 pl-9 pr-3 py-2.5",
-                    "text-small text-ink-900 placeholder:text-ink-400",
-                    "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-ring",
-                  )}
-                />
-              </div>
-              <select
-                value={searchRoleId}
-                onChange={(e) => setSearchRoleId(e.target.value)}
-                className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900 focus:outline-none focus:border-accent"
-                aria-label="Filter by role"
-              >
-                <option value="">All roles</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.title}
-                  </option>
-                ))}
-              </select>
-              <Button type="submit" variant="primary" size="md" loading={searching}>
-                Search
-              </Button>
-            </form>
-            {searchRan && (
-              <div className="space-y-2 pt-1">
-                {searchResults.length === 0 && !searching && (
-                  <p className="text-small text-ink-500 py-2">
-                    No candidates matched. Try a different keyword or run search from a role chat
-                    with Nitya.
-                  </p>
-                )}
-                {searchResults.map((hit) => (
-                  <CandidateHitCard key={`${hit.candidate_id}-${hit.role_id ?? "d"}`} hit={hit} />
-                ))}
-              </div>
-            )}
-          </CardBody>
-        </Card>
-      </section>
-
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-h3 font-semibold text-ink-900">Nitya chats</h2>
-          <span className="text-micro text-ink-500">One thread per role</span>
         </div>
 
         {loading && (
@@ -375,7 +291,7 @@ export default function RecruiterDashboardPage() {
           <EmptyState
             icon={<MessageSquare strokeWidth={1.5} />}
             title="No chats yet"
-            description="Create a role and Nitya will open an intake chat tagged to that job."
+            description="Create a role and Nitya will open an intake chat."
             action={
               <Link href="/recruiter/roles/new">
                 <Button variant="primary" size="sm"
@@ -456,6 +372,99 @@ export default function RecruiterDashboardPage() {
           </div>
         </section>
       )}
+
+      <section className="space-y-3 border-t border-ink-100 pt-6">
+        <button
+          type="button"
+          onClick={() => setStatsOpen((v) => !v)}
+          className="text-small text-ink-600 hover:text-ink-900"
+          aria-expanded={statsOpen}
+        >
+          {statsOpen ? "Hide stats & search" : "Stats & candidate search"}
+        </button>
+
+        {statsOpen && (
+          <div className="space-y-6 animate-fade-in">
+            <RecruiterNudgesPanel />
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <StatCard
+                label="Active roles"
+                value={stats?.active_roles ?? 0}
+                href="/recruiter/roles"
+                Icon={Briefcase}
+              />
+              <StatCard
+                label="In pipeline"
+                value={stats?.pipeline_total ?? 0}
+                href="/recruiter/roles"
+                Icon={Users}
+              />
+              <StatCard
+                label="Pending intros"
+                value={stats?.pending_intros ?? 0}
+                href="/recruiter/inbox"
+                Icon={Inbox}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="text-h3 font-semibold text-ink-900">Find candidates</h2>
+              <Card>
+                <CardBody className="space-y-3">
+                  <form onSubmit={(e) => void runSearch(e)} className="flex flex-col sm:flex-row gap-2">
+                    <div className="relative flex-1">
+                      <Search
+                        className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400"
+                        strokeWidth={1.5}
+                      />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by name, title, company, or skill…"
+                        className={cn(
+                          "w-full rounded-md border border-ink-100 bg-paper-1 pl-9 pr-3 py-2.5",
+                          "text-small text-ink-900 placeholder:text-ink-400",
+                          "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-ring",
+                        )}
+                      />
+                    </div>
+                    <select
+                      value={searchRoleId}
+                      onChange={(e) => setSearchRoleId(e.target.value)}
+                      className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900 focus:outline-none focus:border-accent"
+                      aria-label="Filter by role"
+                    >
+                      <option value="">All roles</option>
+                      {roles.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.title}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="submit" variant="primary" size="md" loading={searching}>
+                      Search
+                    </Button>
+                  </form>
+                  {searchRan && (
+                    <div className="space-y-2 pt-1">
+                      {searchResults.length === 0 && !searching && (
+                        <p className="text-small text-ink-500 py-2">
+                          No candidates matched. Try a different keyword or ask Nitya in a role chat.
+                        </p>
+                      )}
+                      {searchResults.map((hit) => (
+                        <CandidateHitCard key={`${hit.candidate_id}-${hit.role_id ?? "d"}`} hit={hit} />
+                      ))}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
