@@ -1168,7 +1168,11 @@ async def _fetch_match_history_rows(
     remote_preference: str = "any",
     market: str = "IN",
 ) -> list[asyncpg.Record]:
-    """All scored jobs for a candidate, newest activity first."""
+    """All scored jobs for a candidate, newest activity first.
+
+    Unlike the live feed, history keeps expired/inactive postings so past matches
+    remain visible after a scrape cycle ages them out.
+    """
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$5")
     company_exclude = test_jobs_company_sql_exclude(company_alias="co")
@@ -1229,10 +1233,8 @@ async def _fetch_match_history_rows(
           ON cji.candidate_id = ms.candidate_id AND cji.job_id = ms.job_id
         WHERE ms.candidate_id = $1::uuid
           AND ms.overall_score >= $2
-          AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
           {remote_clause}
           {company_exclude}
         ORDER BY
@@ -1359,6 +1361,38 @@ def _serialize_cached_match_row(
             quality,
         ).model_dump(mode="json")
     return item
+
+
+def _serialize_history_rows(
+    rows: list[asyncpg.Record],
+    *,
+    candidate: dict,
+    min_score: float,
+    last_visit_at: datetime | None = None,
+) -> list[dict]:
+    """Serialize past matches from stored scores — do not re-gate on live title fit.
+
+    Job history is a log of what the candidate already saw. Re-running
+    should_persist_match against a newly prioritized title would hide those
+    rows and make Matches look empty even when match_scores exist.
+    """
+    result: list[dict] = []
+    for row in rows:
+        stored = row.get("overall_score")
+        if stored is None:
+            continue
+        overall = float(stored)
+        if overall < min_score:
+            continue
+        result.append(
+            _serialize_cached_match_row(
+                row,
+                candidate=candidate,
+                current_quality={"overall": overall},
+                last_visit_at=last_visit_at,
+            )
+        )
+    return result
 
 
 def _serialize_current_quality_cached_rows(
@@ -1811,7 +1845,7 @@ async def get_match_history(
         market=market,
     )
     return _market_feed_items(
-        _serialize_current_quality_cached_rows(
+        _serialize_history_rows(
             rows,
             candidate=dict(candidate),
             min_score=min_score,

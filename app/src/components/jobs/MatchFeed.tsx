@@ -330,7 +330,7 @@ export function MatchFeed({
     return () => {
       cancelled = true;
     };
-  }, [compact, jobs.length, emptyRefreshCount]);
+  }, [compact]);
 
   const handleFindNewJobs = useCallback(async () => {
     setFindingNew(true);
@@ -590,11 +590,17 @@ export function MatchFeed({
           />
         )}
 
-        {!loading && !error && visibleCount === 0 && (
+        {!loading && !error && visibleCount === 0 && historyJobs.length === 0 && !historyLoading && (
           <MatchesEmptyPanel
             onAskAarya={onAskAarya}
             isSearching={emptyRefreshCount < 5}
           />
+        )}
+
+        {!loading && !error && visibleCount === 0 && (historyLoading || historyJobs.length > 0) && (
+          <p className="text-micro text-ink-500 mb-2">
+            No new matches right now — your past jobs are below.
+          </p>
         )}
 
         {!compact && !loading && triageJobs.length > 0 && (
@@ -689,8 +695,8 @@ export function MatchFeed({
           </div>
         )}
 
-        {compact && (historyLoading || historyJobs.length > 0) ? (
-          <div className="mt-6 pt-4 border-t border-ink-100 space-y-3">
+        {compact ? (
+          <div className="mt-2 space-y-3">
             <div className="flex items-baseline justify-between">
               <h4 className="text-small font-semibold text-ink-900">
                 Job history
@@ -704,7 +710,7 @@ export function MatchFeed({
             </div>
             {historyLoading ? (
               <JobCardSkeleton />
-            ) : (
+            ) : historyJobs.length > 0 ? (
               <Stagger className="space-y-3">
                 {historyJobs.map((job) => (
                   <StaggerItem key={`history-${job.job_id}`}>
@@ -726,6 +732,10 @@ export function MatchFeed({
                   </StaggerItem>
                 ))}
               </Stagger>
+            ) : (
+              <p className="text-micro text-ink-500 pb-2">
+                Past matches will show here once Aarya has scored roles for you.
+              </p>
             )}
           </div>
         ) : null}
