@@ -301,8 +301,7 @@ async def _persist_chat_match_scores(
         )
     if not records:
         return
-    await db.executemany(
-        """
+    sql = """
         INSERT INTO public.match_scores
             (id, candidate_id, job_id,
              overall_score, skills_score, experience_score, location_score, ctc_score,
@@ -317,9 +316,17 @@ async def _persist_chat_match_scores(
             ctc_score = COALESCE(EXCLUDED.ctc_score, match_scores.ctc_score),
             explanation = COALESCE(EXCLUDED.explanation, match_scores.explanation),
             computed_at = NOW()
-        """,
-        records,
-    )
+        """
+    # Prefer executemany; fall back to per-row execute for pool wrappers that
+    # don't implement it (otherwise chat jobs never reach Job history).
+    if hasattr(db, "executemany"):
+        try:
+            await db.executemany(sql, records)
+            return
+        except Exception as exc:
+            logger.warning("chat_match_scores_executemany_failed", error=str(exc)[:200])
+    for record in records:
+        await db.execute(sql, *record)
 
 
 async def profile_read(
@@ -1300,7 +1307,7 @@ async def job_search(
                 rows=results,
             )
         except Exception as exc:
-            logger.debug("chat_match_scores_upsert_failed", error=str(exc)[:200])
+            logger.warning("chat_match_scores_upsert_failed", error=str(exc)[:200])
 
     # When nothing matched, warm the index so the candidate's NEXT search has
     # live openings. Career-path users get a path-scoped ingest regardless of

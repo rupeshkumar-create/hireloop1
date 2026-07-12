@@ -330,7 +330,8 @@ export function MatchFeed({
     return () => {
       cancelled = true;
     };
-  }, [compact]);
+    // Re-pull when chat seeds new jobs so Job history catches persisted rows.
+  }, [compact, seedJobs?.length]);
 
   const handleFindNewJobs = useCallback(async () => {
     setFindingNew(true);

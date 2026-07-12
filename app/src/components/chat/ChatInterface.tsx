@@ -659,12 +659,25 @@ export function ChatInterface({
     [onJobsFound],
   );
 
+  // If job cards are already on assistant messages (same session), keep Matches
+  // in sync even when finalize previously skipped reportChatJobs.
+  useEffect(() => {
+    const fromMessages: MatchedJob[] = [];
+    for (const message of messages) {
+      if (message.role === "assistant" && message.jobs?.length) {
+        fromMessages.push(...message.jobs);
+      }
+    }
+    if (fromMessages.length) reportChatJobs(fromMessages);
+  }, [messages, reportChatJobs]);
+
   const attachJobsToCurrentTurnAssistant = useCallback((jobs: MatchedJob[]) => {
     const unique = dedupeJobs(jobs);
     if (!unique.length) return;
-    // During SSE, finalize() owns the assistant bubble + job cards for this turn.
-    if (isStreamingRef.current) return;
+    // Always mirror to Matches — do not gate on isStreamingRef (finalize + the
+    // post-stream pull can race that ref and drop the sidebar sync).
     reportChatJobs(unique);
+    if (isStreamingRef.current) return;
     setMessages((prev) => {
       let lastUserIdx = -1;
       for (let i = prev.length - 1; i >= 0; i -= 1) {
@@ -687,7 +700,13 @@ export function ChatInterface({
       if (targetIdx === -1) return prev;
 
       const target = prev[targetIdx];
-      if (target.jobs?.length) return prev;
+      if (target.jobs?.length) {
+        const mergedJobs = dedupeJobs([...unique, ...(target.jobs ?? [])]);
+        if (mergedJobs.length === target.jobs.length) return prev;
+        return prev.map((m, i) =>
+          i === targetIdx ? { ...m, jobs: mergedJobs } : m
+        );
+      }
 
       return prev.map((m, i) =>
         i === targetIdx ? { ...m, jobs: unique } : m
@@ -1033,6 +1052,9 @@ export function ChatInterface({
             : streamJobsRef.current.length > 0
               ? dedupeJobs(streamJobsRef.current)
               : undefined;
+        if (jobs?.length) {
+          reportChatJobs(jobs);
+        }
         setMessages((prev) => {
           let lastUserIdx = -1;
           for (let i = prev.length - 1; i >= 0; i -= 1) {
@@ -1275,6 +1297,7 @@ export function ChatInterface({
       onSessionCreated,
       actionCount,
       attachJobsToCurrentTurnAssistant,
+      reportChatJobs,
       interruptSpeech,
       cancelRecording,
       authUserId,
