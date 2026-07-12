@@ -27,7 +27,7 @@ export function Navbar() {
           <Link href="/" className="flex items-center gap-2 shrink-0" aria-label="Hireschema home">
             <div className="w-8 h-8 shrink-0">
               <svg viewBox="0 0 48 48" fill="none" className="h-8 w-8" aria-hidden>
-                <rect width="48" height="48" fill="#B5FF6B" />
+                <rect width="48" height="48" fill="#9FE870" />
                 <g transform="translate(24 24) skewX(-10) translate(-24 -24)">
                   <rect x="10.5" y="9" width="7.5" height="12.5" fill="#141414" />
                   <rect x="10.5" y="26.5" width="7.5" height="12.5" fill="#141414" />
@@ -70,7 +70,7 @@ export function Navbar() {
             </Link>
             <Link
               href={APP_URL + "/signup"}
-              className="bg-accent hover:bg-accent-hover text-paper-0 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              className="bg-accent hover:bg-accent-hover text-accent-fg text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
             >
               Start chatting — it&apos;s free
             </Link>
@@ -125,7 +125,7 @@ export function Navbar() {
             </Link>
             <Link
               href={APP_URL + "/signup"}
-              className="block text-center bg-accent hover:bg-accent-hover text-paper-0 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              className="block text-center bg-accent hover:bg-accent-hover text-accent-fg text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
             >
               Start chatting — it&apos;s free
             </Link>

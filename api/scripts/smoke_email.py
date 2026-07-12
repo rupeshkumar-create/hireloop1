@@ -215,7 +215,7 @@ async def amain() -> int:
 
     for label, subject, html in templates:
         has_logo = "email-logo.svg" in html
-        has_cta = "#B5FF6B" in html
+        has_cta = "#9FE870" in html
         has_doctype = "<!DOCTYPE html>" in html
         ok = bool(subject.strip()) and len(html) > 200 and has_logo and has_cta and has_doctype
         all_ok &= _check(f"render_{label}", ok, subject[:60])

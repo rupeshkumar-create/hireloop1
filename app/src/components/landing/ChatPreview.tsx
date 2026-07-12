@@ -194,7 +194,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
                 transition={{ duration: 0.28, ease: [0.21, 0.47, 0.32, 0.98] }}
                 className="flex justify-end"
               >
-                <div className="max-w-[82%] rounded-2xl rounded-br-sm border-2 border-black bg-accent px-3.5 py-2.5 text-small leading-relaxed text-on-accent shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000]">
+                <div className="max-w-[82%] rounded-2xl rounded-br-sm border-2 border-black bg-accent px-3.5 py-2.5 text-small leading-relaxed text-on-accent shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000]">
                   {line.text}
                 </div>
               </motion.div>

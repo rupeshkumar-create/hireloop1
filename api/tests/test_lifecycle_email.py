@@ -35,7 +35,7 @@ def test_brand_shell_includes_logo_and_lime_cta() -> None:
         preheader="Hidden preview",
     )
     assert "email-logo.svg" in html
-    assert "#B5FF6B" in html
+    assert "#9FE870" in html
     assert "Test heading" in html
     assert "Hidden preview" in html
 

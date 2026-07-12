@@ -43,7 +43,7 @@ export function HireIcon({
           (title ? `<title>${title}</title>` : "") +
           icon.l +
           (icon.n
-            ? `<g fill="#B5FF6B" stroke="none">${icon.n}</g>`
+            ? `<g fill="#9FE870" stroke="none">${icon.n}</g>`
             : ""),
       }}
     />

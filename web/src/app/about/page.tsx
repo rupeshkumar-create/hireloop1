@@ -96,7 +96,7 @@ export default function AboutPage() {
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <a
               href="mailto:hello@hireschema.com"
-              className="inline-flex items-center justify-center bg-accent hover:bg-accent-hover text-paper-0 font-semibold px-6 py-3 rounded-xl text-sm transition-colors"
+              className="inline-flex items-center justify-center bg-accent hover:bg-accent-hover text-accent-fg font-semibold px-6 py-3 rounded-xl text-sm transition-colors"
             >
               hello@hireschema.com
             </a>

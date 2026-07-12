@@ -43,11 +43,11 @@ const config: Config = {
         "1":     "#1C1C1C",  // cards / surface (lighter than page)
       },
       accent: {
-        DEFAULT: "#B5FF6B",  // electric lime
-        hover:   "#A5EF58",
+        DEFAULT: "#9FE870",  // brand green
+        hover:   "#8CCC63",
         fg:      "#000000",  // black text on lime — use class text-on-accent
         // Reserved low-emphasis tint for focus rings only.
-        ring:    "rgba(181, 255, 107, 0.30)",
+        ring:    "rgba(159, 232, 112, 0.30)",
       },
       destructive: {
         DEFAULT: "#F76D6D",  // lighter red reads on dark
@@ -84,7 +84,7 @@ const config: Config = {
         "1": "0 1px 2px rgba(0,0,0,0.30), 0 1px 1px rgba(0,0,0,0.20)",
         "2": "0 4px 16px rgba(0,0,0,0.40), 0 2px 4px rgba(0,0,0,0.30)",
         // Focus ring (used by primitives — not a "real" shadow)
-        focus: "0 0 0 2px #141414, 0 0 0 4px #B5FF6B",
+        focus: "0 0 0 2px #141414, 0 0 0 4px #9FE870",
       },
       transitionTimingFunction: {
         "out-soft": "cubic-bezier(0.16, 1, 0.3, 1)",
