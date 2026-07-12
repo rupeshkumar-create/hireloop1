@@ -120,7 +120,7 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
       <div className="mt-10 flex gap-4">
         <a
           href={`${appUrl}/signup`}
-          className="inline-flex bg-accent text-paper-0 px-6 py-3 rounded-xl font-medium"
+          className="inline-flex bg-accent text-accent-fg px-6 py-3 rounded-xl font-medium"
         >
           Get matched free
         </a>

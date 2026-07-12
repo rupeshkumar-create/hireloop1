@@ -9,11 +9,11 @@ from __future__ import annotations
 from html import escape
 
 # DESIGN.md tokens
-LIME = "#B5FF6B"
+LIME = "#9FE870"
 CHARCOAL = "#141414"
 PAPER = "#FAFAFA"
 INK_MUTED = "#6B7280"
-MATCH_GREEN = "#16A34A"
+MATCH_GREEN = "#9FE870"
 
 
 def default_app_base() -> str:

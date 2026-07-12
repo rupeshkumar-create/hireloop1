@@ -53,6 +53,8 @@ interface JobCardProps {
   onApplyLocked?: () => void;
   /** chat = compact actions for Aarya thread; feed = full matches panel */
   variant?: "feed" | "chat";
+  /** When set, show this date label instead of posted-ago (job history mode). */
+  historyDateLabel?: string | null;
   className?: string;
 }
 
@@ -93,6 +95,7 @@ export function JobCard({
   variant = "feed",
   applyLocked = false,
   onApplyLocked,
+  historyDateLabel,
   className,
 }: JobCardProps) {
   const { toast } = useToast();
@@ -293,7 +296,11 @@ export function JobCard({
             {job.action_label}
           </Badge>
         )}
-        {postedAgo && <Badge tone="muted">{postedAgo}</Badge>}
+        {historyDateLabel ? (
+          <Badge tone="muted">{historyDateLabel}</Badge>
+        ) : (
+          postedAgo && <Badge tone="muted">{postedAgo}</Badge>
+        )}
         {(job.tier || job.tier_label) && (
           <Badge
             tone={

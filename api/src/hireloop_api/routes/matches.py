@@ -395,6 +395,7 @@ class MatchedJob(BaseModel):
     is_new_for_you: bool = False
     is_new_since_visit: bool = False
     first_seen_at: str | None = None
+    last_seen_at: str | None = None
     # Skill detail: which required skills the candidate has vs is missing.
     skills_matched: list[str] = []
     skills_gap: list[str] = []
@@ -418,6 +419,13 @@ class EmbedResponse(BaseModel):
     failed: int = 0
 
 
+class FindNewJobsResponse(BaseModel):
+    jobs: list[MatchedJob]
+    refreshing: bool = False
+    excluded_count: int = 0
+    message: str | None = None
+
+
 # ── Candidate match feed ──────────────────────────────────────────────────────
 
 
@@ -434,6 +442,10 @@ async def get_match_feed(
     ),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    only_new: bool = Query(
+        default=False,
+        description="When true, return only jobs the candidate has never been shown",
+    ),
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> list[dict]:
@@ -543,6 +555,7 @@ async def get_match_feed(
         offset=offset,
         remote_preference=remote_pref,
         market=market,
+        only_new=only_new,
     )
 
     if not _market_match_rows(rows) and offset == 0:
@@ -559,6 +572,7 @@ async def get_match_feed(
                 offset=offset,
                 remote_preference=remote_pref,
                 market=market,
+                only_new=only_new,
             )
             if not _market_match_rows(rows):
                 await _enqueue_candidate_match_scoring(db, candidate["id"])
@@ -1046,7 +1060,115 @@ async def _fetch_cached_match_rows(
     offset: int,
     remote_preference: str = "any",
     market: str = "IN",
+    only_new: bool = False,
 ) -> list[asyncpg.Record]:
+    remote_clause = remote_filter_sql(remote_preference)
+    vis = job_visible_for_market_sql(market_param="$5")
+    company_exclude = test_jobs_company_sql_exclude(company_alias="co")
+    only_new_clause = "AND cji.first_seen_at IS NULL" if only_new else ""
+    return await db.fetch(
+        f"""
+        SELECT
+            ms.job_id,
+            j.title,
+            co.name          AS company_name,
+            co.logo_url      AS company_logo_url,
+            co.domain        AS company_domain,
+            j.location_city,
+            j.location_state,
+            j.is_remote,
+            j.employment_type,
+            j.seniority,
+            j.ctc_min,
+            j.ctc_max,
+            j.salary_currency,
+            j.skills_required,
+            j.description,
+            j.apply_url,
+            ms.overall_score,
+            ms.skills_score,
+            ms.experience_score,
+            ms.location_score,
+            ms.ctc_score,
+            ms.culture_score,
+            ms.career_alignment_score,
+            ms.fit_recommendation,
+            ms.salary_benchmark,
+            ms.triage_notes,
+            ms.explanation,
+            ms.llm_rationale,
+            ms.llm_rationale_at,
+            ms.computed_at,
+            j.scraped_at,
+            cji.first_seen_at,
+            cji.last_seen_at,
+            -- Action-state: surface what the candidate (or Aarya) has already done
+            -- for this role, so an acted-on match no longer looks untouched.
+            EXISTS (
+                SELECT 1 FROM public.job_application_kits k
+                WHERE k.candidate_id = ms.candidate_id AND k.job_id = ms.job_id
+            ) AS has_kit,
+            (
+                SELECT ja.status FROM public.job_applications ja
+                WHERE ja.candidate_id = ms.candidate_id AND ja.job_id = ms.job_id
+                ORDER BY ja.applied_at DESC LIMIT 1
+            ) AS application_status,
+            (
+                SELECT ir.status FROM public.intro_requests ir
+                WHERE ir.candidate_id = ms.candidate_id AND ir.job_id = ms.job_id
+                ORDER BY ir.created_at DESC LIMIT 1
+            ) AS intro_status
+        FROM public.match_scores ms
+        JOIN public.jobs j ON j.id = ms.job_id
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        LEFT JOIN public.candidate_job_impressions cji
+          ON cji.candidate_id = ms.candidate_id AND cji.job_id = ms.job_id
+        WHERE ms.candidate_id = $1::uuid
+          AND ms.overall_score >= $2
+          AND j.is_active = TRUE
+          AND {vis}
+          AND j.deleted_at IS NULL
+          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          {remote_clause}
+          {company_exclude}
+          {only_new_clause}
+        ORDER BY
+            (cji.first_seen_at IS NULL) DESC,
+            COALESCE(j.scraped_at, j.created_at) DESC NULLS LAST,
+            ms.overall_score * (
+                -- Freshness decay (#27), applied at serve time so the stored score
+                -- stays a pure "fit" signal: small boost for jobs scraped <72h ago,
+                -- gentle penalty after 14d, stronger after 30d. Recruiter-posted
+                -- jobs (scraped_at NULL) are treated as fresh.
+                CASE
+                    WHEN j.scraped_at IS NULL THEN 1.0
+                    WHEN j.scraped_at > NOW() - INTERVAL '72 hours' THEN 1.05
+                    WHEN j.scraped_at > NOW() - INTERVAL '14 days' THEN 1.0
+                    WHEN j.scraped_at > NOW() - INTERVAL '30 days' THEN 0.92
+                    ELSE 0.85
+                END
+            ) DESC
+        LIMIT $3 OFFSET $4
+        """,
+        candidate_id,
+        min_score,
+        limit,
+        offset,
+        market,
+    )
+
+
+async def _fetch_match_history_rows(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    min_score: float,
+    limit: int,
+    offset: int,
+    remote_preference: str = "any",
+    market: str = "IN",
+) -> list[asyncpg.Record]:
+    """All scored jobs for a candidate, newest activity first."""
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$5")
     company_exclude = test_jobs_company_sql_exclude(company_alias="co")
@@ -1085,8 +1207,7 @@ async def _fetch_cached_match_rows(
             ms.computed_at,
             j.scraped_at,
             cji.first_seen_at,
-            -- Action-state: surface what the candidate (or Aarya) has already done
-            -- for this role, so an acted-on match no longer looks untouched.
+            cji.last_seen_at,
             EXISTS (
                 SELECT 1 FROM public.job_application_kits k
                 WHERE k.candidate_id = ms.candidate_id AND k.job_id = ms.job_id
@@ -1115,21 +1236,8 @@ async def _fetch_cached_match_rows(
           {remote_clause}
           {company_exclude}
         ORDER BY
-            (cji.first_seen_at IS NULL) DESC,
-            COALESCE(j.scraped_at, j.created_at) DESC NULLS LAST,
-            ms.overall_score * (
-                -- Freshness decay (#27), applied at serve time so the stored score
-                -- stays a pure "fit" signal: small boost for jobs scraped <72h ago,
-                -- gentle penalty after 14d, stronger after 30d. Recruiter-posted
-                -- jobs (scraped_at NULL) are treated as fresh.
-                CASE
-                    WHEN j.scraped_at IS NULL THEN 1.0
-                    WHEN j.scraped_at > NOW() - INTERVAL '72 hours' THEN 1.05
-                    WHEN j.scraped_at > NOW() - INTERVAL '14 days' THEN 1.0
-                    WHEN j.scraped_at > NOW() - INTERVAL '30 days' THEN 0.92
-                    ELSE 0.85
-                END
-            ) DESC
+            COALESCE(cji.last_seen_at, cji.first_seen_at, ms.computed_at) DESC NULLS LAST,
+            ms.overall_score DESC
         LIMIT $3 OFFSET $4
         """,
         candidate_id,
@@ -1196,6 +1304,7 @@ def _serialize_cached_match_row(
 ) -> dict:
     data = dict(row)
     first_seen = data.get("first_seen_at")
+    last_seen = data.get("last_seen_at")
     # A cached LLM rationale is usable only if it was generated AFTER the latest
     # score (otherwise the row was re-scored and the rationale may be stale).
     llm = data.pop("llm_rationale", None)
@@ -1229,6 +1338,7 @@ def _serialize_cached_match_row(
         "skills_required": row["skills_required"] or [],
         "computed_at": computed_at.isoformat() if computed_at else None,
         "first_seen_at": first_seen.isoformat() if hasattr(first_seen, "isoformat") else None,
+        "last_seen_at": last_seen.isoformat() if hasattr(last_seen, "isoformat") else None,
         "is_new_for_you": first_seen is None,
         "is_new_since_visit": is_new_since_visit,
         "action_state": action_state,
@@ -1635,6 +1745,175 @@ async def get_match_triage(
     if len(picks) < min(3, limit):
         picks = serialized[:limit]
     return picks[:limit]
+
+
+# ── Job history + find-new ─────────────────────────────────────────────────────
+
+
+async def _resolve_match_candidate(
+    db: asyncpg.Connection,
+    user_id: uuid.UUID,
+) -> asyncpg.Record:
+    candidate = await db.fetchrow(
+        """
+        SELECT c.id, c.current_title, c.current_company, c.looking_for, c.headline, c.summary,
+               c.years_experience, c.skills,
+               c.location_city, c.location_state, c.expected_ctc_min, c.expected_ctc_max,
+               c.remote_preference, c.open_to_relocation, c.location_scope,
+               c.aarya_state, c.market,
+               c.last_visit_at,
+               (
+                   SELECT cp.target_titles
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS target_titles,
+               (
+                   SELECT cp.prioritized_title
+                   FROM public.career_paths cp
+                   WHERE cp.candidate_id = c.id AND cp.deleted_at IS NULL
+                   ORDER BY cp.created_at DESC
+                   LIMIT 1
+               ) AS prioritized_title
+        FROM public.candidates c
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        user_id,
+    )
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Complete your profile first")
+    return await _candidate_with_intelligence(db, candidate)
+
+
+@router.get("/history", response_model=list[MatchedJob])
+async def get_match_history(
+    min_score: float = Query(default=0.0, ge=0.0, le=1.0),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> list[dict]:
+    """Full job match history for the candidate, newest activity first."""
+    candidate = await _resolve_match_candidate(db, uuid.UUID(current_user["id"]))
+    market = normalize_market(candidate.get("market"))
+    if not candidate.get("market"):
+        market = await fetch_candidate_market(db, candidate["id"])
+    remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
+
+    rows = await _fetch_match_history_rows(
+        db,
+        candidate_id=candidate["id"],
+        min_score=min_score,
+        limit=limit,
+        offset=offset,
+        remote_preference=remote_pref,
+        market=market,
+    )
+    return _market_feed_items(
+        _serialize_current_quality_cached_rows(
+            rows,
+            candidate=dict(candidate),
+            min_score=min_score,
+            last_visit_at=candidate.get("last_visit_at"),
+        )
+    )
+
+
+@router.post("/find-new", response_model=FindNewJobsResponse)
+async def find_new_matches(
+    current_user: dict = Depends(get_phone_verified_user),
+    db: asyncpg.Connection = Depends(get_db),
+) -> dict:
+    """
+    Surface jobs the candidate has never been shown, and queue a fresh scrape +
+    re-score so more new roles arrive without repeating prior matches.
+    """
+    settings = get_settings()
+    candidate = await _resolve_match_candidate(db, uuid.UUID(current_user["id"]))
+    market = normalize_market(candidate.get("market"))
+    if not candidate.get("market"):
+        market = await fetch_candidate_market(db, candidate["id"])
+    remote_pref = normalize_remote_preference(candidate.get("remote_preference"))
+
+    excluded_count = int(
+        await db.fetchval(
+            """
+            SELECT COUNT(*)::int
+            FROM public.candidate_job_impressions
+            WHERE candidate_id = $1::uuid
+            """,
+            candidate["id"],
+        )
+        or 0
+    )
+
+    if settings.apify_token and hasattr(db, "fetchval"):
+        from hireloop_api.services.background_jobs import (
+            AARYA_AUTO_INGEST,
+            CAREER_PATH_INGEST,
+            enqueue_job,
+        )
+
+        await enqueue_job(
+            db,
+            kind=AARYA_AUTO_INGEST,
+            payload={"candidate_id": str(candidate["id"]), "force_refresh": False},
+            idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
+        )
+        path_row = await db.fetchrow(
+            """
+            SELECT id FROM public.career_paths
+            WHERE candidate_id = $1::uuid AND deleted_at IS NULL
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            candidate["id"],
+        )
+        if path_row is not None:
+            await enqueue_job(
+                db,
+                kind=CAREER_PATH_INGEST,
+                payload={
+                    "candidate_id": str(candidate["id"]),
+                    "derive_from_candidate": True,
+                    "force_refresh": False,
+                    "user_id": current_user["id"],
+                },
+                idempotency_key=f"career_path_ingest:{candidate['id']}",
+            )
+
+    await _enqueue_candidate_match_scoring(db, candidate["id"])
+
+    rows = await _fetch_cached_match_rows(
+        db,
+        candidate_id=candidate["id"],
+        min_score=DEFAULT_FEED_MIN_SCORE,
+        limit=20,
+        offset=0,
+        remote_preference=remote_pref,
+        market=market,
+        only_new=True,
+    )
+    jobs = _market_feed_items(
+        _serialize_current_quality_cached_rows(
+            rows,
+            candidate=dict(candidate),
+            min_score=DEFAULT_FEED_MIN_SCORE,
+            last_visit_at=candidate.get("last_visit_at"),
+        )
+    )
+
+    message = (
+        f"Found {len(jobs)} new role{'s' if len(jobs) != 1 else ''}."
+        if jobs
+        else "Searching for new roles — check back in a minute."
+    )
+    return {
+        "jobs": jobs,
+        "refreshing": len(jobs) < 3,
+        "excluded_count": excluded_count,
+        "message": message,
+    }
 
 
 # ── Single match score ────────────────────────────────────────────────────────

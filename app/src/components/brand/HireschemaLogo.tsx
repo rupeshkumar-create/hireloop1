@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 type MarkVariant = "app" | "lime" | "charcoal" | "white";
 
-const LIME = "#B5FF6B";
+const LIME = "#9FE870";
 const CHARCOAL = "#141414";
 const PAPER = "#FAFAFA";
 

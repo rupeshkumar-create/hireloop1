@@ -123,7 +123,7 @@ export default function HowItWorksPage() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
               href={APP_URL + "/signup?role=candidate"}
-              className="inline-flex items-center justify-center bg-accent hover:bg-accent-hover text-paper-0 font-semibold px-6 py-3 rounded-xl text-sm transition-colors"
+              className="inline-flex items-center justify-center bg-accent hover:bg-accent-hover text-accent-fg font-semibold px-6 py-3 rounded-xl text-sm transition-colors"
             >
               I&apos;m a job seeker →
             </Link>

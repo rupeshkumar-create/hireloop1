@@ -54,6 +54,7 @@ export type MatchedJob = {
   // Retention: job is new to this candidate (not previously surfaced).
   is_new_for_you?: boolean;
   first_seen_at?: string | null;
+  last_seen_at?: string | null;
   // Presentation layer — confidence badge from the API ranking layer.
   tier?: string | null;
   tier_label?: string | null;
@@ -67,6 +68,14 @@ export type MatchFeedFilters = {
   min_score?: number;   // 0–1
   limit?: number;
   offset?: number;
+  only_new?: boolean;
+};
+
+export type FindNewJobsResult = {
+  jobs: MatchedJob[];
+  refreshing: boolean;
+  excluded_count: number;
+  message: string | null;
 };
 
 export type JobAction = "request_intro" | "direct_apply" | "save";
@@ -93,6 +102,7 @@ function matchFeedCacheKey(filters: MatchFeedFilters = {}): string {
     min_score: filters.min_score ?? null,
     limit: filters.limit ?? null,
     offset: filters.offset ?? null,
+    only_new: filters.only_new ?? false,
   });
 }
 
@@ -173,6 +183,7 @@ export async function fetchMatchFeed(
     params.set("limit", String(filters.limit));
   if (filters.offset !== undefined)
     params.set("offset", String(filters.offset));
+  if (filters.only_new) params.set("only_new", "true");
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), MATCH_FEED_FETCH_TIMEOUT_MS);
@@ -247,6 +258,38 @@ export async function fetchMatchFeedCount(
 
   _matchFeedCountInFlight.set(cacheKey, req);
   return req;
+}
+
+export async function fetchMatchHistory(
+  filters: Pick<MatchFeedFilters, "min_score" | "limit" | "offset"> = {},
+): Promise<MatchedJob[]> {
+  const params = new URLSearchParams();
+  if (filters.min_score !== undefined) {
+    params.set("min_score", String(filters.min_score));
+  }
+  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+  if (filters.offset !== undefined) params.set("offset", String(filters.offset));
+
+  const res = await apiAuthFetch(`/api/v1/matches/history?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Match history failed: ${res.status}`);
+  }
+  return res.json() as Promise<MatchedJob[]>;
+}
+
+export async function findNewMatches(): Promise<FindNewJobsResult> {
+  const res = await apiAuthFetch("/api/v1/matches/find-new", {
+    method: "POST",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Find new jobs failed: ${res.status}`);
+  }
+  return res.json() as Promise<FindNewJobsResult>;
 }
 
 export async function fetchSingleMatch(jobId: string): Promise<MatchedJob> {

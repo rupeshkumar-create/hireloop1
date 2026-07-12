@@ -36,10 +36,10 @@ const config: Config = {
         1:       "#FFFFFF",
       },
       accent: {
-        DEFAULT: "#3B5BFD",
-        hover:   "#2F4BE6",
-        fg:      "#FFFFFF",
-        ring:    "rgba(59, 91, 253, 0.15)",
+        DEFAULT: "#9FE870",
+        hover:   "#8CCC63",
+        fg:      "#000000",
+        ring:    "rgba(159, 232, 112, 0.30)",
       },
       destructive: {
         DEFAULT: "#B91C1C",
@@ -74,7 +74,7 @@ const config: Config = {
       boxShadow: {
         "1": "0 1px 2px rgba(14,14,16,0.04), 0 1px 1px rgba(14,14,16,0.02)",
         "2": "0 4px 16px rgba(14,14,16,0.06), 0 2px 4px rgba(14,14,16,0.04)",
-        focus: "0 0 0 2px #FAFAF7, 0 0 0 4px #3B5BFD",
+        focus: "0 0 0 2px #FAFAF7, 0 0 0 4px #9FE870",
       },
       transitionTimingFunction: {
         "out-soft": "cubic-bezier(0.16, 1, 0.3, 1)",

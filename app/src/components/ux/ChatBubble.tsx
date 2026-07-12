@@ -16,7 +16,7 @@ export function ChatBubble({
       className={cn(
         "max-w-[85%] rounded-lg px-4 py-2.5 text-body leading-relaxed",
         isUser
-          ? "ml-auto border-2 border-black bg-accent text-on-accent shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000]"
+          ? "ml-auto border-2 border-black bg-accent text-on-accent shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000]"
           : "mr-auto bg-paper-1 border border-ink-100 text-ink-900",
         className,
       )}

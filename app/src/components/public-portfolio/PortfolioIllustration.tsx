@@ -9,7 +9,7 @@ function palette(slug: string) {
     hash = (hash * 31 + slug.charCodeAt(i)) >>> 0;
   }
   const palettes = [
-    { bg: "#E8F9C8", skin: "#F5D0A8", hair: "#2A2118", accent: "#B5FF6B", shirt: "#1A1A1A" },
+    { bg: "#EAF9DC", skin: "#F5D0A8", hair: "#2A2118", accent: "#9FE870", shirt: "#1A1A1A" },
     { bg: "#D4F4FF", skin: "#E8B98A", hair: "#1F2937", accent: "#7DD3FC", shirt: "#0F172A" },
     { bg: "#FDE8FF", skin: "#C68642", hair: "#3D2314", accent: "#E879F9", shirt: "#27272A" },
     { bg: "#FFF4D6", skin: "#FFCC99", hair: "#4A3728", accent: "#FACC15", shirt: "#18181B" },

@@ -11,22 +11,22 @@ const BTN_TEXT = "text-black hover:text-black";
 /** Primary CTA — solid lime fill. */
 export const BTN_PRIMARY =
   `${BTN_FRAME} hs-btn-primary ${BTN_LAYOUT} ${BTN_TEXT} bg-accent border-2 border-black ` +
-  "shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000] " +
+  "shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000] " +
   "hover:bg-accent-hover hover:border-black " +
-  "hover:shadow-[0_0_0_2px_#a5ef58,0_0_0_4px_#000000]";
+  "hover:shadow-[0_0_0_2px_#8ccc63,0_0_0_4px_#000000]";
 
 /** Secondary — light chip, black label. */
 export const BTN_SECONDARY =
   `${BTN_FRAME} hs-btn-secondary ${BTN_LAYOUT} ${BTN_TEXT} bg-ink-700 border-2 border-black ` +
   "shadow-[0_0_0_2px_#e0e0e0,0_0_0_4px_#000000] " +
-  "hover:bg-accent hover:shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000]";
+  "hover:bg-accent hover:shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000]";
 
 /** Ghost — light chip for secondary actions. */
 export const BTN_GHOST =
   `${BTN_FRAME} hs-btn-ghost ${BTN_LAYOUT} ${BTN_TEXT} bg-ink-700 border-2 border-black ` +
   "shadow-[0_0_0_2px_#e0e0e0,0_0_0_4px_#000000] " +
   "hover:bg-accent hover:border-black " +
-  "hover:shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000]";
+  "hover:shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000]";
 
 export const BTN_DESTRUCTIVE =
   `${BTN_FRAME} hs-btn-destructive ${BTN_LAYOUT} ${BTN_TEXT} bg-destructive-bg border-2 border-black ` +
@@ -42,7 +42,7 @@ export const BTN_ICON =
 /** Solid lime icon control (send). */
 export const BTN_ICON_ACCENT =
   `inline-flex items-center justify-center border-2 border-black bg-accent ${BTN_TEXT} ` +
-  "shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000] " +
+  "shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000] " +
   "hover:bg-accent-hover transition-colors duration-fast ease-out-soft";
 
 /** Selectable chip (role picker, filters). */
@@ -52,7 +52,7 @@ export const BTN_CHIP =
 
 export const BTN_CHIP_ACTIVE =
   `${BTN_FRAME} inline-flex items-center justify-center font-medium border-2 border-black bg-accent ${BTN_TEXT} ` +
-  "shadow-[0_0_0_2px_#b5ff6b,0_0_0_4px_#000000]";
+  "shadow-[0_0_0_2px_#9fe870,0_0_0_4px_#000000]";
 
 /** Full-width list / card action row. */
 export const BTN_ROW =

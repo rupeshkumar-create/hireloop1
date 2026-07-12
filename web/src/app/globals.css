@@ -10,13 +10,17 @@
   .text-paper-0 { color: #FAFAF7; }
   .text-paper-1 { color: #FFFFFF; }
 
-  .bg-accent        { background-color: #3B5BFD; }
-  .bg-accent-hover  { background-color: #2F4BE6; }
-  .text-accent      { color: #3B5BFD; }
-  .text-accent-fg   { color: #FFFFFF; }
-  .border-accent    { border-color: #3B5BFD; }
-  .ring-accent-ring { --tw-ring-color: rgba(59, 91, 253, 0.15); }
-  .hover\:bg-accent-hover:hover { background-color: #2F4BE6; }
+  .bg-accent        { background-color: #9FE870; }
+  .bg-accent-hover  { background-color: #8CCC63; }
+  /* Fill stays #9FE870; text uses a darker sibling so links stay readable on cream. */
+  .text-accent      { color: #3F8F1A; }
+  .text-accent-fg   { color: #000000; }
+  .text-on-accent   { color: #000000; }
+  .border-accent    { border-color: #9FE870; }
+  .ring-accent-ring { --tw-ring-color: rgba(159, 232, 112, 0.30); }
+  .hover\:bg-accent-hover:hover { background-color: #8CCC63; }
+  .hover\:text-accent:hover { color: #347816; }
+  .hover\:text-accent-hover:hover { color: #347816; }
 
   .bg-destructive-bg { background-color: #FEE2E2; }
   .text-destructive  { color: #B91C1C; }
@@ -68,12 +72,12 @@
 
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #FAFAF7, 0 0 0 4px #3B5BFD;
+    box-shadow: 0 0 0 2px #FAFAF7, 0 0 0 4px #9FE870;
     border-radius: 0;
   }
 
   ::selection {
-    background-color: rgba(59, 91, 253, 0.18);
+    background-color: rgba(159, 232, 112, 0.28);
     color: #0E0E10;
   }
 }
