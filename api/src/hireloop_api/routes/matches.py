@@ -1168,10 +1168,12 @@ async def _fetch_match_history_rows(
     remote_preference: str = "any",
     market: str = "IN",
 ) -> list[asyncpg.Record]:
-    """All scored jobs for a candidate, newest activity first.
+    """All scored or previously-shown jobs for a candidate, newest activity first.
 
     Unlike the live feed, history keeps expired/inactive postings so past matches
-    remain visible after a scrape cycle ages them out.
+    remain visible after a scrape cycle ages them out. Keys come from match_scores
+    OR chat/feed impressions so roles Aarya showed in chat survive refresh even
+    when the batch scorer never wrote a row.
     """
     remote_clause = remote_filter_sql(remote_preference)
     vis = job_visible_for_market_sql(market_param="$5")
@@ -1179,7 +1181,7 @@ async def _fetch_match_history_rows(
     return await db.fetch(
         f"""
         SELECT
-            ms.job_id,
+            keys.job_id,
             j.title,
             co.name          AS company_name,
             co.logo_url      AS company_logo_url,
@@ -1195,7 +1197,7 @@ async def _fetch_match_history_rows(
             j.skills_required,
             j.description,
             j.apply_url,
-            ms.overall_score,
+            COALESCE(ms.overall_score, 0.55) AS overall_score,
             ms.skills_score,
             ms.experience_score,
             ms.location_score,
@@ -1208,38 +1210,47 @@ async def _fetch_match_history_rows(
             ms.explanation,
             ms.llm_rationale,
             ms.llm_rationale_at,
-            ms.computed_at,
+            COALESCE(ms.computed_at, cji.first_seen_at, cji.last_seen_at, j.scraped_at) AS computed_at,
             j.scraped_at,
             cji.first_seen_at,
             cji.last_seen_at,
             EXISTS (
                 SELECT 1 FROM public.job_application_kits k
-                WHERE k.candidate_id = ms.candidate_id AND k.job_id = ms.job_id
+                WHERE k.candidate_id = $1::uuid AND k.job_id = keys.job_id
             ) AS has_kit,
             (
                 SELECT ja.status FROM public.job_applications ja
-                WHERE ja.candidate_id = ms.candidate_id AND ja.job_id = ms.job_id
+                WHERE ja.candidate_id = $1::uuid AND ja.job_id = keys.job_id
                 ORDER BY ja.applied_at DESC LIMIT 1
             ) AS application_status,
             (
                 SELECT ir.status FROM public.intro_requests ir
-                WHERE ir.candidate_id = ms.candidate_id AND ir.job_id = ms.job_id
+                WHERE ir.candidate_id = $1::uuid AND ir.job_id = keys.job_id
                 ORDER BY ir.created_at DESC LIMIT 1
             ) AS intro_status
-        FROM public.match_scores ms
-        JOIN public.jobs j ON j.id = ms.job_id
+        FROM (
+            SELECT candidate_id, job_id
+            FROM public.match_scores
+            WHERE candidate_id = $1::uuid
+            UNION
+            SELECT candidate_id, job_id
+            FROM public.candidate_job_impressions
+            WHERE candidate_id = $1::uuid
+        ) keys
+        JOIN public.jobs j ON j.id = keys.job_id
         LEFT JOIN public.companies co ON co.id = j.company_id
+        LEFT JOIN public.match_scores ms
+          ON ms.candidate_id = keys.candidate_id AND ms.job_id = keys.job_id
         LEFT JOIN public.candidate_job_impressions cji
-          ON cji.candidate_id = ms.candidate_id AND cji.job_id = ms.job_id
-        WHERE ms.candidate_id = $1::uuid
-          AND ms.overall_score >= $2
+          ON cji.candidate_id = keys.candidate_id AND cji.job_id = keys.job_id
+        WHERE COALESCE(ms.overall_score, 0.55) >= $2
           AND {vis}
           AND j.deleted_at IS NULL
           {remote_clause}
           {company_exclude}
         ORDER BY
             COALESCE(cji.last_seen_at, cji.first_seen_at, ms.computed_at) DESC NULLS LAST,
-            ms.overall_score DESC
+            COALESCE(ms.overall_score, 0.55) DESC
         LIMIT $3 OFFSET $4
         """,
         candidate_id,

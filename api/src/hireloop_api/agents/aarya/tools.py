@@ -260,6 +260,68 @@ async def _write_action(
     )
 
 
+async def _persist_chat_match_scores(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Upsert match_scores for jobs Aarya just showed in chat.
+
+    Job history / Matches panel read from match_scores. Chat previously only
+    wrote impressions, so refresh wiped jobs that never went through the batch
+    scorer.
+    """
+    records: list[tuple[Any, ...]] = []
+    for row in rows:
+        raw_id = row.get("job_id") or row.get("id")
+        if not raw_id:
+            continue
+        try:
+            job_id = uuid.UUID(str(raw_id))
+        except (TypeError, ValueError):
+            continue
+        overall = row.get("overall_score")
+        if overall is None:
+            overall = 0.55
+        explanation = row.get("explanation")
+        records.append(
+            (
+                uuid.uuid4(),
+                candidate_id,
+                job_id,
+                float(overall),
+                float(row["skills_score"]) if row.get("skills_score") is not None else None,
+                float(row["experience_score"]) if row.get("experience_score") is not None else None,
+                float(row["location_score"]) if row.get("location_score") is not None else None,
+                float(row["ctc_score"]) if row.get("ctc_score") is not None else None,
+                explanation,
+                json.dumps({"source": "aarya_chat"}),
+            )
+        )
+    if not records:
+        return
+    await db.executemany(
+        """
+        INSERT INTO public.match_scores
+            (id, candidate_id, job_id,
+             overall_score, skills_score, experience_score, location_score, ctc_score,
+             explanation, bias_audit, computed_at)
+        VALUES
+            ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+        ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+            overall_score = GREATEST(match_scores.overall_score, EXCLUDED.overall_score),
+            skills_score = COALESCE(EXCLUDED.skills_score, match_scores.skills_score),
+            experience_score = COALESCE(EXCLUDED.experience_score, match_scores.experience_score),
+            location_score = COALESCE(EXCLUDED.location_score, match_scores.location_score),
+            ctc_score = COALESCE(EXCLUDED.ctc_score, match_scores.ctc_score),
+            explanation = COALESCE(EXCLUDED.explanation, match_scores.explanation),
+            computed_at = NOW()
+        """,
+        records,
+    )
+
+
 async def profile_read(
     db: asyncpg.Connection,
     user_id: str,
@@ -1204,8 +1266,8 @@ async def job_search(
         duration_ms,
     )
 
-    # Retention: mark jobs surfaced via chat as "seen".
-    # Best-effort: never fail the tool due to retention writes.
+    # Retention: mark jobs surfaced via chat as "seen" AND persist scores so
+    # Matches → Job history survives a refresh (history reads match_scores).
     if candidate is not None and job_cards:
         try:
             job_uuids = [
@@ -1230,6 +1292,15 @@ async def job_search(
                 )
         except Exception as exc:
             logger.debug("chat_job_impressions_upsert_failed", error=str(exc)[:200])
+
+        try:
+            await _persist_chat_match_scores(
+                db,
+                candidate_id=uuid.UUID(str(candidate["id"])),
+                rows=results,
+            )
+        except Exception as exc:
+            logger.debug("chat_match_scores_upsert_failed", error=str(exc)[:200])
 
     # When nothing matched, warm the index so the candidate's NEXT search has
     # live openings. Career-path users get a path-scoped ingest regardless of
