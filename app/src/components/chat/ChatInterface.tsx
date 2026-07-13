@@ -126,6 +126,12 @@ import { AgentThinkingIndicator } from "./AgentThinkingIndicator";
 import { ActivityTimeline, type AgentAction } from "./ActivityTimeline";
 import { ProfileCompletionFlow } from "./ProfileCompletionFlow";
 import { ChatJobCards } from "./ChatJobCards";
+import {
+  JdFitAnalysisCard,
+  ResumeAnalysisCard,
+  type JdFitAnalysis,
+  type ResumeAnalysis,
+} from "./ChatAnalysisCards";
 import { ChatShell } from "@/components/chat/shell/ChatShell";
 import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
 import { VoiceDeepDiveModal } from "./VoiceDeepDiveModal";
@@ -162,6 +168,10 @@ interface Message {
   jobs?: MatchedJob[];
   /** Apply assets from prepare_application_kit in this turn */
   applicationKits?: ApplicationKit[];
+  /** Structured resume analysis card */
+  resumeAnalysis?: ResumeAnalysis;
+  /** Structured JD / role fit analysis card */
+  jdFitAnalysis?: JdFitAnalysis;
   /** Assistant reply was read aloud after a voice turn */
   spoken?: boolean;
   /** When set, render an inline intro draft panel for this intro request. */
@@ -251,6 +261,26 @@ const VOICE_FEATURE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED !== "false";
 // ── Option-block parser ───────────────────────────────────────────────────────
 
 const OPTIONS_RE = /\n*---OPTIONS---\n([\s\S]*?)\n---END---\n*/;
+
+function looksLikeJdPaste(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 280) return false;
+  const low = t.toLowerCase();
+  const hints = [
+    "responsibilities",
+    "requirements",
+    "qualifications",
+    "about the role",
+    "job description",
+    "must have",
+    "nice to have",
+    "years of experience",
+    "we are hiring",
+    "we're hiring",
+  ];
+  const hits = hints.filter((h) => low.includes(h)).length;
+  return hits >= 2 || (hits >= 1 && t.length > 600);
+}
 
 function parseMessage(content: string): ParsedMessage {
   const match = OPTIONS_RE.exec(content);
@@ -1023,6 +1053,35 @@ export function ChatInterface({
 
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
+
+      // Pasted JD → immediate fit analysis card (then continue normal Aarya turn)
+      let jdFit: JdFitAnalysis | undefined;
+      if (looksLikeJdPaste(trimmedIntent)) {
+        try {
+          const jdRes = await apiAuthFetch("/api/v1/me/chat/analyze-jd", {
+            method: "POST",
+            body: JSON.stringify({ jd_text: trimmedIntent }),
+          });
+          if (jdRes.ok) {
+            jdFit = (await jdRes.json()) as JdFitAnalysis;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content:
+                  "I've scored this JD against your profile. Review the fit card — then ask me to find similar roles or prepare an application kit.",
+                content_type: "text",
+                created_at: new Date().toISOString(),
+                jdFitAnalysis: jdFit,
+              },
+            ]);
+          }
+        } catch {
+          /* continue to Aarya */
+        }
+      }
+
       setStreamingContent("");
       setTurnActionBaseline(actionCount);
       setIsStreaming(true);
@@ -1565,15 +1624,30 @@ export function ChatInterface({
         }
 
         setIsUploading(false);
+        let analysis: ResumeAnalysis | null = null;
+        try {
+          const analysisRes = await apiAuthFetch("/api/v1/me/chat/analyze-resume", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          if (analysisRes.ok) {
+            analysis = (await analysisRes.json()) as ResumeAnalysis;
+          }
+        } catch {
+          analysis = null;
+        }
+
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: "assistant" as const,
-            content:
-              "Resume received. Open **Profile → Intelligence** to confirm your target role, then ask me to find matching jobs.",
+            content: analysis
+              ? "I've analysed your CV. Review the card below — then pick an action or ask me anything."
+              : "Resume received. Open **Profile → Intelligence** to confirm your target role, then ask me to find matching jobs.",
             content_type: "text" as const,
             created_at: new Date().toISOString(),
+            resumeAnalysis: analysis ?? undefined,
           },
         ]);
         return;
@@ -1731,6 +1805,8 @@ export function ChatInterface({
                 }
                 jobs={msgJobs}
                 applicationKits={msgKits}
+                resumeAnalysis={msg.resumeAnalysis}
+                jdFitAnalysis={msg.jdFitAnalysis}
                 jobFilters={jobFilters}
                 conversationId={sessionId ?? undefined}
                 savedJobIds={savedJobIds}
@@ -1740,6 +1816,31 @@ export function ChatInterface({
                 onRequestIntro={handleRequestIntroWithConfirm}
                 onApply={handleJobApply}
                 onWhyFit={handleWhyFit}
+                onAnalysisAction={(actionId) => {
+                  if (actionId === "find_jobs" || actionId === "find_similar") {
+                    void sendMessage("Find matching jobs for my profile in India");
+                  } else if (actionId === "fill_gaps") {
+                    void sendMessage(
+                      "Help me fill the missing profile gaps from my CV analysis",
+                    );
+                  } else if (actionId === "career_path") {
+                    void sendMessage("Build a career path for me");
+                  } else if (actionId === "mock_interview") {
+                    void sendMessage(
+                      "Give me a mock interview based on the JD we just analysed",
+                    );
+                  } else if (actionId === "prepare_kit" && msg.jdFitAnalysis?.job_id) {
+                    void sendMessage(
+                      `Prepare an application kit for job ${msg.jdFitAnalysis.job_id}`,
+                    );
+                  } else if (actionId === "request_intro" && msg.jdFitAnalysis?.job_id) {
+                    void sendMessage(
+                      `Request an intro for job ${msg.jdFitAnalysis.job_id}`,
+                    );
+                  } else {
+                    void sendMessage(`Let's do: ${actionId.replaceAll("_", " ")}`);
+                  }
+                }}
               />
             );
           })}
@@ -2407,6 +2508,8 @@ function MessageBubble({
   actions,
   jobs = [],
   applicationKits = [],
+  resumeAnalysis,
+  jdFitAnalysis,
   jobFilters = {},
   conversationId,
   savedJobIds,
@@ -2414,6 +2517,7 @@ function MessageBubble({
   onRequestIntro,
   onApply,
   onWhyFit,
+  onAnalysisAction,
 }: {
   message: Message;
   isStreaming?: boolean;
@@ -2422,6 +2526,8 @@ function MessageBubble({
   actions: AgentAction[];
   jobs?: MatchedJob[];
   applicationKits?: ApplicationKit[];
+  resumeAnalysis?: ResumeAnalysis;
+  jdFitAnalysis?: JdFitAnalysis;
   jobFilters?: JobCardFilters;
   conversationId?: string;
   savedJobIds?: Set<string>;
@@ -2429,6 +2535,7 @@ function MessageBubble({
   onRequestIntro?: (job: MatchedJob) => void;
   onApply?: (job: MatchedJob) => void;
   onWhyFit?: (job: MatchedJob) => void;
+  onAnalysisAction?: (actionId: string) => void;
 }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -2501,6 +2608,14 @@ function MessageBubble({
 
       {applicationKits.length > 0 && !isStreaming && (
         <ApplicationKitCards kits={applicationKits} />
+      )}
+
+      {resumeAnalysis && !isStreaming && (
+        <ResumeAnalysisCard analysis={resumeAnalysis} onAction={onAnalysisAction} />
+      )}
+
+      {jdFitAnalysis && !isStreaming && (
+        <JdFitAnalysisCard analysis={jdFitAnalysis} onAction={onAnalysisAction} />
       )}
 
       {/* Option cards */}

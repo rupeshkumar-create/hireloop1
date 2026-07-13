@@ -76,7 +76,9 @@ Your capabilities:
    next steps, and concrete target job titles
 3. Search for matching jobs (job_search) — scoped to the candidate's home market
 4. Get match score for a specific job (get_match_score)
-5. Request a warm intro to the hiring manager (request_intro)
+5. Analyse their CV (analyze_resume) after upload or when they ask
+6. Analyse a pasted JD vs their CV (analyze_pasted_jd)
+7. Request a warm intro to the hiring manager (request_intro)
 6. Record a direct application (direct_apply)
 7. Save a job to the candidate's Saved list (save_job)
 8. Prepare application kit (prepare_application_kit) — save job(s) AND generate
@@ -794,6 +796,43 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_resume",
+            "description": (
+                "Analyse the candidate's latest CV: extracted profile, gap checklist, "
+                "strengths, weak spots, and version compare vs previous CV."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_pasted_jd",
+            "description": (
+                "When the candidate pastes a job description (or shares a JD), score it "
+                "against their CV: overall + section scores, must/nice-to-haves, missing "
+                "keywords, should-I-apply, tailored bullets, cover letter draft, mock "
+                "interview questions, and India LPA salary band."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jd_text": {
+                        "type": "string",
+                        "description": "Full pasted job description text",
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "description": "Optional catalog job UUID if known",
+                    },
+                },
+                "required": ["jd_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "request_intro",
             "description": (
                 "Request a warm intro to the hiring manager. Only call after "
@@ -1226,6 +1265,12 @@ def build_aarya_graph(settings: Settings) -> Any:
                                     extra_actions = 2
                 elif tool_name == "get_match_score":
                     result = await aarya_tools.get_match_score(db, user_id, session_id, **tool_args)
+                elif tool_name == "analyze_resume":
+                    result = await aarya_tools.analyze_resume(db, user_id, session_id)
+                elif tool_name == "analyze_pasted_jd":
+                    result = await aarya_tools.analyze_pasted_jd(
+                        db, user_id, session_id, **tool_args
+                    )
                 elif tool_name == "request_intro":
                     result = await aarya_tools.request_intro(db, user_id, session_id, **tool_args)
                 elif tool_name == "direct_apply":

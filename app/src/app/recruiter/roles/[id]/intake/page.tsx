@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Send, Zap } from "@/components/brand/icons";
+import { Mic, Paperclip, Send, Zap } from "@/components/brand/icons";
 import { useParams } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -11,11 +11,16 @@ import {
   type AgentAction,
 } from "@/components/chat/ActivityTimeline";
 import { ChatCandidateCards } from "@/components/chat/ChatCandidateCards";
+import {
+  JdFitAnalysisCard,
+  type JdFitAnalysis,
+} from "@/components/chat/ChatAnalysisCards";
 import { MessageText } from "@/components/chat/MessageText";
 import { RoleReadinessBar } from "@/components/recruiter/RoleReadinessBar";
 import { RoleWorkspaceTabs } from "@/components/recruiter/RoleWorkspaceTabs";
 import { ShareRoleLink } from "@/components/recruiter/ShareRoleLink";
 import {
+  analyzeResumeForRole,
   fetchNityaChatHistory,
   getRole,
   movePipelineCandidate,
@@ -33,6 +38,7 @@ type Message = {
   content: string;
   candidates?: RankedCandidate[];
   searchMeta?: SearchMeta | null;
+  jdFitAnalysis?: JdFitAnalysis;
 };
 
 export default function RoleIntakePage() {
@@ -55,7 +61,9 @@ export default function RoleIntakePage() {
   const [roleTitle, setRoleTitle] = useState<string | null>(null);
   const [lastSearchMeta, setLastSearchMeta] = useState<SearchMeta | null>(null);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const [analyzingResume, setAnalyzingResume] = useState(false);
   const bootstrappedRef = useRef(false);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
 
   const {
     isRecording,
@@ -352,6 +360,39 @@ export default function RoleIntakePage() {
     }
   }
 
+  async function handleResumeAnalyze(file: File) {
+    if (analyzingResume || loading) return;
+    setAnalyzingResume(true);
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: `📎 Analyse resume: ${file.name}` },
+    ]);
+    try {
+      const res = await analyzeResumeForRole(id, file, { add_to_pipeline: false });
+      const analysis = res.analysis as JdFitAnalysis;
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content:
+            "Here's how this resume scores against this live role. You can add them to pipeline or ask me to refine the brief.",
+          jdFitAnalysis: analysis,
+        },
+      ]);
+    } catch (e) {
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Couldn't analyse that resume. ${(e as Error).message}`,
+        },
+      ]);
+    } finally {
+      setAnalyzingResume(false);
+      if (resumeInputRef.current) resumeInputRef.current.value = "";
+    }
+  }
+
   const showChips = chips.length > 0 && !loading;
 
   return (
@@ -435,6 +476,27 @@ export default function RoleIntakePage() {
                   </div>
                 </div>
 
+                {m.role === "assistant" && m.jdFitAnalysis && (
+                  <div className="pl-[38px]">
+                    <JdFitAnalysisCard
+                      analysis={m.jdFitAnalysis}
+                      onAction={(actionId) => {
+                        if (actionId === "add_to_pipeline") {
+                          void send(
+                            "Add the analysed candidate to my pipeline for this role",
+                          );
+                        } else if (actionId === "request_intro") {
+                          void send(
+                            "Request an intro to the candidate we just analysed",
+                          );
+                        } else {
+                          void send(`Help me with: ${actionId.replaceAll("_", " ")}`);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
                 {m.role === "assistant" &&
                   (Boolean(m.candidates?.length) || m.searchMeta) && (
                   <div className="pl-[38px]">
@@ -499,6 +561,26 @@ export default function RoleIntakePage() {
           )}
 
           <div className="flex items-end gap-2 rounded-xl border border-ink-100 bg-paper-0 px-3 py-2 focus-within:border-ink-300 focus-within:ring-2 focus-within:ring-accent/15 transition-all">
+            <input
+              ref={resumeInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleResumeAnalyze(file);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => resumeInputRef.current?.click()}
+              disabled={loading || bootstrapping || analyzingResume}
+              aria-label="Upload resume to analyse against this role"
+              title="Upload resume vs this live role"
+              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-ink-500 hover:bg-ink-50 hover:text-ink-900 transition-colors disabled:opacity-40"
+            >
+              <Paperclip className="h-3.5 w-3.5" strokeWidth={1.5} />
+            </button>
             <textarea
               ref={textareaRef}
               value={input}
@@ -512,12 +594,14 @@ export default function RoleIntakePage() {
               placeholder={
                 isRecording
                   ? "Listening… tap mic when done"
+                  : analyzingResume
+                    ? "Analysing resume…"
                   : briefDone
-                    ? "Ask Nitya to find candidates, shortlist, or publish…"
+                    ? "Ask Nitya, or attach a resume to score vs this role…"
                     : "Message Nitya…"
               }
               rows={1}
-              disabled={loading || bootstrapping || isRecording || voiceProcessing}
+              disabled={loading || bootstrapping || isRecording || voiceProcessing || analyzingResume}
               className="flex-1 resize-none bg-transparent text-body text-ink-900 placeholder:text-ink-300 outline-none min-h-[24px] max-h-36"
             />
             <button

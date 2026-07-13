@@ -30,6 +30,7 @@ from hireloop_api.routes.application_kits import router as application_kits_rout
 from hireloop_api.routes.auth import router as auth_router
 from hireloop_api.routes.career import router as career_router
 from hireloop_api.routes.chat import router as chat_router
+from hireloop_api.routes.chat_analysis import router as chat_analysis_router
 from hireloop_api.routes.gmail import router as gmail_router
 from hireloop_api.routes.health import router as health_router
 from hireloop_api.routes.hiring_managers import router as hiring_managers_router
@@ -222,6 +223,7 @@ app.include_router(voice_sessions_router, prefix="/api/v1")
 
 # P08: Aarya chat (SSE streaming)
 app.include_router(chat_router, prefix="/api/v1")
+app.include_router(chat_analysis_router, prefix="/api/v1")
 
 # P09: Job ingestion (Apify) + public job listing
 app.include_router(jobs_router, prefix="/api/v1")
