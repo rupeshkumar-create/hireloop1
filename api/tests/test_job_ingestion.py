@@ -4,7 +4,7 @@ Tests for the Apify job ingestion pipeline (P09).
 These exercise the pure normalisation logic and the DB upsert path without
 needing a real Apify token, network, or Postgres connection:
 
-  * Multi-market normalisation (IN / US / GB) produces supported JobRecords.
+  * India-only normalisation produces JobRecords with country_code=IN.
   * Salary / location / skill / dedup-id parsing for Google Jobs payloads.
   * JobIngester._upsert_jobs insert / update / skip accounting via a fake conn.
 """
@@ -31,9 +31,14 @@ from hireloop_api.services.apify.jobs_scraper import ApifyJobsScraper, JobRecord
 # ── JobRecord model invariants ────────────────────────────────────────────────
 
 
-def test_country_code_accepts_supported_markets() -> None:
-    rec = JobRecord(apify_job_id="x1", title="Engineer", country_code="US")
-    assert rec.country_code == "US"
+def test_country_code_accepts_india_only() -> None:
+    rec = JobRecord(apify_job_id="x1", title="Engineer", country_code="IN")
+    assert rec.country_code == "IN"
+
+
+def test_country_code_rejects_non_india() -> None:
+    with pytest.raises(ValueError, match="Unsupported market"):
+        JobRecord(apify_job_id="x1", title="Engineer", country_code="US")
 
 
 def test_employment_type_is_normalised() -> None:
@@ -75,7 +80,9 @@ def test_google_jobs_input_uses_johnvc_schema() -> None:
     assert payload["num_results"] == 100
     assert payload["max_pagination"] == 3
     assert payload["cleanup_results"] is True
-    assert scraper._google_country_code("GB") == "gb"
+    assert scraper._google_country_code("IN") == "in"
+    # Unknown markets fall back to India config.
+    assert scraper._google_country_code("GB") == "in"
 
 
 def test_google_jobs_normalises_valid_india_job() -> None:
@@ -104,7 +111,7 @@ def test_google_jobs_normalises_valid_india_job() -> None:
     assert "customer support" in rec.skills_required
 
 
-def test_google_jobs_accepts_us_location() -> None:
+def test_google_jobs_skips_non_india_location() -> None:
     scraper = _google_jobs_scraper()
     raw = {
         "title": "Senior Engineer",
@@ -112,8 +119,7 @@ def test_google_jobs_accepts_us_location() -> None:
         "jobUrl": "https://jobs.google.com/job/google-999",
     }
     rec = scraper.normalise(raw)
-    assert rec is not None
-    assert rec.country_code == "US"
+    assert rec is None
 
 
 def test_google_jobs_accepts_india_and_parses_city_state() -> None:

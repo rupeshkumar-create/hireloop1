@@ -30,12 +30,13 @@ Infra:                   AWS ap-south-1 (ECS Fargate + RDS Postgres read replica
 CDN / WAF:               Cloudflare (non-IN ASN block at WAF level)
 CI/CD:                   GitHub Actions
 
-## R4 — Multi-region marketplace (global v1)
-1. Each user has `market` (ISO 3166-1 alpha-2; IN default); candidates and jobs scoped by market
-2. Phone OTP: IN → +91/MSG91 only; other markets — optional, no SMS provider required for MVP
-3. Prices shown in local currency per market (INR, USD, GBP, EUR, AUD, CAD, CHF, AED, SGD)
-4. Job visibility: onsite = same `country_code`; remote = `allowed_regions` or worldwide
-5. `ENABLED_MARKETS` controls per-region job ingest; defaults to all supported markets
+## R4 — India-only marketplace (MVP)
+1. Product is locked to India: Indian candidates + Indian recruiters only
+2. Every user/candidate/job uses `market = 'IN'` (ISO 3166-1 alpha-2); non-IN values are rejected or normalised to IN
+3. Phone OTP: +91 via MSG91 only
+4. Prices and salaries shown in INR (LPA)
+5. Job visibility: onsite = `country_code = 'IN'`; remote = `allowed_regions` includes IN or WORLD
+6. `ENABLED_MARKETS` must be `IN` only — do not enable other regions without explicit approval
 
 ## R5 — Intro handshake via DB state only (NO agent-to-agent RPC)
 Flow: candidate clicks "Request Intro" → row in intro_requests table →

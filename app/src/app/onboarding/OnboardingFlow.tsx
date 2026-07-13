@@ -32,7 +32,7 @@ import {
 } from "@/components/brand/icons";
 import { apiAuthFetch, ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { DIRECT_API_URL } from "@/lib/api/base-url";
-import { fetchMyProfile, inferMarketFromGeo } from "@/lib/api/profile";
+import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
 } from "@/lib/api/onboardingProfile";
@@ -51,8 +51,6 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
-import { MarketSelect } from "@/components/market/MarketSelect";
-import { marketByCode, type MarketCode } from "@/lib/markets";
 
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
@@ -174,18 +172,11 @@ function ActivationStep({
   const firstName = firstNameFromDisplayName(candidateName) ?? "there";
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [market, setMarket] = useState<MarketCode>("IN");
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    void inferMarketFromGeo().then((inferred) => {
-      if (inferred) setMarket(marketByCode(inferred).code);
-    });
-  }, []);
 
   const hasResume = resumeFile !== null;
 
@@ -237,7 +228,7 @@ function ActivationStep({
         body: JSON.stringify({
           skipped_voice: true,
           skipped_resume: false,
-          market,
+          market: "IN",
         }),
       });
       const completeData = (await completeRes.json().catch(() => ({}))) as {
@@ -309,13 +300,12 @@ function ActivationStep({
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="onboarding-market" className="text-small font-medium text-ink-700">
-              Home job market
-            </label>
-            <MarketSelect id="onboarding-market" value={market} onChange={setMarket} />
+            <p className="text-small font-medium text-ink-700">Home job market</p>
+            <p className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900">
+              India · salaries in INR · +91 phone verification
+            </p>
             <p className="text-micro text-ink-400">
-              Where you want to work. We auto-detect from your location when possible;
-              you can change this anytime in Settings.
+              Hireschema is built for Indian candidates and Indian recruiters.
             </p>
           </div>
 

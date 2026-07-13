@@ -287,9 +287,8 @@ async def _provision_user_row(
     )
     avatar = meta.get("avatar_url") or meta.get("picture") or None
 
-    market = meta.get("market") or "IN"
-    if market not in ("IN", "US", "GB"):
-        market = "IN"
+    # India-only MVP — always persist market=IN for new users.
+    market = "IN"
 
     try:
         row = await db.fetchrow(

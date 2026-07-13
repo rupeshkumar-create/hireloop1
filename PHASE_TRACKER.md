@@ -62,7 +62,7 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 ## S02 — Phone OTP Verification (optional)  ✅ 🧪
 
-> Optional phone verification: India (+91/MSG91) when configured. Other markets can use the app without SMS OTP.
+> Optional phone verification: India (+91/MSG91) when configured.
 > Not required for signup — available in Settings when configured.
 
 **What's built:**
@@ -79,7 +79,7 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 **Env needed:**
 ```
-ENABLED_MARKETS=IN,US,GB,AT,DE,FR,AE,AU,CA,CH,NL,SG
+ENABLED_MARKETS=IN
 MSG91_AUTH_KEY=...          # IN OTP (+91 only)
 ```
 
@@ -92,12 +92,12 @@ SELECT email, phone_verified, market, phone FROM public.users WHERE phone_verifi
 
 ## S03 — Onboarding Wizard (v2)  ✅ 🧪
 
-> Two-step activation after signup: welcome → CV + market + DPDP consent.
+> Two-step activation after signup: welcome → CV + DPDP consent (India-only).
 > On completion → `/dashboard` with jobs panel open.
 
 **Steps:**
 1. **Welcome** — Aarya introduces herself
-2. **Activate** — CV upload, market picker, legal consent → `complete-onboarding`
+2. **Activate** — CV upload, legal consent → `complete-onboarding` (market fixed to IN)
 
 **What's built:**
 - `/onboarding/OnboardingFlow.tsx` — v2 two-step wizard

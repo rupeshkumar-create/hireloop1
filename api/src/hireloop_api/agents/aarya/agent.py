@@ -703,8 +703,7 @@ TOOL_DEFINITIONS = [
                 "experience, skills, CTC, notice period, location, target roles). Use this "
                 "whenever they share a fact that fills a profile gap — especially on a call "
                 "where you're gathering their details. Pass only the fields you just learned. "
-                "Compensation fields: for IN market use LPA; for US/GB use annual amount in "
-                "local currency."
+                "Compensation fields: use LPA / INR annual amounts (India-only marketplace)."
             ),
             "parameters": {
                 "type": "object",

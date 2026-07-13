@@ -176,7 +176,7 @@ API calls from the browser must send **`Authorization: Bearer <supabase_access_t
 - Never commit `.env` / `.env.local`.
 - Never put `service_role` in the Next.js app.
 - Cold email stays on **Gmail OAuth**, not SendGrid (R9).
-- Multi-region marketplace: market-scoped jobs + phone verify per region (R4).
+- India-only marketplace: candidates + recruiters + jobs scoped to IN (R4).
 
 See also: `LOCAL_TESTING.md` (phase-by-phase tests), `PHASE_TRACKER.md`.
 

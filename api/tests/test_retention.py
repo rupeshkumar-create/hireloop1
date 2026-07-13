@@ -37,7 +37,7 @@ async def test_count_new_matches_since_with_timestamp() -> None:
         db,
         candidate_id=uuid.uuid4(),
         since=since,
-        market="US",
+        market="IN",
     )
     assert n == 3
 

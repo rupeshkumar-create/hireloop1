@@ -3,13 +3,11 @@
 import { useEffect, useState } from "react";
 import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
-import { fetchMyProfile, type MyProfileData, updateMyMarket } from "@/lib/api/profile";
+import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
 import { CandidateSharingSettings } from "@/components/settings/CandidateSharingSettings";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { TailoredResumeSettings } from "@/components/settings/TailoredResumeSettings";
 import { NOTIFICATION_CATEGORIES } from "@/lib/notification-categories";
-import { type MarketCode, marketByCode } from "@/lib/markets";
-import { MarketSelect } from "@/components/market/MarketSelect";
 import {
   Button,
   Card,
@@ -34,8 +32,6 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const { toast } = useToast();
 
-  const [market, setMarket] = useState<MarketCode>("IN");
-  const [savingMarket, setSavingMarket] = useState(false);
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [profileError, setProfileError] = useState("");
@@ -49,8 +45,6 @@ export function SettingsPanel({
       try {
         const d = await fetchMyProfile();
         setProfile(d);
-        const nextMarket = (d.user?.market ?? "IN") as MarketCode;
-        setMarket(marketByCode(nextMarket).code);
       } catch (err) {
         setProfileError(err instanceof Error ? err.message : "Couldn't load profile");
       } finally {
@@ -86,22 +80,6 @@ export function SettingsPanel({
       ...p,
       [catId]: { ...(p[catId] ?? {}), email: checked },
     }));
-  }
-
-  async function saveMarket() {
-    if (savingMarket) return;
-    setSavingMarket(true);
-    try {
-      await updateMyMarket(market);
-      const refreshed = await fetchMyProfile({ force: true });
-      setProfile(refreshed);
-      toast.success("Market updated");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Couldn't update market";
-      toast.error(msg);
-    } finally {
-      setSavingMarket(false);
-    }
   }
 
   async function deleteAccount() {
@@ -185,27 +163,16 @@ export function SettingsPanel({
       <Card>
         <CardHeader
           title="Market"
-          description="Your home job market. Roles and salaries are scoped to this region."
+          description="Hireschema is India-only. Roles and salaries are scoped to India (INR)."
         />
         <CardBody className="space-y-3 !pt-0">
-          <label htmlFor="settings-market" className="text-small font-medium text-ink-700">
-            Home market
-          </label>
-          <MarketSelect
-            id="settings-market"
-            value={market}
-            onChange={setMarket}
-          />
+          <p className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900">
+            India · +91 phone verification via MSG91
+          </p>
           <p className="text-micro text-ink-500">
-            You can switch markets anytime. India (+91) supports SMS verification via MSG91.
-            Fully remote roles may still show when eligible worldwide.
+            Fully remote roles may still show when eligible worldwide and allowed for India.
           </p>
         </CardBody>
-        <CardFooter>
-          <Button variant="primary" size="sm" onClick={() => void saveMarket()} loading={savingMarket}>
-            Save market
-          </Button>
-        </CardFooter>
       </Card>
 
       <CandidateSharingSettings />

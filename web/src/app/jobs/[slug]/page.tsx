@@ -111,7 +111,7 @@ export default async function ProgrammaticJobPage({ params }: PageProps) {
       <section className="mt-8 rounded-2xl border bg-ink-50 p-6">
         <h2 className="font-semibold">Why candidates use Hireschema</h2>
         <ul className="mt-3 list-disc list-inside text-sm text-ink-700 space-y-1">
-          <li>Daily ranked matches in your market (IN / US / GB)</li>
+          <li>Daily ranked matches across India</li>
           <li>Request Intro — email from your Gmail, not spam</li>
           <li>Tailored résumé per JD in under 30 seconds</li>
         </ul>

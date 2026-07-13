@@ -74,6 +74,7 @@ class SendOTPRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_phone(self) -> "SendOTPRequest":
+        self.market = normalize_market(self.market)
         try:
             self.phone = validate_e164_phone(self.phone, self.market)
         except ValueError as exc:
@@ -88,6 +89,7 @@ class VerifyOTPRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_phone(self) -> "VerifyOTPRequest":
+        self.market = normalize_market(self.market)
         try:
             self.phone = validate_e164_phone(self.phone, self.market)
         except ValueError as exc:
@@ -121,6 +123,7 @@ class SavePhoneRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_phone(self) -> "SavePhoneRequest":
+        self.market = normalize_market(self.market)
         try:
             self.phone = validate_e164_phone(self.phone, self.market)
         except ValueError as exc:

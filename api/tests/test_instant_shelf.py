@@ -60,7 +60,7 @@ async def test_instant_shelf_skips_starter_when_enough_cards() -> None:
             "id": candidate_id,
             "looking_for": "Engineer",
             "current_title": None,
-            "market": "US",
+            "market": "IN",
             "remote_preference": "remote",
         }
     )

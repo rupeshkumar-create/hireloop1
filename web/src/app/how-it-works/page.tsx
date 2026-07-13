@@ -12,7 +12,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 const CANDIDATE_STEPS = [
   { n: 1, title: "Sign in with LinkedIn", detail: "One click. Aarya reads your profile, work history, skills and education. No manual form filling." },
-  { n: 2, title: "Set your home market", detail: "Pick where you want to work (12 supported countries). Optional phone verification via SMS for India (+91 MSG91). Resume upload sets your profile — no manual forms." },
+  { n: 2, title: "Confirm you're in India", detail: "Hireschema is India-only. Optional phone verification via SMS (+91 MSG91). Resume upload sets your profile — no manual forms." },
   { n: 3, title: "Chat with Aarya", detail: "Tell her what you're looking for — role, company type, city, CTC. She builds your preference graph in real time." },
   { n: 4, title: "Review your match feed", detail: "Aarya surfaces the top 10 roles daily, ranked by semantic match score. Each card shows role, company, CTC, and your fit score." },
   { n: 5, title: "Pick an action on each role", detail: "Three options: Direct Apply (via the job's native link), Request Intro (warm intro via your Gmail), or Save for Later." },

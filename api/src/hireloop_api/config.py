@@ -231,8 +231,8 @@ class Settings(BaseSettings):
     # Dev-only: when True and is_development, save-phone also sets phone_verified.
     allow_phone_save_bypass: bool = False
 
-    # ── Multi-region markets ─────────────────────────────────────────────────
-    # Comma-separated ISO codes. Defaults to all supported markets.
+    # ── India-only marketplace (MVP) ─────────────────────────────────────────
+    # Comma-separated ISO codes. Must remain IN-only unless product expands.
     enabled_markets: list[str] = list(ALL_SUPPORTED_MARKET_CODES)
     default_market: str = "IN"
 
@@ -293,7 +293,10 @@ class Settings(BaseSettings):
             parts = [s.strip().upper() for s in v.split(",") if s.strip()]
         else:
             parts = [str(s).strip().upper() for s in v if str(s).strip()]
-        return parts or ["IN"]
+        # India-only MVP: drop any non-IN codes from env so misconfigured
+        # deploys cannot accidentally ingest US/GB/etc. jobs.
+        india_only = [p for p in parts if p == "IN"]
+        return india_only or ["IN"]
 
     # Secrets that MUST be overridden in production. Their insecure defaults gate
     # privileged surfaces (service-secret webhooks, admin job ingest/cron, token

@@ -28,20 +28,27 @@ def test_profile_not_ready_when_empty() -> None:
     assert _profile_ready_for_path({}) is False
 
 
-def test_career_path_prompt_is_market_aware_for_us_candidates() -> None:
+def test_career_path_prompt_is_india_only() -> None:
+    prompt = build_career_path_system_prompt("IN")
+
+    assert "India" in prompt
+    assert "Indian job-board titles" in prompt
+
+
+def test_career_path_prompt_normalises_non_india_to_india() -> None:
     prompt = build_career_path_system_prompt("US")
 
-    assert "United States" in prompt
-    assert "Indian job market" not in prompt
-    assert "US job-board titles" in prompt
+    assert "India" in prompt
+    assert "Indian job-board titles" in prompt
+    assert "United States" not in prompt
 
 
-def test_career_path_prompt_is_market_aware_for_uk_candidates() -> None:
+def test_career_path_prompt_normalises_uk_to_india() -> None:
     prompt = build_career_path_system_prompt("GB")
 
-    assert "United Kingdom" in prompt
-    assert "Indian professionals" not in prompt
-    assert "UK job-board titles" in prompt
+    assert "India" in prompt
+    assert "United Kingdom" not in prompt
+    assert "Indian job-board titles" in prompt
 
 
 def test_career_path_prompt_blocks_generic_team_lead_titles() -> None:
@@ -55,18 +62,18 @@ def test_profile_brief_includes_market_and_full_location() -> None:
     brief = _build_profile_brief(
         {
             "full_name": "Candidate",
-            "market": "GB",
+            "market": "IN",
             "current_title": "Data Analyst",
             "current_company": "Acme",
             "years_experience": 4,
-            "location_city": "London",
-            "location_state": "England",
+            "location_city": "Bengaluru",
+            "location_state": "Karnataka",
             "skills": ["SQL"],
         }
     )
 
-    assert "Market: GB" in brief
-    assert "Location: London, England" in brief
+    assert "Market: IN" in brief
+    assert "Location: Bengaluru, Karnataka" in brief
 
 
 def test_path_from_career_intelligence_orders_by_feasibility() -> None:

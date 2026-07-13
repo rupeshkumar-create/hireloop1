@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_optional, get_phone_verified_user
-from hireloop_api.market_db import fetch_candidate_market, infer_market_from_geo_country
+from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import (
     MARKET_LABELS,
     SUPPORTED_MARKETS,
@@ -378,10 +378,13 @@ async def update_my_market(
 
     This controls job visibility/scoping. We also mirror the value onto the candidate row.
     """
-    raw = (body.market or "").strip()
-    market = normalize_market(raw)
-    if market not in SUPPORTED_MARKETS:
-        raise HTTPException(status_code=400, detail="Unsupported market")
+    raw = (body.market or "").strip().upper()
+    if raw and raw not in SUPPORTED_MARKETS:
+        raise HTTPException(
+            status_code=400,
+            detail="Hireschema is India-only. Home market must be IN.",
+        )
+    market = normalize_market(raw or "IN")
 
     user_id = uuid.UUID(str(current_user["id"]))
 
@@ -456,46 +459,40 @@ async def infer_market_from_geo(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """
-    Infer home market from CDN geo headers (Cloudflare / Vercel).
-    Only updates when the user is still on the default IN market.
+    India-only MVP: ensure user + candidate rows stay on market=IN.
+    Geo headers are ignored for market selection (product is India-locked).
     """
-    geo = (
+    _ = (
         request.headers.get("cf-ipcountry")
         or request.headers.get("x-vercel-ip-country")
         or request.headers.get("x-country-code")
     )
-    inferred = infer_market_from_geo_country(geo)
-    if not inferred:
-        return {"ok": False, "market": None, "reason": "unsupported_geo"}
-
     user_id = uuid.UUID(str(current_user["id"]))
     row = await db.fetchrow(
         "SELECT market FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
         user_id,
     )
     current = normalize_market(row["market"] if row else None)
-    if current not in {None, "", "IN"} and current != inferred:
-        return {"ok": True, "market": current, "updated": False}
+    if current == "IN":
+        return {"ok": True, "market": "IN", "updated": False}
 
     await db.execute(
         """
         UPDATE public.users
-        SET market = $2, phone_country = $2, updated_at = NOW()
+        SET market = 'IN', phone_country = 'IN', updated_at = NOW()
         WHERE id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
-        inferred,
     )
     await db.execute(
         """
         UPDATE public.candidates
-        SET market = $2, updated_at = NOW()
+        SET market = 'IN', updated_at = NOW()
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
-        inferred,
     )
-    return {"ok": True, "market": inferred, "updated": True}
+    return {"ok": True, "market": "IN", "updated": True}
 
 
 @router.post("/public-profile/publish")
@@ -1805,9 +1802,14 @@ async def complete_onboarding(
             detail="Accept terms and privacy policy before finishing onboarding.",
         )
 
-    market = normalize_market(body.market or current_user.get("market"))
-    if body.market and market not in SUPPORTED_MARKETS:
-        raise HTTPException(status_code=400, detail="Unsupported market")
+    # India-only MVP — always complete onboarding as IN.
+    requested = (body.market or "").strip().upper()
+    if requested and requested not in SUPPORTED_MARKETS:
+        raise HTTPException(
+            status_code=400,
+            detail="Hireschema is India-only. Home market must be IN.",
+        )
+    market = "IN"
 
     await _ensure_candidate_row(db, user_id)
 

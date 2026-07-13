@@ -84,11 +84,7 @@ Rules:
 def build_career_path_system_prompt(market: str | None = None) -> str:
     m = normalize_market(market)
     market_label = MARKET_LABELS.get(m, "India")
-    board_phrase = {
-        "IN": "Indian job-board titles",
-        "US": "US job-board titles",
-        "GB": "UK job-board titles",
-    }.get(m, f"{market_label} job-board titles")
+    board_phrase = "Indian job-board titles"
     return _SYSTEM_PROMPT_TEMPLATE.replace("{market_label}", market_label).replace(
         "{job_board_phrase}", board_phrase
     )
