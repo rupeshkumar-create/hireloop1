@@ -464,7 +464,7 @@ async def run_market_insight_sweep(db: asyncpg.Connection, settings: Settings) -
             db, user_id=user_id, notif_type="market_insight", dedupe_key=dedupe_key, within_hours=36
         ):
             continue
-        vis = job_visible_for_market_sql(market_param="$2")
+        vis = job_visible_for_market_sql(market_param="$1")
         n = await db.fetchval(
             f"""
             SELECT count(*)::int

@@ -11,6 +11,7 @@ import pytest
 from hireloop_api.services.retention import (
     count_new_matches_since,
     fetch_return_summary,
+    run_market_insight_sweep,
     send_daily_match_digest,
 )
 
@@ -84,3 +85,33 @@ async def test_daily_digest_skips_when_deduped() -> None:
         out = await send_daily_match_digest(db, settings, user_id=str(uuid.uuid4()))
     assert out["sent"] is False
     assert out["skipped"] == "deduped"
+
+
+@pytest.mark.asyncio
+async def test_market_insight_uses_first_parameter_for_market() -> None:
+    db = AsyncMock()
+    db.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": uuid.uuid4(),
+                "user_id": uuid.uuid4(),
+                "market": "IN",
+                "looking_for": "Product Manager",
+            }
+        ]
+    )
+    db.fetchval = AsyncMock(return_value=0)
+    settings = MagicMock(public_app_url="https://www.hireschema.com", allowed_origins=[])
+
+    with patch(
+        "hireloop_api.services.notifications._already_notified",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        sent = await run_market_insight_sweep(db, settings)
+
+    assert sent == 0
+    query, market = db.fetchval.await_args.args
+    assert market == "IN"
+    assert "$1" in query
+    assert "$2" not in query
