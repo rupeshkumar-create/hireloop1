@@ -1,6 +1,6 @@
 # Hireschema
 
-**Hireschema** — AI recruiting platform for India, the US, and the UK. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
+**Hireschema** — AI recruiting platform for India. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
 
 > Replicating the Jack & Jill model (Tinker Tailor Talent, London) for the Indian market — INR, +91-only, ap-south-1, DPDP-compliant.
 

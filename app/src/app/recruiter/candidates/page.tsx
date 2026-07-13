@@ -53,7 +53,9 @@ function CandidateDetailCard({
   const pipelineHref = hit.role_id ? `/recruiter/roles/${hit.role_id}/pipeline` : null;
   const skills = (hit.skills ?? []).slice(0, 6);
   const summary = hit.summary?.trim() || hit.headline?.trim() || null;
-  const fallbackRole = roles.find((role) => role.id === roleFilter) ?? roles[0] ?? null;
+  // Never attach outreach to an arbitrary first role. Nitya needs explicit role
+  // context so the candidate sees an accurate opportunity and fit rationale.
+  const fallbackRole = roles.find((role) => role.id === roleFilter) ?? null;
   const chatRoleId = hit.role_id ?? fallbackRole?.id ?? null;
   const chatRoleTitle = hit.role_title ?? fallbackRole?.title ?? null;
   const canChat = Boolean(chatRoleId);
@@ -247,7 +249,7 @@ export default function RecruiterCandidatesPage() {
         <div>
           <h1 className="text-h2 font-semibold text-ink-900">Talent</h1>
           <p className="text-small text-ink-500 mt-1">
-            All live candidates on Hireschema — plus anyone already in your role pipelines.
+            Candidates who opted into discovery — plus anyone already in your role pipelines.
           </p>
         </div>
         <Button
@@ -300,6 +302,11 @@ export default function RecruiterCandidatesPage() {
               ? "Loading candidates…"
               : `${candidates.length} candidate${candidates.length === 1 ? "" : "s"}`}
           </p>
+          {!roleFilter && roles.length > 0 ? (
+            <p className="text-micro text-ink-500">
+              Select a role before starting a chat so Nitya can explain the exact opportunity and match.
+            </p>
+          ) : null}
         </CardBody>
       </Card>
 
@@ -316,7 +323,7 @@ export default function RecruiterCandidatesPage() {
           description={
             query.trim()
               ? "Try a different search term or clear filters."
-              : "No live candidate profiles yet. They appear here once someone completes onboarding on Hireschema."
+              : "No opted-in candidates match this view yet. Try another role or check again as candidates enable recruiter discovery."
           }
         />
       ) : (

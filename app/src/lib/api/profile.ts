@@ -145,6 +145,7 @@ export type ProfilePatch = {
   notice_period_days?: number;
   looking_for?: string;
   summary?: string;
+  visibility?: CandidateVisibility;
   display_currency?: DisplayCurrency;
   public_profile_enabled?: boolean;
   hide_contact_public?: boolean;

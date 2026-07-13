@@ -110,6 +110,7 @@ import {
 import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
+import { emailDraftDisplayText } from "@/lib/security/email-content";
 import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
@@ -1355,7 +1356,6 @@ export function ChatInterface({
       speakFiller,
       onSessionCreated,
       actionCount,
-      attachJobsToCurrentTurnAssistant,
       reportChatJobs,
       interruptSpeech,
       cancelRecording,
@@ -1668,7 +1668,7 @@ export function ChatInterface({
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [authUserId, isUploading, isStreaming]
+    [isUploading, isStreaming]
   );
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
@@ -2744,12 +2744,9 @@ function InlineIntroDraft({ introId }: { introId: string }) {
               {draft.subject ?? "(no subject)"}
             </p>
           </div>
-          <div
-            className="px-4 py-3 text-small text-ink-800 leading-relaxed prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{
-              __html: draft.body_html ?? `<p>${draft.body_text ?? ""}</p>`,
-            }}
-          />
+          <div className="px-4 py-3 text-small text-ink-800 leading-relaxed whitespace-pre-wrap">
+            {emailDraftDisplayText(draft.body_html, draft.body_text)}
+          </div>
           <div className="px-4 py-3 border-t border-ink-100 flex items-center gap-2">
             <Button
               variant="primary"

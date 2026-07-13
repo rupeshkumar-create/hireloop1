@@ -4,6 +4,7 @@ Inbound applicants and external candidate triage for recruiter roles.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -167,7 +168,12 @@ async def add_external_candidate(
     parsed: dict[str, Any] = {}
     resume_path = None
     if resume_bytes:
-        parsed = parse_resume_bytes(resume_bytes, filename=filename, mime_type=mime_type)
+        parsed = await asyncio.to_thread(
+            parse_resume_bytes,
+            resume_bytes,
+            filename=filename,
+            mime_type=mime_type,
+        )
         if not full_name and parsed.get("full_name"):
             full_name = str(parsed["full_name"])
         if not email and parsed.get("email"):

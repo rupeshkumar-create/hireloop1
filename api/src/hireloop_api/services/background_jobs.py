@@ -30,6 +30,8 @@ CAREER_PATH_INGEST = "career_path_ingest"
 POOL_INGEST = "pool_ingest"
 AARYA_AUTO_INGEST = "aarya_auto_ingest"
 RESUME_EMBED_SCORE = "resume_embed_score"
+RESUME_PARSE = "resume_parse"
+NITYA_INTRO_DRAFT = "nitya_intro_draft"
 CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
 CAREER_PATH_UPDATE = "career_path_update"
 PROFILE_COMPLETENESS = "profile_completeness"
@@ -61,6 +63,8 @@ _BACKOFF_MAX_SECONDS = 900
 _INTERACTIVE_JOB_KINDS = frozenset(
     {
         APPLICATION_KIT,
+        NITYA_INTRO_DRAFT,
+        RESUME_PARSE,
         TAILORED_RESUME,
         CAREER_PATH_RESUMES,
         LEARNING_ROADMAP,
@@ -382,6 +386,30 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
             logger.warning("job_match_alert_failed", error=str(exc)[:200])
 
 
+async def _handle_resume_parse(settings: Settings, payload: dict[str, Any]) -> None:
+    """Download an uploaded resume and durably run the full parser enrichment."""
+    from supabase import create_client
+
+    from hireloop_api.routes.resumes import _schedule_resume_parse
+
+    storage_path = str(payload["storage_path"])
+    client = create_client(settings.supabase_url, settings.supabase_service_key)
+    file_bytes = await asyncio.to_thread(
+        client.storage.from_("resumes").download,
+        storage_path,
+    )
+    task = _schedule_resume_parse(
+        user_id=str(payload["user_id"]),
+        candidate_id=str(payload["candidate_id"]),
+        resume_id=str(payload["resume_id"]),
+        file_bytes=file_bytes,
+        filename=str(payload.get("filename") or "resume.pdf"),
+        mime_type=str(payload.get("mime_type") or "application/pdf"),
+        settings=settings,
+    )
+    await task
+
+
 async def _handle_career_intelligence_update(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.services.career_intelligence import run_career_intelligence_update
 
@@ -639,11 +667,55 @@ async def _handle_hm_enrich(settings: Settings, payload: dict[str, Any]) -> None
             await enricher.close()
 
 
+async def _handle_nitya_intro_draft(settings: Settings, payload: dict[str, Any]) -> None:
+    """Durably progress one candidate-to-HM intro to a reviewable draft."""
+    from hireloop_api.agents.nitya.agent import NityaIntroHandler
+    from hireloop_api.deps import get_db_pool
+
+    intro_id = str(payload["id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        claimed = await conn.fetchval(
+            "SELECT pg_try_advisory_lock(hashtext($1))",
+            intro_id,
+        )
+        if not claimed:
+            # The LISTEN worker may be progressing this intro. Retrying is safer
+            # than acknowledging durable work that is still in flight.
+            raise RuntimeError(f"Nitya intro {intro_id} is already being processed")
+        try:
+            status = await conn.fetchval(
+                "SELECT status FROM public.intro_requests WHERE id = $1::uuid",
+                intro_id,
+            )
+            if status in {
+                "draft_ready",
+                "sent",
+                "opened",
+                "replied",
+                "declined",
+                "cancelled",
+            }:
+                return
+            result = await NityaIntroHandler(settings=settings, db=conn).handle(payload)
+            if result.get("error"):
+                final_status = await conn.fetchval(
+                    "SELECT status FROM public.intro_requests WHERE id = $1::uuid",
+                    intro_id,
+                )
+                if final_status not in {"declined", "cancelled"}:
+                    raise RuntimeError(str(result["error"]))
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(hashtext($1))", intro_id)
+
+
 _HANDLERS: dict[str, Handler] = {
     CAREER_PATH_INGEST: _handle_career_path_ingest,
     POOL_INGEST: _handle_pool_ingest,
     AARYA_AUTO_INGEST: _handle_aarya_auto_ingest,
     RESUME_EMBED_SCORE: _handle_resume_embed_score,
+    RESUME_PARSE: _handle_resume_parse,
+    NITYA_INTRO_DRAFT: _handle_nitya_intro_draft,
     CAREER_INTELLIGENCE_UPDATE: _handle_career_intelligence_update,
     CAREER_PATH_UPDATE: _handle_career_path_update,
     PROFILE_COMPLETENESS: _handle_profile_completeness,
@@ -704,6 +776,18 @@ async def process_job(
                 attempts=job["attempts"],
                 max_attempts=job["max_attempts"],
             )
+            if kind == NITYA_INTRO_DRAFT and int(job["attempts"]) >= int(job["max_attempts"]):
+                await conn.execute(
+                    """
+                    UPDATE public.intro_requests
+                    SET status = 'declined',
+                        error_message = 'Nitya could not prepare this draft. Please retry.',
+                        updated_at = NOW()
+                    WHERE id = $1::uuid
+                      AND status IN ('pending', 'enriching', 'drafting')
+                    """,
+                    str(job["payload"].get("id")),
+                )
 
 
 async def run_background_worker(
@@ -758,9 +842,20 @@ async def run_background_worker(
                     reclaimed = await conn.fetch(
                         """
                         UPDATE public.background_jobs
-                        SET status = 'failed',
-                            last_error = 'reclaimed: stuck running after worker death',
-                            completed_at = NOW(),
+                        SET status = CASE
+                              WHEN attempts < max_attempts THEN 'pending'
+                              ELSE 'failed'
+                            END,
+                            last_error = 'reclaimed: worker stopped before completion',
+                            completed_at = CASE
+                              WHEN attempts < max_attempts THEN NULL
+                              ELSE NOW()
+                            END,
+                            run_after = CASE
+                              WHEN attempts < max_attempts THEN NOW() + INTERVAL '60 seconds'
+                              ELSE run_after
+                            END,
+                            started_at = NULL,
                             updated_at = NOW(),
                             worker_id = NULL
                         WHERE status = 'running'
@@ -832,6 +927,10 @@ async def run_background_worker(
                     await conn.execute(
                         "DELETE FROM public.resume_parse_cache "
                         "WHERE created_at < NOW() - INTERVAL '30 days'"
+                    )
+                    await conn.execute(
+                        "DELETE FROM public.api_rate_limits "
+                        "WHERE window_start < NOW() - INTERVAL '2 days'"
                     )
                 if nudged:
                     logger.info("intro_followup_sweep_done", nudged=nudged)

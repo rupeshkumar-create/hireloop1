@@ -16,6 +16,7 @@ import {
   type OutboundDraft,
 } from "@/lib/api/intros";
 import { Button, useToast } from "@/components/ui";
+import { emailDraftDisplayText } from "@/lib/security/email-content";
 
 function parseDraft(raw: string | OutboundDraft | null | undefined): OutboundDraft | null {
   if (!raw) return null;
@@ -290,12 +291,9 @@ export function IntroDraftPanel({
                 {introDraft.subject ?? "(no subject)"}
               </p>
             </div>
-            <div
-              className="px-4 py-3 text-small text-ink-800 leading-relaxed prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{
-                __html: introDraft.body_html ?? `<p>${introDraft.body_text ?? ""}</p>`,
-              }}
-            />
+            <div className="px-4 py-3 text-small text-ink-800 leading-relaxed whitespace-pre-wrap">
+              {emailDraftDisplayText(introDraft.body_html, introDraft.body_text)}
+            </div>
           </div>
           <Button
             variant="primary"

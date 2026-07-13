@@ -122,7 +122,7 @@ export default function PrivacyPage() {
             DPDP Act 2023 compliant
           </div>
           <h1 className="text-4xl font-bold text-ink-900 mb-2">Privacy Policy</h1>
-          <p className="text-ink-500 text-sm">Effective: January 2026 · India, US &amp; UK</p>
+          <p className="text-ink-500 text-sm">Effective: January 2026 · India</p>
         </div>
 
         {/* TOC */}

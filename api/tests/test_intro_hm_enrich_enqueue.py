@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from hireloop_api.services.background_jobs import HM_ENRICH
+from hireloop_api.services.background_jobs import HM_ENRICH, NITYA_INTRO_DRAFT
 from hireloop_api.services.intro_service import create_candidate_intro
 
 
@@ -83,10 +83,10 @@ class _ExistingIntroDb(_Db):
 async def test_candidate_intro_enqueues_hm_enrich_when_stub_created(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: list[dict[str, object]] = []
 
     async def fake_enqueue(db: object, **kwargs: object) -> uuid.UUID:
-        captured.update(kwargs)
+        captured.append(dict(kwargs))
         return uuid.uuid4()
 
     # Ensure settings look configured for the enqueue gate.
@@ -117,13 +117,21 @@ async def test_candidate_intro_enqueues_hm_enrich_when_stub_created(
     assert out.get("hm_enrich_provider") == "apify"
     assert db.hm_id is not None
     assert db.intro_status == "enriching"
-    assert captured.get("kind") == HM_ENRICH
-    assert captured.get("payload") == {"hm_id": str(db.hm_id)}
-    assert captured.get("idempotency_key") == f"hm_enrich:{db.hm_id}"
+    hm_job = next(job for job in captured if job.get("kind") == HM_ENRICH)
+    assert hm_job.get("payload") == {"hm_id": str(db.hm_id)}
+    assert hm_job.get("idempotency_key") == f"hm_enrich:{db.hm_id}"
+    nitya_job = next(job for job in captured if job.get("kind") == NITYA_INTRO_DRAFT)
+    assert nitya_job.get("idempotency_key") == f"nitya_intro_draft:{db.intro_id}"
 
 
 @pytest.mark.asyncio
-async def test_candidate_intro_backfills_simple_draft_for_existing_hm_intro() -> None:
+async def test_candidate_intro_backfills_simple_draft_for_existing_hm_intro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_enqueue(db: object, **kwargs: object) -> uuid.UUID:
+        return uuid.uuid4()
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue)
     db = _ExistingIntroDb()
 
     out = await create_candidate_intro(

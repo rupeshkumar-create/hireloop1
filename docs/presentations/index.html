@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema — Presentations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    body { overflow: auto; }
+    .hub {
+      min-height: 100vh;
+      padding: clamp(2rem, 5vw, 4rem);
+      max-width: 56rem;
+      margin: 0 auto;
+    }
+    .hub h1 {
+      max-width: none;
+      margin-bottom: 0.5rem;
+    }
+    .deck-links {
+      display: grid;
+      gap: 1rem;
+      margin-top: 2.5rem;
+    }
+    a.deck-card {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.35rem 1.5rem;
+      transition: border-color 160ms ease, background 160ms ease;
+    }
+    a.deck-card:hover {
+      border-color: rgba(159, 232, 112, 0.45);
+      background: var(--raised);
+    }
+    a.deck-card .n {
+      color: var(--accent);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 0.35rem;
+    }
+    a.deck-card h2 {
+      font-size: 1.35rem;
+      margin: 0 0 0.4rem;
+    }
+    a.deck-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+    .hint {
+      margin-top: 2.5rem;
+      color: var(--subtle);
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="hub">
+    <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+    <p class="eyebrow">Internal briefings</p>
+    <h1>Three decks for leadership</h1>
+    <p class="lede">Business &amp; tech overview, then deep-dives on the candidate and recruiter sides — same charcoal + lime language as the product.</p>
+
+    <div class="deck-links">
+      <a class="deck-card" href="01-business-overview.html">
+        <div class="n">01</div>
+        <h2>Business &amp; technology</h2>
+        <p>What Hireschema is, candidate value, tools/APIs, stack, and system architecture.</p>
+      </a>
+      <a class="deck-card" href="02-candidate.html">
+        <div class="n">02</div>
+        <h2>Candidate — Aarya</h2>
+        <p>Engines, app architecture, job finding, match scoring, and Request Intro — end to end.</p>
+      </a>
+      <a class="deck-card" href="03-recruiter.html">
+        <div class="n">03</div>
+        <h2>Recruiter — Nitya</h2>
+        <p>Signup, JD create/import, publish, find candidates, algorithms, and architecture.</p>
+      </a>
+    </div>
+
+    <p class="hint">Open any deck → arrow keys / space to advance · <kbd>F</kbd> fullscreen · works offline once fonts are cached.</p>
+  </div>
+</body>
+</html>

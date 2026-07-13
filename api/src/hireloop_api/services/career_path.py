@@ -124,7 +124,7 @@ async def expand_similar_titles(
 
     prompt = (
         "List 4-6 alternative job titles that mean the same role as "
-        f'"{title}" on major job boards (India/US/UK). Return ONLY real, '
+        f'"{title}" on major job boards in India. Return ONLY real, '
         "searchable posted titles people hire for (e.g. 'Customer Success "
         "Manager', 'Backend Engineer'). Never skills, keywords, soft skills, "
         "or marketing phrases. Return ONLY a JSON array of strings."

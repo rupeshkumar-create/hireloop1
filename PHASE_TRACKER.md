@@ -1,5 +1,10 @@
 # Hireschema — Build Phases (User Journey Order)
 
+> Release contract: see `HIRELOOP_MVP.md`. Existing capabilities are retained;
+> current hardening makes privacy opt-in, resume parsing and Nitya drafts durable,
+> requires explicit recruiter role context, and promotes security/build checks to
+> release-blocking CI gates. Real-provider beta smoke remains required.
+
 Phases follow the **exact order a real user experiences the product**, not technical concerns.
 Build → test → ship each phase before moving to the next.
 

@@ -301,6 +301,14 @@ class NityaWorker:
         try:
             conn = await asyncpg.connect(self._db_dsn, statement_cache_size=0)
             try:
+                intro_id = str(payload.get("id") or "")
+                claimed = await conn.fetchval(
+                    "SELECT pg_try_advisory_lock(hashtext($1))",
+                    intro_id,
+                )
+                if not claimed:
+                    logger.info("nitya_intro_already_claimed", intro_id=intro_id)
+                    return
                 handler = NityaIntroHandler(settings=self._settings, db=conn)
                 result = await handler.handle(payload)
                 logger.info("nitya_intro_handled", **result)

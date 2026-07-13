@@ -2,7 +2,7 @@
   "name": "hireschema",
   "version": "0.1.0",
   "private": true,
-  "description": "Hireschema — AI recruiting for India, the US, and the UK. Aarya (candidate) + Nitya (recruiter).",
+  "description": "Hireschema — AI recruiting for India. Aarya (candidate) + Nitya (recruiter).",
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:app": "pnpm --filter app dev",

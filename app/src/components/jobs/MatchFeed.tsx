@@ -407,7 +407,7 @@ export function MatchFeed({
     window.addEventListener(MATCH_FEED_INVALIDATE_EVENT, onInvalidate);
     return () =>
       window.removeEventListener(MATCH_FEED_INVALIDATE_EVENT, onInvalidate);
-  }, [load]);
+  }, [load, minScore]);
 
   useEffect(() => {
     if (loading || error || jobs.length > 0 || emptyRefreshCount >= 5) return;

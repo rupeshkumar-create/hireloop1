@@ -964,9 +964,7 @@ async def get_match_feed_count(
             min_score=min_score,
         )
     )
-    market_items = dedupe_jobs(
-        filter_and_rerank_jobs(dict(candidate), market_items, limit=100)
-    )
+    market_items = dedupe_jobs(filter_and_rerank_jobs(dict(candidate), market_items, limit=100))
     total = len(market_items)
 
     if total == 0:
@@ -1026,9 +1024,7 @@ async def get_match_feed_count(
                 remote_preference=remote_pref,
                 market=market,
             )
-            total = len(
-                dedupe_jobs(filter_and_rerank_jobs(dict(candidate), starter, limit=50))
-            )
+            total = len(dedupe_jobs(filter_and_rerank_jobs(dict(candidate), starter, limit=50)))
 
     test_jobs = await fetch_test_jobs_for_feed(
         db,

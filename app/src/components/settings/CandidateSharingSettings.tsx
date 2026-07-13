@@ -11,6 +11,7 @@ import {
   fetchMyProfile,
   publishPublicProfile,
   updateMyProfile,
+  type CandidateVisibility,
   type DisplayCurrency,
   type MyProfileData,
 } from "@/lib/api/profile";
@@ -33,9 +34,10 @@ export function CandidateSharingSettings() {
   const [currency, setCurrency] = useState<DisplayCurrency>("auto");
   const [savingCurrency, setSavingCurrency] = useState(false);
   const [hideContact, setHideContact] = useState(true);
-  const [shareRecruiters, setShareRecruiters] = useState(true);
+  const [shareRecruiters, setShareRecruiters] = useState(false);
+  const [visibility, setVisibility] = useState<CandidateVisibility>("open_to_matches");
   const [tailoredResumes, setTailoredResumes] = useState(false);
-  const [published, setPublished] = useState(true);
+  const [published, setPublished] = useState(false);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -53,9 +55,10 @@ export function CandidateSharingSettings() {
       setProfile(p);
       setCurrency((p.candidate?.display_currency as DisplayCurrency) ?? "auto");
       setHideContact(p.candidate?.hide_contact_public ?? true);
-      setShareRecruiters(p.candidate?.share_with_recruiters ?? true);
+      setShareRecruiters(p.candidate?.share_with_recruiters ?? false);
+      setVisibility(p.candidate?.visibility ?? "open_to_matches");
       setTailoredResumes(p.candidate?.tailored_resume_enabled ?? false);
-      setPublished(p.candidate?.public_profile_enabled ?? true);
+      setPublished(p.candidate?.public_profile_enabled ?? false);
       const rel = p.candidate?.public_profile_url;
       setPublicUrl(rel ? `${typeof window !== "undefined" ? window.location.origin : ""}${rel}` : null);
       setPathResumes(resumes);
@@ -90,6 +93,7 @@ export function CandidateSharingSettings() {
         hide_contact_public: hideContact,
         share_with_recruiters: shareRecruiters,
         public_profile_enabled: published,
+        visibility,
       });
       toast.success("Privacy settings saved");
       await load();
@@ -247,9 +251,23 @@ export function CandidateSharingSettings() {
       <Card>
         <CardHeader
           title="Public profile & sharing"
-          description="Control who can see your profile and contact details."
+          description="Private by default. Each sharing option is independent and can be turned off at any time."
         />
         <CardBody className="space-y-4 !pt-0">
+          <div className="rounded-lg border border-ink-100 bg-paper-1 px-3 py-2.5">
+            <p className="text-small font-medium text-ink-900">
+              {published || (shareRecruiters && visibility !== "private")
+                ? "Sharing is enabled"
+                : "Your profile is private"}
+            </p>
+            <p className="mt-0.5 text-micro text-ink-500">
+              {published
+                ? "Your public link is visible to anyone who has it."
+                : shareRecruiters && visibility !== "private"
+                  ? "Only signed-in Hireschema recruiters can discover your profile."
+                  : "Recruiters and public-link visitors cannot discover your profile."}
+            </p>
+          </div>
           <ToggleRow
             label="Hide email & phone on public page"
             description="Your name, email, phone, location, and LinkedIn stay private. Visitors see experience and skills only. The share link uses an anonymous URL."
@@ -258,13 +276,30 @@ export function CandidateSharingSettings() {
           />
           <ToggleRow
             label="Share with Hireschema recruiters"
-            description="Registered recruiters on Hireschema can discover your profile in search. Off = hidden from recruiter inbox."
+            description="Opt in to recruiter search. Recruiters see your career profile, not hidden contact details. Off removes you from discovery."
             checked={shareRecruiters}
             onChange={setShareRecruiters}
           />
+          {shareRecruiters ? (
+            <label className="block space-y-1.5 pl-0 sm:pl-1">
+              <span className="text-small font-medium text-ink-900">Recruiter discovery level</span>
+              <select
+                value={visibility}
+                onChange={(event) => setVisibility(event.target.value as CandidateVisibility)}
+                className="h-10 w-full rounded-md border border-ink-100 bg-paper-1 px-3 text-small text-ink-900 outline-none focus:ring-2 focus:ring-accent-ring"
+              >
+                <option value="open_to_matches">Show for relevant role matches</option>
+                <option value="exceptional_only">Show only for exceptional matches</option>
+                <option value="private">Stay hidden from all recruiter search</option>
+              </select>
+              <span className="block text-micro text-ink-500">
+                Private overrides the recruiter-sharing switch until you choose another level.
+              </span>
+            </label>
+          ) : null}
           <ToggleRow
             label="Publish public profile link"
-            description="Anyone with the link can view your published page."
+            description="Create a separate shareable page. Anyone with its anonymous link can view the fields shown there."
             checked={published}
             onChange={setPublished}
           />
@@ -303,7 +338,7 @@ export function CandidateSharingSettings() {
         </CardBody>
         <CardFooter className="flex flex-wrap gap-2">
           <Button variant="primary" size="sm" loading={savingPrivacy} onClick={() => void savePrivacy()}>
-            Save privacy
+            Save sharing choices
           </Button>
           {!published && (
             <Button variant="secondary" size="sm" loading={publishing} onClick={() => void handlePublish()}>

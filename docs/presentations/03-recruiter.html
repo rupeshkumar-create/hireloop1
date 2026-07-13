@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema — Recruiter (Nitya)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Recruiter · Nitya</span>
+  <div class="deck">
+
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Deck 03 · Recruiter</p>
+      <h1>Nitya — roles, search &amp; intros</h1>
+      <p class="lede">Signup → JD create/import → publish → find candidates → intro pipeline. Algorithms and architecture.</p>
+      <p class="meta">July 2026</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">A → Z</p>
+      <h2>Recruiter journey</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Signup</strong><span>Auth · company</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Create JD</strong><span>Form or URL</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Publish</strong><span>/r/{slug}</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Find talent</strong><span>Graph match</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intros</strong><span>Nitya + Gmail</span></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">App architecture</p>
+      <h2>Recruiter SPA</h2>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-label">Routes</div>
+          <div class="arch-nodes">
+            <span class="node">Recruiter onboarding</span>
+            <span class="node hi">Roles / JD editor</span>
+            <span class="node hi">Candidates / pipeline</span>
+            <span class="node">Nitya chat</span>
+            <span class="node">Company settings</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">API</div>
+          <div class="arch-nodes">
+            <span class="node">Job CRUD · publish</span>
+            <span class="node">JD URL import</span>
+            <span class="node">Candidate search</span>
+            <span class="node">Intro status</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Agent</div>
+          <div class="arch-nodes">
+            <span class="node hi">Nitya LangGraph</span>
+            <span class="node">LISTEN intro_requests</span>
+            <span class="node">draft_email · send_via_gmail</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Signup</p>
+      <h2>Recruiter account</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Identity</h3>
+          <p>Supabase Auth (LinkedIn / email paths as configured). Role = recruiter. Company profile attached.</p>
+        </div>
+        <div class="card">
+          <h3>Separation</h3>
+          <p>CandidateGate / role routing keeps recruiter chrome off the candidate journey — except public role pages.</p>
+        </div>
+      </div>
+      <p class="note">Same monorepo app package; UX branches by role, not a separate deploy.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">JD create</p>
+      <h2>Two ways to open a role</h2>
+      <div class="grid-2">
+        <div class="card accent-edge">
+          <div class="label">Manual</div>
+          <h3>Structured form</h3>
+          <p>Title, location, remote/onsite, skills_required, salary band, description — validated with zod · Pydantic.</p>
+        </div>
+        <div class="card accent-edge">
+          <div class="label">Import</div>
+          <h3>Paste career URL</h3>
+          <p>Fetch page → Firecrawl fallback → Ashby/Greenhouse embeds → JSON-LD / HTML extract → prefill form.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1.25rem">
+        <h3>Location hygiene</h3>
+        <p>Title/region beats nav city sniff (e.g. US East Coast roles must not inherit “Singapore” from global site chrome). LLM conflict checks on city vs region.</p>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Publish</p>
+      <h2>From draft to live link</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Draft</strong><span>Editable JD</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Publish</strong><span>Slug + apply_url</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Public page</strong><span>/r/{slug}</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Apply CTA</strong><span>Candidate signup → Jobs</span></div>
+      </div>
+      <p class="note" style="margin-top:1.5rem">Published roles are first-class jobs in the shared graph — visible under market rules.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Find candidates</p>
+      <h2>Search against the graph</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 900 260" xmlns="http://www.w3.org/2000/svg" aria-label="Candidate search">
+          <rect x="30" y="80" width="150" height="100" rx="12" fill="#1c1c1c" stroke="#9fe870"/>
+          <text x="105" y="120" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="13" font-weight="700">Role vector</text>
+          <text x="105" y="142" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">JD + skills</text>
+          <text x="105" y="162" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">+ constraints</text>
+
+          <text x="210" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="240" y="60" width="200" height="140" rx="14" fill="rgba(159,232,112,0.12)" stroke="#9fe870"/>
+          <text x="340" y="100" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="14" font-weight="700">pgvector HNSW</text>
+          <text x="340" y="125" text-anchor="middle" fill="#fafafa" font-family="DM Sans,sans-serif" font-size="12">cosine (<=>)</text>
+          <text x="340" y="148" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">profile + skills emb.</text>
+          <text x="340" y="170" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">market filter</text>
+
+          <text x="470" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="500" y="80" width="160" height="100" rx="12" fill="#1c1c1c" stroke="#2a2a2a"/>
+          <text x="580" y="120" text-anchor="middle" fill="#fafafa" font-family="Syne,sans-serif" font-size="13" font-weight="700">Hybrid rank</text>
+          <text x="580" y="142" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">skills ∩ · RRF</text>
+          <text x="580" y="162" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">bias_audit</text>
+
+          <text x="690" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="720" y="80" width="150" height="100" rx="12" fill="#1c1c1c" stroke="#9fe870"/>
+          <text x="795" y="125" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="13" font-weight="700">Shortlist UI</text>
+          <text x="795" y="148" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">scores + gaps</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Algorithms</p>
+      <h2>What drives ranking</h2>
+      <table class="table">
+        <thead><tr><th>Signal</th><th>Mechanism</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Skills overlap</td><td>Canonical skill taxonomy</td><td>Matched vs gap on every card</td></tr>
+          <tr><td>Semantic fit</td><td>pgvector cosine on embeddings</td><td>HNSW · never L2 for search</td></tr>
+          <tr><td>Fusion</td><td>Reciprocal rank fusion style</td><td>Protects strong skill hits</td></tr>
+          <tr><td>Hard filters</td><td>Market · remote regions · deleted_at</td><td>Soft-delete on PII tables</td></tr>
+          <tr><td>Explain</td><td>LLM rationale (optional persist)</td><td>Same family as candidate feed</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Nitya</p>
+      <h2>Agent tools &amp; wake path</h2>
+      <div class="two-col">
+        <ul class="list-clean">
+          <li><strong style="color:var(--text)">candidate_lookup</strong> — pull graph profile</li>
+          <li><strong style="color:var(--text)">draft_email</strong> — cold intro copy</li>
+          <li><strong style="color:var(--text)">send_via_gmail</strong> — OAuth send</li>
+          <li><strong style="color:var(--text)">update_intro_status</strong> — close the loop</li>
+        </ul>
+        <div class="card">
+          <div class="label">Wake</div>
+          <h3>Postgres NOTIFY</h3>
+          <p>New / updated <code>intro_requests</code> → Nitya loop. No Aarya→Nitya HTTP. Shared state is the protocol.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">HM enrichment</p>
+      <h2>Who we email</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Company</strong><span>LinkedIn employees actor</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Profile</strong><span>HM candidate</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Email find</strong><span>Apify finder</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Verify</strong><span>NeverBounce</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Send</strong><span>Gmail OAuth</span></div>
+      </div>
+      <p class="note warn" style="margin-top:1.5rem">No cookie-based LinkedIn scraping. No cold mail through SendGrid.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Architecture</p>
+      <h2>Recruiter system context</h2>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-label">UI</div>
+          <div class="arch-nodes">
+            <span class="node hi">Recruiter SPA (Next.js)</span>
+            <span class="node">JD import UX</span>
+            <span class="node">Pipeline / intros</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Services</div>
+          <div class="arch-nodes">
+            <span class="node">Jobs · publish</span>
+            <span class="node">URL extract (Firecrawl)</span>
+            <span class="node hi">Match / search</span>
+            <span class="node">Intro service</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Agents</div>
+          <div class="arch-nodes">
+            <span class="node hi">Nitya</span>
+            <span class="node">Recruiter chat helper</span>
+            <span class="node">agent_actions → Realtime</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Data</div>
+          <div class="arch-nodes">
+            <span class="node">jobs · companies</span>
+            <span class="node">candidates · embeddings</span>
+            <span class="node hi">intro_requests</span>
+            <span class="node">match_scores</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Billing note</p>
+      <h2>MVP commercial model</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>No payment plumbing</h3>
+          <p>Phases 1–21: no Razorpay / Stripe. Manual invoice via founder email.</p>
+        </div>
+        <div class="card">
+          <h3>Value proof first</h3>
+          <p>Intros that land + shortlists that convert beat checkout UI for now.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">End of series</p>
+      <h1>Ready for the room</h1>
+      <p class="lede">Three decks · charcoal + lime · keyboard presentable. Open from the index and go fullscreen.</p>
+      <p class="meta"><a href="02-candidate.html" style="color:var(--accent)">← Candidate</a> &nbsp;·&nbsp; <a href="index.html" style="color:var(--accent)">All decks</a></p>
+    </section>
+  </div>
+
+  <nav class="nav">
+    <div class="nav-left">
+      <a href="index.html" style="color:var(--muted);text-decoration:none">All decks</a>
+      <span class="kbd">← → space · F fullscreen</span>
+    </div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right">
+      <span id="slide-counter">1 / 13</span>
+      <button type="button" id="prev">Prev</button>
+      <button type="button" id="next" class="primary">Next</button>
+    </div>
+  </nav>
+  <script src="shared.js"></script>
+</body>
+</html>

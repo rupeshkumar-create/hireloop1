@@ -303,9 +303,7 @@ def analyze_jd_vs_profile(
     matched_nice = [s for s in nice if canonical_skill(s) in cand_canon]
     missing_nice = [s for s in nice if canonical_skill(s) not in cand_canon]
 
-    skills_score = (
-        round(len(matched_must) / max(len(must), 1), 3) if must else 0.55
-    )
+    skills_score = round(len(matched_must) / max(len(must), 1), 3) if must else 0.55
     years = profile.get("years_experience")
     req_years = _jd_years_required(jd_text)
     if years is None or req_years is None:
@@ -336,10 +334,7 @@ def analyze_jd_vs_profile(
     loc_score, loc_note = _location_fit(profile, jd_text)
 
     overall = round(
-        0.4 * skills_score
-        + 0.25 * seniority_score
-        + 0.2 * domain_score
-        + 0.15 * loc_score,
+        0.4 * skills_score + 0.25 * seniority_score + 0.2 * domain_score + 0.15 * loc_score,
         3,
     )
     overall_pct = round(overall * 100)

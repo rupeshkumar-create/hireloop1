@@ -84,6 +84,7 @@ class DraftEditRequest(BaseModel):
     body_html: str | None = None
     body_text: str | None = Field(default=None, max_length=20000)
 
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -214,9 +215,7 @@ async def get_intro(
     d["thankyou_draft_at"] = (
         row["thankyou_draft_at"].isoformat() if row["thankyou_draft_at"] else None
     )
-    d["thankyou_sent_at"] = (
-        row["thankyou_sent_at"].isoformat() if row["thankyou_sent_at"] else None
-    )
+    d["thankyou_sent_at"] = row["thankyou_sent_at"].isoformat() if row["thankyou_sent_at"] else None
     d["gmail_thread_id"] = row["gmail_thread_id"]
     return d
 

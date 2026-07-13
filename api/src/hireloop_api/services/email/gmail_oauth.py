@@ -21,7 +21,7 @@ from __future__ import annotations
 import base64
 import email.mime.multipart
 import email.mime.text
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import httpx
@@ -102,8 +102,7 @@ class GmailOAuthService:
 
             new_token = data["access_token"]
             expires_in = data.get("expires_in", 3600)
-            new_expiry = datetime.now(UTC).replace(microsecond=0)
-            new_expiry = new_expiry.replace(second=new_expiry.second + expires_in)
+            new_expiry = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=expires_in)
 
             await self._db.execute(
                 """

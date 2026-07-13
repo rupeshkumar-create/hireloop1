@@ -194,7 +194,7 @@ const CTA_COPY: Record<
 > = {
   candidate: {
     title: "Your next role is one chat with Aarya away.",
-    sub: "Join from anywhere. Aarya adapts to your market, currency, and city — then gets to work.",
+    sub: "Built for candidates in India. Aarya adapts to your city, role, and salary goals — then gets to work.",
     ctaLabel: "Talk to Aarya — free",
     ctaHref: "/signup",
   },

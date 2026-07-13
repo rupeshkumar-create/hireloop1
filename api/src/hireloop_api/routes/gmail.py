@@ -35,6 +35,7 @@ from fastapi.responses import RedirectResponse
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.email.gmail_oauth import GmailOAuthService
+from hireloop_api.services.token_crypto import decrypt_token
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/gmail", tags=["gmail"])
@@ -296,7 +297,7 @@ async def gmail_disconnect(
             async with httpx.AsyncClient(timeout=10.0) as http:
                 await http.post(
                     "https://oauth2.googleapis.com/revoke",
-                    params={"token": row["access_token"]},
+                    params={"token": decrypt_token(row["access_token"])},
                 )
         except Exception as exc:
             # Revocation failure is non-fatal — delete locally anyway.

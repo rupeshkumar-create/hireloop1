@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema v2 — Recruiter (Nitya)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Recruiter · Nitya v2</span>
+  <div class="deck">
+
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">v2 · Deck 03 · Recruiter</p>
+      <h1>Nitya — roles, search, scoring</h1>
+      <p class="lede">How JD import works, how “find candidates” actually ranks people, and how intros send — with the real matcher math.</p>
+      <p class="meta">July 2026</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Journey</p>
+      <h2>Recruiter A → Z</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Signup</strong><span>role=recruiter</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>JD</strong><span>Form or URL</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Publish</strong><span>/r/{slug}</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Search</strong><span>Same MatchingEngine</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intro</strong><span>Nitya + Gmail</span></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">App</p>
+      <h2>Recruiter SPA + API</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">UI</div><div class="arch-nodes"><span class="node hi">Roles / JD editor</span><span class="node hi">Pipeline / search</span><span class="node">Nitya chat</span><span class="node">Inbox</span></div></div>
+        <div class="arch-row"><div class="arch-label">API</div><div class="arch-nodes"><span class="node">routes/recruiter.py</span><span class="node hi">POST /roles/{id}/search</span><span class="node">JD URL extract</span></div></div>
+        <div class="arch-row"><div class="arch-label">Core</div><div class="arch-nodes"><span class="node hi">recruiter_search.py</span><span class="node">MatchingEngine</span><span class="node">agents/nitya/</span></div></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">JD create</p>
+      <h2>Manual + URL import</h2>
+      <div class="grid-2">
+        <div class="card accent-edge"><div class="label">Manual</div><h3>Structured form</h3><p>Title, location, remote, must/nice skills, comp, JD — zod / Pydantic validated.</p></div>
+        <div class="card accent-edge"><div class="label">Import</div><h3>Career-page URL</h3><p>Fetch → Firecrawl fallback → Ashby/Greenhouse embeds → JSON-LD / HTML. Location: title/region wins over nav city sniff.</p></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Publish</p>
+      <h2>Draft → public apply link</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Draft</strong><span>role row</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Publish</strong><span>slug + apply_url</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>/r/{slug}</strong><span>public page</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Apply</strong><span>candidate signup → Jobs</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">Published roles enter the shared job graph under market visibility rules.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Graph search · truth</p>
+      <h2>There is no separate graph ranker</h2>
+      <p class="lede">“Find candidates” reuses the <strong>same</strong> candidate↔job MatchingEngine against a mirrored <code>jobs</code> row for the role.</p>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>ensure_role_scoring_job</strong><span>jobs.source='recruiter'</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>score_job</strong><span>MatchingEngine</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>ORDER BY</strong><span>overall_score DESC</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>role_pipeline</strong><span>stage=search</span></div>
+      </div>
+      <p class="src">services/recruiter_search.py · search_candidates_for_role · POST /roles/{role_id}/search</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Graph search · details</p>
+      <h2>How the mirror job is built</h2>
+      <dl class="dl">
+        <dt>ensure_role_scoring_job</dt>
+        <dd>Find/create <code>jobs</code> linked by <code>role_id</code>, <code>source='recruiter'</code>. Sync title, JD text, skills from must/nice-haves, compensation, location. Inactive until published where applicable.</dd>
+        <dt>score_job(job_id, limit=500)</dt>
+        <dd>Runs identical <code>_assemble_score</code> against eligible candidates.</dd>
+        <dt>Visibility filters</dt>
+        <dd><code>share_with_recruiters = TRUE</code> and <code>visibility &lt;&gt; 'private'</code>.</dd>
+        <dt>Pipeline write</dt>
+        <dd>Upsert <code>role_pipeline</code> with <code>match_score</code> + <code>criterion_scores</code> JSON (skills / experience / location / ctc). Log <code>recruiter_searches</code>.</dd>
+      </dl>
+      <p class="note">Per-criterion LLM scoring is reserved (P17+) — <strong>not</strong> live today.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Scoring recap · same engine</p>
+      <h2>overall_score for candidates on a role</h2>
+      <div class="formula">overall = weighted dims → × gates
+
+skills 0.40 · profile 0.30 · experience 0.15 · location 0.10 · ctc 0.05
+
+skills_lex = 0.85×coverage + 0.15×jaccard  (+ embedding lift)
+profile    = cosine(profile_emb, jd_emb)     (+ lift)
+persist if overall ≥ ~0.35 (feed/search floors apply on candidate side)</div>
+      <p class="lede" style="font-size:0.95rem;margin-top:1rem">Recruiter cards order by <code>match_scores.overall_score</code> / pipeline <code>match_score</code> — not a second formula.</p>
+      <p class="src">services/matching.py — shared with candidate Matches feed</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Embeddings in search</p>
+      <h2>What vectors participate</h2>
+      <div class="grid-2">
+        <div class="card"><h3>Candidate</h3><p><code>candidate_embeddings</code>: profile · skills · resume (1536-d HNSW, cosine)</p></div>
+        <div class="card"><h3>Role / job</h3><p><code>job_embeddings</code>: jd · title · skills — built after role sync / embed workers</p></div>
+      </div>
+      <p class="note" style="margin-top:1rem">If embeddings are missing, lexical/constraint dims still run — semantic lift is weaker until embed jobs catch up.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Nitya</p>
+      <h2>Intro path after a shortlist</h2>
+      <ul class="list-clean">
+        <li><strong style="color:var(--text)">Wake:</strong> Postgres LISTEN/NOTIFY on <code>intro_requests</code></li>
+        <li><strong style="color:var(--text)">Tools:</strong> candidate_lookup · draft_email · send_via_gmail · update_intro_status</li>
+        <li><strong style="color:var(--text)">Send:</strong> candidate (or configured) Gmail OAuth — not Resend for cold</li>
+        <li><strong style="color:var(--text)">Enrichment:</strong> Apify company employees → profile → email finder (verification vendor not in active stack)</li>
+      </ul>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Post-MVP · planned</p>
+      <h2>Screening results from Aarya’s call</h2>
+      <p class="lede" style="font-size:1rem">After MVP is stable: candidates complete one 15–20 min Deepgram call with Aarya. Recruiters don’t join that call — they get the <strong style="color:var(--text)">screening output</strong> when someone applies.</p>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Apply</strong><span>candidate → role</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Screen</strong><span>call insights + JD</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>Package</strong><span>fit · gaps · notes</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Show</strong><span>recruiter pipeline UI</span></div>
+      </div>
+      <div class="grid-2" style="margin-top:1.25rem">
+        <div class="card accent-edge">
+          <div class="label">Inputs</div>
+          <h3>Call + your JD</h3>
+          <p>Structured signals from the Aarya session (experience, path, strengths) compared to the role description and must-haves.</p>
+        </div>
+        <div class="card accent-edge">
+          <div class="label">Output</div>
+          <h3>Screening result card</h3>
+          <p>Recruiter sees why they fit / where they gap — before a human first screen.</p>
+        </div>
+      </div>
+      <p class="note" style="margin-top:1rem">Same MatchingEngine shortlist stays; screening call is an extra layer on apply — not a replacement for score search.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Status &amp; risks</p>
+      <h2>Recruiter side (candid)</h2>
+      <div class="grid-2">
+        <div class="card risk"><h3>Search quality</h3><p>Depends on role→job sync fidelity and candidate embeddings. Empty graph → empty shortlist.</p></div>
+        <div class="card risk"><h3>Intros</h3><p>Gmail OAuth app must be live. Enrichment without verify step = deliverability risk — call it out operationally.</p></div>
+      </div>
+      <div class="card risk" style="margin-top:1rem"><h3>Shared with candidate</h3><p>Match/chat reliability work affects recruiter published roles that land in the same jobs graph.</p></div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Next 2 weeks</p>
+      <h2>Recruiter focus (near-term)</h2>
+      <div class="grid-2">
+        <div class="card road"><h3>Search confidence</h3><p>Ensure embed-after-sync · surface criterion breakdown in UI · monitor empty searches</p></div>
+        <div class="card road"><h3>Intro E2E</h3><p>Gmail send path · status inbox · clear failure states when OAuth missing</p></div>
+      </div>
+      <div class="card" style="margin-top:1rem"><h3>Later (after stable)</h3><p>Apply-time screening UI fed by Aarya’s 15–20 min Deepgram call + JD comparison</p></div>
+    </section>
+
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Download</p>
+      <h1>All three decks ready</h1>
+      <p class="lede">Open the zip or this folder offline. Print → Save as PDF per deck if needed.</p>
+      <p class="meta"><a href="02-candidate.html" style="color:var(--accent)">← 02</a> · <a href="index.html" style="color:var(--accent)">Index</a></p>
+    </section>
+  </div>
+  <nav class="nav">
+    <div class="nav-left"><a href="index.html" style="color:var(--muted);text-decoration:none">Index</a><span class="kbd">← → · F · Print→PDF</span></div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right"><span id="slide-counter"></span><button type="button" id="prev">Prev</button><button type="button" id="next" class="primary">Next</button></div>
+  </nav>
+  <script src="shared.js"></script>
+</body>
+</html>

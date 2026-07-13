@@ -15,9 +15,7 @@ import structlog
 logger = structlog.get_logger()
 
 
-def followup_draft_bodies(
-    hm_name: str, job_title: str, candidate_name: str
-) -> dict[str, str]:
+def followup_draft_bodies(hm_name: str, job_title: str, candidate_name: str) -> dict[str, str]:
     hm_first = (hm_name or "there").split(" ")[0]
     text = (
         f"Hi {hm_first},\n\n"
@@ -123,7 +121,11 @@ async def ensure_thankyou_draft(
         user_id = str(row["user_id"])
         dedupe_key = f"thankyou_draft:{intro_id}"
         if not await _already_notified(
-            db, user_id=user_id, notif_type="thankyou_draft", dedupe_key=dedupe_key, within_hours=720
+            db,
+            user_id=user_id,
+            notif_type="thankyou_draft",
+            dedupe_key=dedupe_key,
+            within_hours=720,
         ):
             title = row["job_title"] or "your role"
             cta = f"{_app_base(settings)}/dashboard?panel=inbox"
@@ -178,7 +180,11 @@ async def create_followup_draft_row(
         intro_id = str(row["id"])
         dedupe_key = f"followup_draft:{intro_id}"
         if not await _already_notified(
-            db, user_id=user_id, notif_type="followup_draft", dedupe_key=dedupe_key, within_hours=168
+            db,
+            user_id=user_id,
+            notif_type="followup_draft",
+            dedupe_key=dedupe_key,
+            within_hours=168,
         ):
             title = row["job_title"] or "your role"
             company = row["company_name"] or "the company"

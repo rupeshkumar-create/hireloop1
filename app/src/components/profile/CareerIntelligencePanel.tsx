@@ -314,25 +314,6 @@ function CollapsibleGroup({
   );
 }
 
-/** One headline stat tile for the hero. */
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | null | undefined;
-}) {
-  if (!value) return null;
-  return (
-    <div className="rounded-lg border border-ink-100 bg-ink-50 px-3.5 py-2.5 transition-colors hover:border-ink-200">
-      <p className="text-micro uppercase tracking-wide text-ink-400">{label}</p>
-      <p className="text-body font-semibold text-ink-900 mt-1 leading-snug">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 // ── Loading skeleton (DESIGN.md: skeletons, not spinners) ─────────────────────
 
 function IntelSkeleton() {

@@ -23,7 +23,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 export const metadata = {
   title: "Hireschema — Your AI career partner",
   description:
-    "Aarya finds you the right roles in India, the US, and the UK — scores your fit and makes the warm intro to the hiring manager. Free for candidates. Private beta.",
+    "Aarya finds India-eligible roles, scores your fit, and helps you make a warm intro to the hiring manager. Free for candidates. Private beta.",
 };
 
 // ── Hero ─────────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ function Hero() {
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ink-50 border border-ink-100 mb-8">
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               <span className="text-micro text-ink-700 uppercase">
-                Private beta · India, US &amp; UK · Q1 2026
+                Private beta · India · 2026
               </span>
             </div>
           </Reveal>
@@ -47,7 +47,7 @@ function Hero() {
           <Reveal delay={60}>
             <h1 className="text-display text-ink-900 mb-6 leading-[1.05]">
               Your AI career partner
-              <span className="text-ink-500">, built for your market.</span>
+              <span className="text-ink-500">, built for India.</span>
             </h1>
           </Reveal>
 

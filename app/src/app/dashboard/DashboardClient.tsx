@@ -20,7 +20,6 @@ import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
 import { consumeStarterJobs } from "@/lib/auth/starter-jobs";
-import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { cn } from "@/lib/utils";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";

@@ -183,9 +183,7 @@ async def book_session(
             )
             msg += " " + google_hint
         else:
-            google_hint = (
-                "Reconnect Google and grant calendar access to get a Meet link next time."
-            )
+            google_hint = "Reconnect Google and grant calendar access to get a Meet link next time."
             msg += " " + google_hint
         calendar_connected = False
 

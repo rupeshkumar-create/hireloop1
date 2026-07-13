@@ -206,12 +206,12 @@ async def _ensure_candidate_row(
           hide_contact_public, share_with_recruiters, public_profile_enabled,
           tailored_resume_enabled
         )
-        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE, FALSE)
+        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, FALSE, FALSE, FALSE)
         ON CONFLICT (user_id) DO UPDATE
         SET headline = COALESCE(NULLIF(TRIM(public.candidates.headline), ''), EXCLUDED.headline),
             hide_contact_public = COALESCE(public.candidates.hide_contact_public, TRUE),
-            share_with_recruiters = COALESCE(public.candidates.share_with_recruiters, TRUE),
-            public_profile_enabled = COALESCE(public.candidates.public_profile_enabled, TRUE),
+            share_with_recruiters = COALESCE(public.candidates.share_with_recruiters, FALSE),
+            public_profile_enabled = COALESCE(public.candidates.public_profile_enabled, FALSE),
             tailored_resume_enabled = COALESCE(public.candidates.tailored_resume_enabled, FALSE),
             updated_at = NOW()
         WHERE public.candidates.deleted_at IS NULL
@@ -890,6 +890,11 @@ async def update_my_profile(
                 "current_ctc",
                 "notice_period_days",
                 "visibility",
+                "display_currency",
+                "public_profile_enabled",
+                "hide_contact_public",
+                "share_with_recruiters",
+                "tailored_resume_enabled",
             )
             if k in updates
         }
@@ -924,6 +929,17 @@ async def update_my_profile(
             await rest_users.log_consent_rest(
                 settings, user_id=user_id, purpose="profile_update_manual", granted=True
             )
+            for field, purpose in (
+                ("share_with_recruiters", "candidate_recruiter_sharing"),
+                ("public_profile_enabled", "public_profile_publish"),
+            ):
+                if field in updates:
+                    await rest_users.log_consent_rest(
+                        settings,
+                        user_id=user_id,
+                        purpose=purpose,
+                        granted=bool(updates[field]),
+                    )
         except Exception as exc:
             logger.error("consent_log_rest_failed", user_id=str(user_id), error=str(exc))
         return {"ok": True}
@@ -1080,6 +1096,22 @@ async def update_my_profile(
             """,
             user_id,
         )
+
+        privacy_updates = body.model_dump(exclude_unset=True)
+        for field, purpose in (
+            ("share_with_recruiters", "candidate_recruiter_sharing"),
+            ("public_profile_enabled", "public_profile_publish"),
+        ):
+            if field in privacy_updates:
+                await db.execute(
+                    """
+                    INSERT INTO public.consent_log (user_id, purpose, granted)
+                    VALUES ($1::uuid, $2, $3)
+                    """,
+                    user_id,
+                    purpose,
+                    bool(privacy_updates[field]),
+                )
 
         candidate_row = await db.fetchrow(
             "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",

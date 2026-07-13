@@ -29,6 +29,7 @@ from hireloop_api.agents.nitya.recruiter_chat import (
 )
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_current_user, get_db, get_recruiter_user
+from hireloop_api.services.file_security import MAX_RESUME_BYTES, validate_resume_upload
 from hireloop_api.services.public_role import public_role_path
 from hireloop_api.services.recruiter_nudges import compute_recruiter_nudges
 from hireloop_api.services.recruiter_search import (
@@ -2074,7 +2075,10 @@ async def add_role_applicant(
     filename = "resume.pdf"
     mime_type = None
     if resume and resume.filename:
-        resume_bytes = await resume.read()
+        resume_bytes = await resume.read(MAX_RESUME_BYTES + 1)
+        validation_error = validate_resume_upload(resume.content_type, resume_bytes)
+        if validation_error:
+            raise HTTPException(400, validation_error)
         filename = resume.filename
         mime_type = resume.content_type
 

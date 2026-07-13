@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -17,8 +18,8 @@ from hireloop_api.services.chat_analysis import (
     analyze_resume_vs_role,
     looks_like_jd,
 )
-from hireloop_api.services.resume_parser import ResumeParserService
-from hireloop_api.services.role_inbound import score_inbound_profile
+from hireloop_api.services.file_security import MAX_RESUME_BYTES, validate_resume_upload
+from hireloop_api.services.role_inbound import parse_resume_bytes, score_inbound_profile
 
 router = APIRouter(tags=["chat-analysis"])
 
@@ -42,9 +43,7 @@ def _parsed_from_row(row: asyncpg.Record | None) -> dict[str, Any]:
     return {}
 
 
-async def _candidate_profile(
-    db: asyncpg.Connection, user_id: uuid.UUID
-) -> dict[str, Any] | None:
+async def _candidate_profile(db: asyncpg.Connection, user_id: uuid.UUID) -> dict[str, Any] | None:
     cand = await db.fetchrow(
         """
         SELECT c.current_title, c.current_company, c.years_experience, c.skills,
@@ -132,24 +131,23 @@ async def analyze_resume_for_role(
     from hireloop_api.services.role_inbound import add_external_candidate
 
     recruiter = current_user["recruiter"]
-    role = await _fetch_role_for_recruiter(
-        db, role_id=role_id, recruiter_id=recruiter["id"]
-    )
+    role = await _fetch_role_for_recruiter(db, role_id=role_id, recruiter_id=recruiter["id"])
     if not role:
         raise HTTPException(404, "Role not found")
 
-    data = await resume.read()
-    if not data:
-        raise HTTPException(400, "Empty file")
-    if len(data) > 10 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 10MB)")
+    data = await resume.read(MAX_RESUME_BYTES + 1)
+    validation_error = validate_resume_upload(resume.content_type, data)
+    if validation_error:
+        raise HTTPException(400, validation_error)
 
     filename = resume.filename or "resume.pdf"
     mime = resume.content_type
-    parsed_model = ResumeParserService.parse_from_text(
-        ResumeParserService._extract_text(data, filename, mime)
+    parsed = await asyncio.to_thread(
+        parse_resume_bytes,
+        data,
+        filename=filename,
+        mime_type=mime,
     )
-    parsed = parsed_model.model_dump()
     if full_name and full_name.strip():
         parsed["full_name"] = full_name.strip()
 

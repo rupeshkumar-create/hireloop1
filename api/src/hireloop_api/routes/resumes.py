@@ -4,7 +4,7 @@ Resume upload and parsing routes.
 POST /api/v1/resumes/upload
   - Accepts multipart/form-data with a PDF or DOCX file
   - Uploads to Supabase Storage (bucket: resumes)
-  - Triggers Affinda parsing (async)
+  - Queues durable multi-tier parsing (async)
   - Returns storage path + parsed data
 
 GET  /api/v1/resumes/{resume_id}
@@ -29,6 +29,12 @@ from supabase import Client, create_client
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
 from hireloop_api.services.candidate_display_name import sync_preferred_name_from_resume
+from hireloop_api.services.file_security import (
+    ALLOWED_RESUME_MIME_TYPES,
+    MAX_RESUME_BYTES,
+    resume_magic_ok,
+    validate_resume_upload,
+)
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
 
@@ -36,25 +42,12 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
-ALLOWED_MIME_TYPES = {
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/octet-stream",
-}
-MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
-
-
-def _resume_magic_ok(file_bytes: bytes) -> bool:
-    magic = file_bytes[:4]
-    return magic in (b"%PDF", b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
-
 
 def _normalize_resume_mime(content_type: str | None, file_bytes: bytes) -> str:
     """Browsers (especially mobile) often send application/octet-stream for PDFs."""
-    if content_type in ALLOWED_MIME_TYPES and content_type != "application/octet-stream":
+    if content_type in ALLOWED_RESUME_MIME_TYPES and content_type != "application/octet-stream":
         return content_type or "application/pdf"
-    if _resume_magic_ok(file_bytes):
+    if resume_magic_ok(file_bytes):
         if file_bytes[:4] == b"%PDF":
             return "application/pdf"
         if file_bytes[:4] == b"PK\x03\x04":
@@ -119,7 +112,7 @@ async def _ensure_candidate_for_resume_upload(
           user_id, headline, profile_complete,
           hide_contact_public, share_with_recruiters, public_profile_enabled
         )
-        VALUES ($1::uuid, $2, FALSE, TRUE, TRUE, TRUE)
+        VALUES ($1::uuid, $2, FALSE, TRUE, FALSE, FALSE)
         """,
         user_uuid,
         headline,
@@ -211,7 +204,7 @@ def _schedule_resume_parse(
     filename: str,
     mime_type: str | None,
     settings: Settings,
-) -> None:
+) -> asyncio.Task[None]:
     """Run LLM parsing off the upload request so proxies don't time out."""
 
     async def _run() -> None:
@@ -279,10 +272,8 @@ def _schedule_resume_parse(
                     candidate_id=candidate_id,
                     resume_full_name=parsed.full_name,
                 )
-                # The fast regex parse that drove the initial apply often lacks
-                # location — when the full LLM parse lands with one, re-sync the
-                # market too, or a New York CV stays on the IN market forever
-                # (US jobs invisible; only demo jobs survive the filter).
+                # The schema retains market fields for compatibility. The market
+                # resolver is India-only and ignores non-India locations.
                 if parsed.location_city or parsed.location_state:
                     from hireloop_api.market_db import sync_candidate_market_from_location
 
@@ -339,10 +330,14 @@ def _schedule_resume_parse(
                     resume_id=resume_id,
                     error=str(mark_exc)[:200],
                 )
+            # Let the durable queue apply bounded backoff/retries. The failed
+            # marker keeps the UI honest if all attempts are exhausted.
+            raise
 
     task = asyncio.create_task(_run())
     _parse_tasks.add(task)
     task.add_done_callback(_parse_tasks.discard)
+    return task
 
 
 async def _prepare_candidate_resume_storage(
@@ -533,31 +528,25 @@ async def upload_resume(
     db: asyncpg.Connection = Depends(get_db),
 ) -> ResumeUploadResponse:
     """
-    Upload a resume, parse it with Affinda, and store the result.
+    Upload a resume, queue durable parsing, and store the result.
     The candidate can then choose to apply parsed data to their profile.
     """
     # Parsing is a multi-tier LLM job — cap per user per hour (cost guard).
     check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15)
 
-    # Validate file type (mobile browsers often send application/octet-stream).
-    if file.content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type '{file.content_type}' not supported. Upload PDF or DOCX.",
-        )
-
-    # Read file bytes (validate size)
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+    # Read at most one byte over the limit so oversized requests do not become
+    # unbounded per-request memory allocations.
+    file_bytes = await file.read(MAX_RESUME_BYTES + 1)
+    validation_error = validate_resume_upload(file.content_type, file_bytes)
+    if validation_error and len(file_bytes) > MAX_RESUME_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File too large. Maximum size is 10MB.",
         )
-
-    if not _resume_magic_ok(file_bytes):
+    if validation_error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File content doesn't look like a PDF or DOCX.",
+            detail=validation_error,
         )
 
     normalized_mime = _normalize_resume_mime(file.content_type, file_bytes)
@@ -584,7 +573,8 @@ async def upload_resume(
     supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key)
 
     try:
-        supabase.storage.from_("resumes").upload(
+        await asyncio.to_thread(
+            supabase.storage.from_("resumes").upload,
             path=storage_path,
             file=file_bytes,
             file_options={"content-type": normalized_mime},
@@ -637,14 +627,21 @@ async def upload_resume(
         resume_full_name=quick_parsed.full_name,
     )
 
-    _schedule_resume_parse(
-        user_id=user_id,
-        candidate_id=candidate_id,
-        resume_id=resume_id,
-        file_bytes=file_bytes,
-        filename=filename,
-        mime_type=normalized_mime,
-        settings=settings,
+    from hireloop_api.services.background_jobs import RESUME_PARSE, enqueue_job
+
+    await enqueue_job(
+        db,
+        kind=RESUME_PARSE,
+        payload={
+            "user_id": str(user_id),
+            "candidate_id": candidate_id,
+            "resume_id": resume_id,
+            "storage_path": storage_path,
+            "filename": filename,
+            "mime_type": normalized_mime,
+        },
+        idempotency_key=f"resume_parse:{resume_id}",
+        max_attempts=4,
     )
 
     was_parsed = bool(quick_parsed.skills or quick_parsed.current_title or quick_parsed.full_name)

@@ -1331,7 +1331,7 @@ async def job_search(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
-                    "force_refresh": True,
+                    "force_refresh": bool(settings.auto_ingest_on_empty_search),
                     "user_id": user_id,
                     "session_id": session_id,
                 },
@@ -1342,7 +1342,7 @@ async def job_search(
                 candidate_id=candidate_id,
                 queries=path_search_titles or target_titles,
             )
-        else:
+        elif settings.auto_ingest_on_empty_search:
             # Always pull live openings on an empty personalized search so
             # "find job" / "find new job" do not dead-end when the shelf is cold.
             await enqueue_job(

@@ -20,6 +20,10 @@ def test_token_decrypt_legacy_plaintext_passthrough() -> None:
     assert decrypt_token("legacy-plaintext-token") == "legacy-plaintext-token"
 
 
+def test_corrupt_fernet_token_fails_closed() -> None:
+    assert decrypt_token("gAAAA-corrupt-ciphertext") is None
+
+
 def test_token_encrypt_none_passthrough() -> None:
     assert encrypt_token(None) is None
     assert decrypt_token(None) is None
