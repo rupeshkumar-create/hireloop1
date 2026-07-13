@@ -27,7 +27,11 @@ export default async function JobDetailPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/signup");
+  if (!user) {
+    redirect(
+      `/signup?role=candidate&from=${encodeURIComponent(`/jobs/${id}`)}`,
+    );
+  }
 
   return <JobDetailView jobId={id} />;
 }

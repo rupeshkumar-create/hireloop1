@@ -40,6 +40,10 @@ Return ONLY valid JSON (no markdown fences):
 Weights in evaluation_criteria should sum to ~100. No calibration profiles.
 Prefer India context (LPA, cities) when the JD is India-focused.
 Never invent a company name — only use one that appears clearly in the text.
+Never invent a city from site navigation, cookie banners, or unrelated office lists.
+If the title includes a region (e.g. "US East Coast"), location_city must match that
+region — do not pick a city from another country.
+If location is multi-city within one region, use the region label from the title.
 If comp is missing, set comp_structure to unclear."""
 
 ROLE_REMOTE_POLICIES = frozenset({"onsite", "hybrid", "remote", "flex"})

@@ -781,12 +781,15 @@ async def publish_role_to_jobs(
     if public_meta.get("error"):
         return public_meta
 
+    apply_url = public_meta.get("public_role_url")
+
     if existing:
         await db.execute(
             """
             UPDATE public.jobs SET
               title = $2, description = $3, location_city = $4, location_state = $5,
               is_remote = $6, ctc_min = $7, ctc_max = $8, skills_required = $9,
+              apply_url = COALESCE($10, apply_url),
               is_active = TRUE, scraped_at = NOW(), expires_at = NOW() + INTERVAL '60 days',
               updated_at = NOW()
             WHERE id = $1
@@ -800,6 +803,7 @@ async def publish_role_to_jobs(
             role["comp_min"],
             role["comp_max"],
             skills,
+            apply_url,
         )
         return {
             "job_id": str(existing),
@@ -813,9 +817,10 @@ async def publish_role_to_jobs(
         INSERT INTO public.jobs
           (id, company_id, recruiter_id, role_id, title, description,
            location_city, location_state, country_code, is_remote,
-           ctc_min, ctc_max, skills_required, source, is_active, scraped_at, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'IN', $9, $10, $11, $12, 'recruiter', TRUE,
-                NOW(), NOW() + INTERVAL '60 days')
+           ctc_min, ctc_max, skills_required, apply_url, source, is_active,
+           scraped_at, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'IN', $9, $10, $11, $12, $13,
+                'recruiter', TRUE, NOW(), NOW() + INTERVAL '60 days')
         """,
         job_id,
         role["company_id"],
@@ -829,6 +834,7 @@ async def publish_role_to_jobs(
         role["comp_min"],
         role["comp_max"],
         skills,
+        apply_url,
     )
     return {
         "job_id": str(job_id),

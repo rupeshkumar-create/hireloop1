@@ -6,13 +6,13 @@ import {
   Briefcase,
   Building2,
   Copy,
-  ExternalLink,
   FileText,
   GraduationCap,
   Linkedin,
   LinkIcon,
   Loader2,
   MapPin,
+  PencilLine,
   Shield,
 } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
@@ -29,7 +29,12 @@ import {
   type RemotePreference,
   type WorkExperience,
 } from "@/lib/api/profile";
-import { isValidLinkedInUrl, linkedInProfileId, saveLinkedInUrl } from "@/lib/api/onboardingProfile";
+import {
+  isValidLinkedInUrl,
+  linkedInProfileId,
+  normalizeLinkedInUrl,
+  saveLinkedInUrl,
+} from "@/lib/api/onboardingProfile";
 import { CareerIntelligencePanel } from "@/components/profile/CareerIntelligencePanel";
 import { GoogleConnectCard } from "@/components/profile/GoogleConnectCard";
 import { ResumeUpload } from "@/components/resume/ResumeUpload";
@@ -117,6 +122,7 @@ export function ProfilePanel({
   const [linkedinDraft, setLinkedinDraft] = useState("");
   const [savingLinkedin, setSavingLinkedin] = useState(false);
   const [linkedinError, setLinkedinError] = useState("");
+  const [editingLinkedin, setEditingLinkedin] = useState(false);
   const [publishingPublic, setPublishingPublic] = useState(false);
 
   function hydrate(d: MyProfileData) {
@@ -244,7 +250,10 @@ export function ProfilePanel({
       .join("")
       .toUpperCase() || "U";
   const isActive = profile?.candidate?.is_active !== false;
-  const linkedinUrl = profile?.candidate?.linkedin_url?.trim() || null;
+  const linkedinUrl =
+    normalizeLinkedInUrl(profile?.candidate?.linkedin_url ?? "") ||
+    profile?.candidate?.linkedin_url?.trim() ||
+    null;
   const linkedinId = linkedInProfileId(linkedinUrl);
   const publicEnabled = Boolean(profile?.candidate?.public_profile_enabled);
   const publicPath = profile?.candidate?.public_profile_url ?? null;
@@ -252,6 +261,10 @@ export function ProfilePanel({
     typeof window !== "undefined" && publicPath
       ? `${window.location.origin}${publicPath}`
       : publicPath;
+
+  const iconLinkClass =
+    "inline-flex h-9 w-9 items-center justify-center rounded-md border border-ink-100 " +
+    "bg-paper-1 text-ink-700 hover:text-ink-900 hover:bg-ink-50 transition-colors";
 
   async function handleSaveLinkedin() {
     if (!isValidLinkedInUrl(linkedinDraft)) {
@@ -264,12 +277,19 @@ export function ProfilePanel({
       await saveLinkedInUrl(linkedinDraft);
       hydrate(await fetchMyProfile({ force: true }));
       setLinkedinDraft("");
+      setEditingLinkedin(false);
       toast.success("LinkedIn profile saved");
     } catch (err) {
       setLinkedinError(err instanceof Error ? err.message : "Couldn't save LinkedIn URL");
     } finally {
       setSavingLinkedin(false);
     }
+  }
+
+  function startEditLinkedin() {
+    setEditingLinkedin(true);
+    setLinkedinDraft(linkedinUrl ?? linkedinId ?? "");
+    setLinkedinError("");
   }
 
   async function handlePublishPublic() {
@@ -344,128 +364,127 @@ export function ProfilePanel({
               {headline || "Add a headline to stand out"}
             </p>
 
-            <div className="mt-2 space-y-1.5">
-              <div className="flex items-start gap-2 min-w-0">
-                <Linkedin className="h-3.5 w-3.5 text-ink-400 shrink-0 mt-0.5" strokeWidth={1.5} />
-                {linkedinId ? (
-                  <div className="min-w-0">
-                    <p className="text-micro text-ink-500">LinkedIn</p>
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {linkedinId && !editingLinkedin ? (
+                  <>
                     <a
-                      href={linkedinUrl!}
+                      href={linkedinUrl ?? `https://www.linkedin.com/in/${linkedinId}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-small font-medium text-ink-900 hover:text-accent truncate block"
+                      title={`LinkedIn · ${linkedinId}`}
+                      aria-label={`Open LinkedIn profile ${linkedinId}`}
+                      className={iconLinkClass}
                     >
-                      linkedin.com/in/{linkedinId}
+                      <Linkedin className="h-4 w-4" strokeWidth={1.5} />
                     </a>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={startEditLinkedin}
+                      title="Edit LinkedIn profile"
+                      aria-label="Edit LinkedIn profile"
+                      className={iconLinkClass}
+                    >
+                      <PencilLine className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </button>
+                  </>
+                ) : null}
+
+                {publicEnabled && publicPath ? (
+                  <a
+                    href={publicPath}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open live public profile"
+                    aria-label="Open live public profile"
+                    className={cn(iconLinkClass, "relative")}
+                  >
+                    <LinkIcon className="h-4 w-4" strokeWidth={1.5} />
+                    <span className="absolute -right-1 -top-1 rounded-full bg-accent px-1 py-px text-[9px] font-semibold leading-none text-ink-900">
+                      Live
+                    </span>
+                  </a>
                 ) : (
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <p className="text-micro text-ink-500">LinkedIn not saved yet</p>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="url"
-                        value={linkedinDraft}
-                        onChange={(e) => {
-                          setLinkedinDraft(e.target.value);
-                          setLinkedinError("");
-                        }}
-                        placeholder="linkedin.com/in/your-profile"
-                        className="flex-1 min-w-0 h-8 rounded-md border border-ink-200 bg-paper-0 px-2 text-micro text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-900"
-                      />
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        loading={savingLinkedin}
-                        onClick={() => void handleSaveLinkedin()}
-                        className="shrink-0 h-8 px-2.5 text-micro"
-                      >
-                        Save
-                      </Button>
-                    </div>
-                    {linkedinError && (
-                      <p className="text-micro text-destructive">{linkedinError}</p>
-                    )}
-                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={publishingPublic}
+                    onClick={() => void handlePublishPublic()}
+                    className="h-9 px-2.5 text-micro"
+                  >
+                    Go live
+                  </Button>
                 )}
+
+                {publicEnabled && publicUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyPublicLink()}
+                    title="Copy public link"
+                    aria-label="Copy public link"
+                    className={iconLinkClass}
+                  >
+                    <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => setTab("overview")}
+                  title="Update CV"
+                  aria-label="Update CV"
+                  className={iconLinkClass}
+                >
+                  <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </button>
               </div>
 
-              <div className="flex items-start gap-2 min-w-0">
-                <LinkIcon className="h-3.5 w-3.5 text-ink-400 shrink-0 mt-0.5" strokeWidth={1.5} />
-                {publicEnabled && publicUrl ? (
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-micro text-ink-500">Live public link</p>
-                      <span className="inline-flex items-center rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
-                        Live
-                      </span>
-                    </div>
-                    <p className="text-small font-medium text-ink-900 break-all">{publicUrl}</p>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyPublicLink()}
-                        className={cn(
-                          BTN_GHOST,
-                          "inline-flex items-center gap-1 px-2 py-1 text-micro",
-                        )}
-                      >
-                        <Copy className="h-3 w-3" strokeWidth={1.5} />
-                        Copy
-                      </button>
-                      <Link
-                        href={publicPath ?? "/dashboard"}
-                        target="_blank"
-                        className={cn(
-                          BTN_GHOST,
-                          "inline-flex items-center gap-1 px-2 py-1 text-micro",
-                        )}
-                      >
-                        <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
-                        Open
-                      </Link>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 min-w-0">
-                    <p className="text-micro text-ink-500">Live public link</p>
-                    <p className="text-small text-ink-600">
-                      Share a recruiter-friendly profile page.
-                    </p>
+              {(editingLinkedin || !linkedinId) && (
+                <div className="space-y-1.5">
+                  <p className="text-micro text-ink-500">
+                    {linkedinId
+                      ? "Confirm or update your LinkedIn profile URL"
+                      : "Add your LinkedIn profile so recruiters can verify you"}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="url"
+                      value={linkedinDraft}
+                      onChange={(e) => {
+                        setLinkedinDraft(e.target.value);
+                        setLinkedinError("");
+                      }}
+                      placeholder="linkedin.com/in/your-profile"
+                      className="flex-1 min-w-0 h-8 rounded-md border border-ink-200 bg-paper-0 px-2 text-micro text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-900"
+                    />
                     <Button
                       variant="secondary"
                       size="sm"
-                      loading={publishingPublic}
-                      onClick={() => void handlePublishPublic()}
-                      className="mt-1 h-8 px-2.5 text-micro"
+                      loading={savingLinkedin}
+                      onClick={() => void handleSaveLinkedin()}
+                      className="shrink-0 h-8 px-2.5 text-micro"
                     >
-                      Go live
+                      Save
                     </Button>
+                    {editingLinkedin && linkedinId ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingLinkedin(false);
+                          setLinkedinDraft("");
+                          setLinkedinError("");
+                        }}
+                        className={cn(BTN_GHOST, "h-8 px-2 text-micro")}
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
                   </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 mt-2">
-              {linkedinUrl && !linkedinId && (
-                <a
-                  href={linkedinUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(BTN_GHOST, "inline-flex items-center gap-1.5 px-2.5 py-1.5 text-micro")}
-                >
-                  <Linkedin className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  View LinkedIn
-                </a>
+                  {linkedinError && (
+                    <p className="text-micro text-destructive">{linkedinError}</p>
+                  )}
+                </div>
               )}
-              <button
-                type="button"
-                onClick={() => setTab("overview")}
-                className={cn(BTN_GHOST, "inline-flex items-center gap-1.5 px-2.5 py-1.5 text-micro")}
-              >
-                <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
-                Update CV
-              </button>
             </div>
           </div>
         </div>

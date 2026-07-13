@@ -1900,11 +1900,12 @@ async def find_new_matches(
             enqueue_job,
         )
 
+        # Dedicated find-new keys so a soft idle ingest cannot block a hard refresh.
         await enqueue_job(
             db,
             kind=AARYA_AUTO_INGEST,
-            payload={"candidate_id": str(candidate["id"]), "force_refresh": False},
-            idempotency_key=f"aarya_auto_ingest:{candidate['id']}",
+            payload={"candidate_id": str(candidate["id"]), "force_refresh": True},
+            idempotency_key=f"aarya_auto_ingest:find_new:{candidate['id']}",
         )
         path_row = await db.fetchrow(
             """
@@ -1921,10 +1922,10 @@ async def find_new_matches(
                 payload={
                     "candidate_id": str(candidate["id"]),
                     "derive_from_candidate": True,
-                    "force_refresh": False,
+                    "force_refresh": True,
                     "user_id": current_user["id"],
                 },
-                idempotency_key=f"career_path_ingest:{candidate['id']}",
+                idempotency_key=f"career_path_ingest:find_new:{candidate['id']}",
             )
 
     await _enqueue_candidate_match_scoring(db, candidate["id"])
@@ -1947,15 +1948,52 @@ async def find_new_matches(
             last_visit_at=candidate.get("last_visit_at"),
         )
     )
+    used_fallback = False
+    if not jobs:
+        # Impressions often cover the whole scored shelf — still show best matches
+        # while Apify pulls unseen roles in the background.
+        used_fallback = True
+        rows = await _fetch_cached_match_rows(
+            db,
+            candidate_id=candidate["id"],
+            min_score=DEFAULT_FEED_MIN_SCORE,
+            limit=20,
+            offset=0,
+            remote_preference=remote_pref,
+            market=market,
+            only_new=False,
+        )
+        jobs = _market_feed_items(
+            _serialize_current_quality_cached_rows(
+                rows,
+                candidate=dict(candidate),
+                min_score=DEFAULT_FEED_MIN_SCORE,
+                last_visit_at=candidate.get("last_visit_at"),
+            )
+        )
+        if not jobs:
+            jobs = await _supplement_market_feed(
+                db,
+                candidate=dict(candidate),
+                candidate_id=candidate["id"],
+                result=[],
+                min_score=DEFAULT_FEED_MIN_SCORE,
+                limit=20,
+                remote_preference=remote_pref,
+                market=market,
+            )
 
-    message = (
-        f"Found {len(jobs)} new role{'s' if len(jobs) != 1 else ''}."
-        if jobs
-        else "Searching for new roles — check back in a minute."
-    )
+    if used_fallback and jobs:
+        message = (
+            f"Showing {len(jobs)} role{'s' if len(jobs) != 1 else ''} while we search for newer ones."
+        )
+    elif jobs:
+        message = f"Found {len(jobs)} new role{'s' if len(jobs) != 1 else ''}."
+    else:
+        message = "Searching for new roles — check back in a minute."
     return {
         "jobs": jobs,
-        "refreshing": len(jobs) < 3,
+        "refreshing": len(jobs) < 3 or used_fallback,
         "excluded_count": excluded_count,
         "message": message,
     }

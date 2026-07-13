@@ -38,6 +38,10 @@ import {
 } from "@/lib/api/onboardingProfile";
 import { invalidateProfileCache } from "@/lib/api/profile";
 import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
+import {
+  clearPostAuthRedirect,
+  readPostAuthRedirect,
+} from "@/lib/auth/post-auth-redirect";
 import { storeStarterJobs } from "@/lib/auth/starter-jobs";
 import type { MatchedJob } from "@/lib/api/matches";
 import { createClient } from "@/lib/supabase/client";
@@ -251,7 +255,9 @@ function ActivationStep({
       const { data: authData } = await createClient().auth.getUser();
       markClientOnboardingComplete(authData.user?.id);
       clearOnboardingProgress();
-      window.location.replace("/dashboard?kickoff=career");
+      const saved = readPostAuthRedirect();
+      clearPostAuthRedirect();
+      window.location.replace(saved ?? "/dashboard?kickoff=career");
     } catch (err) {
       setError(await formatOnboardingError(err));
     } finally {

@@ -11,10 +11,13 @@ type ShareRoleLinkProps = {
 };
 
 function absolutePublicUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const envOrigin = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+  if (envOrigin) return `${envOrigin}${path}`;
   if (typeof window !== "undefined" && window.location?.origin) {
     return `${window.location.origin}${path}`;
   }
-  return path;
+  return `https://www.hireschema.com${path}`;
 }
 
 export function ShareRoleLink({ publicRoleUrl, className }: ShareRoleLinkProps) {

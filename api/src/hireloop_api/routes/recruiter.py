@@ -50,6 +50,8 @@ from hireloop_api.services.role_jd_extract import (
 from hireloop_api.services.role_jd_fetch import (
     RoleImportError,
     fetch_role_from_url,
+    infer_role_location,
+    location_conflicts_with_title,
     merge_import_warnings,
 )
 from hireloop_api.services.role_market_intel import compute_role_market_intel
@@ -549,7 +551,7 @@ async def import_role_from_url(
     """
     _ = current_user
     try:
-        imported = await fetch_role_from_url(body.url.strip())
+        imported = await fetch_role_from_url(body.url.strip(), settings=settings)
     except RoleImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -581,8 +583,27 @@ async def import_role_from_url(
             comp_max_lpa = int(extraction["comp_max_lpa"])
         elif extraction.get("comp_max"):
             comp_max_lpa = int(extraction["comp_max"]) // 100_000
-        location_city = extraction.get("location_city") or location_city
-        location_state = extraction.get("location_state") or location_state
+        # Prefer URL-imported location; only take LLM city when it doesn't conflict
+        # with the title (e.g. reject Singapore for a "US East Coast" role).
+        llm_city = extraction.get("location_city")
+        llm_state = extraction.get("location_state")
+        if not location_city and llm_city:
+            if not location_conflicts_with_title(title, str(llm_city)):
+                location_city = llm_city
+                location_state = llm_state or location_state
+        elif location_city and llm_city and location_conflicts_with_title(title, str(llm_city)):
+            pass  # keep imported city
+        elif not location_city:
+            location_city = llm_city
+            location_state = llm_state or location_state
+        refined_city, refined_state = infer_role_location(
+            title=title,
+            body=jd_text,
+            structured_city=location_city if isinstance(location_city, str) else None,
+            structured_state=location_state if isinstance(location_state, str) else None,
+        )
+        location_city = refined_city or location_city
+        location_state = refined_state or location_state
         remote_policy = extraction.get("remote_policy") or remote_policy
         jd_struct = extraction.get("jd_structured") or {}
         if isinstance(jd_struct, dict):
@@ -596,7 +617,13 @@ async def import_role_from_url(
                 "director",
             }:
                 seniority = sen
-
+    elif not location_city:
+        location_city, location_state = infer_role_location(
+            title=title,
+            body=jd_text,
+            structured_city=location_city if isinstance(location_city, str) else None,
+            structured_state=location_state if isinstance(location_state, str) else None,
+        )
     warnings = merge_import_warnings(imported, extraction)
     source_note = f"\n\nSource: {imported['source_url']}"
     if source_note.strip() not in jd_text:

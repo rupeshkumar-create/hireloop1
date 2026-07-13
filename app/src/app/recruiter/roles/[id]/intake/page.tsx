@@ -216,12 +216,15 @@ export default function RoleIntakePage() {
         const result = await publishRole(id);
         setPublished(true);
         if (result.public_role_url) setPublicRoleUrl(result.public_role_url);
+        const liveUrl = result.public_role_url
+          ? `${typeof window !== "undefined" ? window.location.origin : ""}${result.public_role_url}`
+          : null;
         setMessages((m) => [
           ...m,
           {
             role: "system",
-            content: result.public_role_url
-              ? "Role published — share the public link with candidates."
+            content: liveUrl
+              ? `Role published — live link: ${liveUrl}`
               : "Role published to the candidate marketplace.",
           },
         ]);

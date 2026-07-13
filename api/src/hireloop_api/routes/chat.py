@@ -450,14 +450,13 @@ async def _enqueue_live_job_ingest_for_search(
     from hireloop_api.services.background_jobs import CAREER_PATH_INGEST, enqueue_job
 
     title = search_title.strip()
-    if not title:
-        return
     payload: dict[str, object] = {
         "candidate_id": candidate_id,
         "derive_from_candidate": True,
-        "requested_titles": [title],
         "force_refresh": True,
     }
+    if title:
+        payload["requested_titles"] = [title]
     if location_city:
         payload["locations"] = [location_city]
     if user_id:
@@ -468,7 +467,11 @@ async def _enqueue_live_job_ingest_for_search(
         db,
         kind=CAREER_PATH_INGEST,
         payload=payload,
-        idempotency_key=_job_ingest_search_key(candidate_id, title),
+        idempotency_key=(
+            _job_ingest_search_key(candidate_id, title)
+            if title
+            else f"career_path_ingest:chat_find:{candidate_id}"
+        ),
     )
 
 
@@ -550,7 +553,8 @@ async def _resolve_turn_job_cards(
     """Run job_search after the first SSE byte for job-intent turns."""
     if not wants_jobs:
         return []
-    if user_intent == "job_search" and search_title:
+    # Empty string means "personalized top matches" — still run job_search.
+    if user_intent == "job_search" and search_title is not None:
         async with pool.acquire() as db:
             js_kwargs: dict[str, object] = {"query_text": search_title}
             if search_city:
@@ -1021,7 +1025,7 @@ async def send_message(
                                 idempotency_key=(
                                     _job_ingest_search_key(candidate_id, search_title)
                                     if search_title and search_title.strip()
-                                    else f"career_path_ingest:{candidate_id}"
+                                    else f"career_path_ingest:chat_find:{candidate_id}"
                                 ),
                             )
                     except Exception as exc:

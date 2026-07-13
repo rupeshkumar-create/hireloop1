@@ -1321,43 +1321,27 @@ async def job_search(
         )
 
         candidate_id = str(candidate["id"])
-        if path_search_titles:
+        if path_search_titles or target_titles:
             await enqueue_job(
                 db,
                 kind=CAREER_PATH_INGEST,
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
-                    "force_refresh": False,
+                    "force_refresh": True,
                     "user_id": user_id,
                     "session_id": session_id,
                 },
-                idempotency_key=f"career_path_ingest:{candidate_id}",
+                idempotency_key=f"career_path_ingest:empty_search:{candidate_id}",
             )
             logger.info(
                 "aarya_path_ingest_enqueued",
                 candidate_id=candidate_id,
-                queries=path_search_titles,
+                queries=path_search_titles or target_titles,
             )
-        elif target_titles:
-            await enqueue_job(
-                db,
-                kind=CAREER_PATH_INGEST,
-                payload={
-                    "candidate_id": candidate_id,
-                    "derive_from_candidate": True,
-                    "force_refresh": False,
-                    "user_id": user_id,
-                    "session_id": session_id,
-                },
-                idempotency_key=f"career_path_ingest:{candidate_id}",
-            )
-            logger.info(
-                "aarya_path_ingest_enqueued",
-                candidate_id=candidate_id,
-                queries=target_titles,
-            )
-        elif settings.auto_ingest_on_empty_search:
+        else:
+            # Always pull live openings on an empty personalized search so
+            # "find job" / "find new job" do not dead-end when the shelf is cold.
             await enqueue_job(
                 db,
                 kind=AARYA_AUTO_INGEST,
@@ -1365,9 +1349,9 @@ async def job_search(
                     "candidate_id": candidate_id,
                     "user_id": user_id,
                     "session_id": session_id,
-                    "force_refresh": False,
+                    "force_refresh": True,
                 },
-                idempotency_key=f"aarya_auto_ingest:{candidate_id}",
+                idempotency_key=f"aarya_auto_ingest:empty_search:{candidate_id}",
             )
             logger.info("aarya_auto_ingest_enqueued", candidate_id=candidate_id)
 

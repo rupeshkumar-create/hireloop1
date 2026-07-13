@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Briefcase, Building2, CheckCircle, MapPin } from "@/components/brand/icons";
+import { Briefcase, Building2, MapPin } from "@/components/brand/icons";
 import { getApiBaseUrl } from "@/lib/api/base-url";
-import { Button, Card, CardBody, Field, Input } from "@/components/ui";
+import { Card, CardBody } from "@/components/ui";
+import { createClient } from "@/lib/supabase/client";
+import { persistPostAuthRedirect } from "@/lib/auth/post-auth-redirect";
 import { formatSalaryRange } from "@/lib/salary";
 
 type PublicRole = {
@@ -27,20 +29,29 @@ type PublicRole = {
   updated_at: string | null;
 };
 
+function jobsDestination(role: PublicRole): string {
+  if (role.job_id) {
+    return `/jobs/${encodeURIComponent(role.job_id)}`;
+  }
+  return "/dashboard?panel=jobs";
+}
+
+function candidateSignupHref(role: PublicRole, destination: string): string {
+  const qs = new URLSearchParams();
+  qs.set("role", "candidate");
+  qs.set("from", destination);
+  if (role.job_id) qs.set("job_id", role.job_id);
+  qs.set("role_slug", role.slug);
+  return `/signup?${qs.toString()}`;
+}
+
 export default function PublicRolePage() {
   const params = useParams();
   const slug = typeof params.slug === "string" ? params.slug : "";
   const [role, setRole] = useState<PublicRole | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [resume, setResume] = useState<File | null>(null);
-  const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [matchScore, setMatchScore] = useState<number | null>(null);
+  const [signedInCandidate, setSignedInCandidate] = useState(false);
 
   useEffect(() => {
     if (!slug) return;
@@ -60,34 +71,33 @@ export default function PublicRolePage() {
       .finally(() => setLoading(false));
   }, [slug]);
 
-  async function submitApplication(e: React.FormEvent) {
-    e.preventDefault();
-    if (!resume || !fullName.trim() || !email.trim()) {
-      setApplyError("Name, email, and resume are required.");
-      return;
-    }
-    setApplying(true);
-    setApplyError(null);
-    try {
-      const form = new FormData();
-      form.set("full_name", fullName.trim());
-      form.set("email", email.trim());
-      form.set("resume", resume);
-      const res = await fetch(
-        `${getApiBaseUrl()}/api/v1/public/roles/${encodeURIComponent(slug)}/apply`,
-        { method: "POST", body: form },
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error((body as { detail?: string }).detail ?? "Application failed");
-      }
-      setApplied(true);
-      setMatchScore((body as { match_score?: number }).match_score ?? null);
-    } catch (err) {
-      setApplyError((err as Error).message);
-    } finally {
-      setApplying(false);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    void createClient()
+      .auth.getUser()
+      .then(({ data }) => {
+        if (!cancelled) setSignedInCandidate(Boolean(data.user));
+      })
+      .catch(() => {
+        if (!cancelled) setSignedInCandidate(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const destination = useMemo(
+    () => (role ? jobsDestination(role) : "/dashboard?panel=jobs"),
+    [role],
+  );
+  const applyHref = useMemo(() => {
+    if (!role) return "/signup?role=candidate";
+    if (signedInCandidate) return destination;
+    return candidateSignupHref(role, destination);
+  }, [role, signedInCandidate, destination]);
+
+  function handleApplyClick() {
+    persistPostAuthRedirect(destination);
   }
 
   if (loading) {
@@ -112,10 +122,6 @@ export default function PublicRolePage() {
   const compLabel = formatSalaryRange(role.comp_min, role.comp_max, {
     market: role.market,
   });
-
-  const signupHref = role.job_id
-    ? `/signup?role=candidate&job_id=${encodeURIComponent(role.job_id)}&role_slug=${encodeURIComponent(slug)}`
-    : `/signup?role=candidate&role_slug=${encodeURIComponent(slug)}`;
 
   return (
     <div className="min-h-screen bg-paper-0">
@@ -180,73 +186,35 @@ export default function PublicRolePage() {
           </section>
         )}
 
-        {applied ? (
-          <div className="rounded-xl border border-success/30 bg-success/5 px-5 py-4 space-y-2">
-            <div className="flex items-center gap-2 text-small font-medium text-ink-900">
-              <CheckCircle className="h-4 w-4 text-success" strokeWidth={1.5} />
-              Application submitted
-            </div>
-            <p className="text-small text-ink-700">
-              The hiring team will review your profile against this role.
-              {matchScore != null && (
-                <> Initial fit score: {Math.round(matchScore * 100)}%.</>
-              )}
+        <Card>
+          <CardBody className="space-y-3">
+            <h2 className="text-h3 font-semibold text-ink-900">Want this role?</h2>
+            <p className="text-small text-ink-600">
+              {signedInCandidate
+                ? "Open the job on Hireschema to save it and request a warm intro."
+                : "Create a candidate account, then open Jobs to request an intro for this role."}
             </p>
-            <Link href={signupHref} className="text-small text-accent hover:underline inline-block">
-              Join Hireschema for warm intros and more roles →
+            <Link
+              href={applyHref}
+              onClick={handleApplyClick}
+              className="inline-flex w-full items-center justify-center h-10 px-4 rounded-md bg-accent text-ink-900 text-body font-semibold hover:brightness-95 transition-colors"
+            >
+              Apply for this job
             </Link>
-          </div>
-        ) : (
-          <Card>
-            <CardBody>
-              <h2 className="text-h3 font-semibold text-ink-900 mb-1">Apply to this role</h2>
-              <p className="text-micro text-ink-500 mb-4">
-                Upload your resume — we score it against the hiring brief instantly.
-              </p>
-              <form onSubmit={(e) => void submitApplication(e)} className="space-y-3">
-                <Field label="Full name" htmlFor="apply-name">
-                  <Input
-                    id="apply-name"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field label="Email" htmlFor="apply-email">
-                  <Input
-                    id="apply-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field label="Resume (PDF or DOCX)" htmlFor="apply-resume">
-                  <input
-                    id="apply-resume"
-                    type="file"
-                    accept=".pdf,.doc,.docx"
-                    required
-                    className="text-micro text-ink-700"
-                    onChange={(e) => setResume(e.target.files?.[0] ?? null)}
-                  />
-                </Field>
-                {applyError && (
-                  <p className="text-micro text-destructive">{applyError}</p>
-                )}
-                <Button type="submit" variant="primary" size="sm" loading={applying} fullWidth>
-                  Submit application
-                </Button>
-              </form>
-              <p className="text-micro text-ink-500 mt-4 text-center">
+            {!signedInCandidate && (
+              <p className="text-micro text-ink-500 text-center">
                 Already on Hireschema?{" "}
-                <Link href={signupHref} className="text-accent hover:underline">
-                  Sign in to request a warm intro
+                <Link
+                  href={`/signup?mode=signin&role=candidate&from=${encodeURIComponent(destination)}`}
+                  onClick={handleApplyClick}
+                  className="text-accent hover:underline"
+                >
+                  Sign in
                 </Link>
               </p>
-            </CardBody>
-          </Card>
-        )}
+            )}
+          </CardBody>
+        </Card>
 
         <p className="text-micro text-ink-500 text-center pt-2">
           This is a live listing from a Hireschema recruiter.

@@ -32,6 +32,10 @@ export function CandidateGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!pathname) return;
 
+    // Public listings (/r/*, /p/*, legal, auth) must stay reachable even when a
+    // recruiter is logged in — otherwise "View live job" bounces to /recruiter.
+    if (isPublicPath(pathname)) return;
+
     // OAuth return is handled by middleware + OAuthReturnHandler → /auth/callback.
     if (hasOAuthParams(searchParams)) return;
 

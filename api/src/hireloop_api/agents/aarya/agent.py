@@ -291,6 +291,9 @@ def _detect_likely_intent(text: str) -> str:
 
     job_signals = (
         "find job",
+        "find a job",
+        "find my job",
+        "find new job",
         "find role",
         "find me",
         "show me my",

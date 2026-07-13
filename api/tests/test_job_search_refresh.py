@@ -12,6 +12,9 @@ from hireloop_api.services.job_search_refresh import (
 def test_wants_fresh_job_results_detects_refresh_phrases() -> None:
     assert wants_fresh_job_results("Find me something new")
     assert wants_fresh_job_results("Show me more roles")
+    assert wants_fresh_job_results("find new job")
+    assert wants_fresh_job_results("Find my job")
+    assert wants_fresh_job_results("find a new job please")
     assert not wants_fresh_job_results("Find me backend jobs in Bangalore")
 
 

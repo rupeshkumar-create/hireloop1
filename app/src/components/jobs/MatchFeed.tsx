@@ -367,15 +367,15 @@ export function MatchFeed({
           setEmptyRefreshCount(0);
         }
         setFindNewMessage(result.message);
-        if (!result.refreshing || attempts >= 6) {
+        if (!result.refreshing || attempts >= 12) {
           setRefreshingNew(false);
           const history = await fetchMatchHistory({ min_score: 0, limit: 100 });
           setHistoryJobs(history);
         }
       } catch {
-        if (attempts >= 6) setRefreshingNew(false);
+        if (attempts >= 12) setRefreshingNew(false);
       }
-    }, 12_000);
+    }, 10_000);
     return () => window.clearInterval(id);
   }, [refreshingNew]);
 

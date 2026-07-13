@@ -7,7 +7,6 @@
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
 
-const LINKEDIN_IN_RE = /linkedin\.com\/in\/[^/?#\s]+/i;
 const RESUME_PARSE_POLL_MS = 2000;
 const RESUME_PARSE_TIMEOUT_MS = 120_000;
 
@@ -15,22 +14,48 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export function isValidLinkedInUrl(url: string): boolean {
-  return LINKEDIN_IN_RE.test(url.trim());
-}
-
 /** LinkedIn vanity slug from a profile URL, e.g. `rupesh-kumar`. */
 export function linkedInProfileId(url: string | null | undefined): string | null {
   if (!url?.trim()) return null;
-  const match = url.trim().match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  return match?.[1] ?? null;
+  const raw = url.trim();
+  const fromHost = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (fromHost?.[1]) {
+    try {
+      return decodeURIComponent(fromHost[1]).replace(/\/+$/, "") || null;
+    } catch {
+      return fromHost[1].replace(/\/+$/, "") || null;
+    }
+  }
+  if (raw.startsWith("in/")) {
+    const slug = raw.slice(3).split(/[/?#]/)[0]?.replace(/\/+$/, "");
+    return slug || null;
+  }
+  // Allow paste of just the vanity slug (no host).
+  if (/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,98}[a-zA-Z0-9])?$/.test(raw)) {
+    return raw;
+  }
+  return null;
+}
+
+export function normalizeLinkedInUrl(url: string): string | null {
+  const id = linkedInProfileId(url);
+  if (!id) return null;
+  return `https://www.linkedin.com/in/${id}`;
+}
+
+export function isValidLinkedInUrl(url: string): boolean {
+  return Boolean(normalizeLinkedInUrl(url));
 }
 
 /** Save the LinkedIn profile URL; the server enriches via Apify/LinkDAPI. */
 export async function saveLinkedInUrl(url: string): Promise<void> {
+  const normalized = normalizeLinkedInUrl(url);
+  if (!normalized) {
+    throw new Error("Enter a valid LinkedIn URL (linkedin.com/in/your-name)");
+  }
   const res = await apiAuthFetch("/api/v1/me/linkedin", {
     method: "POST",
-    body: JSON.stringify({ linkedin_url: url.trim() }),
+    body: JSON.stringify({ linkedin_url: normalized }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

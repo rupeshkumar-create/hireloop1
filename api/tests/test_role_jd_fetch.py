@@ -134,3 +134,102 @@ def test_parse_json_ld_graph_array() -> None:
     assert parsed["company_name"] == "Pixel Co"
     assert parsed["location_city"] == "London"
     assert "React" in (parsed["jd_text"] or "")
+
+
+def test_parse_greenhouse_embed_url() -> None:
+    assert _parse_greenhouse_url(
+        "https://boards.greenhouse.io/embed/job_app?for=acme&token=987654"
+    ) == ("acme", "987654")
+
+
+def test_parse_ashby_url() -> None:
+    from hireloop_api.services.role_jd_fetch import _parse_ashby_url
+
+    assert _parse_ashby_url("https://jobs.ashbyhq.com/hireschema/abc-123") == (
+        "hireschema",
+        "abc-123",
+    )
+
+
+def test_text_from_next_data_extracts_description() -> None:
+    from hireloop_api.services.role_jd_fetch import _text_from_next_data
+
+    html = """
+    <script id="__NEXT_DATA__" type="application/json">
+    {"props":{"pageProps":{"job":{"title":"Eng",
+      "descriptionHtml":"<p>Build products with Python and React for millions of users across India and beyond.</p>"}}}}
+    </script>
+    """
+    text = _text_from_next_data(html)
+    assert text is not None
+    assert "Python" in text
+    assert len(text) >= 40
+
+
+def test_best_html_body_prefers_job_description_block() -> None:
+    from hireloop_api.services.role_jd_fetch import _best_html_body
+
+    html = """
+    <html><body>
+      <nav>Home Careers Login</nav>
+      <div class="job-description">
+        <p>We are hiring a backend engineer to design APIs, own reliability, and mentor teammates.</p>
+        <p>Required: Python, Postgres, and distributed systems experience.</p>
+      </div>
+      <footer>Copyright</footer>
+    </body></html>
+    """
+    body = _best_html_body(html)
+    assert "backend engineer" in body
+    assert "Copyright" not in body or "Python" in body
+
+
+def test_json_ld_parses_html_encoded_type_attr() -> None:
+    html = """
+    <script id="js-job-posting" type="application/ld&#x2B;json">
+    {
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      "title": "Field Sales Manager - US East Coast",
+      "description": "<p>ADP is hiring a Field Sales Manager for the US East Coast territory with quota ownership and coaching responsibility.</p>",
+      "hiringOrganization": {"@type": "Organization", "name": "ADP"},
+      "jobLocation": {
+        "@type": "Place",
+        "name": "United States, Home Office USA",
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": "United States",
+          "addressRegion": "Home Office Usa",
+          "addressCountry": "United States"
+        }
+      }
+    }
+    </script>
+    """
+    parsed = _parse_json_ld_job_posting(html)
+    assert parsed is not None
+    assert parsed["title"] == "Field Sales Manager - US East Coast"
+    assert parsed["company_name"] == "ADP"
+    assert parsed["jd_text"] is not None
+    assert "Field Sales Manager" in parsed["jd_text"]
+
+
+def test_infer_location_uses_title_region_not_nav_city() -> None:
+    from hireloop_api.services.role_jd_fetch import infer_role_location
+
+    city, _state = infer_role_location(
+        title="Field Sales Manager - US East Coast",
+        body=(
+            "Sales Field Sales Manager - US East Coast United States, Home Office USA. "
+            "Nav also mentions Singapore and Dubai office pickers."
+        ),
+        structured_city="Singapore",
+    )
+    assert city == "US East Coast"
+
+
+def test_location_conflicts_with_title() -> None:
+    from hireloop_api.services.role_jd_fetch import location_conflicts_with_title
+
+    assert location_conflicts_with_title("Field Sales Manager - US East Coast", "Singapore")
+    assert not location_conflicts_with_title("Backend Engineer - Bengaluru", "Bengaluru")
