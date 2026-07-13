@@ -54,6 +54,8 @@ class BookSessionResponse(BaseModel):
     end_time: str
     meet_url: str | None
     message: str
+    calendar_connected: bool = False
+    google_connect_hint: str | None = None
 
 
 @router.get("/slots", response_model=list[AvailableSlot])
@@ -159,7 +161,34 @@ async def book_session(
         logger.warning("interview_booked_notify_failed", error=str(exc)[:200])
 
     msg = f"Your {body.session_type.replace('_', ' ')} is booked"
-    msg += " — calendar invite sent." if event_id else "."
+    calendar_connected = False
+    google_hint: str | None = None
+    if event_id and meet_url:
+        msg += f" — Meet link added to your Google Calendar: {meet_url}"
+        calendar_connected = True
+    elif event_id:
+        msg += " — calendar invite created on your Google Calendar."
+        calendar_connected = True
+    else:
+        msg += "."
+        # Check whether they have a token at all (scope may be missing).
+        token_row = await db.fetchrow(
+            "SELECT scopes FROM public.gmail_tokens WHERE candidate_id = $1::uuid",
+            candidate["id"],
+        )
+        if token_row is None:
+            google_hint = (
+                "Connect Google (Gmail + Calendar) in Settings so the next booking "
+                "gets a Meet link on your calendar."
+            )
+            msg += " " + google_hint
+        else:
+            google_hint = (
+                "Reconnect Google and grant calendar access to get a Meet link next time."
+            )
+            msg += " " + google_hint
+        calendar_connected = False
+
     return BookSessionResponse(
         session_id=session_id,
         calendar_event_id=event_id,
@@ -167,6 +196,8 @@ async def book_session(
         end_time=end_dt.isoformat(),
         meet_url=meet_url,
         message=msg,
+        calendar_connected=calendar_connected,
+        google_connect_hint=google_hint,
     )
 
 

@@ -36,6 +36,8 @@ const STATUS_META: Record<
   drafting: { tone: "accent", label: "Drafting email" },
   draft_ready: { tone: "accent", label: "Draft ready" },
   sent: { tone: "strong", label: "Intro sent" },
+  opened: { tone: "strong", label: "Opened" },
+  replied: { tone: "strong", label: "Replied" },
   accepted: { tone: "strong", label: "Accepted" },
   declined: { tone: "muted", label: "Declined" },
   expired: { tone: "muted", label: "Expired" },
@@ -197,7 +199,10 @@ export function IntrosInboxPanel() {
   const canChat = selected?.status === "accepted";
   const showDraftPanel =
     isHmEmailIntro &&
-    ["pending", "enriching", "drafting", "draft_ready"].includes(selected?.status ?? "");
+    (["pending", "enriching", "drafting", "draft_ready"].includes(selected?.status ?? "") ||
+      Boolean(selected?.followup_ready) ||
+      Boolean(selected?.thankyou_ready) ||
+      ["sent", "opened", "replied"].includes(selected?.status ?? ""));
 
   return (
     <div className="flex h-full min-h-0">
@@ -234,10 +239,20 @@ export function IntrosInboxPanel() {
                       {contact}
                     </p>
                   )}
-                  <div className="mt-1.5">
+                  <div className="mt-1.5 flex flex-wrap gap-1">
                     <Badge tone={meta.tone} className="text-[10px]">
                       {meta.label}
                     </Badge>
+                    {intro.followup_ready && (
+                      <Badge tone="accent" className="text-[10px]">
+                        Follow-up ready
+                      </Badge>
+                    )}
+                    {intro.thankyou_ready && (
+                      <Badge tone="accent" className="text-[10px]">
+                        Thank-you ready
+                      </Badge>
+                    )}
                   </div>
                 </button>
               </li>

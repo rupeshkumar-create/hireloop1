@@ -106,6 +106,51 @@ def test_dedupe_collapses_near_identical_postings() -> None:
     assert out[0]["job_id"] == "b"  # higher score kept
 
 
+def test_dedupe_on_long_feed_like_limit_50() -> None:
+    """Matches sidebar uses limit=50; dedupe must still collapse near-dupes."""
+    items = [
+        _job("a1", company="Acme", title="Backend Engineer", score=0.91),
+        _job("a2", company="Acme", title="Backend Engineer", score=0.88),
+        _job("a3", company="Acme", title="Backend Engineer", score=0.85),
+        _job(
+            "b1",
+            company="Bolt",
+            title="Data Scientist",
+            seniority="senior",
+            city="Mumbai",
+            score=0.80,
+        ),
+        _job(
+            "b2",
+            company="Bolt",
+            title="Data Scientist",
+            seniority="mid",
+            city="Mumbai",
+            score=0.78,
+            apply_url="https://jobs.example/bolt-ds",
+        ),
+    ]
+    # Pad to a long list like the default feed page size.
+    for i in range(45):
+        items.append(
+            _job(
+                f"unique-{i}",
+                company=f"Co{i}",
+                title=f"Role {i}",
+                seniority="mid",
+                city="Pune",
+                score=0.70 - (i * 0.001),
+            )
+        )
+    out = dedupe_jobs(items)
+    ids = {it["job_id"] for it in out}
+    assert "a1" in ids
+    assert "a2" not in ids and "a3" not in ids
+    assert "b1" in ids
+    assert "b2" not in ids
+    assert len(out) == 1 + 1 + 45  # one Acme, one Bolt, 45 unique
+
+
 def test_dedupe_keeps_distinct_roles() -> None:
     items = [
         _job("a", company="Acme", title="Backend Engineer"),

@@ -17,6 +17,7 @@ import asyncpg
 
 from hireloop_api.markets import job_visible_for_market_sql, normalize_market
 from hireloop_api.services.job_preferences import remote_filter_sql
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 
 TEST_RECRUITER_EMAIL = "rupesh.kumar@candidate.ly"
 TEST_COMPANY_DOMAIN = "hireschema-test.com"
@@ -132,7 +133,7 @@ async def fetch_test_jobs(
         LEFT JOIN public.users u ON u.id = r.user_id AND u.deleted_at IS NULL
         WHERE j.is_active = TRUE
           AND j.deleted_at IS NULL
-          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          AND {LIVE_JOB_VISIBLE_SQL}
           AND {vis}
           AND {predicate}
           {remote_clause}

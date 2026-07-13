@@ -36,6 +36,7 @@ from hireloop_api.services.job_relevance_pipeline import (
     filter_and_rerank_jobs,
     rationale_overlay_items,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.match_audit import audit_match_quality
 from hireloop_api.services.match_quality import (
     DEFAULT_FEED_MIN_SCORE,
@@ -52,6 +53,7 @@ from hireloop_api.services.ranking import (
     assemble_first_screen,
     attach_tiers,
     boost_by_saved,
+    dedupe_jobs,
     passes_hard_constraints,
 )
 from hireloop_api.services.skills import canonical_skill
@@ -74,7 +76,8 @@ _MIN_MARKET_FEED_JOBS = 8
 _FEED_SCORE_LIMIT = 500
 # Floor for brand-new signups while embeddings/scores are still computing.
 _STARTER_FEED_MIN_SCORE = 0.25
-_ACTIVE_JOB_EXPIRY_SQL = "(j.expires_at IS NULL OR j.expires_at > NOW())"
+# Live surfaces only: not expired + scraped within freshness window (or recruiter).
+_LIVE_JOB_VISIBLE_SQL = LIVE_JOB_VISIBLE_SQL
 
 
 def _is_test_match_row(row: asyncpg.Record | dict) -> bool:
@@ -506,7 +509,7 @@ async def get_match_feed(
             WHERE j.source = 'google_jobs'
               AND j.is_active = TRUE
               AND j.deleted_at IS NULL
-              AND {_ACTIVE_JOB_EXPIRY_SQL}
+              AND {_LIVE_JOB_VISIBLE_SQL}
             """
         )
         if int(apify_jobs or 0) < 20:
@@ -652,11 +655,15 @@ async def get_match_feed(
         or (not is_test_job(job) and passes_hard_constraints(job, constraints))
     ]
     result = filter_and_rerank_jobs(dict(candidate), result, limit=limit)
+    # Always collapse near-duplicates (same apply URL / company+title). The default
+    # Matches sidebar uses limit=50, which used to skip assemble_first_screen and
+    # therefore skipped dedupe entirely.
+    result = dedupe_jobs(result)
 
     # Presentation layer: on the opening screen (first page), personalise from
-    # saved jobs, then de-duplicate and MMR-diversify so the candidate isn't
-    # greeted by eight near-identical cards. Deeper pages keep pure relevance
-    # order for pagination stability. Tiers are attached for the UI badge.
+    # saved jobs, then MMR-diversify so the candidate isn't greeted by eight
+    # near-identical cards. Deeper pages keep pure relevance order for
+    # pagination stability. Tiers are attached for the UI badge.
     if offset == 0:
         saved = await _fetch_saved_job_signals(db, candidate["id"])
         boost_by_saved(result, saved, output_key="_ranking_score")
@@ -666,7 +673,8 @@ async def get_match_feed(
             # Hybrid retrieval: fuse the composite (dense-leaning) and the lexical
             # skills signal via RRF so an exceptional direct-skill match isn't buried
             # under a marginally-higher composite. Degrades to overall_score alone
-            # when skills_score is absent.
+            # when skills_score is absent. Dedupe already ran above; assemble still
+            # re-dedupes harmlessly before MMR.
             result = assemble_first_screen(
                 result,
                 screen_size=min(limit, 10),
@@ -956,7 +964,9 @@ async def get_match_feed_count(
             min_score=min_score,
         )
     )
-    market_items = filter_and_rerank_jobs(dict(candidate), market_items, limit=100)
+    market_items = dedupe_jobs(
+        filter_and_rerank_jobs(dict(candidate), market_items, limit=100)
+    )
     total = len(market_items)
 
     if total == 0:
@@ -971,7 +981,11 @@ async def get_match_feed_count(
             market=market,
             relaxed=min_score <= MIN_PERSIST_SCORE,
         )
-        total = len(filter_and_rerank_jobs(dict(candidate), _market_feed_items(fallback), limit=50))
+        total = len(
+            dedupe_jobs(
+                filter_and_rerank_jobs(dict(candidate), _market_feed_items(fallback), limit=50)
+            )
+        )
         if total == 0 and min_score > MIN_PERSIST_SCORE:
             relaxed = await _fetch_fallback_match_rows(
                 db,
@@ -984,7 +998,9 @@ async def get_match_feed_count(
                 relaxed=True,
             )
             total = len(
-                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                dedupe_jobs(
+                    filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                )
             )
         if total == 0:
             relaxed = await _fetch_fallback_match_rows(
@@ -998,7 +1014,9 @@ async def get_match_feed_count(
                 relaxed=True,
             )
             total = len(
-                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                dedupe_jobs(
+                    filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                )
             )
         if total == 0:
             starter = await _fetch_starter_market_jobs(
@@ -1008,7 +1026,9 @@ async def get_match_feed_count(
                 remote_preference=remote_pref,
                 market=market,
             )
-            total = len(filter_and_rerank_jobs(dict(candidate), starter, limit=50))
+            total = len(
+                dedupe_jobs(filter_and_rerank_jobs(dict(candidate), starter, limit=50))
+            )
 
     test_jobs = await fetch_test_jobs_for_feed(
         db,
@@ -1041,7 +1061,7 @@ async def _count_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
         """,
         candidate_id,
@@ -1128,7 +1148,7 @@ async def _fetch_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
           {only_new_clause}
@@ -1542,7 +1562,7 @@ async def _fetch_starter_market_jobs(
         WHERE j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
         ORDER BY j.scraped_at DESC NULLS LAST, j.created_at DESC
@@ -1645,7 +1665,7 @@ async def _fetch_fallback_match_rows(
         WHERE j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
         ORDER BY

@@ -48,6 +48,7 @@ from hireloop_api.services.job_preferences import (
     REMOTE_PREFERENCE_ONSITE_ONLY,
     normalize_remote_preference,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.match_quality import (
     job_in_persona_pool,
     should_persist_match,
@@ -1073,7 +1074,7 @@ class MatchingEngine:
             WHERE j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
             ORDER BY j.scraped_at DESC
             LIMIT $2
             """,

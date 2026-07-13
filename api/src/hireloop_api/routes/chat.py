@@ -59,6 +59,7 @@ from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.memory import (
     CandidateMemoryService,
     format_known_facts,
@@ -421,7 +422,7 @@ async def _prefetch_top_jobs(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          AND {LIVE_JOB_VISIBLE_SQL}
         ORDER BY ms.overall_score DESC NULLS LAST
         LIMIT $2::integer
         """,

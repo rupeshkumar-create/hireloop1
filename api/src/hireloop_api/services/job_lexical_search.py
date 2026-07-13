@@ -9,6 +9,7 @@ from typing import Any
 import asyncpg
 
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.test_jobs import test_jobs_company_sql_exclude
 
 
@@ -48,7 +49,7 @@ async def fetch_fts_job_pool(
               AND j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
               {remote_clause}
               {company_exclude}
               AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
@@ -98,7 +99,7 @@ async def fetch_trigram_title_pool(
             WHERE j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
               {remote_clause}
               {company_exclude}
               AND similarity(lower(j.title), lower($1)) > 0.25
@@ -147,7 +148,7 @@ async def fetch_role_family_pool(
               AND j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
               {remote_clause}
               {company_exclude}
               AND ($2::text IS NULL OR j.location_city ILIKE '%' || $2::text || '%')
