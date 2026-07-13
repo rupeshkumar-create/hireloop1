@@ -1948,52 +1948,21 @@ async def find_new_matches(
             last_visit_at=candidate.get("last_visit_at"),
         )
     )
-    used_fallback = False
-    if not jobs:
-        # Impressions often cover the whole scored shelf — still show best matches
-        # while Apify pulls unseen roles in the background.
-        used_fallback = True
-        rows = await _fetch_cached_match_rows(
-            db,
-            candidate_id=candidate["id"],
-            min_score=DEFAULT_FEED_MIN_SCORE,
-            limit=20,
-            offset=0,
-            remote_preference=remote_pref,
-            market=market,
-            only_new=False,
-        )
-        jobs = _market_feed_items(
-            _serialize_current_quality_cached_rows(
-                rows,
-                candidate=dict(candidate),
-                min_score=DEFAULT_FEED_MIN_SCORE,
-                last_visit_at=candidate.get("last_visit_at"),
-            )
-        )
-        if not jobs:
-            jobs = await _supplement_market_feed(
-                db,
-                candidate=dict(candidate),
-                candidate_id=candidate["id"],
-                result=[],
-                min_score=DEFAULT_FEED_MIN_SCORE,
-                limit=20,
-                remote_preference=remote_pref,
-                market=market,
-            )
 
-    if used_fallback and jobs:
-        message = (
-            f"Showing {len(jobs)} role{'s' if len(jobs) != 1 else ''} while we search for newer ones."
-        )
-    elif jobs:
+    # Never fall back to already-seen roles — Find new must only surface unseen jobs.
+    # Background ingest above keeps searching; the client polls while refreshing=True.
+    if jobs:
         message = f"Found {len(jobs)} new role{'s' if len(jobs) != 1 else ''}."
+    elif excluded_count > 0:
+        message = (
+            "No new roles yet — searching fresh openings now. "
+            "Check back in a minute (we won’t re-show jobs you’ve already seen)."
+        )
     else:
         message = "Searching for new roles — check back in a minute."
     return {
         "jobs": jobs,
-        "refreshing": len(jobs) < 3 or used_fallback,
+        "refreshing": len(jobs) < 3,
         "excluded_count": excluded_count,
         "message": message,
     }
