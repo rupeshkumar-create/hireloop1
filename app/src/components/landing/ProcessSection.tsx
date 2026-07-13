@@ -35,15 +35,15 @@ const CANDIDATE_STEPS: Step[] = [
     step: "01",
     Icon: MessageSquare,
     title: "Tell Aarya what you want",
-    body: "Upload your CV or paste your LinkedIn. Say the role, city, and pay band — type it or talk. Aarya builds your profile from the conversation.",
+    body: "Upload your CV, then tell Aarya the role, city, and salary range you want. You can type or talk, and you can correct the profile she extracts.",
     detail: "Aarya · voice or text",
   },
   {
     step: "02",
     Icon: Search,
-    title: "Aarya hunts in your region",
-    body: "Live openings near you first — your city, then your country, then remote roles you qualify for. Currency and market adjust automatically.",
-    detail: "Vienna → Austria → EU remote",
+    title: "Aarya finds India-eligible roles",
+    body: "Aarya searches active roles in India, including remote roles that accept candidates in India, using your preferences to narrow the results.",
+    detail: "India onsite · India-eligible remote",
   },
   {
     step: "03",
@@ -56,8 +56,8 @@ const CANDIDATE_STEPS: Step[] = [
     step: "04",
     Icon: Send,
     title: "Aarya requests warm intros",
-    body: "Pick a role you like. Aarya tailors your CV, drafts the outreach, and sends a warm intro from your Gmail — not a cold apply into the void.",
-    detail: "CV per role · Consent-first",
+    body: "Pick a role you like. Aarya prepares a tailored CV and intro draft. You review and approve the message before it is sent from your Gmail.",
+    detail: "Candidate-approved · Sent from your Gmail",
   },
 ];
 
@@ -73,8 +73,8 @@ const RECRUITER_STEPS: Step[] = [
     step: "02",
     Icon: Search,
     title: "Nitya searches the graph",
-    body: "Nitya scans pre-verified candidates in your market who match the brief — skills, seniority, location, and interest signals.",
-    detail: "Live candidate graph",
+    body: "Nitya searches candidates who opted into recruiter discovery and compares skills, seniority, location, preferences, and role evidence.",
+    detail: "Opted-in candidate graph",
   },
   {
     step: "03",
@@ -87,8 +87,8 @@ const RECRUITER_STEPS: Step[] = [
     step: "04",
     Icon: Send,
     title: "Nitya warms up the intro",
-    body: "Nitya drafts the outreach and coordinates a warm handoff — so you start conversations with interested people, not cold DMs.",
-    detail: "Warm intros · No spam",
+    body: "Request an introduction from a candidate's profile. The candidate can accept or decline before the conversation begins.",
+    detail: "Two-sided introduction · Candidate choice",
   },
 ];
 
@@ -98,15 +98,15 @@ const SECTION_COPY: Record<
 > = {
   candidate: {
     label: "How Aarya works",
-    title: "Four steps. One chat with Aarya.",
+    title: "From CV to a reviewed introduction.",
     description:
-      "Aarya is your candidate agent — it runs the job search while you watch every move.",
+      "Aarya does the search and preparation. You decide what is accurate and what gets sent.",
   },
   recruiter: {
     label: "How Nitya works",
-    title: "Four steps. One chat with Nitya.",
+    title: "From role brief to a consented shortlist.",
     description:
-      "Nitya is your recruiter agent — it sources and shortlists while you stay in control.",
+      "Nitya structures the work and explains the matches. You choose whom to contact.",
   },
 };
 
@@ -120,7 +120,10 @@ export function ProcessSection({ audience }: ProcessSectionProps) {
   const agent = LANDING_AGENTS[audience];
 
   return (
-    <section id="process" className="scroll-mt-20 border-t border-ink-100 bg-paper-0">
+    <section
+      id="process"
+      className="scroll-mt-20 border-t border-ink-100 bg-paper-0"
+    >
       <div className="mx-auto max-w-page px-6 py-16 md:py-24">
         <SectionHeader
           label={header.label}
@@ -144,7 +147,10 @@ export function ProcessSection({ audience }: ProcessSectionProps) {
                 >
                   <div className="flex items-start gap-4 md:flex-col md:items-center md:gap-3">
                     <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-ink-900 ring-2 ring-accent/20">
-                      <Icon className="h-6 w-6 text-paper-0" strokeWidth={1.5} />
+                      <Icon
+                        className="h-6 w-6 text-paper-0"
+                        strokeWidth={1.5}
+                      />
                       <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-on-accent">
                         {step.replace("0", "")}
                       </span>
@@ -158,7 +164,9 @@ export function ProcessSection({ audience }: ProcessSectionProps) {
                         {agent.name} · Step {step}
                       </span>
                     </div>
-                    <p className="text-small leading-relaxed text-ink-600">{body}</p>
+                    <p className="text-small leading-relaxed text-ink-600">
+                      {body}
+                    </p>
                     <p className="inline-flex items-center gap-1.5 text-micro font-medium text-accent">
                       <Sparkles className="h-3 w-3" strokeWidth={1.5} />
                       {detail}
@@ -193,15 +201,19 @@ const CREDIBILITY: Record<
 > = {
   candidate: [
     { Icon: Mic, label: "Talk to Aarya", sub: "Text or voice" },
-    { Icon: MapPin, label: "Your region", sub: "City → country → remote" },
+    { Icon: MapPin, label: "India-focused", sub: "Onsite and eligible remote" },
     { Icon: Zap, label: "Live actions", sub: "Every step logged" },
     { Icon: FileText, label: "CV per role", sub: "Aarya tailors each one" },
   ],
   recruiter: [
     { Icon: Mic, label: "Talk to Nitya", sub: "Text or voice" },
-    { Icon: MapPin, label: "Your market", sub: "Local talent pools" },
+    { Icon: MapPin, label: "India-focused", sub: "Role and location filters" },
     { Icon: Zap, label: "Live actions", sub: "Every step logged" },
-    { Icon: ShieldCheck, label: "Consent-first", sub: "Opted-in candidates only" },
+    {
+      Icon: ShieldCheck,
+      label: "Consent-first",
+      sub: "Opted-in candidates only",
+    },
   ],
 };
 
@@ -214,7 +226,10 @@ export function CredibilityBar({ audience }: CredibilityBarProps) {
 
   return (
     <section className="border-y border-ink-100 bg-paper-1">
-      <RevealStagger key={audience} className="mx-auto grid max-w-page grid-cols-2 gap-6 px-6 py-8 md:grid-cols-4">
+      <RevealStagger
+        key={audience}
+        className="mx-auto grid max-w-page grid-cols-2 gap-6 px-6 py-8 md:grid-cols-4"
+      >
         {items.map(({ Icon, label, sub }) => (
           <StaggerItem key={label}>
             <motion.div

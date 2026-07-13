@@ -20,24 +20,29 @@ const RESTART_MS = 3000;
 
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined") return false;
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  return (
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+  );
 }
 
 const CANDIDATE_SCRIPT: Line[] = [
   {
     role: "assistant",
-    text: "Hi, I'm Aarya. Tell me what you're after — type or tap the mic.",
+    text: "Hi, I'm Aarya. What role are you looking for?",
   },
-  { role: "user", text: "Senior backend in Vienna, €90k+, remote-friendly." },
+  {
+    role: "user",
+    text: "Senior backend roles in Bengaluru, ₹40–50 LPA. Remote is fine.",
+  },
   {
     role: "assistant",
-    text: "Found 14 live roles — 8 in Vienna, 4 across Austria, 2 EU-remote. Top match: Staff Engineer at a Series B fintech, 89% fit. Want a warm intro?",
+    text: "I found 14 India-eligible roles. Your top match is a Senior Backend Engineer role at 89% fit. The strongest reasons are Python, Postgres, and fintech experience. Want to review the role?",
     actions: "Aarya performed 4 actions",
   },
-  { role: "user", text: "Yes — request the intro." },
+  { role: "user", text: "Yes. Prepare an intro for me to review." },
   {
     role: "assistant",
-    text: "Done. CV tailored, intro sent from your Gmail. I'll notify you when they reply.",
+    text: "The draft is ready. Nothing will be sent until you approve it and connect Gmail.",
     actions: "Aarya performed 2 actions",
   },
 ];
@@ -45,18 +50,21 @@ const CANDIDATE_SCRIPT: Line[] = [
 const RECRUITER_SCRIPT: Line[] = [
   {
     role: "assistant",
-    text: "Hi, I'm Nitya. Describe the role you're hiring for — I'll find interested, pre-scored candidates.",
+    text: "Hi, I'm Nitya. Tell me about the role you're hiring for.",
   },
-  { role: "user", text: "Staff backend engineer, Bangalore, ₹45–55L, Python + Postgres." },
+  {
+    role: "user",
+    text: "Staff backend engineer, Bangalore, ₹45–55L, Python + Postgres.",
+  },
   {
     role: "assistant",
-    text: "Brief saved. Surfaced 6 candidates above 80% fit who opted in this week. Top match: 7 yrs fintech, actively looking. Warm intro draft ready.",
+    text: "The brief is ready. I found 6 candidates above 80% fit who opted into recruiter discovery. The top match has 7 years in fintech and is actively looking.",
     actions: "Nitya performed 3 actions",
   },
-  { role: "user", text: "Send the intro to the top two." },
+  { role: "user", text: "Request introductions to the top two." },
   {
     role: "assistant",
-    text: "Intros queued. Candidates notified — you'll see replies in your inbox.",
+    text: "Requests sent. Each candidate can accept or decline before a conversation starts.",
     actions: "Nitya performed 2 actions",
   },
 ];
@@ -133,7 +141,10 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
   }, [audience, script]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [shown, typing]);
 
   const visible = script.slice(0, shown);
@@ -153,7 +164,9 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
           animate={{ scale: 1, opacity: 1 }}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink-900"
         >
-          <span className="text-micro font-semibold text-paper-0">{agent.initial}</span>
+          <span className="text-micro font-semibold text-paper-0">
+            {agent.initial}
+          </span>
         </motion.div>
         <div className="min-w-0">
           <AnimatePresence mode="wait">
@@ -164,8 +177,12 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
               exit={{ opacity: 0, x: 6 }}
               transition={{ duration: 0.2 }}
             >
-              <p className="text-small font-semibold leading-none text-ink-900">{agent.name}</p>
-              <p className="mt-0.5 text-micro text-ink-400">{agent.chatTagline}</p>
+              <p className="text-small font-semibold leading-none text-ink-900">
+                {agent.name}
+              </p>
+              <p className="mt-0.5 text-micro text-ink-400">
+                {agent.chatTagline}
+              </p>
             </motion.div>
           </AnimatePresence>
         </div>
@@ -176,7 +193,7 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
           >
             <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />
           </motion.span>
-          Live demo
+          Example conversation
         </span>
       </div>
 
@@ -207,7 +224,9 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
                 className="flex justify-start gap-2"
               >
                 <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-900">
-                  <span className="text-[10px] font-semibold text-paper-0">{agent.initial}</span>
+                  <span className="text-[10px] font-semibold text-paper-0">
+                    {agent.initial}
+                  </span>
                 </div>
                 <div className="max-w-[82%] space-y-1.5">
                   <div className="rounded-2xl rounded-bl-sm border border-ink-100 bg-paper-1 px-3.5 py-2.5 text-small leading-relaxed text-ink-900 shadow-1">
@@ -239,7 +258,9 @@ export function ChatPreview({ audience = "candidate" }: ChatPreviewProps) {
               className="flex justify-start gap-2"
             >
               <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-900">
-                <span className="text-[10px] font-semibold text-paper-0">{agent.initial}</span>
+                <span className="text-[10px] font-semibold text-paper-0">
+                  {agent.initial}
+                </span>
               </div>
               <div className="rounded-2xl rounded-bl-sm border border-ink-100 bg-paper-1 px-3.5 py-3 shadow-1">
                 <div className="flex items-center gap-1">

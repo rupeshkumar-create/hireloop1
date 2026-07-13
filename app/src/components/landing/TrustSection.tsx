@@ -2,26 +2,33 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, MessageSquare, Search, Send, ShieldCheck, Zap } from "@/components/brand/icons";
-import { LANDING_AGENTS, type LandingAudience } from "@/components/landing/landing-audience";
+import {
+  ArrowRight,
+  MessageSquare,
+  Search,
+  Send,
+  ShieldCheck,
+  Zap,
+} from "@/components/brand/icons";
+import {
+  LANDING_AGENTS,
+  type LandingAudience,
+} from "@/components/landing/landing-audience";
 import { SectionHeader } from "@/components/landing/SectionHeader";
 import { Reveal, RevealStagger, StaggerItem } from "@/components/ui/motion";
 import { BTN_PRIMARY } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
-const TRUST_COPY: Record<
-  LandingAudience,
-  { action: string; data: string }
-> = {
+const TRUST_COPY: Record<LandingAudience, { action: string; data: string }> = {
   candidate: {
     action:
       'Aarya logs every search, score, and outreach. "Aarya performed 7 actions on your profile" — always visible.',
-    data: "Your CV is shared only with your consent. DPDP-compliant. No spam, no selling your data.",
+    data: "Recruiter discovery is off until you opt in. Public profile publishing is a separate choice, and you can turn either one off.",
   },
   recruiter: {
     action:
       'Nitya logs every search, shortlist, and intro. "Nitya performed 5 actions on this role" — always visible.',
-    data: "Candidate profiles are shared only with their consent. No cold outreach, no spam.",
+    data: "Search results include only candidates who opted into recruiter discovery. Introduction requests remain the candidate's choice.",
   },
 };
 
@@ -44,8 +51,8 @@ export function TrustSection({ audience }: TrustSectionProps) {
         <div className="grid gap-12 md:grid-cols-2 md:items-center">
           <SectionHeader
             label={`Trust ${agent.name}`}
-            title="No black box. No spam."
-            description={`${agent.name} works for you — and you see everything it does.`}
+            title="Clear actions. Clear consent."
+            description={`${agent.name} shows the work and leaves the important decisions with you.`}
           />
 
           <RevealStagger key={audience} className="space-y-4">
@@ -61,7 +68,9 @@ export function TrustSection({ audience }: TrustSectionProps) {
                   </span>
                   <div className="space-y-1">
                     <h3 className="text-h3 text-ink-900">{title}</h3>
-                    <p className="text-small leading-relaxed text-ink-600">{body}</p>
+                    <p className="text-small leading-relaxed text-ink-600">
+                      {body}
+                    </p>
                   </div>
                 </motion.div>
               </StaggerItem>
@@ -76,28 +85,53 @@ export function TrustSection({ audience }: TrustSectionProps) {
 /** Shown when audience is candidate — cross-sell Nitya for recruiters. */
 export function RecruitersSection() {
   const cards = [
-    { Icon: Search, title: "Describe the role", body: "Plain words — Nitya builds the brief." },
-    { Icon: Zap, title: "Pre-scored matches", body: "Nitya ranks candidates, not résumé piles." },
-    { Icon: Send, title: "Warm intros", body: "Candidates who opted in — not cold DMs." },
-    { Icon: ShieldCheck, title: "Consent-first", body: "Nitya shares profiles only with permission." },
+    {
+      Icon: Search,
+      title: "Describe the role",
+      body: "Plain words — Nitya builds the brief.",
+    },
+    {
+      Icon: Zap,
+      title: "Pre-scored matches",
+      body: "Nitya ranks candidates, not résumé piles.",
+    },
+    {
+      Icon: Send,
+      title: "Warm intros",
+      body: "Candidates who opted in — not cold DMs.",
+    },
+    {
+      Icon: ShieldCheck,
+      title: "Consent-first",
+      body: "Nitya shares profiles only with permission.",
+    },
   ] as const;
 
   return (
-    <section id="recruiters" className="scroll-mt-20 border-t border-ink-100 bg-paper-1">
+    <section
+      id="recruiters"
+      className="scroll-mt-20 border-t border-ink-100 bg-paper-1"
+    >
       <div className="mx-auto max-w-page px-6 py-16 md:py-24">
         <div className="grid gap-12 md:grid-cols-2 md:items-center">
           <Reveal>
             <p className="text-micro font-semibold uppercase tracking-[0.14em] text-accent">
               For recruiters · Nitya
             </p>
-            <h2 className="mt-3 text-h1 text-ink-900 md:text-[32px]">Hiring? Meet Nitya.</h2>
+            <h2 className="mt-3 text-h1 text-ink-900 md:text-[32px]">
+              Hiring? Meet Nitya.
+            </h2>
             <p className="mt-4 text-body leading-relaxed text-ink-600">
-              Nitya is the recruiter agent — separate from Aarya. Describe the role in plain
-              words and Nitya surfaces pre-scored, genuinely-interested candidates.
+              Nitya is the recruiter agent — separate from Aarya. Describe the
+              role in plain words and Nitya surfaces pre-scored,
+              genuinely-interested candidates.
             </p>
             <Link
               href="/signup?role=recruiter"
-              className={cn(BTN_PRIMARY, "group mt-6 gap-2 px-6 py-3.5 text-body")}
+              className={cn(
+                BTN_PRIMARY,
+                "group mt-6 gap-2 px-6 py-3.5 text-body",
+              )}
             >
               Talk to Nitya
               <Send
@@ -119,7 +153,9 @@ export function RecruitersSection() {
                     <Icon className="h-4 w-4" strokeWidth={1.5} />
                   </span>
                   <h3 className="text-h3 text-ink-900">{title}</h3>
-                  <p className="text-small leading-relaxed text-ink-600">{body}</p>
+                  <p className="text-small leading-relaxed text-ink-600">
+                    {body}
+                  </p>
                 </motion.div>
               </StaggerItem>
             ))}
@@ -133,29 +169,54 @@ export function RecruitersSection() {
 /** Shown when audience is recruiter — cross-sell Aarya for candidates. */
 export function CandidatesCrossSell({ onSwitch }: { onSwitch: () => void }) {
   const cards = [
-    { Icon: MessageSquare, title: "Tell Aarya your goals", body: "Role, location, pay — in plain words." },
-    { Icon: Search, title: "Aarya finds live roles", body: "Scored for fit in your market." },
-    { Icon: Send, title: "Warm intros", body: "Aarya requests intros — not cold applies." },
-    { Icon: ShieldCheck, title: "Your data stays yours", body: "Shared only with your consent." },
+    {
+      Icon: MessageSquare,
+      title: "Tell Aarya your goals",
+      body: "Role, location, pay — in plain words.",
+    },
+    {
+      Icon: Search,
+      title: "Aarya finds live roles",
+      body: "Scored for fit in your market.",
+    },
+    {
+      Icon: Send,
+      title: "Warm intros",
+      body: "Aarya requests intros — not cold applies.",
+    },
+    {
+      Icon: ShieldCheck,
+      title: "Your data stays yours",
+      body: "Shared only with your consent.",
+    },
   ] as const;
 
   return (
-    <section id="candidates" className="scroll-mt-20 border-t border-ink-100 bg-paper-1">
+    <section
+      id="candidates"
+      className="scroll-mt-20 border-t border-ink-100 bg-paper-1"
+    >
       <div className="mx-auto max-w-page px-6 py-16 md:py-24">
         <div className="grid gap-12 md:grid-cols-2 md:items-center">
           <Reveal>
             <p className="text-micro font-semibold uppercase tracking-[0.14em] text-accent">
               For job seekers · Aarya
             </p>
-            <h2 className="mt-3 text-h1 text-ink-900 md:text-[32px]">Job hunting? Meet Aarya.</h2>
+            <h2 className="mt-3 text-h1 text-ink-900 md:text-[32px]">
+              Job hunting? Meet Aarya.
+            </h2>
             <p className="mt-4 text-body leading-relaxed text-ink-600">
-              Aarya is the candidate agent — separate from Nitya. It finds live roles in your
-              region, scores your fit, and gets you warm intros in one chat.
+              Aarya is the candidate agent — separate from Nitya. It finds live
+              roles in your region, scores your fit, and gets you warm intros in
+              one chat.
             </p>
             <button
               type="button"
               onClick={onSwitch}
-              className={cn(BTN_PRIMARY, "group mt-6 gap-2 px-6 py-3.5 text-body")}
+              className={cn(
+                BTN_PRIMARY,
+                "group mt-6 gap-2 px-6 py-3.5 text-body",
+              )}
             >
               Switch to Aarya
               <ArrowRight
@@ -177,7 +238,9 @@ export function CandidatesCrossSell({ onSwitch }: { onSwitch: () => void }) {
                     <Icon className="h-4 w-4" strokeWidth={1.5} />
                   </span>
                   <h3 className="text-h3 text-ink-900">{title}</h3>
-                  <p className="text-small leading-relaxed text-ink-600">{body}</p>
+                  <p className="text-small leading-relaxed text-ink-600">
+                    {body}
+                  </p>
                 </motion.div>
               </StaggerItem>
             ))}
@@ -193,15 +256,15 @@ const CTA_COPY: Record<
   { title: string; sub: string; ctaLabel: string; ctaHref: string }
 > = {
   candidate: {
-    title: "Your next role is one chat with Aarya away.",
-    sub: "Built for candidates in India. Aarya adapts to your city, role, and salary goals — then gets to work.",
-    ctaLabel: "Talk to Aarya — free",
-    ctaHref: "/signup",
+    title: "Try Hireschema with Aarya.",
+    sub: "Hireschema is in beta for candidates in India. Core features are available, and your feedback will shape what we improve next.",
+    ctaLabel: "Join the candidate beta",
+    ctaHref: "/signup?role=candidate",
   },
   recruiter: {
-    title: "Your next hire is one chat with Nitya away.",
-    sub: "Describe the role. Nitya surfaces pre-scored, opted-in candidates — then warms up the intro.",
-    ctaLabel: "Talk to Nitya — free",
+    title: "Try Hireschema with Nitya.",
+    sub: "Hireschema is in beta for recruiters in India. Create a real role brief and help us make consent-first hiring better.",
+    ctaLabel: "Join the recruiter beta",
     ctaHref: "/signup?role=recruiter",
   },
 };
@@ -219,7 +282,12 @@ export function FinalCtaSection({ audience }: FinalCtaSectionProps) {
         className="pointer-events-none absolute inset-0 opacity-30"
         aria-hidden
         animate={{ backgroundPosition: ["0% 0%", "100% 100%"] }}
-        transition={{ duration: 18, repeat: Infinity, repeatType: "reverse", ease: "linear" }}
+        transition={{
+          duration: 18,
+          repeat: Infinity,
+          repeatType: "reverse",
+          ease: "linear",
+        }}
         style={{
           backgroundImage:
             "radial-gradient(circle at 20% 50%, rgba(185,248,76,0.15), transparent 50%), radial-gradient(circle at 80% 50%, rgba(185,248,76,0.08), transparent 40%)",
@@ -230,7 +298,9 @@ export function FinalCtaSection({ audience }: FinalCtaSectionProps) {
       <div className="relative mx-auto max-w-page px-6 py-20 text-center">
         <Reveal key={audience}>
           <h2 className="text-h1 text-paper-0 md:text-[32px]">{copy.title}</h2>
-          <p className="mx-auto mt-4 max-w-md text-body text-ink-500">{copy.sub}</p>
+          <p className="mx-auto mt-4 max-w-md text-body text-ink-500">
+            {copy.sub}
+          </p>
           <div className="mt-8 flex flex-col items-center gap-3">
             <Link
               href={copy.ctaHref}
@@ -242,7 +312,9 @@ export function FinalCtaSection({ audience }: FinalCtaSectionProps) {
                 strokeWidth={1.5}
               />
             </Link>
-            <span className="text-micro text-ink-400">Free · No credit card</span>
+            <span className="text-micro text-ink-400">
+              Beta · Free to start · No credit card
+            </span>
           </div>
         </Reveal>
       </div>
@@ -254,7 +326,7 @@ export function LandingFooter() {
   return (
     <footer className="border-t border-ink-100">
       <div className="mx-auto flex max-w-page flex-col items-center justify-between gap-4 px-6 py-8 text-micro text-ink-400 sm:flex-row">
-        <span>© {new Date().getFullYear()} Hireschema</span>
+        <span>© {new Date().getFullYear()} Hireschema · Beta</span>
         <div className="flex flex-wrap items-center justify-center gap-4">
           <a href="#process" className="transition-colors hover:text-ink-700">
             How it works
@@ -268,12 +340,21 @@ export function LandingFooter() {
           <Link href="/signup" className="transition-colors hover:text-ink-700">
             Sign up
           </Link>
-          <Link href="/privacy" className="transition-colors hover:text-ink-700">
+          <Link
+            href="/privacy"
+            className="transition-colors hover:text-ink-700"
+          >
             Privacy Policy
           </Link>
           <Link href="/terms" className="transition-colors hover:text-ink-700">
             Terms of Service
           </Link>
+          <a
+            href="mailto:privacy@hireschema.com"
+            className="transition-colors hover:text-ink-700"
+          >
+            Privacy contact
+          </a>
         </div>
       </div>
     </footer>
