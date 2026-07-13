@@ -17,7 +17,13 @@ DROP POLICY IF EXISTS "candidates: recruiter read active" ON public.candidates;
 CREATE POLICY "candidates: recruiter read opted in"
   ON public.candidates FOR SELECT
   USING (
-    auth.user_role() = 'recruiter'
+    EXISTS (
+      SELECT 1
+      FROM public.users
+      WHERE id = auth.uid()
+        AND role = 'recruiter'
+        AND deleted_at IS NULL
+    )
     AND is_active = TRUE
     AND share_with_recruiters = TRUE
     AND visibility <> 'private'
