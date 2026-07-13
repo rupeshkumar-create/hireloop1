@@ -2,7 +2,7 @@
 -- (aligns with api/scripts/expire_stale_jobs.py). Recruiter mirrors (scraped_at NULL)
 -- only deactivate via expires_at.
 
-DO $$
+DO $migration$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
 
@@ -14,7 +14,7 @@ BEGIN
     PERFORM cron.schedule(
       'deactivate-expired-jobs',
       '30 1 * * *',
-      $$
+      $job$
         UPDATE public.jobs
         SET is_active = FALSE, updated_at = NOW()
         WHERE is_active = TRUE
@@ -23,11 +23,11 @@ BEGIN
                 (expires_at IS NOT NULL AND expires_at < NOW())
              OR (scraped_at IS NOT NULL AND scraped_at < NOW() - INTERVAL '45 days')
           );
-      $$
+      $job$
     );
 
   ELSE
     RAISE NOTICE 'pg_cron not available — skipping deactivate-expired-jobs update';
   END IF;
 END;
-$$;
+$migration$;
