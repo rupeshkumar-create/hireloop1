@@ -44,10 +44,22 @@ async def test_instant_shelf_uses_job_search_then_starter_fallback() -> None:
         out = await fetch_instant_shelf(db, user_id=user_id, settings=settings, limit=10)
 
     mock_search.assert_awaited_once()
+    session_id = mock_search.await_args.args[2]
+    assert str(uuid.UUID(session_id)) == session_id
     mock_starter.assert_awaited_once()
     assert len(out) == 2
     assert out[0]["title"] == "PM"
     assert out[1]["title"] == "APM"
+    db.executemany.assert_awaited_once()
+    score_rows = db.executemany.await_args.args[1]
+    assert {str(row[2]) for row in score_rows} == {
+        job_cards[0]["job_id"],
+        starter[0]["job_id"],
+    }
+    impression_calls = [
+        call for call in db.execute.await_args_list if "candidate_job_impressions" in call.args[0]
+    ]
+    assert len(impression_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -82,3 +94,36 @@ async def test_instant_shelf_skips_starter_when_enough_cards() -> None:
 
     mock_starter.assert_not_awaited()
     assert len(out) == 6
+    db.executemany.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_failure_logs_and_persists_starter_history() -> None:
+    db = AsyncMock()
+    candidate_id = uuid.uuid4()
+    user_id = str(uuid.uuid4())
+    db.fetchrow.return_value = {
+        "id": candidate_id,
+        "looking_for": "Growth",
+        "current_title": None,
+        "market": "IN",
+        "remote_preference": "any",
+    }
+    starter = [{"job_id": str(uuid.uuid4()), "title": "Growth Lead"}]
+
+    with (
+        patch(
+            "hireloop_api.agents.aarya.tools.job_search",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("temporary"),
+        ),
+        patch(
+            "hireloop_api.routes.matches._fetch_starter_market_jobs",
+            new_callable=AsyncMock,
+            return_value=starter,
+        ),
+    ):
+        result = await fetch_instant_shelf(db, user_id=user_id, settings=MagicMock())
+
+    assert result == starter
+    db.executemany.assert_awaited_once()

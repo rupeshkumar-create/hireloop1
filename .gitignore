@@ -81,3 +81,6 @@ api/.railway-config-pull-*/
 
 # Brainstorm companion sessions
 .superpowers/
+
+# Isolated Codex feature worktrees
+.worktrees/

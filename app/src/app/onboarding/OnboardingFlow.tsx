@@ -30,8 +30,7 @@ import {
   Check,
   Upload,
 } from "@/components/brand/icons";
-import { apiAuthFetch, ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
-import { DIRECT_API_URL } from "@/lib/api/base-url";
+import { apiAuthFetch, ApiUnreachableError } from "@/lib/api/auth-fetch";
 import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
@@ -51,6 +50,7 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
+import { withTransientRetry } from "@/lib/api/transient-retry";
 
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
@@ -59,24 +59,7 @@ const ONBOARDING_STORAGE_KEY = "hireloop_onboarding_v2";
 
 async function formatOnboardingError(error: unknown): Promise<string> {
   if (error instanceof ApiUnreachableError) {
-    const health = await probeApiHealth();
-    if (health.ok) {
-      return "Request failed after reaching the API. Please try again.";
-    }
-    const isLocal =
-      typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1");
-    if (isLocal) {
-      return (
-        "Can't reach the Hireschema API. Start the API on port 8000 " +
-        `(NEXT_PUBLIC_API_URL is ${DIRECT_API_URL}), then try again.`
-      );
-    }
-    return (
-      "Can't reach the Hireschema API. On Vercel, set NEXT_PUBLIC_API_URL to your " +
-      "Railway API URL, redeploy the app, and confirm Railway is running."
-    );
+    return "We had trouble connecting. Please try again.";
   }
   return error instanceof Error ? error.message : "Something went wrong.";
 }
@@ -175,8 +158,11 @@ function ActivationStep({
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [canRetry, setCanRetry] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadIdempotencyKeyRef = useRef<string | null>(null);
 
   const hasResume = resumeFile !== null;
 
@@ -195,17 +181,35 @@ function ActivationStep({
       return;
     }
     setSaving(true);
+    setRetrying(false);
+    setCanRetry(false);
     setError(null);
     try {
-      const summary = await uploadResumeAndApply(resumeFile);
-
-      const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
-        method: "POST",
-        body: JSON.stringify({
-          tos_accepted: true,
-          marketing_emails: marketingConsent,
-        }),
+      const uploadKey = uploadIdempotencyKeyRef.current ?? crypto.randomUUID();
+      uploadIdempotencyKeyRef.current = uploadKey;
+      const onRetry = () => {
+        setRetrying(true);
+        setError("We had trouble connecting. Retrying…");
+      };
+      const summary = await uploadResumeAndApply(resumeFile, {
+        idempotencyKey: uploadKey,
+        onRetry,
       });
+      setRetrying(false);
+      setError(null);
+
+      const consentRes = await withTransientRetry(
+        (attempt) =>
+          apiAuthFetch("/api/v1/me/onboarding-consent", {
+            method: "POST",
+            headers: { "X-Retry-Attempt": String(attempt) },
+            body: JSON.stringify({
+              tos_accepted: true,
+              marketing_emails: marketingConsent,
+            }),
+          }),
+        { onRetry },
+      );
       if (!consentRes.ok) {
         const data = (await consentRes.json().catch(() => ({}))) as { detail?: string };
         throw new Error(data.detail ?? "Couldn't save consent.");
@@ -213,24 +217,34 @@ function ActivationStep({
 
       const lookingFor = summary.current_title?.trim();
       if (lookingFor) {
-        const patchRes = await apiAuthFetch("/api/v1/me/profile", {
-          method: "PATCH",
-          body: JSON.stringify({ looking_for: lookingFor }),
-        });
+        const patchRes = await withTransientRetry(
+          (attempt) =>
+            apiAuthFetch("/api/v1/me/profile", {
+              method: "PATCH",
+              headers: { "X-Retry-Attempt": String(attempt) },
+              body: JSON.stringify({ looking_for: lookingFor }),
+            }),
+          { onRetry },
+        );
         if (!patchRes.ok) {
           const data = (await patchRes.json().catch(() => ({}))) as { detail?: string };
           throw new Error(data.detail ?? "Couldn't save your job search preferences.");
         }
       }
 
-      const completeRes = await apiAuthFetch("/api/v1/me/complete-onboarding", {
-        method: "POST",
-        body: JSON.stringify({
-          skipped_voice: true,
-          skipped_resume: false,
-          market: "IN",
-        }),
-      });
+      const completeRes = await withTransientRetry(
+        (attempt) =>
+          apiAuthFetch("/api/v1/me/complete-onboarding", {
+            method: "POST",
+            headers: { "X-Retry-Attempt": String(attempt) },
+            body: JSON.stringify({
+              skipped_voice: true,
+              skipped_resume: false,
+              market: "IN",
+            }),
+          }),
+        { onRetry },
+      );
       const completeData = (await completeRes.json().catch(() => ({}))) as {
         detail?: string;
         starter_jobs?: MatchedJob[];
@@ -250,6 +264,8 @@ function ActivationStep({
       clearPostAuthRedirect();
       window.location.replace(saved ?? "/dashboard?kickoff=career");
     } catch (err) {
+      setRetrying(false);
+      setCanRetry(true);
       setError(await formatOnboardingError(err));
     } finally {
       setSaving(false);
@@ -281,7 +297,11 @@ function ActivationStep({
               type="file"
               accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               className="hidden"
-              onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] ?? null;
+                setResumeFile(nextFile);
+                uploadIdempotencyKeyRef.current = nextFile ? crypto.randomUUID() : null;
+              }}
             />
             <button
               type="button"
@@ -376,9 +396,14 @@ function ActivationStep({
           </div>
 
           {error && (
-            <p className="text-small text-destructive rounded-lg border border-destructive/30 bg-destructive-bg px-3 py-2">
-              {error}
-            </p>
+            <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive-bg px-3 py-2">
+              <p className="text-small text-destructive">{error}</p>
+              {canRetry && !saving && (
+                <Button variant="secondary" size="sm" onClick={() => void handleActivate()}>
+                  Retry setup
+                </Button>
+              )}
+            </div>
           )}
 
           <Button
@@ -394,7 +419,11 @@ function ActivationStep({
               ) : undefined
             }
           >
-            {saving ? "Setting up your dashboard…" : "Upload & meet Aarya"}
+            {retrying
+              ? "We had trouble connecting. Retrying…"
+              : saving
+                ? "Setting up your dashboard…"
+                : "Upload & meet Aarya"}
           </Button>
         </div>
       </div>

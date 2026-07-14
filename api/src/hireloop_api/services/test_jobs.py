@@ -64,9 +64,9 @@ def test_jobs_sql_exclude(*, company_alias: str = "co", user_alias: str = "u") -
         return ""
     legacy_names = "', '".join(sorted(_LEGACY_TEST_COMPANY_NAMES))
     return f""" AND NOT (
-        {company_alias}.domain = '{TEST_COMPANY_DOMAIN}'
-        OR {company_alias}.name IN ('{legacy_names}')
-        OR {user_alias}.email = '{TEST_RECRUITER_EMAIL}'
+        COALESCE({company_alias}.domain, '') = '{TEST_COMPANY_DOMAIN}'
+        OR COALESCE({company_alias}.name, '') IN ('{legacy_names}')
+        OR COALESCE({user_alias}.email, '') = '{TEST_RECRUITER_EMAIL}'
     )"""
 
 
@@ -76,8 +76,8 @@ def test_jobs_company_sql_exclude(*, company_alias: str = "co") -> str:
         return ""
     legacy_names = "', '".join(sorted(_LEGACY_TEST_COMPANY_NAMES))
     return f""" AND NOT (
-        {company_alias}.domain = '{TEST_COMPANY_DOMAIN}'
-        OR {company_alias}.name IN ('{legacy_names}')
+        COALESCE({company_alias}.domain, '') = '{TEST_COMPANY_DOMAIN}'
+        OR COALESCE({company_alias}.name, '') IN ('{legacy_names}')
     )"""
 
 

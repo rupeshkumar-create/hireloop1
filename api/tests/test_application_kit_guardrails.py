@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 from hireloop_api.config import Settings
 from hireloop_api.services import application_kit
+from hireloop_api.services.outcome_learning import build_kit_aware_interview_prep
 
 
 class _FakeLLM:
@@ -33,6 +34,31 @@ def _job() -> dict[str, Any]:
         "company_name": "Modern SaaS",
         "skills_required": ["SQL", "Experimentation"],
     }
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"star_stories": ["Launch"]}, {"star_stories": ["Launch"]}),
+        ('{"star_stories":["Launch"]}', {"star_stories": ["Launch"]}),
+        ("not-json", {}),
+        (["wrong-shape"], {}),
+        (None, {}),
+    ],
+)
+def test_coerce_json_object(value: object, expected: dict[str, object]) -> None:
+    assert application_kit._coerce_json_object(value) == expected
+
+
+def test_interview_prep_ignores_string_profile_enrichment() -> None:
+    out = build_kit_aware_interview_prep(
+        base_prep="## Likely questions",
+        dossier=None,
+        job={"title": "Growth Lead", "company_name": "Acme"},
+        profile={"profile_enrichment": '{"star_stories":["Launch"]}'},
+    )
+
+    assert "## Role focus" in out
 
 
 @pytest.mark.asyncio

@@ -190,6 +190,7 @@ export function MatchFeed({
   const [triageLoading, setTriageLoading] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<MatchedJob[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [findingNew, setFindingNew] = useState(false);
   const [findNewMessage, setFindNewMessage] = useState<string | null>(null);
   const [refreshingNew, setRefreshingNew] = useState(false);
@@ -313,25 +314,37 @@ export function MatchFeed({
     };
   }, [compact, seedJobs?.length]);
 
+  const loadHistory = useCallback(async (background = false) => {
+    if (!background) setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const data = await fetchMatchHistory({ min_score: 0, limit: 100 });
+      setHistoryJobs(data);
+    } catch {
+      // Keep any previously loaded rows visible. An empty list here used to
+      // make a transient proxy failure look like the candidate had no history.
+      setHistoryError("We had trouble refreshing your job history.");
+    } finally {
+      if (!background) setHistoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!compact) return;
-    let cancelled = false;
-    setHistoryLoading(true);
-    fetchMatchHistory({ min_score: 0, limit: 100 })
-      .then((data) => {
-        if (!cancelled) setHistoryJobs(data);
-      })
-      .catch(() => {
-        if (!cancelled) setHistoryJobs([]);
-      })
-      .finally(() => {
-        if (!cancelled) setHistoryLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadHistory();
     // Re-pull when chat seeds new jobs so Job history catches persisted rows.
-  }, [compact, seedJobs?.length]);
+  }, [compact, loadHistory, seedJobs?.length]);
+
+  useEffect(() => {
+    if (!compact || typeof window === "undefined") return;
+    const refresh = () => void loadHistory(true);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+    };
+  }, [compact, loadHistory]);
 
   const handleFindNewJobs = useCallback(async () => {
     setFindingNew(true);
@@ -709,7 +722,14 @@ export function MatchFeed({
               </h4>
               <span className="text-micro text-ink-400">Newest first</span>
             </div>
-            {historyLoading ? (
+            {historyError && historyJobs.length === 0 ? (
+              <div className="space-y-2 pb-2">
+                <p className="text-micro text-ink-500">{historyError}</p>
+                <Button size="sm" variant="secondary" onClick={() => void loadHistory()}>
+                  Try again
+                </Button>
+              </div>
+            ) : historyLoading ? (
               <JobCardSkeleton />
             ) : historyJobs.length > 0 ? (
               <Stagger className="space-y-3">

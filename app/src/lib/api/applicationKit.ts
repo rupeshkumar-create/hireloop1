@@ -1,5 +1,9 @@
 import type { MatchedJob } from "@/lib/api/matches";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  createApplicationKitError,
+  retryApplicationKitRequest,
+} from "@/lib/api/application-kit-recovery";
 
 /** Shape returned by GET /application-kits/jobs/{job_id}. */
 export type JobApplicationKit = {
@@ -58,6 +62,21 @@ type ApplicationKitBackgroundJob = {
 const APPLICATION_KIT_POLL_ATTEMPTS = 90;
 const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
 
+async function applicationKitFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  try {
+    return await retryApplicationKitRequest((attempt) => {
+      const headers = new Headers(init.headers);
+      headers.set("X-Retry-Attempt", String(attempt));
+      return apiAuthFetch(path, { ...init, headers });
+    });
+  } catch (error) {
+    throw createApplicationKitError(error);
+  }
+}
+
 /**
  * Fetch the saved application kit (cover letter + interview prep) for a job.
  * Returns null when none exists yet (404), so callers can render gracefully.
@@ -65,7 +84,7 @@ const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
 export async function getApplicationKitForJob(
   jobId: string
 ): Promise<JobApplicationKit | null> {
-  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}`);
+  const res = await applicationKitFetch(`/api/v1/application-kits/jobs/${jobId}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Kit fetch failed: ${res.status}`);
   const data = (await res.json()) as { kit: JobApplicationKit };
@@ -75,7 +94,7 @@ export async function getApplicationKitForJob(
 async function getApplicationKitStatusForJob(
   jobId: string
 ): Promise<ApplicationKitStatusResponse> {
-  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/status`);
+  const res = await applicationKitFetch(`/api/v1/application-kits/jobs/${jobId}/status`);
   if (!res.ok) {
     const body = await res.json().catch(async () => ({
       detail: (await res.text().catch(() => "")) || res.statusText,
@@ -165,9 +184,10 @@ async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
     if (status.status === "missing" && !requeuedIncomplete) {
       // Incomplete prior kit (cover/prep only) — ask backend to generate again once.
       requeuedIncomplete = true;
-      const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
-        method: "POST",
-      });
+      const res = await applicationKitFetch(
+        `/api/v1/application-kits/jobs/${jobId}/prepare`,
+        { method: "POST" },
+      );
       if (res.ok) {
         const data = (await res.json()) as PrepareApplicationKitResponse;
         if (isApplicationKit(data)) return data;
@@ -184,9 +204,10 @@ async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
 
 /** Generate full application kit (resume + cover letter + interview prep) for a job. */
 export async function prepareApplicationKit(jobId: string): Promise<ApplicationKit> {
-  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
-    method: "POST",
-  });
+  const res = await applicationKitFetch(
+    `/api/v1/application-kits/jobs/${jobId}/prepare`,
+    { method: "POST" },
+  );
   if (!res.ok) {
     const body = await res.json().catch(async () => ({
       detail: (await res.text().catch(() => "")) || res.statusText,
@@ -202,6 +223,16 @@ export async function prepareApplicationKit(jobId: string): Promise<ApplicationK
     return kitRowToApplicationKit(data.kit);
   }
   return pollApplicationKit(jobId);
+}
+
+/** Resume status polling without creating duplicate background work. */
+export async function checkApplicationKit(jobId: string): Promise<ApplicationKit> {
+  return pollApplicationKit(jobId);
+}
+
+/** Idempotently request generation again, then resume status polling. */
+export async function retryApplicationKit(jobId: string): Promise<ApplicationKit> {
+  return prepareApplicationKit(jobId);
 }
 
 export type ApplicationKitResume = {

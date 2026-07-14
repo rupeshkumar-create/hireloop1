@@ -6,6 +6,7 @@
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
+import { withTransientRetry, type RetryNotice } from "@/lib/api/transient-retry";
 
 const RESUME_PARSE_POLL_MS = 2000;
 const RESUME_PARSE_TIMEOUT_MS = 120_000;
@@ -112,24 +113,32 @@ async function waitForResumeParse(resumeId: string): Promise<ParsedResumeSummary
 }
 
 /** Upload a CV, apply the parsed fields to the profile, and return the parse summary. */
-export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSummary> {
+export async function uploadResumeAndApply(
+  file: File,
+  options: { idempotencyKey: string; onRetry?: (notice: RetryNotice) => void },
+): Promise<ParsedResumeSummary> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await apiAuthFetch("/api/v1/resumes/upload", {
-    method: "POST",
-    body: fd,
-  });
+  const res = await withTransientRetry(
+    (attempt) =>
+      apiAuthFetch("/api/v1/resumes/upload", {
+        method: "POST",
+        headers: {
+          "Idempotency-Key": options.idempotencyKey,
+          "X-Retry-Attempt": String(attempt),
+        },
+        body: fd,
+      }),
+    { onRetry: options.onRetry },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const detail = (err as { detail?: string }).detail;
     if (res.status === 401) {
       throw new Error(detail ?? "Session expired. Sign out and sign in again.");
     }
-    if (res.status === 502 || res.status === 503) {
-      throw new Error(
-        detail ??
-          "API is temporarily unavailable. Check NEXT_PUBLIC_API_URL on Vercel and redeploy.",
-      );
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error("We had trouble connecting. Please try again.");
     }
     throw new Error(detail ?? "Resume upload failed");
   }
@@ -142,9 +151,13 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
   // Apply parsed fields to the profile (best-effort — don't fail activation).
   // replace: the fresh CV wins over any earlier LinkedIn enrichment; the
   // candidate reviews and corrects everything on the next screen anyway.
-  const applyRes = await apiAuthFetch(
-    `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
-    { method: "POST" },
+  const applyRes = await withTransientRetry(
+    (attempt) =>
+      apiAuthFetch(`/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`, {
+        method: "POST",
+        headers: { "X-Retry-Attempt": String(attempt) },
+      }),
+    { onRetry: options.onRetry },
   );
   if (!applyRes.ok && applyRes.status !== 409) {
     // Resume is stored — profile apply can be retried from dashboard.

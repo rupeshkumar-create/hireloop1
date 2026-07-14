@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from hireloop_api.config import Settings
+from hireloop_api.services import test_jobs
 from hireloop_api.services.match_quality import job_in_persona_pool, should_persist_match
 from hireloop_api.services.test_jobs import (
     TEST_COMPANY_NAME,
@@ -87,3 +88,24 @@ def test_test_jobs_disabled_in_production() -> None:
 def test_test_jobs_enabled_in_development() -> None:
     settings = Settings(environment="development")
     assert _test_jobs_enabled(settings) is True
+
+
+def test_production_company_exclusion_keeps_rows_with_nullable_company_fields(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(test_jobs, "test_jobs_enabled", lambda settings=None: False)
+
+    clause = test_jobs.test_jobs_company_sql_exclude(company_alias="co")
+
+    assert "COALESCE(co.domain, '')" in clause
+    assert "COALESCE(co.name, '')" in clause
+
+
+def test_production_full_exclusion_is_null_safe(monkeypatch) -> None:
+    monkeypatch.setattr(test_jobs, "test_jobs_enabled", lambda settings=None: False)
+
+    clause = test_jobs.test_jobs_sql_exclude(company_alias="co", user_alias="u")
+
+    assert "COALESCE(co.domain, '')" in clause
+    assert "COALESCE(co.name, '')" in clause
+    assert "COALESCE(u.email, '')" in clause

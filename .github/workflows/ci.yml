@@ -79,7 +79,7 @@ jobs:
       - name: Python dependency audit
         run: |
           cd api
-          uv export --format requirements-txt --no-dev > /tmp/requirements.txt
+          uv export --format requirements-txt --no-dev --no-emit-project > /tmp/requirements.txt
           pipx run pip-audit -r /tmp/requirements.txt
       - uses: pnpm/action-setup@v4
         with:
