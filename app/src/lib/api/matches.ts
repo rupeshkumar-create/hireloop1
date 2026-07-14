@@ -5,6 +5,7 @@
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { recordJobApplication } from "@/lib/api/job-applications";
+import { loadMatchHistoryWithRecovery } from "@/lib/api/match-history-recovery";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -270,14 +271,29 @@ export async function fetchMatchHistory(
   if (filters.limit !== undefined) params.set("limit", String(filters.limit));
   if (filters.offset !== undefined) params.set("offset", String(filters.offset));
 
-  const res = await apiAuthFetch(`/api/v1/matches/history?${params.toString()}`, {
-    cache: "no-store",
+  const result = await loadMatchHistoryWithRecovery<MatchedJob>(async () => {
+    const res = await apiAuthFetch(`/api/v1/matches/history?${params.toString()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { detail?: string };
+      return {
+        ok: false,
+        status: res.status,
+        jobs: [],
+        detail: err.detail ?? `Match history failed: ${res.status}`,
+      };
+    }
+    return {
+      ok: true,
+      status: res.status,
+      jobs: (await res.json()) as MatchedJob[],
+    };
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Match history failed: ${res.status}`);
+  if (!result.ok) {
+    throw new Error(result.detail ?? `Match history failed: ${result.status}`);
   }
-  return res.json() as Promise<MatchedJob[]>;
+  return result.jobs;
 }
 
 export async function findNewMatches(): Promise<FindNewJobsResult> {
