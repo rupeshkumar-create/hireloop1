@@ -69,7 +69,13 @@ import {
   warmupChatContext,
   type ChatWarmupSnapshot,
 } from "@/lib/chat/warmup";
-import { prepareApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
+import {
+  checkApplicationKit,
+  prepareApplicationKit,
+  retryApplicationKit,
+  type ApplicationKit,
+} from "@/lib/api/applicationKit";
+import { toApplicationKitFailure } from "@/lib/api/application-kit-recovery";
 import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
@@ -177,7 +183,15 @@ interface Message {
   spoken?: boolean;
   /** When set, render an inline intro draft panel for this intro request. */
   introId?: string;
+  /** Candidate-safe recovery actions for a disrupted application-kit request. */
+  kitRecovery?: KitRecovery;
 }
+
+type KitRecovery = {
+  jobId: string;
+  title: string;
+  company: string;
+};
 
 type SendOptions = {
   contentType?: "text" | "voice";
@@ -353,6 +367,7 @@ export function ChatInterface({
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
+  const [kitRecoveryMessageId, setKitRecoveryMessageId] = useState<string | null>(null);
   const holdActiveRef = useRef(false);
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
@@ -1535,13 +1550,14 @@ export function ChatInterface({
       })
       .catch((e) => {
         if (kitRequestRef.current?.nonce !== nonce) return;
-        const message = e instanceof Error ? e.message : "Please try again.";
+        const failure = toApplicationKitFailure(e);
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMessageId
               ? {
                   ...m,
-                  content: `I couldn’t finish the application kit yet. ${message}`,
+                  content: failure.message,
+                  kitRecovery: { jobId, title, company },
                 }
               : m,
           ),
@@ -1553,6 +1569,57 @@ export function ChatInterface({
         setThinkingStatus(null);
       });
   }, [applicationKitRequest]);
+
+  const runKitRecovery = useCallback(
+    async (
+      messageId: string,
+      request: KitRecovery,
+      mode: "check" | "retry",
+    ) => {
+      if (kitRecoveryMessageId) return;
+      setKitRecoveryMessageId(messageId);
+      setThinkingStatus(
+        mode === "check"
+          ? "Checking your application kit…"
+          : "Retrying your application kit…",
+      );
+      try {
+        const kit =
+          mode === "check"
+            ? await checkApplicationKit(request.jobId)
+            : await retryApplicationKit(request.jobId);
+        if (kit.saved && kit.job?.job_id) {
+          onSavedChangeRef.current?.(kit.job.job_id, true);
+        }
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  content:
+                    "Your application kit is ready — preview or download the tailored resume, cover letter, and interview prep below.",
+                  applicationKits: [kit],
+                  kitRecovery: undefined,
+                }
+              : message,
+          ),
+        );
+      } catch (error) {
+        const failure = toApplicationKitFailure(error);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === messageId
+              ? { ...message, content: failure.message, kitRecovery: request }
+              : message,
+          ),
+        );
+      } finally {
+        setKitRecoveryMessageId(null);
+        setThinkingStatus(null);
+      }
+    },
+    [kitRecoveryMessageId],
+  );
 
   // ── Resume upload ────────────────────────────────────────────────────────
 
@@ -1841,6 +1908,12 @@ export function ChatInterface({
                     void sendMessage(`Let's do: ${actionId.replaceAll("_", " ")}`);
                   }
                 }}
+                onKitRecovery={(mode) => {
+                  if (msg.kitRecovery) {
+                    void runKitRecovery(msg.id, msg.kitRecovery, mode);
+                  }
+                }}
+                kitRecoveryLoading={kitRecoveryMessageId === msg.id}
               />
             );
           })}
@@ -2518,6 +2591,8 @@ function MessageBubble({
   onApply,
   onWhyFit,
   onAnalysisAction,
+  onKitRecovery,
+  kitRecoveryLoading = false,
 }: {
   message: Message;
   isStreaming?: boolean;
@@ -2536,6 +2611,8 @@ function MessageBubble({
   onApply?: (job: MatchedJob) => void;
   onWhyFit?: (job: MatchedJob) => void;
   onAnalysisAction?: (actionId: string) => void;
+  onKitRecovery?: (mode: "check" | "retry") => void;
+  kitRecoveryLoading?: boolean;
 }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -2588,6 +2665,27 @@ function MessageBubble({
             <Volume2 className="h-3 w-3" strokeWidth={1.5} />
             Played aloud
           </p>
+        )}
+        {message.kitRecovery && !isStreaming && (
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={kitRecoveryLoading}
+              onClick={() => onKitRecovery?.("check")}
+            >
+              {kitRecoveryLoading ? "Checking…" : "Check again"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={kitRecoveryLoading}
+              onClick={() => onKitRecovery?.("retry")}
+            >
+              Retry
+            </Button>
+          </div>
         )}
       </div>
 
