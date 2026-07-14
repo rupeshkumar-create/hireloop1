@@ -542,9 +542,7 @@ async def _prepare_application_kit_for_candidate_row(
         candidate_id,
     )
     if enrich_row and enrich_row["profile_enrichment"]:
-        profile["profile_enrichment"] = _coerce_json_object(
-            enrich_row["profile_enrichment"]
-        )
+        profile["profile_enrichment"] = _coerce_json_object(enrich_row["profile_enrichment"])
     job = dict(job_row)
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []
