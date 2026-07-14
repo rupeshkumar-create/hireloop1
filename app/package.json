@@ -12,6 +12,7 @@
     "dev:clean": "rm -rf .next && next dev -p 3001",
     "dev:fresh": "rm -rf .next node_modules/.cache && next dev -p 3001",
     "build": "next build",
+    "test:retry": "node --experimental-strip-types --test src/lib/api/transient-retry.test.ts",
     "start": "next start -p 3001",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",

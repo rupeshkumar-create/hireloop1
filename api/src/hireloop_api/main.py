@@ -14,6 +14,7 @@ Run locally:
 
 import asyncio
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -179,6 +180,21 @@ async def _security_headers(
 # header so latency is visible in the browser network panel too. Cheap: one clock
 # read per request.
 _SLOW_REQUEST_MS = 1000.0
+_CANDIDATE_FLOW_PATHS = {
+    "/api/v1/resumes/upload",
+    "/api/v1/me/onboarding-consent",
+    "/api/v1/me/complete-onboarding",
+    "/api/v1/matches/history",
+}
+
+
+def _correlation_request_id(raw: str | None) -> str:
+    if raw:
+        try:
+            return str(uuid.UUID(raw))
+        except ValueError:
+            pass
+    return str(uuid.uuid4())
 
 
 @app.middleware("http")
@@ -186,10 +202,23 @@ async def _request_timing(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
+    request_id = _correlation_request_id(request.headers.get("X-Request-ID"))
+    request.state.request_id = request_id
     start = time.perf_counter()
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.0f}"
+    response.headers["X-Request-ID"] = request_id
+    if request.url.path in _CANDIDATE_FLOW_PATHS:
+        logger.info(
+            "candidate_flow_request",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round(elapsed_ms),
+            retry_attempt=request.headers.get("X-Retry-Attempt", "1")[:16],
+        )
     if elapsed_ms >= _SLOW_REQUEST_MS and request.url.path != "/api/v1/health":
         logger.warning(
             "slow_request",

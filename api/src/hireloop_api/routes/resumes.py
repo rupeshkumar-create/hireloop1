@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -86,6 +86,56 @@ class ApplyToProfileResponse(BaseModel):
     message: str
     fields_updated: list[str]
     starter_jobs: list[dict] = []
+
+
+_RESUME_UPLOAD_NAMESPACE = uuid.UUID("b81d7215-8297-45a1-9a8c-2ff3af523a82")
+
+
+def _validate_upload_idempotency_key(raw: str | None) -> uuid.UUID:
+    """Validate a supplied key or create one for legacy non-retrying callers."""
+    if raw is None or not raw.strip():
+        return uuid.uuid4()
+    try:
+        return uuid.UUID(raw.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Idempotency-Key must be a UUID.",
+        ) from exc
+
+
+def _resume_id_for_upload(*, user_id: uuid.UUID, idempotency_key: uuid.UUID) -> uuid.UUID:
+    """Derive a stable storage/database identity for one logical upload."""
+    return uuid.uuid5(_RESUME_UPLOAD_NAMESPACE, f"{user_id}:{idempotency_key}")
+
+
+async def _find_idempotent_resume(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    idempotency_key: uuid.UUID,
+) -> ResumeUploadResponse | None:
+    row = await db.fetchrow(
+        """
+        SELECT id, file_path, parsed_data
+        FROM public.resumes
+        WHERE candidate_id = $1::uuid
+          AND upload_idempotency_key = $2
+        LIMIT 1
+        """,
+        candidate_id,
+        str(idempotency_key),
+    )
+    if not row:
+        return None
+    parsed = _parsed_resume_from_row(row["parsed_data"]) or ParsedResume()
+    return ResumeUploadResponse(
+        resume_id=str(row["id"]),
+        file_path=str(row["file_path"]),
+        parsed=parsed,
+        parse_status="ready",
+        message="Resume upload already completed.",
+    )
 
 
 async def _ensure_candidate_for_resume_upload(
@@ -523,6 +573,7 @@ async def _sync_user_display_name_from_resume(
 @router.post("/upload", response_model=ResumeUploadResponse, status_code=201)
 async def upload_resume(
     file: Annotated[UploadFile, File(description="PDF or DOCX resume, max 10MB")],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
@@ -531,8 +582,30 @@ async def upload_resume(
     Upload a resume, queue durable parsing, and store the result.
     The candidate can then choose to apply parsed data to their profile.
     """
-    # Parsing is a multi-tier LLM job — cap per user per hour (cost guard).
-    check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15)
+    user_uuid = uuid.UUID(str(current_user["id"]))
+    upload_key = _validate_upload_idempotency_key(idempotency_key)
+    candidate = await _ensure_candidate_for_resume_upload(
+        db,
+        user_id=str(user_uuid),
+        headline="New candidate",
+    )
+    candidate_uuid = uuid.UUID(str(candidate["id"]))
+    replay = await _find_idempotent_resume(
+        db,
+        candidate_id=candidate_uuid,
+        idempotency_key=upload_key,
+    )
+    if replay is not None:
+        logger.info(
+            "resume_upload_replayed",
+            resume_id=replay.resume_id,
+            idempotency_key=str(upload_key),
+        )
+        return replay
+
+    # A replay that already completed returns above and does not burn quota.
+    check_rate_limit(str(user_uuid), "resume_upload", max_per_hour=15)
+    logger.info("resume_upload_started", idempotency_key=str(upload_key))
 
     # Read at most one byte over the limit so oversized requests do not become
     # unbounded per-request memory allocations.
@@ -557,16 +630,9 @@ async def upload_resume(
         mime_type=normalized_mime,
     )
 
-    user_id = current_user["id"]
-
-    candidate = await _ensure_candidate_for_resume_upload(
-        db,
-        user_id=user_id,
-        headline="New candidate",
-    )
-
-    candidate_id = str(candidate["id"])
-    resume_id = str(uuid.uuid4())
+    user_id = str(user_uuid)
+    candidate_id = str(candidate_uuid)
+    resume_id = str(_resume_id_for_upload(user_id=user_uuid, idempotency_key=upload_key))
     file_ext = "pdf" if "pdf" in normalized_mime else "docx"
     storage_path = f"{user_id}/{resume_id}.{file_ext}"
 
@@ -577,7 +643,7 @@ async def upload_resume(
             supabase.storage.from_("resumes").upload,
             path=storage_path,
             file=file_bytes,
-            file_options={"content-type": normalized_mime},
+            file_options={"content-type": normalized_mime, "upsert": "true"},
         )
     except Exception as exc:
         logger.error(
@@ -606,8 +672,8 @@ async def upload_resume(
         """
         INSERT INTO public.resumes
           (id, candidate_id, file_path, file_name, file_size_bytes, mime_type,
-           parsed_data, raw_text, version, is_primary)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 1, TRUE)
+           parsed_data, raw_text, version, is_primary, upload_idempotency_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 1, TRUE, $9)
         ON CONFLICT DO NOTHING
         """,
         uuid.UUID(resume_id),
@@ -618,6 +684,7 @@ async def upload_resume(
         normalized_mime,
         quick_parsed.model_dump_json(),
         quick_parsed.raw_text,
+        str(upload_key),
     )
 
     await _sync_user_display_name_from_resume(
@@ -645,6 +712,11 @@ async def upload_resume(
     )
 
     was_parsed = bool(quick_parsed.skills or quick_parsed.current_title or quick_parsed.full_name)
+    logger.info(
+        "resume_upload_completed",
+        resume_id=resume_id,
+        idempotency_key=str(upload_key),
+    )
     return ResumeUploadResponse(
         resume_id=resume_id,
         file_path=storage_path,
