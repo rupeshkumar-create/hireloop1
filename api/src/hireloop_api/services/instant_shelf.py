@@ -94,8 +94,7 @@ async def fetch_instant_shelf(
         except Exception as exc:
             logger.warning(
                 "instant_shelf_job_search_failed",
-                user_id=user_id,
-                error=str(exc)[:200],
+                extra={"user_id": user_id, "error": str(exc)[:200]},
             )
 
     if len(cards) < 5:
