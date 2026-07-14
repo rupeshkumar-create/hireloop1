@@ -2,6 +2,13 @@
 
 import { useEffect } from "react";
 import { BTN_GHOST, BTN_PRIMARY } from "@/lib/button-classes";
+import {
+  CLIENT_RELOAD_MARKER_KEY,
+  classifyClientLoadError,
+  createReloadMarker,
+  reportClientError,
+  shouldReloadOnce,
+} from "@/lib/client-error-report";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,6 +25,21 @@ export default function Error({
   useEffect(() => {
     // eslint-disable-next-line no-console
     console.error("[app:error-boundary]", error);
+    const pathname = window.location.pathname;
+    void reportClientError(error, pathname);
+
+    if (classifyClientLoadError(error) !== "chunk_load") return;
+    try {
+      const storedMarker = window.sessionStorage.getItem(CLIENT_RELOAD_MARKER_KEY);
+      if (!shouldReloadOnce(pathname, storedMarker)) return;
+      window.sessionStorage.setItem(
+        CLIENT_RELOAD_MARKER_KEY,
+        createReloadMarker(pathname),
+      );
+      window.location.reload();
+    } catch {
+      // Without a reliable session guard, retain manual recovery instead of looping.
+    }
   }, [error]);
 
   return (

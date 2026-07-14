@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/client-error-report";
 
 /**
  * Last-resort boundary for errors thrown in the root layout itself (where the
@@ -16,6 +17,7 @@ export default function GlobalError({
   useEffect(() => {
     // eslint-disable-next-line no-console
     console.error("[app:global-error]", error);
+    void reportClientError(error, window.location.pathname);
   }, [error]);
 
   return (

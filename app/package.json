@@ -13,7 +13,7 @@
     "dev:clean": "rm -rf .next && next dev -p 3001",
     "dev:fresh": "rm -rf .next node_modules/.cache && next dev -p 3001",
     "build": "next build",
-    "test:reliability": "node --experimental-strip-types --test src/lib/api/application-kit-recovery.test.ts src/lib/api/transient-retry.test.ts",
+    "test:reliability": "node --experimental-strip-types --test src/lib/api/application-kit-recovery.test.ts src/lib/api/transient-retry.test.ts src/lib/client-error-report.test.ts",
     "test:retry": "node --experimental-strip-types --test src/lib/api/transient-retry.test.ts",
     "start": "next start -p 3001",
     "lint": "eslint src --max-warnings=0",
