@@ -72,6 +72,19 @@ _INTERVIEW_PREP_REQUIRED_SECTIONS = (
 )
 
 
+def _coerce_json_object(value: object) -> dict[str, Any]:
+    """Normalize asyncpg json/jsonb values to an object without trusting their codec."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _kit_llm_model(settings: Settings) -> str:
     return settings.openrouter_fallback_model or settings.openrouter_primary_model
 
@@ -529,7 +542,9 @@ async def _prepare_application_kit_for_candidate_row(
         candidate_id,
     )
     if enrich_row and enrich_row["profile_enrichment"]:
-        profile["profile_enrichment"] = enrich_row["profile_enrichment"]
+        profile["profile_enrichment"] = _coerce_json_object(
+            enrich_row["profile_enrichment"]
+        )
     job = dict(job_row)
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []

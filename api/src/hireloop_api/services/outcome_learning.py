@@ -133,7 +133,8 @@ def build_kit_aware_interview_prep(
             + "\n".join(f"- {g}" for g in gaps[:6])
             + "\n\nBridge answers: adjacent experience + learning plan — never invent."
         )
-    enrich = profile.get("profile_enrichment") or {}
+    raw_enrich = profile.get("profile_enrichment")
+    enrich = raw_enrich if isinstance(raw_enrich, dict) else {}
     stars = enrich.get("star_stories") or []
     if stars:
         lines.append("\n## Your STAR bank\n" + "\n".join(f"- {s}" for s in stars[:4]))
