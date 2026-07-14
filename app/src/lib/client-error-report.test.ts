@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canReportClientError,
   classifyClientLoadError,
   createClientErrorReport,
   createReloadMarker,
@@ -9,6 +10,12 @@ import {
   sanitizeClientErrorReport,
   shouldReloadOnce,
 } from "./client-error-report.ts";
+
+test("client error reports require an authenticated user", () => {
+  assert.equal(canReportClientError(null), false);
+  assert.equal(canReportClientError(""), false);
+  assert.equal(canReportClientError("authenticated-user"), true);
+});
 
 test("classifies deployment-transition chunk failures", () => {
   assert.equal(

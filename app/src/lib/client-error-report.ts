@@ -16,6 +16,10 @@ const RELOAD_RECOVERY_WINDOW_MS = 60_000;
 
 export const CLIENT_RELOAD_MARKER_KEY = "hireschema_client_reload_recovery";
 
+export function canReportClientError(userId: string | null | undefined): boolean {
+  return Boolean(userId);
+}
+
 export function sanitizeClientErrorText(value: unknown, maxLength: number): string {
   return String(value ?? "")
     .replace(URL_PATTERN, "[url]")

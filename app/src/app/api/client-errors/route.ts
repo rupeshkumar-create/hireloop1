@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
+  canReportClientError,
   sanitizeClientErrorReport,
   type ClientErrorReport,
 } from "@/lib/client-error-report";
+import { createClient } from "@/lib/supabase/server";
 
 const clientErrorSchema = z
   .object({
@@ -17,6 +19,14 @@ const clientErrorSchema = z
   .strict();
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!canReportClientError(user?.id)) {
+    return NextResponse.json({ detail: "Authentication required" }, { status: 401 });
+  }
+
   const body: unknown = await request.json().catch(() => null);
   const parsed = clientErrorSchema.safeParse(body);
   if (!parsed.success) {
