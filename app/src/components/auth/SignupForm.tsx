@@ -85,11 +85,21 @@ export function SignupForm() {
   useEffect(() => {
     const error = searchParams.get("error");
     const message = searchParams.get("message");
+    const gmail = searchParams.get("gmail");
+    const gmailReason = searchParams.get("gmail_reason");
     const decodedMessage = message
       ? decodeURIComponent(message.replace(/\+/g, " "))
       : null;
 
-    if (error) {
+    if (gmail === "error") {
+      setErrorMessage(
+        decodedMessage ||
+          (gmailReason === "invalid_client"
+            ? "Google connect failed — app OAuth credentials need a new client secret. Sign in, then try again after that's updated."
+            : "Google connect didn't finish. Sign in, then try Connect Google again from Profile."),
+      );
+      setInfoMessage("");
+    } else if (error) {
       setErrorMessage(decodeAuthError(error, decodedMessage));
       setInfoMessage("");
     } else if (decodedMessage) {

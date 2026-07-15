@@ -30,6 +30,7 @@ import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import { type JobsTab, type PanelId, type ProfileTabId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
 import { useToast } from "@/components/ui";
 import { GoogleConnectedBanner } from "@/components/profile/GoogleConnectedBanner";
+import { GoogleConnectResultBanner } from "@/components/profile/GoogleConnectResultBanner";
 import { fetchGoogleStatus, GOOGLE_CONNECTED_EVENT } from "@/lib/api/gmail";
 import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
 
@@ -109,6 +110,9 @@ export function DashboardClient({
   const [googleConnectedBanner, setGoogleConnectedBanner] = useState<{
     email: string | null;
   } | null>(null);
+  const [googleErrorBanner, setGoogleErrorBanner] = useState<string | null | undefined>(
+    undefined,
+  );
   const [handledGmailParam] = useState(() => ({ handled: false }));
 
   // Retention: return summary before visit bump; visit after feed so "since last visit" works.
@@ -132,23 +136,32 @@ export function DashboardClient({
     if (title) setKickoffMatchTitle(title);
   }, []);
 
-  // Google OAuth return: stay on chat, show connected + benefits, refresh UI.
+  // Google OAuth return: stay on chat, show connected/error UI, refresh status.
   useEffect(() => {
     if (handledGmailParam.handled) return;
     const gmail = searchParams?.get("gmail")?.trim();
     if (!gmail) return;
     handledGmailParam.handled = true;
 
+    const reason = searchParams?.get("gmail_reason")?.trim() || null;
     setActivePanel(null);
+    setGoogleErrorBanner(undefined);
+    setGoogleConnectedBanner(null);
 
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.delete("gmail");
+    params.delete("gmail_reason");
     params.delete("panel");
     const q = params.toString();
     router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
 
     if (gmail === "error") {
-      toast.error("Couldn't connect Google. Try Connect Google again from Profile.");
+      setGoogleErrorBanner(reason);
+      try {
+        toast.error("Couldn't connect Google — see details above chat.");
+      } catch {
+        /* toast provider optional during edge navigations */
+      }
       return;
     }
     if (gmail !== "connected") return;
@@ -156,18 +169,26 @@ export function DashboardClient({
     void fetchGoogleStatus()
       .then((status) => {
         setGoogleConnectedBanner({ email: status.gmail_email });
-        toast.success(
-          status.gmail_email
-            ? `Google connected as ${status.gmail_email}`
-            : "Google connected",
-        );
+        try {
+          toast.success(
+            status.gmail_email
+              ? `Google connected as ${status.gmail_email}`
+              : "Google connected",
+          );
+        } catch {
+          /* ignore */
+        }
         window.dispatchEvent(
           new CustomEvent(GOOGLE_CONNECTED_EVENT, { detail: status }),
         );
       })
       .catch(() => {
         setGoogleConnectedBanner({ email: null });
-        toast.success("Google connected");
+        try {
+          toast.success("Google connected");
+        } catch {
+          /* ignore */
+        }
         window.dispatchEvent(new CustomEvent(GOOGLE_CONNECTED_EVENT));
       });
   }, [router, searchParams, handledGmailParam, toast]);
@@ -523,6 +544,15 @@ export function DashboardClient({
             activePanel ? "flex-1 min-w-0" : "w-full",
           )}
         >
+          {googleErrorBanner !== undefined && (
+            <div className="shrink-0 border-b border-ink-100 bg-paper-0 px-3 py-3 sm:px-5">
+              <GoogleConnectResultBanner
+                variant="error"
+                reason={googleErrorBanner}
+                onDismiss={() => setGoogleErrorBanner(undefined)}
+              />
+            </div>
+          )}
           {googleConnectedBanner && (
             <div className="shrink-0 border-b border-ink-100 bg-paper-0 px-3 py-3 sm:px-5">
               <GoogleConnectedBanner

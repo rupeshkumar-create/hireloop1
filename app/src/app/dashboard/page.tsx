@@ -3,6 +3,7 @@
  */
 
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
@@ -114,8 +115,29 @@ export default async function DashboardPage({
     data: { user },
   } = await supabase.auth.getUser();
 
+  const gmailRaw = sp.gmail;
+  const gmailParam = Array.isArray(gmailRaw) ? gmailRaw[0] : gmailRaw;
+  const gmailReasonRaw = sp.gmail_reason;
+  const gmailReason = Array.isArray(gmailReasonRaw) ? gmailReasonRaw[0] : gmailReasonRaw;
+
   if (!user) {
-    redirect("/signup");
+    // Returning from Google OAuth without a session — send to sign-in with context
+    // instead of a bare /signup that feels like a blank/broken page.
+    const qs = new URLSearchParams({ mode: "signin", redirect: "/dashboard" });
+    if (gmailParam === "error") {
+      qs.set("gmail", "error");
+      if (gmailReason) qs.set("gmail_reason", gmailReason);
+      qs.set(
+        "message",
+        gmailReason === "invalid_client"
+          ? "Google connect failed because app credentials are misconfigured. Sign in, then ask support to rotate GOOGLE_CLIENT_SECRET."
+          : "Google connect didn't finish. Sign in, then try Connect Google again from Profile.",
+      );
+    } else if (gmailParam === "connected") {
+      qs.set("gmail", "connected");
+      qs.set("message", "Google connected — sign in to continue to your chat.");
+    }
+    redirect(`/signup?${qs.toString()}`);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -277,19 +299,27 @@ export default async function DashboardPage({
   }
 
   return (
-    <DashboardClient
-      conversationId={conversationId}
-      candidateName={candidateName}
-      initialInput={initMessage}
-      initialPanel={initialPanel}
-      canApplyOrIntro={canApply}
-      hasResume={hasResume}
-      hasVoiceSession={hasVoiceSession}
-      showProfileBoosters={showProfileBoosters}
-      initialVoiceDeepDive={initialVoiceDeepDive}
-      initialJobsTab={initialJobsTab}
-      initialProfileTab={initialProfileTab}
-      showAdminLink={canSeeAdmin}
-    />
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-paper-0 text-small text-ink-500">
+          Loading dashboard…
+        </div>
+      }
+    >
+      <DashboardClient
+        conversationId={conversationId}
+        candidateName={candidateName}
+        initialInput={initMessage}
+        initialPanel={initialPanel}
+        canApplyOrIntro={canApply}
+        hasResume={hasResume}
+        hasVoiceSession={hasVoiceSession}
+        showProfileBoosters={showProfileBoosters}
+        initialVoiceDeepDive={initialVoiceDeepDive}
+        initialJobsTab={initialJobsTab}
+        initialProfileTab={initialProfileTab}
+        showAdminLink={canSeeAdmin}
+      />
+    </Suspense>
   );
 }
