@@ -182,6 +182,7 @@ interface Message {
 type SendOptions = {
   contentType?: "text" | "voice";
   speakReply?: boolean;
+  jobId?: string;
 };
 
 type StreamRecovery = {
@@ -1034,13 +1035,14 @@ export function ChatInterface({
       jobDiscoveryStartedAtRef.current = null;
       setThinkingStatus("Thinking…");
       const trimmedIntent = text.trim();
-      if (isJobSearchIntent(trimmedIntent)) {
+      const isJobSearchTurn = !options.jobId && isJobSearchIntent(trimmedIntent);
+      if (isJobSearchTurn) {
         markCareerKickoffDone(authUserId ?? undefined);
         clearClientOnboardingComplete();
         setKickoffActive(false);
       }
       lastUserTurnRef.current = {
-        expectJobCards: isJobSearchIntent(trimmedIntent),
+        expectJobCards: isJobSearchTurn,
         expectApplicationKits: isJobApplicationIntent(trimmedIntent),
       };
 
@@ -1242,7 +1244,8 @@ export function ChatInterface({
             trimmed,
             contentType,
             streamCallbacks,
-            abortSignal
+            abortSignal,
+            { jobId: options.jobId }
           );
 
         let streamResult;
@@ -1377,9 +1380,9 @@ export function ChatInterface({
   const handleWhyFit = useCallback(
     (job: MatchedJob) => {
       const company = job.company_name ?? "this company";
-      void sendMessage(
-        `Why is ${job.title} at ${company} a fit for me? Use job id ${job.job_id}.`
-      );
+      void sendMessage(`Why is ${job.title} at ${company} a fit for me?`, {
+        jobId: job.job_id,
+      });
     },
     [sendMessage]
   );

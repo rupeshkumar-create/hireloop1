@@ -246,6 +246,19 @@ def _detect_likely_intent(text: str) -> str:
     """Small deterministic turn classifier used only as prompt guidance."""
     lowered = text.lower()
 
+    match_explanation_signals = (
+        "why is this a fit",
+        "why is this role a fit",
+        "why this match",
+        "explain this match",
+        "explain the match",
+        "fit for me",
+        "match breakdown",
+        "explain the score",
+    )
+    if any(signal in lowered for signal in match_explanation_signals):
+        return "match_explanation"
+
     profile_signals = (
         "what should i add",
         "improve my match",
@@ -503,6 +516,12 @@ def build_turn_context_prompt(
             "- action_policy: call job_search directly for starter matches; use "
             "prefetched matches when provided. Build or refine a career path only as a "
             "follow-up if the user asks for direction or the search is too broad."
+        )
+    elif likely_intent == "match_explanation":
+        guidance.append(
+            "- action_policy: explain only the selected job's match score. Use "
+            "get_match_score when its result is not already present. Do NOT call "
+            "job_search or attach unrelated role cards."
         )
     elif likely_intent == "intro_request":
         guidance.append(

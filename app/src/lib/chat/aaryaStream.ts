@@ -314,7 +314,8 @@ export async function streamAaryaMessage(
   content: string,
   contentType: AaryaContentType,
   callbacks: AaryaStreamCallbacks = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  context?: { jobId?: string }
 ): Promise<AaryaStreamResult> {
   const res = await apiAuthFetch(
     `/api/v1/chat/sessions/${conversationId}/messages`,
@@ -323,7 +324,11 @@ export async function streamAaryaMessage(
       headers: {
         "X-Hireschema-Channel": contentType,
       },
-      body: JSON.stringify({ content, content_type: contentType }),
+      body: JSON.stringify({
+        content,
+        content_type: contentType,
+        job_id: context?.jobId,
+      }),
       signal,
     }
   );

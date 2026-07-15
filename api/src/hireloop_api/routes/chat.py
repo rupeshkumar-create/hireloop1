@@ -12,6 +12,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import asyncpg
 import structlog
@@ -357,6 +358,46 @@ class CreateSessionResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     content_type: str = "text"  # 'text' | 'voice'
+    job_id: uuid.UUID | None = None
+
+
+def _match_explanation_job_id(body: SendMessageRequest, user_intent: str) -> str | None:
+    """Resolve a selected job without requiring its UUID in user-visible chat copy."""
+    if user_intent != "match_explanation":
+        return None
+    if body.job_id is not None:
+        return str(body.job_id)
+    match = _JOB_UUID_RE.search(body.content)
+    return match.group(0).lower() if match else None
+
+
+def _build_match_explanation_reply(result: dict[str, Any]) -> str:
+    """Build a grounded explanation for exactly one selected role."""
+    error = str(result.get("error") or "").strip()
+    if error:
+        return (
+            "I couldn't load the match details for that role. It may no longer be active. "
+            "Open the role again and retry **Why this match**."
+        )
+
+    title = str(result.get("job_title") or "this role")
+    company = str(result.get("company_name") or "the company")
+    overall = float(result.get("overall_score") or 0)
+    explanation = str(result.get("explanation") or "").strip()
+    if not explanation:
+        explanation = "The score compares your skills, experience, location, and compensation fit."
+
+    dimensions = (
+        ("Skills", result.get("skills_score")),
+        ("Experience", result.get("experience_score")),
+        ("Location", result.get("location_score")),
+        ("Compensation", result.get("ctc_score")),
+    )
+    breakdown = "\n".join(
+        f"- {label}: **{round(float(value))}%**" for label, value in dimensions if value is not None
+    )
+    suffix = f"\n\n**Score breakdown**\n{breakdown}" if breakdown else ""
+    return f"**{round(overall)}% match — {title} at {company}**\n\n{explanation}{suffix}"
 
 
 async def _persist_assistant_reply(
@@ -847,6 +888,7 @@ async def send_message(
             clear_session_tool_cache(conversation_id, "job_search")
 
         user_intent = _detect_likely_intent(body.content)
+        match_explanation_job_id = _match_explanation_job_id(body, user_intent)
         wants_jobs = user_intent == "job_search" or bool(career_path_just_prioritized)
         prefetched_jobs: list[dict] = []
         if wants_jobs and user_intent != "job_search":
@@ -1072,6 +1114,36 @@ async def send_message(
                     )
             if include_prefetch and stream_jobs:
                 yield sse_jobs(stream_jobs)
+            if match_explanation_job_id:
+                yield sse_status(
+                    tool_status_label("get_match_score", voice_mode=voice_mode),
+                    spoken_filler=(
+                        tool_status_spoken_filler("get_match_score") if voice_mode else None
+                    ),
+                    eta_sec=tool_status_eta("get_match_score"),
+                    hinglish_hint=hinglish,
+                )
+                async with pool.acquire() as db:
+                    match_result = await aarya_tools.get_match_score(
+                        db,
+                        str(current_user["id"]),
+                        conversation_id,
+                        match_explanation_job_id,
+                    )
+                full_response = _build_match_explanation_reply(match_result)
+                yield sse_text(full_response)
+                try:
+                    await _persist_assistant_reply(
+                        settings, conversation_id, full_response, title_hint
+                    )
+                except Exception as save_exc:
+                    logger.error(
+                        "assistant_message_save_failed",
+                        error=str(save_exc),
+                        conversation_id=conversation_id,
+                    )
+                yield sse_done()
+                return
             if application_kit_job_ids:
                 yield sse_status(
                     tool_status_label("prepare_application_kit", voice_mode=voice_mode),

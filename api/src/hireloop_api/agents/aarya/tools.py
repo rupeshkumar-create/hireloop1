@@ -1724,6 +1724,19 @@ async def get_match_score(
                     "source": "computed_live",
                 }
 
+    job = await db.fetchrow(
+        """
+        SELECT j.title AS job_title, co.name AS company_name
+        FROM public.jobs j
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE j.id = $1::uuid AND j.deleted_at IS NULL
+        """,
+        uuid.UUID(job_id),
+    )
+    if job:
+        result["job_title"] = job["job_title"]
+        result["company_name"] = job["company_name"]
+
     duration_ms = int((time.monotonic() - t0) * 1000)
     await _write_action(
         db,

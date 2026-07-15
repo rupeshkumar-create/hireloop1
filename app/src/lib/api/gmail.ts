@@ -1,5 +1,8 @@
 import { apiFetch } from "@/lib/api/client";
 
+/** Fired on `window` after Google OAuth succeeds so UI can refresh connected state. */
+export const GOOGLE_CONNECTED_EVENT = "hireschema:google-connected";
+
 /** Google connection state for the current candidate. */
 export type GoogleStatus = {
   connected: boolean;
