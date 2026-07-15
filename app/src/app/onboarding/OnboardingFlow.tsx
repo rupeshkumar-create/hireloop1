@@ -14,7 +14,7 @@
  *
  * Activation v2 — one screen, then dashboard chat kickoff:
  *
- * Step 1  Activate         +91 OTP → CV upload → dashboard chat (guided kickoff)
+ * Step 1  Activate         CV upload → dashboard chat (guided kickoff)
  *
  * Resume, CTC, and voice are dashboard boosters — not wizard gates.
  *
@@ -32,7 +32,6 @@ import {
 } from "@/components/brand/icons";
 import { apiAuthFetch, ApiUnreachableError, probeApiHealth } from "@/lib/api/auth-fetch";
 import { DIRECT_API_URL } from "@/lib/api/base-url";
-import { fetchAuthMe, savePhone, sendPhoneOtp, verifyPhoneOtp } from "@/lib/api/auth";
 import { fetchMyProfile } from "@/lib/api/profile";
 import {
   uploadResumeAndApply,
@@ -48,11 +47,11 @@ import type { MatchedJob } from "@/lib/api/matches";
 import { createClient } from "@/lib/supabase/client";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { FadeUp } from "@/components/ui/motion";
-import { Button, Input } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
-import { marketByCode } from "@/lib/markets";
+
 
 const PROGRESS_STEPS = [{ step: 1, label: "Activate" }] as const;
 
@@ -161,7 +160,7 @@ function Bubble({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Step 1: Activation (phone OTP + CV upload) ───────────────────────────────
+// ── Step 1: Activation (CV upload) ───────────────────────────────────────────
 
 function ActivationStep({
   candidateName,
@@ -171,17 +170,8 @@ function ActivationStep({
   signupMethod: SignupMethod;
 }) {
   const firstName = firstNameFromDisplayName(candidateName) ?? "there";
-  const market = marketByCode("IN");
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [phoneDigits, setPhoneDigits] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [resendIn, setResendIn] = useState(0);
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
-  const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [marketingConsent, setMarketing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -189,75 +179,9 @@ function ActivationStep({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasResume = resumeFile !== null;
-  const e164Phone = market.toE164(phoneDigits);
-  const phoneValid = market.validateNational(phoneDigits);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchAuthMe()
-      .then((me) => {
-        if (!cancelled && me.phone_verified) setPhoneVerified(true);
-      })
-      .catch(() => {
-        /* non-fatal — user can still verify */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = window.setTimeout(() => setResendIn((s) => Math.max(0, s - 1)), 1000);
-    return () => window.clearTimeout(t);
-  }, [resendIn]);
-
-  async function handleSendOtp() {
-    if (sendingOtp || !phoneValid) return;
-    setSendingOtp(true);
-    setError(null);
-    setDevOtpHint(null);
-    try {
-      await savePhone({ phone: e164Phone, market: "IN" });
-      const sent = await sendPhoneOtp({ phone: e164Phone, market: "IN" });
-      setOtpSent(true);
-      setResendIn(Math.max(0, sent.resend_available_in_seconds || 0));
-      if (sent.dev_otp) setDevOtpHint(sent.dev_otp);
-    } catch (err) {
-      setError(await formatOnboardingError(err));
-    } finally {
-      setSendingOtp(false);
-    }
-  }
-
-  async function handleVerifyOtp() {
-    if (verifyingOtp || otpCode.trim().length !== 6) return;
-    setVerifyingOtp(true);
-    setError(null);
-    try {
-      const result = await verifyPhoneOtp({
-        phone: e164Phone,
-        otp: otpCode.trim(),
-        market: "IN",
-      });
-      if (!result.phone_verified) {
-        throw new Error("Phone verification did not complete. Try again.");
-      }
-      setPhoneVerified(true);
-      setDevOtpHint(null);
-    } catch (err) {
-      setError(await formatOnboardingError(err));
-    } finally {
-      setVerifyingOtp(false);
-    }
-  }
 
   async function handleActivate() {
     if (saving) return;
-    if (!phoneVerified) {
-      setError("Verify your +91 mobile number with OTP before continuing.");
-      return;
-    }
     if (!resumeFile) {
       setError(
         signupMethod === "linkedin"
@@ -314,19 +238,14 @@ function ActivationStep({
       if (!completeRes.ok) {
         throw new Error(completeData.detail ?? "Couldn't finish activation.");
       }
-
-      if (Array.isArray(completeData.starter_jobs) && completeData.starter_jobs.length > 0) {
+      if (completeData.starter_jobs?.length) {
         storeStarterJobs(completeData.starter_jobs);
       }
 
-      markClientOnboardingComplete();
       invalidateProfileCache();
+      const { data: authData } = await createClient().auth.getUser();
+      markClientOnboardingComplete(authData.user?.id);
       clearOnboardingProgress();
-      try {
-        await createClient().auth.refreshSession();
-      } catch {
-        /* ignore */
-      }
       const saved = readPostAuthRedirect();
       clearPostAuthRedirect();
       window.location.replace(saved ?? "/dashboard?kickoff=career");
@@ -339,8 +258,8 @@ function ActivationStep({
 
   const activationPrompt =
     signupMethod === "linkedin"
-      ? `Hey ${firstName}! Verify your +91 number, upload your CV, and I'll open your dashboard with matches.`
-      : `Hey ${firstName}! Verify your +91 number, upload your CV, and I'll line up matches on your dashboard.`;
+      ? `Hey ${firstName}! Upload your CV and I'll read your experience — then we'll open your dashboard with me.`
+      : `Hey ${firstName}! Upload your CV and I'll line up matches on your dashboard.`;
 
   return (
     <div className="min-h-screen bg-paper-0 flex items-center px-6 py-12">
@@ -355,80 +274,6 @@ function ActivationStep({
         </div>
 
         <div className="space-y-5 rounded-lg border border-ink-100 bg-paper-1 p-5 shadow-1">
-          <div className="space-y-2">
-            <p className="text-small font-medium text-ink-700">+91 mobile verification</p>
-            {phoneVerified ? (
-              <p className="rounded-md border border-ink-100 bg-paper-0 px-3 py-2.5 text-small text-ink-900">
-                Phone verified{phoneDigits ? ` · ${market.dial} ${phoneDigits}` : ""}.
-              </p>
-            ) : (
-              <>
-                <div className="flex gap-2">
-                  <span className="inline-flex items-center rounded-md border border-ink-100 bg-paper-0 px-3 text-small text-ink-700 shrink-0">
-                    {market.dial}
-                  </span>
-                  <Input
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    placeholder={market.placeholder}
-                    value={phoneDigits}
-                    onChange={(e) => {
-                      const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
-                      setPhoneDigits(digits);
-                      setOtpSent(false);
-                      setOtpCode("");
-                    }}
-                    aria-label="Indian mobile number"
-                  />
-                </div>
-                <p className="text-micro text-ink-400">{market.helper} OTP via SMS.</p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  loading={sendingOtp}
-                  disabled={!phoneValid || sendingOtp || resendIn > 0}
-                  onClick={() => void handleSendOtp()}
-                >
-                  {otpSent
-                    ? resendIn > 0
-                      ? `Resend OTP in ${resendIn}s`
-                      : "Resend OTP"
-                    : "Send OTP"}
-                </Button>
-                {otpSent && (
-                  <div className="space-y-2 pt-1">
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6-digit OTP"
-                      value={otpCode}
-                      onChange={(e) =>
-                        setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-                      }
-                      aria-label="OTP code"
-                    />
-                    {devOtpHint && (
-                      <p className="text-micro text-ink-500">
-                        Dev OTP: <span className="font-mono text-ink-800">{devOtpHint}</span>
-                      </p>
-                    )}
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      loading={verifyingOtp}
-                      disabled={otpCode.length !== 6 || verifyingOtp}
-                      onClick={() => void handleVerifyOtp()}
-                    >
-                      Verify OTP
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
           <div className="space-y-2">
             <span className="text-small font-medium text-ink-700">Upload your CV</span>
             <input
@@ -541,10 +386,10 @@ function ActivationStep({
             size="lg"
             fullWidth
             loading={saving}
-            disabled={!phoneVerified || !tosAccepted || !hasResume || saving}
+            disabled={!tosAccepted || !hasResume || saving}
             onClick={() => void handleActivate()}
             rightIcon={
-              phoneVerified && tosAccepted && hasResume && !saving ? (
+              tosAccepted && hasResume && !saving ? (
                 <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               ) : undefined
             }

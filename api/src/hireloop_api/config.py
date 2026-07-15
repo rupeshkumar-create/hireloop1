@@ -236,9 +236,8 @@ class Settings(BaseSettings):
     enabled_markets: list[str] = list(ALL_SUPPORTED_MARKET_CODES)
     default_market: str = "IN"
 
-    # Temporary MVP/dev bypass: keep OTP enforcement configurable while LinkedIn
-    # + resume onboarding is being tested. Production/staging always force True
-    # via _enforce_production_phone_gate (cannot be disabled by env).
+    # Temporary MVP bypass: phone OTP not required while onboarding is CV-first.
+    # Set REQUIRE_PHONE_VERIFICATION=true when MSG91 OTP is ready to enforce.
     require_phone_verification: bool = False
 
     # ── Internal service secret ───────────────────────────────────────────────
@@ -332,13 +331,6 @@ class Settings(BaseSettings):
                 + " must be set to a strong non-default value "
                 "(currently empty or 'change-me'). Refusing to start."
             )
-        return self
-
-    @model_validator(mode="after")
-    def _enforce_production_phone_gate(self) -> "Settings":
-        """India OTP gate cannot be disabled in production or staging (R4)."""
-        if self.environment in ("production", "staging"):
-            self.require_phone_verification = True
         return self
 
     @model_validator(mode="after")

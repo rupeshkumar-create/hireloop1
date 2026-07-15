@@ -126,9 +126,9 @@ async def save_phone(
     user_id: uuid.UUID,
     phone: str,
     supabase_user: dict[str, Any],
-    phone_verified: bool = False,
+    phone_verified: bool = True,
 ) -> None:
-    """Upsert user row and set phone. phone_verified defaults False (OTP required)."""
+    """Upsert user row and set phone + phone_verified (OTP deferred)."""
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("Supabase REST not configured")
 
