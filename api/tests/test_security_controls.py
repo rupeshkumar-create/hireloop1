@@ -33,24 +33,26 @@ def _settings(**overrides: object) -> Settings:
 # ── Rate limiting (cost-drain / abuse) ────────────────────────────────────────
 
 
-def test_rate_limit_blocks_after_max() -> None:
+@pytest.mark.asyncio
+async def test_rate_limit_blocks_after_max() -> None:
     reset_rate_limits()
     uid = str(uuid.uuid4())
     for _ in range(3):
-        check_rate_limit(uid, "bucket", max_per_hour=3)  # within limit
+        await check_rate_limit(uid, "bucket", max_per_hour=3)  # within limit
     with pytest.raises(HTTPException) as exc:
-        check_rate_limit(uid, "bucket", max_per_hour=3)  # one over
+        await check_rate_limit(uid, "bucket", max_per_hour=3)  # one over
     assert exc.value.status_code == 429
 
 
-def test_rate_limit_is_scoped_per_user_and_bucket() -> None:
+@pytest.mark.asyncio
+async def test_rate_limit_is_scoped_per_user_and_bucket() -> None:
     reset_rate_limits()
     a, b = str(uuid.uuid4()), str(uuid.uuid4())
-    check_rate_limit(a, "bk", max_per_hour=1)
-    check_rate_limit(b, "bk", max_per_hour=1)  # different user — unaffected
-    check_rate_limit(a, "other", max_per_hour=1)  # different bucket — unaffected
+    await check_rate_limit(a, "bk", max_per_hour=1)
+    await check_rate_limit(b, "bk", max_per_hour=1)  # different user — unaffected
+    await check_rate_limit(a, "other", max_per_hour=1)  # different bucket — unaffected
     with pytest.raises(HTTPException):
-        check_rate_limit(a, "bk", max_per_hour=1)  # same user+bucket — blocked
+        await check_rate_limit(a, "bk", max_per_hour=1)  # same user+bucket — blocked
 
 
 # ── Webhook / service-secret auth (spoofing) ──────────────────────────────────

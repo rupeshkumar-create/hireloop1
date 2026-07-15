@@ -820,7 +820,7 @@ async def set_linkedin_url(
     from hireloop_api.services.linkdapi_profile import extract_linkedin_username
 
     # Each save kicks off an Apify/LinkDAPI scrape (external cost) — cap it.
-    check_rate_limit(str(current_user["id"]), "linkedin_enrich", max_per_hour=5)
+    await check_rate_limit(str(current_user["id"]), "linkedin_enrich", max_per_hour=5, db=db)
 
     url = (body.linkedin_url or "").strip()
     if not extract_linkedin_username(url):
@@ -2150,19 +2150,38 @@ async def update_notification(
 
 
 async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[str, Any]:
+    uid = uuid.UUID(user_id)
     user = await db.fetchrow(
-        "SELECT * FROM public.users WHERE id = $1",
-        uuid.UUID(user_id),
+        """
+        SELECT id, email, phone, full_name, role, market, phone_country,
+               phone_verified, avatar_url, created_at, updated_at, deleted_at
+        FROM public.users
+        WHERE id = $1 AND deleted_at IS NULL
+        """,
+        uid,
     )
     candidate = await db.fetchrow(
-        "SELECT * FROM public.candidates WHERE user_id = $1",
-        uuid.UUID(user_id),
+        """
+        SELECT id, user_id, headline, summary, current_title, current_company,
+               location_city, location_state, years_experience, skills,
+               linkedin_url, github_url, portfolio_url, market,
+               profile_complete, is_active, created_at, updated_at
+        FROM public.candidates
+        WHERE user_id = $1 AND deleted_at IS NULL
+        """,
+        uid,
     )
     consents = await db.fetch(
-        "SELECT * FROM public.consent_log WHERE user_id = $1 ORDER BY created_at",
-        uuid.UUID(user_id),
+        """
+        SELECT purpose, granted, created_at
+        FROM public.consent_log
+        WHERE user_id = $1
+        ORDER BY created_at
+        """,
+        uid,
     )
     messages = []
+    intros = []
     if candidate:
         messages = await db.fetch(
             """
@@ -2175,10 +2194,13 @@ async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[st
             """,
             candidate["id"],
         )
-    intros = []
-    if candidate:
         intros = await db.fetch(
-            "SELECT * FROM public.intro_requests WHERE candidate_id = $1",
+            """
+            SELECT id, status, direction, created_at, sent_at, opened_at, replied_at
+            FROM public.intro_requests
+            WHERE candidate_id = $1
+            ORDER BY created_at
+            """,
             candidate["id"],
         )
 
@@ -2198,7 +2220,7 @@ async def dpdp_export(
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> JSONResponse:
-    """Synchronous export for MVP (<60s for typical user)."""
+    """Synchronous export for MVP (<60s for typical user). Requires Bearer auth."""
     payload = await _build_export_payload(db, current_user["id"])
     await db.execute(
         """
@@ -2223,40 +2245,46 @@ async def dpdp_delete_account(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
-    Soft-delete user + schedule 30-day purge (R14).
+    Soft-delete user + schedule 30-day purge (R14). Transactional.
     """
     purge_after = datetime.now(UTC) + timedelta(days=30)
-    await db.execute(
-        """
-        UPDATE public.users SET deleted_at = NOW(), updated_at = NOW()
-        WHERE id = $1
-        """,
-        current_user["id"],
-    )
-    candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1",
-        current_user["id"],
-    )
-    if candidate:
+    uid = uuid.UUID(str(current_user["id"]))
+    async with db.transaction():
         await db.execute(
-            "UPDATE public.candidates SET deleted_at = NOW() WHERE id = $1",
-            candidate["id"],
+            """
+            UPDATE public.users SET deleted_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            uid,
         )
-    await db.execute(
-        """
-        INSERT INTO public.dpdp_export_jobs (user_id, status, purge_after)
-        VALUES ($1::uuid, 'pending', $2)
-        """,
-        current_user["id"],
-        purge_after,
-    )
-    await db.execute(
-        """
-        INSERT INTO public.consent_log (user_id, purpose, granted)
-        VALUES ($1::uuid, 'account_deletion', TRUE)
-        """,
-        current_user["id"],
-    )
+        candidate = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+            uid,
+        )
+        if candidate:
+            await db.execute(
+                """
+                UPDATE public.candidates
+                SET deleted_at = NOW(), updated_at = NOW()
+                WHERE id = $1 AND deleted_at IS NULL
+                """,
+                candidate["id"],
+            )
+        await db.execute(
+            """
+            INSERT INTO public.dpdp_export_jobs (user_id, status, purge_after)
+            VALUES ($1::uuid, 'pending', $2)
+            """,
+            uid,
+            purge_after,
+        )
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'account_deletion', TRUE)
+            """,
+            uid,
+        )
     return {
         "ok": True,
         "message": "Account scheduled for deletion. Data purged after 30 days.",

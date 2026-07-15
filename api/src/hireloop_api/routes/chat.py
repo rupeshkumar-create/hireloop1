@@ -801,10 +801,13 @@ async def send_message(
     Send a message to Aarya and stream the response.
     Uses Server-Sent Events (text/event-stream).
     """
-    # #48: every turn is real LLM spend — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "chat_turn", max_per_hour=60)
-
     pool = await get_db_pool(settings)
+
+    # #48: every turn is real LLM spend — cap per user per hour (cluster-wide).
+    async with pool.acquire() as rl_db:
+        await check_rate_limit(
+            str(current_user["id"]), "chat_turn", max_per_hour=60, db=rl_db
+        )
 
     # Pre-stream DB work on a short-lived connection — do not hold through SSE.
     async with pool.acquire() as db:

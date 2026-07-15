@@ -280,6 +280,53 @@ Make it feel like the candidate wrote it themselves after researching the compan
     return result
 
 
+async def claim_intro_for_send(
+    db: asyncpg.Connection,
+    *,
+    intro_id: str,
+    candidate_id: str,
+) -> asyncpg.Record | None:
+    """
+    Atomically claim an intro for Gmail send (at-most-once).
+
+    Moves draft_ready/drafting → sending only if still in a sendable state.
+    Concurrent approves lose the race and get None.
+    """
+    return await db.fetchrow(
+        """
+        UPDATE public.intro_requests
+        SET status = 'sending', updated_at = NOW(), error_message = NULL
+        WHERE id = $1::uuid
+          AND candidate_id = $2::uuid
+          AND status IN ('draft_ready', 'drafting', 'failed')
+        RETURNING id, status, draft_email, direction
+        """,
+        uuid.UUID(intro_id),
+        uuid.UUID(candidate_id),
+    )
+
+
+async def release_intro_send_failure(
+    db: asyncpg.Connection,
+    *,
+    intro_id: str,
+    error_message: str,
+) -> None:
+    """Mark a claimed send as failed (retryable) so it is not stuck in sending."""
+    await db.execute(
+        """
+        UPDATE public.intro_requests
+        SET status = 'failed',
+            error_message = $1,
+            updated_at = NOW()
+        WHERE id = $2::uuid
+          AND status = 'sending'
+        """,
+        error_message[:500],
+        uuid.UUID(intro_id),
+    )
+
+
 async def send_intro_email(
     db: asyncpg.Connection,
     user_id: str,
@@ -293,16 +340,31 @@ async def send_intro_email(
     body_text: str,
     google_client_id: str,
     google_client_secret: str,
+    *,
+    already_claimed: bool = False,
 ) -> dict[str, Any]:
     """
     Send the drafted intro email via the candidate's Gmail OAuth token (R9).
-    Updates intro_request status to 'sent' on success.
+
+    Prefer calling claim_intro_for_send() first, then this with already_claimed=True.
+    When already_claimed is False, this function claims internally before send.
+    Updates intro_request status to 'sent' on success, 'failed' on error.
     """
     import time
 
     from hireloop_api.services.email.gmail_oauth import GmailOAuthService
 
     t0 = time.monotonic()
+
+    if not already_claimed:
+        claimed = await claim_intro_for_send(
+            db, intro_id=intro_id, candidate_id=candidate_id
+        )
+        if claimed is None:
+            return {
+                "sent": False,
+                "error": "Intro is no longer available to send (already claimed or sent)",
+            }
 
     svc = GmailOAuthService(
         google_client_id=google_client_id,
@@ -323,24 +385,33 @@ async def send_intro_email(
 
     if success:
         send_info = msg_id_or_error if isinstance(msg_id_or_error, dict) else {}
-        await db.execute(
+        updated = await db.fetchrow(
             """
             UPDATE public.intro_requests
             SET status = 'sent', sent_at = NOW(), updated_at = NOW(),
-                gmail_message_id = $2, gmail_thread_id = $3, gmail_subject = $4
-            WHERE id = $1::uuid
+                gmail_message_id = $2, gmail_thread_id = $3, gmail_subject = $4,
+                error_message = NULL
+            WHERE id = $1::uuid AND status = 'sending'
+            RETURNING id
             """,
             uuid.UUID(intro_id),
             send_info.get("id"),
             send_info.get("threadId"),
             subject[:300],
         )
+        if updated is None:
+            logger.error(
+                "intro_email_sent_but_status_claim_lost",
+                intro_id=intro_id,
+                gmail_message_id=send_info.get("id"),
+            )
         result: dict[str, Any] = {
             "sent": True,
             "gmail_message_id": send_info.get("id"),
             "intro_status": "sent",
         }
-        logger.info("intro_email_sent", intro_id=intro_id, to=hm_email)
+        # Avoid logging raw HM email (PII); last-4 of local-part is enough for ops.
+        logger.info("intro_email_sent", intro_id=intro_id, to_domain=hm_email.split("@")[-1])
         from hireloop_api.config import get_settings
         from hireloop_api.services.notifications import notify_intro_status_email
 
@@ -351,14 +422,8 @@ async def send_intro_email(
             status="sent",
         )
     else:
-        await db.execute(
-            """
-            UPDATE public.intro_requests
-            SET error_message = $1, updated_at = NOW()
-            WHERE id = $2::uuid
-            """,
-            str(msg_id_or_error),
-            uuid.UUID(intro_id),
+        await release_intro_send_failure(
+            db, intro_id=intro_id, error_message=str(msg_id_or_error)
         )
         result = {"sent": False, "error": str(msg_id_or_error)}
 
@@ -368,7 +433,7 @@ async def send_intro_email(
         user_id,
         session_id,
         "send_intro_email",
-        {"intro_id": intro_id, "to": hm_email},
+        {"intro_id": intro_id, "to_domain": hm_email.split("@")[-1]},
         {"sent": success},
         duration_ms,
     )

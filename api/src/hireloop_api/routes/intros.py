@@ -263,7 +263,7 @@ async def approve_and_send_intro(
         raise HTTPException(status_code=404, detail="Intro request not found")
     if row["direction"] != "candidate_to_hm":
         raise HTTPException(status_code=409, detail="Only HM email intros support approve-send")
-    if row["status"] not in ("draft_ready", "drafting"):
+    if row["status"] not in ("draft_ready", "drafting", "failed"):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot send intro in status '{row['status']}'",
@@ -275,6 +275,18 @@ async def approve_and_send_intro(
     import json as _json
 
     draft = _json.loads(draft_raw) if isinstance(draft_raw, str) else draft_raw
+
+    claimed = await nitya_tools.claim_intro_for_send(
+        db,
+        intro_id=intro_id,
+        candidate_id=str(candidate["id"]),
+    )
+    if claimed is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Intro is already being sent or was already sent",
+        )
+
     settings = get_settings()
     send_result = await nitya_tools.send_intro_email(
         db=db,
@@ -289,6 +301,7 @@ async def approve_and_send_intro(
         body_text=draft.get("body_text", ""),
         google_client_id=settings.google_client_id,
         google_client_secret=settings.google_client_secret,
+        already_claimed=True,
     )
     if not send_result.get("sent"):
         raise HTTPException(

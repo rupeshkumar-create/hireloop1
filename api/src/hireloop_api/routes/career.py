@@ -413,9 +413,12 @@ async def generate_career_path(
     connection held that long (× concurrent mounts waiting on the in-flight
     build) starves the pool for every other route.
     """
-    # #48: full path generation is a heavy LLM call — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "career_path_generate", max_per_hour=10)
     pool = await get_db_pool(settings)
+    # #48: full path generation is a heavy LLM call — cap per user per hour.
+    async with pool.acquire() as rl_db:
+        await check_rate_limit(
+            str(current_user["id"]), "career_path_generate", max_per_hour=10, db=rl_db
+        )
     async with pool.acquire() as db:
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
     try:
@@ -811,7 +814,7 @@ async def generate_career_path_resumes(
             status_code=403,
             detail="Enable tailored resumes in Settings before generating path-specific resumes.",
         )
-    check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5)
+    await check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5, db=db)
     await enqueue_job(
         db,
         kind=CAREER_PATH_RESUMES,

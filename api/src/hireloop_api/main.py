@@ -16,6 +16,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request, Response
@@ -51,19 +52,22 @@ from hireloop_api.routes.voice import router as voice_router
 from hireloop_api.routes.voice_sessions import router as voice_sessions_router
 from hireloop_api.routes.whatsapp_routes import router as whatsapp_router
 
-# ── Structured logging setup ──────────────────────────────────────────────────
-structlog.configure(
-    processors=[
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(),
-    ]
-)
-logger = structlog.get_logger()
-
 # ── Settings ──────────────────────────────────────────────────────────────────
 settings = get_settings()
+
+# ── Structured logging setup ──────────────────────────────────────────────────
+_log_processors: list[Any] = [
+    structlog.contextvars.merge_contextvars,
+    structlog.processors.add_log_level,
+    structlog.processors.TimeStamper(fmt="iso"),
+]
+if settings.environment in ("production", "staging"):
+    _log_processors.append(structlog.processors.JSONRenderer())
+else:
+    _log_processors.append(structlog.dev.ConsoleRenderer())
+
+structlog.configure(processors=_log_processors)
+logger = structlog.get_logger()
 
 # ── Error tracking (Sentry) ───────────────────────────────────────────────────
 # No-op unless SENTRY_DSN is configured. PII is never sent (DPDP Act 2023).
@@ -77,6 +81,8 @@ if settings.sentry_dsn:
         send_default_pii=False,
     )
     logger.info("sentry_initialised", environment=settings.environment)
+elif settings.environment == "production":
+    logger.error("sentry_dsn_missing_in_production")
 
 # ── Nitya worker (background LISTEN/NOTIFY) ───────────────────────────────────
 _nitya_worker: NityaWorker | None = None

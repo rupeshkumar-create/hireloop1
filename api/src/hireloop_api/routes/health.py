@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -104,11 +104,23 @@ async def _check_url(name: str, url: str, token: str | None) -> str:
 
 
 @router.get("/health/deep")
-async def deep_health(settings: Settings = Depends(get_settings)) -> JSONResponse:
-    """Ops-only deep check: reports DB + Apify + OpenRouter reachability. Unlike
-    /health/ready this does NOT 503 on an external-dependency outage (that
-    shouldn't pull the instance from rotation) — it returns 200 with per-dependency
-    status so a dashboard can alert. Probes run concurrently with short timeouts."""
+async def deep_health(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
+    """Ops-only deep check: reports DB + Apify + OpenRouter reachability.
+
+    Requires X-Service-Secret (same as other privileged ops endpoints). Unlike
+    /health/ready this does NOT 503 on an external-dependency outage — it returns
+    200 with per-dependency status so a dashboard can alert.
+    """
+    import hmac
+
+    secret = request.headers.get("X-Service-Secret", "")
+    expected = settings.service_secret or ""
+    if not expected or not hmac.compare_digest(secret, expected):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
     db, apify, openrouter = await asyncio.gather(
         _check_db(settings),
         _check_url("apify", "https://api.apify.com/v2/users/me", settings.apify_token),

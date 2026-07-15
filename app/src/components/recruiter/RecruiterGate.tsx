@@ -45,7 +45,10 @@ export function RecruiterGate({ children }: { children: React.ReactNode }) {
         setReady(true);
       })
       .catch(() => {
-        if (!cancelled) setReady(true);
+        // Fail closed: never render the recruiter shell without a verified session.
+        if (!cancelled) {
+          router.replace("/login");
+        }
       });
 
     return () => {
