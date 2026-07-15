@@ -38,7 +38,7 @@ from hireloop_api.services.email.gmail_oauth import GmailOAuthService
 from hireloop_api.services.token_crypto import decrypt_token
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/gmail", tags=["gmail"])
+router = APIRouter(prefix="/gmail", tags=["gmail", "gmail-oauth-v2"])
 
 # Least-privilege scopes: send-only mail (P13) + event-only calendar (P07).
 # `openid email` is required to read the connected account's address from the
