@@ -3,11 +3,13 @@ Authentication routes — phone collection and optional OTP.
 
 Flow:
   1. POST /api/v1/auth/save-phone   → saves phone for supported market (onboarding)
-  2. POST /api/v1/auth/send-otp     → optional OTP via MSG91 SMS (+91 / India only)
-  3. POST /api/v1/auth/verify-otp   → optional OTP verification
+  2. POST /api/v1/auth/send-otp     → OTP via MSG91 SMS (+91 / India only)
+  3. POST /api/v1/auth/verify-otp   → marks phone_verified (required in prod/staging)
   4. GET  /api/v1/auth/me           → returns current user profile
 
-Onboarding uses save-phone only (no OTP round-trip). The number is used for
+Onboarding must complete verify-otp before gated routes unlock when
+require_phone_verification is on (forced in production/staging).
+The number is used for
 WhatsApp job-match and intro alerts.
 
 Note: LinkedIn OAuth is handled entirely by Supabase Auth + /auth/callback
