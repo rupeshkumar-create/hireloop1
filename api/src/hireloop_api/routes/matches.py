@@ -1693,6 +1693,68 @@ async def _fetch_fallback_match_rows(
     return filtered[offset : offset + limit]
 
 
+def _serialize_single_match_detail(
+    row: asyncpg.Record | dict,
+    *,
+    candidate: dict,
+) -> dict:
+    """Serialize a cached match_scores + job join for GET /matches/{job_id}.
+
+    Avoids response-validation 500s from raw datetimes / null computed_at /
+    non-dict salary_benchmark leaking through ``**dict(row)``.
+    """
+    data = dict(row)
+    scraped = data.get("scraped_at")
+    computed_at = data.get("computed_at")
+    job_skills = list(data.get("skills_required") or [])
+    cand_canon = {canonical_skill(s) for s in (candidate.get("skills") or [])}
+    explanation = data.get("explanation")
+    if explanation is not None and not isinstance(explanation, str):
+        explanation = str(explanation)
+    salary_benchmark = data.get("salary_benchmark")
+    if isinstance(salary_benchmark, str):
+        try:
+            salary_benchmark = json.loads(salary_benchmark)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            salary_benchmark = None
+    elif salary_benchmark is not None and not isinstance(salary_benchmark, dict):
+        salary_benchmark = None
+
+    return {
+        "job_id": str(data["job_id"]),
+        "title": data.get("title") or "",
+        "company_name": data.get("company_name"),
+        "company_logo_url": data.get("company_logo_url"),
+        "location_city": data.get("location_city"),
+        "location_state": data.get("location_state"),
+        "is_remote": bool(data.get("is_remote")),
+        "employment_type": data.get("employment_type"),
+        "seniority": data.get("seniority"),
+        "ctc_min": data.get("ctc_min"),
+        "ctc_max": data.get("ctc_max"),
+        "salary_currency": data.get("salary_currency"),
+        "skills_required": job_skills,
+        "apply_url": data.get("apply_url"),
+        "description": data.get("description"),
+        "requirements": data.get("requirements"),
+        "posted_at": scraped.isoformat() if hasattr(scraped, "isoformat") else None,
+        "overall_score": float(data.get("overall_score") or 0.0),
+        "skills_score": data.get("skills_score"),
+        "experience_score": data.get("experience_score"),
+        "location_score": data.get("location_score"),
+        "ctc_score": data.get("ctc_score"),
+        "culture_score": data.get("culture_score"),
+        "career_alignment_score": data.get("career_alignment_score"),
+        "fit_recommendation": data.get("fit_recommendation"),
+        "salary_benchmark": salary_benchmark,
+        "triage_notes": data.get("triage_notes"),
+        "explanation": explanation,
+        "computed_at": computed_at.isoformat() if hasattr(computed_at, "isoformat") else None,
+        "skills_matched": [s for s in job_skills if canonical_skill(s) in cand_canon],
+        "skills_gap": [s for s in job_skills if canonical_skill(s) not in cand_canon],
+    }
+
+
 def _serialize_fallback_match_row(
     row: asyncpg.Record | dict,
     *,
@@ -2046,7 +2108,13 @@ async def get_single_match(
     if not row:
         # Compute on-the-fly (slow path — no embedding available yet)
         engine = MatchingEngine(db)
-        score = await engine.score_pair(str(candidate["id"]), job_id)
+        try:
+            score = await engine.score_pair(str(candidate["id"]), job_id)
+        except Exception:
+            logger.exception("get_single_match_score_pair_failed", job_id=job_id)
+            raise HTTPException(
+                status_code=404, detail="Job not found or scoring failed"
+            ) from None
         if score is None:
             raise HTTPException(status_code=404, detail="Job not found or scoring failed")
         row = await db.fetchrow(
@@ -2083,12 +2151,21 @@ async def get_single_match(
             full_cand = await db.fetchrow(
                 """
                 SELECT id, skills, current_title, years_experience,
-                       location_city, location_state
+                       location_city, location_state, expected_ctc_min, expected_ctc_max,
+                       remote_preference, open_to_relocation, location_scope,
+                       current_company, headline, summary
                 FROM public.candidates WHERE id = $1::uuid
                 """,
                 candidate["id"],
             )
-            computed = _serialize_fallback_match_row(dict(job_row), candidate=dict(full_cand or {}))
+            # allow_low_score: detail page must render even when feed floors drop the pair
+            computed = _serialize_fallback_match_row(
+                dict(job_row),
+                candidate=dict(full_cand or candidate),
+                allow_low_score=True,
+            )
+            if not computed:
+                raise HTTPException(status_code=404, detail="Job not found or scoring failed")
             job_skills_live = job_row["skills_required"] or []
             cand_canon_live = {canonical_skill(s) for s in (candidate["skills"] or [])}
             scraped_live = job_row["scraped_at"]
@@ -2105,24 +2182,7 @@ async def get_single_match(
                 ],
             }
 
-    # Split required skills into "you have" vs "gap" using the shared canonical
-    # taxonomy, so the score breakdown is actionable (this is what powers the
-    # "Skills gap detected" line — now it shows WHICH skills).
-    job_skills = row["skills_required"] or []
-    cand_canon = {canonical_skill(s) for s in (candidate["skills"] or [])}
-    matched = [s for s in job_skills if canonical_skill(s) in cand_canon]
-    gap = [s for s in job_skills if canonical_skill(s) not in cand_canon]
-    scraped = row["scraped_at"]
-
-    return {
-        **dict(row),
-        "job_id": str(row["job_id"]),
-        "skills_required": job_skills,
-        "skills_matched": matched,
-        "skills_gap": gap,
-        "posted_at": scraped.isoformat() if scraped else None,
-        "computed_at": row["computed_at"].isoformat(),
-    }
+    return _serialize_single_match_detail(row, candidate=dict(candidate))
 
 
 # ── Admin: embed all pending ──────────────────────────────────────────────────
