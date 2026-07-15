@@ -179,10 +179,11 @@ async def _prepare_public_chat_turn(
     if not candidate_id:
         raise LookupError("Profile not found")
 
-    check_rate_limit(
+    await check_rate_limit(
         str(visitor_session_id),
         "public_profile_chat",
         max_per_hour=40,
+        db=db,
     )
 
     chat_id = await _get_or_create_chat(

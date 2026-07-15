@@ -126,7 +126,7 @@ async def request_tailored_resume(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     # #48: each tailor run is a multi-call LLM job — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "tailor_resume", max_per_hour=10)
+    await check_rate_limit(str(current_user["id"]), "tailor_resume", max_per_hour=10, db=db)
 
     candidate = await db.fetchrow(
         """

@@ -17,7 +17,6 @@ request-scoped and intentionally has no hidden in-process checkpoint dependency.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Annotated, Any, Literal, TypedDict
@@ -1320,9 +1319,11 @@ def build_aarya_graph(settings: Settings) -> Any:
                 cards,
             )
 
-        outcomes = await asyncio.gather(*[_execute_one(tc) for tc in last_message.tool_calls])
+        # Serialize tool execution on the shared asyncpg connection. Concurrent
+        # asyncio.gather on one connection corrupts protocol state under load.
         tool_messages: list[ToolMessage] = []
-        for tm, inc, cards in outcomes:
+        for tc in last_message.tool_calls:
+            tm, inc, cards = await _execute_one(tc)
             tool_messages.append(tm)
             action_count += inc
             if cards:

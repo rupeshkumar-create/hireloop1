@@ -532,7 +532,7 @@ async def upload_resume(
     The candidate can then choose to apply parsed data to their profile.
     """
     # Parsing is a multi-tier LLM job — cap per user per hour (cost guard).
-    check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15)
+    await check_rate_limit(str(current_user["id"]), "resume_upload", max_per_hour=15, db=db)
 
     # Read at most one byte over the limit so oversized requests do not become
     # unbounded per-request memory allocations.

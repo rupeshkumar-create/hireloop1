@@ -237,7 +237,8 @@ class Settings(BaseSettings):
     default_market: str = "IN"
 
     # Temporary MVP/dev bypass: keep OTP enforcement configurable while LinkedIn
-    # + resume onboarding is being tested. Production should set this to true.
+    # + resume onboarding is being tested. Production/staging always force True
+    # via _enforce_production_phone_gate (cannot be disabled by env).
     require_phone_verification: bool = False
 
     # ── Internal service secret ───────────────────────────────────────────────
@@ -330,6 +331,28 @@ class Settings(BaseSettings):
                 + ", ".join(missing)
                 + " must be set to a strong non-default value "
                 "(currently empty or 'change-me'). Refusing to start."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_production_phone_gate(self) -> "Settings":
+        """India OTP gate cannot be disabled in production or staging (R4)."""
+        if self.environment in ("production", "staging"):
+            self.require_phone_verification = True
+        return self
+
+    @model_validator(mode="after")
+    def _warn_missing_sentry_in_production(self) -> "Settings":
+        """Sentry is required for operable production — warn loudly if unset."""
+        if self.environment == "production" and not str(self.sentry_dsn).strip():
+            # Import deferred: structlog may not be configured yet during Settings init.
+            import warnings
+
+            warnings.warn(
+                "SENTRY_DSN is empty in production — errors will not be reported. "
+                "Set SENTRY_DSN for operable observability.",
+                UserWarning,
+                stacklevel=2,
             )
         return self
 

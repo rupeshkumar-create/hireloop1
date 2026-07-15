@@ -730,12 +730,13 @@ async def save_phone(
     """
     Save the user's +91 mobile number (format-validated, unique).
 
-    Onboarding flow: collect the number and mark phone_verified so gated routes
-    unlock. WhatsApp alerts use this number — no OTP required for signup.
+    Does NOT mark phone_verified unless allow_phone_save_bypass is on in
+    development. Production always requires OTP via /auth/verify-otp (R4).
     """
     phone = body.phone
     market = normalize_market(body.market)
     user_id = uuid.UUID(str(supabase_user["id"]))
+    mark_verified = bool(settings.allow_phone_save_bypass and settings.is_development)
 
     saved_via_rest = False
     if db is not None:
@@ -744,7 +745,7 @@ async def save_phone(
                 """
                 UPDATE public.users SET
                   phone = $2,
-                  phone_verified = TRUE,
+                  phone_verified = $4,
                   market = $3,
                   phone_country = $3,
                   updated_at = NOW()
@@ -753,6 +754,7 @@ async def save_phone(
                 user_id,
                 phone,
                 market,
+                mark_verified,
             )
             if result.endswith(" 0"):
                 provisioned = await _provision_user_row(db, supabase_user)
@@ -765,7 +767,7 @@ async def save_phone(
                     """
                     UPDATE public.users SET
                       phone = $2,
-                      phone_verified = TRUE,
+                      phone_verified = $4,
                       market = $3,
                       phone_country = $3,
                       updated_at = NOW()
@@ -774,6 +776,7 @@ async def save_phone(
                     user_id,
                     phone,
                     market,
+                    mark_verified,
                 )
                 if result.endswith(" 0"):
                     raise HTTPException(
@@ -828,6 +831,7 @@ async def save_phone(
                 user_id=user_id,
                 phone=phone,
                 supabase_user=supabase_user,
+                phone_verified=mark_verified,
             )
             try:
                 await rest_users.log_consent_rest(
@@ -873,8 +877,12 @@ async def save_phone(
         logger.error("signup_confirmation_email_failed", user_id=str(user_id), error=str(exc))
 
     return SavePhoneResponse(
-        message="Phone number saved",
-        phone_verified=True,
+        message=(
+            "Phone number saved"
+            if mark_verified
+            else "Phone number saved — verify via OTP to unlock gated features"
+        ),
+        phone_verified=mark_verified,
     )
 
 

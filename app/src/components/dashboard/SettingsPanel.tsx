@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { LogOut, Shield, User } from "@/components/brand/icons";
 import { apiFetch } from "@/lib/api/client";
-import { fetchMyProfile, type MyProfileData } from "@/lib/api/profile";
+import { fetchMyProfile, downloadDpdpExport, type MyProfileData } from "@/lib/api/profile";
 import { CandidateSharingSettings } from "@/components/settings/CandidateSharingSettings";
 import { RoleSwitchButton } from "@/components/layout/RoleSwitchButton";
 import { TailoredResumeSettings } from "@/components/settings/TailoredResumeSettings";
@@ -80,6 +80,15 @@ export function SettingsPanel({
       ...p,
       [catId]: { ...(p[catId] ?? {}), email: checked },
     }));
+  }
+
+  async function exportMyData() {
+    try {
+      await downloadDpdpExport();
+      toast.success("Data export downloaded");
+    } catch {
+      toast.error("Couldn't export your data. Try again or contact privacy@hireschema.com");
+    }
   }
 
   async function deleteAccount() {
@@ -213,12 +222,7 @@ export function SettingsPanel({
         <CardBody className="space-y-2 !pt-0">
           <div className="flex flex-col gap-2 pt-1">
             <button
-              onClick={() =>
-                window.open(
-                  `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/me/dpdp/export`,
-                  "_blank",
-                )
-              }
+              onClick={() => void exportMyData()}
               className={BTN_ROW}
             >
               <Shield className="h-4 w-4 text-ink-400 shrink-0" strokeWidth={1.5} />

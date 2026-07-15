@@ -119,7 +119,7 @@ async def request_learning_roadmap(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     # Each roadmap is an LLM job — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "learning_roadmap", max_per_hour=10)
+    await check_rate_limit(str(current_user["id"]), "learning_roadmap", max_per_hour=10, db=db)
 
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",

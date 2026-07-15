@@ -105,7 +105,7 @@ async def start_mock_session(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     # Each mock session drives multiple LLM turns — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "mock_interview", max_per_hour=10)
+    await check_rate_limit(str(current_user["id"]), "mock_interview", max_per_hour=10, db=db)
 
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
