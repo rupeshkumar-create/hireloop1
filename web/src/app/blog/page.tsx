@@ -21,7 +21,7 @@ export default function BlogPage() {
     <main>
       <section className="border-b border-ink-100 bg-ink-900 py-16">
         <div className="max-w-3xl mx-auto px-4 text-center">
-          <h1 className="text-5xl font-bold text-paper-0 mb-4">Blog</h1>
+          <h1 className="text-5xl font-bold text-ink-900 mb-4">Blog</h1>
           <p className="text-ink-300 text-lg">
             AI recruiting insights, product updates, and the India hiring market.
           </p>

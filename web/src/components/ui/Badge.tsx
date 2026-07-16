@@ -13,7 +13,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   default: "bg-ink-100 text-ink-700",
   brand: "bg-ink-50 text-accent",
   accent: "bg-accent text-accent-fg",
-  strong: "bg-ink-900 text-paper-0",
+  strong: "bg-ink-50 text-ink-900 border border-ink-100",
   success: "bg-ink-50 text-ink-900",
   warning: "bg-ink-50 text-ink-700",
   muted: "bg-ink-50 text-ink-500 border border-ink-100",

@@ -2,28 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Hireschema marketing globals — DESIGN.md compliant. Mirrors app/globals.css. */
+/* Hireschema marketing globals — DESIGN.md v2 (dark charcoal + lime). */
 
 @layer utilities {
-  .bg-paper-0   { background-color: #FAFAF7; }
-  .bg-paper-1   { background-color: #FFFFFF; }
-  .text-paper-0 { color: #FAFAF7; }
-  .text-paper-1 { color: #FFFFFF; }
+  .bg-paper-0   { background-color: #141414; }
+  .bg-paper-1   { background-color: #1C1C1C; }
+  .text-paper-0 { color: #141414; }
+  .text-paper-1 { color: #1C1C1C; }
 
   .bg-accent        { background-color: #9FE870; }
   .bg-accent-hover  { background-color: #8CCC63; }
-  /* Fill stays #9FE870; text uses a darker sibling so links stay readable on cream. */
-  .text-accent      { color: #3F8F1A; }
+  .text-accent      { color: #9FE870; }
   .text-accent-fg   { color: #000000; }
   .text-on-accent   { color: #000000; }
   .border-accent    { border-color: #9FE870; }
   .ring-accent-ring { --tw-ring-color: rgba(159, 232, 112, 0.30); }
   .hover\:bg-accent-hover:hover { background-color: #8CCC63; }
-  .hover\:text-accent:hover { color: #347816; }
-  .hover\:text-accent-hover:hover { color: #347816; }
+  .hover\:text-accent:hover { color: #9FE870; }
 
-  .bg-destructive-bg { background-color: #FEE2E2; }
-  .text-destructive  { color: #B91C1C; }
+  .hover\:bg-ink-50:hover { background-color: #2a2a2a; }
+  .bg-ink-50 { background-color: #2a2a2a; }
+
+  .bg-destructive-bg { background-color: rgba(247, 109, 109, 0.14); }
+  .text-destructive  { color: #F76D6D; }
 }
 
 @layer base {
@@ -40,8 +41,8 @@
   }
 
   body {
-    background-color: #FAFAF7;
-    color: #0E0E10;
+    background-color: #141414;
+    color: #FAFAFA;
     font-family: var(--font-geist-sans), "Inter", -apple-system,
                  BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 14px;
@@ -56,10 +57,11 @@
   h1, h2, h3, h4, h5, h6,
   p, span, label, button, input, textarea, select, a, li, td, th {
     font-family: inherit;
+    color: inherit;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    color: #0E0E10;
+    color: #FAFAFA;
     letter-spacing: -0.01em;
   }
 
@@ -68,17 +70,17 @@
     color: inherit;
   }
 
-  ::placeholder { color: #B5B5BA; opacity: 1; }
+  ::placeholder { color: #6B6B6B; opacity: 1; }
 
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #FAFAF7, 0 0 0 4px #9FE870;
+    box-shadow: 0 0 0 2px #141414, 0 0 0 4px #9FE870;
     border-radius: 0;
   }
 
   ::selection {
-    background-color: rgba(159, 232, 112, 0.28);
-    color: #0E0E10;
+    background-color: rgba(159, 232, 112, 0.22);
+    color: #FAFAFA;
   }
 }
 
@@ -86,11 +88,11 @@
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background-color: #E6E6E4;
+    background-color: #2A2A2A;
     border-radius: 0;
-    border: 2px solid #FAFAF7;
+    border: 2px solid #141414;
   }
-  ::-webkit-scrollbar-thumb:hover { background-color: #B5B5BA; }
+  ::-webkit-scrollbar-thumb:hover { background-color: #4D4D4D; }
 }
 
 @media (prefers-reduced-motion: reduce) {

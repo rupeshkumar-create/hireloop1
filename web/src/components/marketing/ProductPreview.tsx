@@ -48,7 +48,7 @@ export function ProductPreview({ variant = "candidate", className }: ProductPrev
             </div>
             <div className="flex-1 bg-paper-1 p-4 flex flex-col gap-3">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-ink-900" />
+                <div className="h-8 w-8 rounded-lg bg-accent" />
                 <div className="h-2.5 w-16 rounded bg-ink-100" />
               </div>
               <div className="rounded-lg bg-ink-50 border border-ink-100 p-3 max-w-[85%]">
@@ -65,7 +65,7 @@ export function ProductPreview({ variant = "candidate", className }: ProductPrev
         ) : (
           <>
             <div className="hidden sm:flex w-14 border-r border-ink-100 bg-paper-0 flex-col items-center py-3 gap-2">
-              <div className="h-9 w-9 rounded-xl bg-ink-900" />
+              <div className="h-9 w-9 rounded-xl bg-accent" />
               <div className="h-8 w-8 rounded-lg bg-ink-900/10" />
               <div className="h-8 w-8 rounded-lg bg-ink-100" />
             </div>

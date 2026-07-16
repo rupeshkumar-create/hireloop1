@@ -36,7 +36,7 @@ export default function AboutPage() {
       {/* Hero */}
       <section className="border-b border-ink-100 bg-paper-0">
         <div className="max-w-3xl mx-auto px-4 text-center">
-          <h1 className="text-5xl font-bold text-paper-0 mb-6">
+          <h1 className="text-5xl font-bold text-ink-900 mb-6">
             We&apos;re building the career layer for India
           </h1>
           <p className="text-ink-300 text-lg leading-relaxed">
