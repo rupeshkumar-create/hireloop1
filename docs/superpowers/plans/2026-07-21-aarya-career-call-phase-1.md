@@ -786,7 +786,7 @@ Keep this guard even though the prompt tells Aarya not to mutate.
 - [ ] **Step 7: Run focused chat/agent tests**
 
 ```bash
-cd api && uv run pytest tests/test_career_interview_policy.py tests/test_aarya_voice_interview_mode.py tests/test_aarya_model_routing.py tests/test_chat_streaming.py -v
+cd api && uv run pytest tests/test_career_interview_policy.py tests/test_aarya_voice_interview_mode.py tests/test_aarya_model_routing.py tests/test_chat_stream.py -v
 ```
 
 Expected: PASS with no new warnings.
