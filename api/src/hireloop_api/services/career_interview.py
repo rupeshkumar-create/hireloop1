@@ -65,14 +65,14 @@ def select_next_focus(
 ) -> NextInterviewFocus:
     """Choose the next uncovered, non-declined topic or wrap the interview."""
     if elapsed_seconds >= 14 * 60:
-        return NextInterviewFocus(prompt_hint=_WRAP_HINT, should_wrap=True)
+        return NextInterviewFocus(topic=None, prompt_hint=_WRAP_HINT, should_wrap=True)
 
     unavailable = set(state.covered_topics) | set(state.declined_topics)
     for topic in INTERVIEW_TOPIC_PRIORITY:
         if topic not in unavailable:
             return NextInterviewFocus(topic=topic, prompt_hint=PROMPT_HINTS[topic])
 
-    return NextInterviewFocus(prompt_hint=_WRAP_HINT, should_wrap=True)
+    return NextInterviewFocus(topic=None, prompt_hint=_WRAP_HINT, should_wrap=True)
 
 
 def record_candidate_answer(

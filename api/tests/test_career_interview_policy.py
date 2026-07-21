@@ -5,10 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from hireloop_api.models.career_interview import (
     ActiveCareerInterview,
     CareerInterviewCoverage,
     InterviewTopic,
+    NextInterviewFocus,
 )
 from hireloop_api.services.career_interview import (
     record_candidate_answer,
@@ -48,6 +52,20 @@ def test_models_expose_the_versioned_interview_contract() -> None:
         "relocation",
         "deal_breakers",
     }
+
+
+def test_question_history_is_typed_as_interview_topics() -> None:
+    coverage = CareerInterviewCoverage(question_history=[InterviewTopic.SKILLS])
+
+    assert coverage.question_history == [InterviewTopic.SKILLS]
+    assert coverage.question_history[0] is InterviewTopic.SKILLS
+    with pytest.raises(ValidationError):
+        CareerInterviewCoverage(question_history=["unknown_topic"])
+
+
+def test_next_interview_focus_requires_an_explicit_topic() -> None:
+    with pytest.raises(ValidationError):
+        NextInterviewFocus(prompt_hint="Continue the interview.")
 
 
 def test_first_focus_is_current_work_before_time_limit() -> None:
@@ -118,7 +136,7 @@ def test_non_answer_is_not_covered_and_is_asked_again() -> None:
 def test_record_candidate_answer_does_not_mutate_input() -> None:
     state = CareerInterviewCoverage(
         covered_topics=[InterviewTopic.CURRENT_WORK],
-        question_history=["What impact did you have?"],
+        question_history=[InterviewTopic.IMPACT],
         current_focus=InterviewTopic.IMPACT,
         turn_count=2,
     )

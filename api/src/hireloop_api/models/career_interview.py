@@ -32,7 +32,7 @@ class CareerInterviewCoverage(BaseModel):
     schema_version: int = 1
     covered_topics: list[InterviewTopic] = Field(default_factory=list)
     declined_topics: list[InterviewTopic] = Field(default_factory=list)
-    question_history: list[str] = Field(default_factory=list)
+    question_history: list[InterviewTopic] = Field(default_factory=list)
     current_focus: InterviewTopic | None = None
     turn_count: int = 0
     completion_reason: str | None = None
@@ -41,7 +41,7 @@ class CareerInterviewCoverage(BaseModel):
 class NextInterviewFocus(BaseModel):
     """Policy decision for Aarya's next interview turn."""
 
-    topic: InterviewTopic | None = None
+    topic: InterviewTopic | None
     prompt_hint: str
     should_wrap: bool = False
 
