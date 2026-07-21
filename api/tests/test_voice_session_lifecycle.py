@@ -1,9 +1,9 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-
 MIGRATION = (
-    Path(__file__).parents[2]
-    / "supabase/migrations/20260721150000_aarya_career_call_phase1.sql"
+    Path(__file__).parents[2] / "supabase/migrations/20260721150000_aarya_career_call_phase1.sql"
 )
 
 
@@ -16,3 +16,10 @@ def test_career_call_migration_has_lifecycle_and_rls_contract() -> None:
     assert "ALTER TABLE public.career_interview_states ENABLE ROW LEVEL SECURITY" in sql
     assert 'CREATE POLICY "career_interview_states: candidate read own"' in sql
     assert "recording_url IS NULL" in sql
+    assert "conversations_id_candidate_unique" in sql
+    assert "voice_sessions_id_candidate_unique" in sql
+    assert "FOREIGN KEY (conversation_id, candidate_id)" in sql
+    assert "REFERENCES public.conversations(id, candidate_id)" in sql
+    assert "ON DELETE SET NULL (conversation_id)" in sql
+    assert "FOREIGN KEY (session_id, candidate_id)" in sql
+    assert "REFERENCES public.voice_sessions(id, candidate_id) ON DELETE CASCADE" in sql

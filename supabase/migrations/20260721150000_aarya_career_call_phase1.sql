@@ -7,9 +7,11 @@
 --    reconcile those rows explicitly before creating the unique index.
 -- This migration intentionally does not delete or reconcile existing data.
 
+ALTER TABLE public.conversations
+  ADD CONSTRAINT conversations_id_candidate_unique UNIQUE (id, candidate_id);
+
 ALTER TABLE public.voice_sessions
-  ADD COLUMN IF NOT EXISTS conversation_id UUID
-    REFERENCES public.conversations(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS conversation_id UUID,
   ADD COLUMN IF NOT EXISTS consent_version TEXT,
   ADD COLUMN IF NOT EXISTS transcript_version INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS completion_reason TEXT
@@ -29,6 +31,13 @@ ALTER TABLE public.voice_sessions
       'failed'
     ));
 
+ALTER TABLE public.voice_sessions
+  ADD CONSTRAINT voice_sessions_id_candidate_unique UNIQUE (id, candidate_id),
+  ADD CONSTRAINT voice_sessions_conversation_candidate_fk
+    FOREIGN KEY (conversation_id, candidate_id)
+    REFERENCES public.conversations(id, candidate_id)
+    ON DELETE SET NULL (conversation_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_sessions_active_candidate
   ON public.voice_sessions(candidate_id)
   WHERE session_type = 'career_chat' AND status = 'active';
@@ -38,14 +47,16 @@ CREATE INDEX IF NOT EXISTS idx_voice_sessions_conversation
   WHERE conversation_id IS NOT NULL;
 
 CREATE TABLE public.career_interview_states (
-  session_id UUID PRIMARY KEY
-    REFERENCES public.voice_sessions(id) ON DELETE CASCADE,
+  session_id UUID PRIMARY KEY,
   candidate_id UUID NOT NULL
     REFERENCES public.candidates(id) ON DELETE CASCADE,
   state JSONB NOT NULL,
   state_version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT career_interview_states_session_candidate_fk
+    FOREIGN KEY (session_id, candidate_id)
+    REFERENCES public.voice_sessions(id, candidate_id) ON DELETE CASCADE
 );
 
 CREATE TRIGGER career_interview_states_updated_at
