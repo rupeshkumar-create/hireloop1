@@ -112,6 +112,24 @@ def classify_operation_error(error: BaseException) -> ClassifiedOperationError:
         return _classified("provider_timeout")
     if isinstance(error, ConnectionError):
         return _classified("provider_unavailable")
+    # DNS resolution and unreachable-network failures are commonly surfaced as
+    # OSError subclasses. Keep this after TimeoutError and ConnectionError so
+    # those more specific retry categories retain precedence, and do not label
+    # unrelated local OS errors (for example, a full disk) as network failures.
+    if isinstance(error, OSError):
+        os_detail = f"{type(error).__name__} {error}".lower()
+        if any(
+            token in os_detail
+            for token in (
+                "gaierror",
+                "dns",
+                "network unreachable",
+                "no route to host",
+                "name resolution",
+                "nodename nor servname",
+            )
+        ):
+            return _classified("network_unreachable")
 
     name = type(error).__name__.lower()
     detail = str(error).lower()
@@ -375,7 +393,20 @@ async def mark_operation_succeeded(
     result_type: str | None = None,
     result_id: uuid.UUID | None = None,
     message: str = "Your result is ready.",
+    allow_resultless: bool = False,
 ) -> AiOperationResponse | None:
+    normalized_result_type = result_type.strip() if result_type is not None else None
+    has_result_type = bool(normalized_result_type)
+    has_result_id = result_id is not None
+    if has_result_type != has_result_id:
+        raise AiOperationLifecycleError(
+            "Successful operations require both result_type and result_id"
+        )
+    if not has_result_type and not allow_resultless:
+        raise AiOperationLifecycleError(
+            "Successful operations require a result reference unless explicitly result-less"
+        )
+
     row = await db.fetchrow(
         f"""
         UPDATE public.ai_operations
@@ -395,7 +426,7 @@ async def mark_operation_succeeded(
         """,
         operation_id,
         _safe_text(message, limit=MAX_SAFE_ERROR_MESSAGE_LENGTH),
-        result_type,
+        normalized_result_type,
         result_id,
     )
     return _to_response(row) if row is not None else None
@@ -531,7 +562,9 @@ async def retry_owned_operation(
                o.resource_type, o.resource_id, o.idempotency_key,
                o.error_code, o.expires_at, j.payload, j.max_attempts
         FROM public.ai_operations o
-        LEFT JOIN public.background_jobs j ON j.id = o.background_job_id
+        JOIN public.background_jobs j
+          ON j.id = o.background_job_id
+         AND j.payload IS NOT NULL
         WHERE o.id = $1
           AND o.user_id = $2
           AND o.status = 'failed'
@@ -552,9 +585,14 @@ async def retry_owned_operation(
     if isinstance(expires_at, datetime) and expires_at <= current_time:
         raise AiOperationLifecycleError("This operation has expired")
 
-    payload = data.get("payload") or {}
+    payload = data.get("payload")
+    if payload is None:
+        raise AiOperationLifecycleError("The original queue payload is unavailable")
     if isinstance(payload, str):
-        payload = json.loads(payload)
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise AiOperationLifecycleError("The original queue payload is invalid") from exc
     if not isinstance(payload, dict):
         raise AiOperationLifecycleError("The original queue payload is unavailable")
     private_payload = dict(payload)

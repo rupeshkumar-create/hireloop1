@@ -103,6 +103,8 @@ def test_accepted_response_uses_the_approved_polling_contract() -> None:
         (TimeoutError("secret timeout detail"), "provider_timeout", True),
         (RuntimeError("HTTP 429 from provider"), "provider_rate_limited", True),
         (ConnectionError("provider unavailable"), "provider_unavailable", True),
+        (OSError("DNS network unreachable: secret.internal"), "network_unreachable", True),
+        (OSError("local disk is full"), "internal_error", False),
         (ValueError("malformed provider response"), "invalid_input", False),
         (RuntimeError("candidate profile is insufficient"), "insufficient_profile", False),
         (PermissionError("forbidden"), "permission_denied", False),
@@ -222,6 +224,54 @@ async def test_running_and_success_transitions_are_atomic_and_guarded() -> None:
     assert "status = 'queued'" in running_sql
     assert "status = 'running'" in success_sql
     assert "progress_percent = 100" in success_sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result_type", "result_id"),
+    [
+        (None, None),
+        ("application_kit", None),
+        (None, uuid.uuid4()),
+        ("   ", uuid.uuid4()),
+    ],
+)
+async def test_success_rejects_missing_or_partial_result_references(
+    result_type: str | None,
+    result_id: uuid.UUID | None,
+) -> None:
+    db = ScriptedConnection()
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.mark_operation_succeeded(
+            db,  # type: ignore[arg-type]
+            OPERATION_ID,
+            result_type=result_type,
+            result_id=result_id,
+        )
+
+    assert db.calls == []
+
+
+@pytest.mark.asyncio
+async def test_success_allows_explicitly_resultless_operation() -> None:
+    succeeded = _operation_row(
+        status="succeeded",
+        progress_percent=100,
+        stage="ready",
+        message="Maintenance is complete.",
+        completed_at=NOW,
+    )
+    db = ScriptedConnection(fetchrows=[succeeded])
+
+    response = await ai_operations.mark_operation_succeeded(
+        db,  # type: ignore[arg-type]
+        OPERATION_ID,
+        message="Maintenance is complete.",
+        allow_resultless=True,
+    )
+
+    assert response is not None and response.status == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -371,6 +421,50 @@ async def test_retry_rejects_non_retryable_failure() -> None:
             }
         ]
     )
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_missing_background_job() -> None:
+    db = ScriptedConnection(fetchrows=[None], fetchvals=["failed"])
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+    retry_query = db.calls[0][1]
+    assert "JOIN public.background_jobs" in retry_query
+    assert "j.payload IS NOT NULL" in retry_query
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, [], "{malformed json"])
+async def test_retry_rejects_missing_non_object_or_malformed_payload(payload: object) -> None:
+    retry_row = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": payload,
+        "max_attempts": 3,
+    }
+    db = ScriptedConnection(fetchrows=[retry_row])
 
     with pytest.raises(ai_operations.AiOperationLifecycleError):
         await ai_operations.retry_owned_operation(
