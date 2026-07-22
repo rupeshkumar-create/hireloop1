@@ -41,6 +41,11 @@ from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import currency_for_market, job_visible_for_market_sql, normalize_market
 from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
+from hireloop_api.services.career_interview import (
+    ActiveCareerInterviewNotFoundError,
+    CareerInterviewTurn,
+    record_turn_and_select_focus,
+)
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import (
     career_path_options,
@@ -359,6 +364,29 @@ class SendMessageRequest(BaseModel):
     content: str
     content_type: str = "text"  # 'text' | 'voice'
     job_id: uuid.UUID | None = None
+    voice_session_id: uuid.UUID | None = None
+
+
+async def prepare_career_interview_turn(
+    *,
+    db: asyncpg.Connection,
+    body: SendMessageRequest,
+    candidate_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> CareerInterviewTurn | None:
+    """Validate and persist a private career-call answer before invoking Aarya."""
+    if body.content_type != "voice" or body.voice_session_id is None:
+        return None
+    try:
+        return await record_turn_and_select_focus(
+            db,
+            session_id=body.voice_session_id,
+            candidate_id=candidate_id,
+            conversation_id=conversation_id,
+            answer=body.content,
+        )
+    except ActiveCareerInterviewNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Career call is no longer active") from exc
 
 
 def _match_explanation_job_id(body: SendMessageRequest, user_intent: str) -> str | None:
@@ -805,9 +833,7 @@ async def send_message(
 
     # #48: every turn is real LLM spend — cap per user per hour (cluster-wide).
     async with pool.acquire() as rl_db:
-        await check_rate_limit(
-            str(current_user["id"]), "chat_turn", max_per_hour=60, db=rl_db
-        )
+        await check_rate_limit(str(current_user["id"]), "chat_turn", max_per_hour=60, db=rl_db)
 
     # Pre-stream DB work on a short-lived connection — do not hold through SSE.
     async with pool.acquire() as db:
@@ -824,7 +850,14 @@ async def send_message(
         if not convo:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        candidate_id = str(convo["candidate_id"])
+        candidate_uuid = uuid.UUID(str(convo["candidate_id"]))
+        candidate_id = str(candidate_uuid)
+        career_interview_turn = await prepare_career_interview_turn(
+            db=db,
+            body=body,
+            candidate_id=candidate_uuid,
+            conversation_id=coerce_uuid(conversation_id),
+        )
         candidate_market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
         memory_summary = await CandidateMemoryService.get_memory_summary(db, candidate_id)
         career_facts = await CandidateMemoryService.get_career_facts(db, candidate_id)
@@ -996,6 +1029,10 @@ async def send_message(
         "career_path_prioritized_title": career_path_prioritized,
         "career_path_just_prioritized": career_path_just_prioritized,
         "career_path_pending_options": career_path_pending,
+        "career_interview_mode": career_interview_turn is not None,
+        "focus": career_interview_turn.focus if career_interview_turn else None,
+        "prompt_hint": career_interview_turn.prompt_hint if career_interview_turn else None,
+        "should_wrap": career_interview_turn.should_wrap if career_interview_turn else False,
     }
 
     graph = get_aarya_graph(settings)

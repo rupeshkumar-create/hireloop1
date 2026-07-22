@@ -37,6 +37,7 @@ from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.config import Settings
+from hireloop_api.models.career_interview import InterviewTopic
 from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
@@ -52,6 +53,35 @@ logger = structlog.get_logger()
 
 MAX_VOICE_TOOL_ROUNDS = 1
 MAX_TEXT_TOOL_ROUNDS = 3
+
+_CAREER_INTERVIEW_BLOCKED_TOOLS = frozenset({"update_profile", "update_job_preferences"})
+
+
+def blocked_career_interview_mutation(tool_name: str, career_interview_mode: bool) -> bool:
+    """Return whether a tool would mutate reviewed facts during a private call."""
+    return career_interview_mode and tool_name in _CAREER_INTERVIEW_BLOCKED_TOOLS
+
+
+def build_career_interview_prompt(
+    *,
+    focus: InterviewTopic | None,
+    prompt_hint: str,
+    should_wrap: bool,
+) -> str:
+    """Build strict, deterministic guidance for one private interview turn."""
+    focus_label = focus.value if focus is not None else "wrap_up"
+    guidance = (
+        "Private career interview mode is active. "
+        f"Current focus: {focus_label}. Prompt hint: {prompt_hint} "
+        "Briefly acknowledge the candidate's answer, then ask exactly one natural "
+        "follow-up question. Do not update the candidate profile or job preferences; "
+        "facts from this private call require candidate review. Do not infer age, gender, "
+        "religion, caste, disability, family status, accent, emotion, or personality."
+    )
+    if should_wrap:
+        guidance += " Wrap up now. Do not ask another discovery question."
+    return guidance
+
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -611,6 +641,10 @@ class AaryaState(TypedDict, total=False):
     career_path_prioritized_title: str | None
     career_path_just_prioritized: str | None
     career_path_pending_options: list[str]
+    career_interview_mode: bool
+    focus: InterviewTopic | None
+    prompt_hint: str | None
+    should_wrap: bool
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -1034,6 +1068,12 @@ def build_aarya_graph(settings: Settings) -> Any:
                 career_path_just_prioritized=state.get("career_path_just_prioritized"),
                 career_path_pending_options=state.get("career_path_pending_options"),
             )
+            if state.get("career_interview_mode"):
+                prompt += "\n\n" + build_career_interview_prompt(
+                    focus=state.get("focus"),
+                    prompt_hint=state.get("prompt_hint") or "Continue the interview naturally.",
+                    should_wrap=bool(state.get("should_wrap")),
+                )
             messages = [SystemMessage(content=prompt), *messages]
 
         prefetched = state.get("prefetched_jobs") or []
@@ -1176,6 +1216,20 @@ def build_aarya_graph(settings: Settings) -> Any:
         async def _execute_one(tool_call: dict[str, Any]) -> tuple[ToolMessage, int, list[dict]]:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
+            if blocked_career_interview_mutation(
+                tool_name, bool(state.get("career_interview_mode"))
+            ):
+                result = {
+                    "error": "Profile changes from this private call require candidate review."
+                }
+                return (
+                    ToolMessage(
+                        content=json.dumps(result),
+                        tool_call_id=tool_call["id"],
+                    ),
+                    0,
+                    [],
+                )
             user_id = state["user_id"]
             session_id = state["session_id"]
             local_actions = 0

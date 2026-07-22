@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+import asyncpg
+from pydantic import BaseModel, ConfigDict
 
 from hireloop_api.models.career_interview import (
+    ActiveCareerInterview,
     CareerInterviewCoverage,
     InterviewTopic,
     NextInterviewFocus,
@@ -78,6 +87,142 @@ _CONTRAST_FILLER_WORDS = frozenset(
         "yet",
     }
 )
+
+
+class CareerInterviewTurn(BaseModel):
+    """Typed result passed from persistence into Aarya's request state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    coverage: CareerInterviewCoverage
+    focus: InterviewTopic | None
+    prompt_hint: str
+    should_wrap: bool
+    state_version: int
+
+
+class ActiveCareerInterviewNotFoundError(LookupError):
+    """Raised when a requested call is not active and owned by the candidate."""
+
+
+def _coverage_from_jsonb(value: object) -> CareerInterviewCoverage:
+    if isinstance(value, str):
+        return CareerInterviewCoverage.model_validate_json(value)
+    if isinstance(value, Mapping):
+        return CareerInterviewCoverage.model_validate(dict(value))
+    raise ValueError("Career interview state must be a JSON object")
+
+
+def _active_interview_from_row(row: Mapping[str, Any]) -> ActiveCareerInterview:
+    return ActiveCareerInterview(
+        session_id=row["session_id"],
+        candidate_id=row["candidate_id"],
+        conversation_id=row["conversation_id"],
+        started_at=row["started_at"],
+        coverage=_coverage_from_jsonb(row["state"]),
+    )
+
+
+async def load_active_interview(
+    db: asyncpg.Connection,
+    session_id: UUID,
+    candidate_id: UUID,
+) -> ActiveCareerInterview | None:
+    """Load a candidate-owned active career interview at a typed boundary."""
+    row = await db.fetchrow(
+        """
+        SELECT vs.id AS session_id,
+               vs.candidate_id,
+               vs.conversation_id,
+               vs.started_at,
+               cis.state,
+               cis.state_version
+        FROM public.voice_sessions vs
+        JOIN public.career_interview_states cis
+          ON cis.session_id = vs.id AND cis.candidate_id = vs.candidate_id
+        WHERE vs.id = $1::uuid
+          AND vs.candidate_id = $2::uuid
+          AND vs.session_type = 'career_chat'
+          AND vs.status = 'active'
+          AND vs.conversation_id IS NOT NULL
+          AND vs.started_at IS NOT NULL
+        """,
+        session_id,
+        candidate_id,
+    )
+    return _active_interview_from_row(row) if row is not None else None
+
+
+async def record_turn_and_select_focus(
+    db: asyncpg.Connection,
+    *,
+    session_id: UUID,
+    candidate_id: UUID,
+    conversation_id: UUID,
+    answer: str,
+) -> CareerInterviewTurn:
+    """Persist one answer and deterministically select Aarya's next focus."""
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            SELECT vs.id AS session_id,
+                   vs.candidate_id,
+                   vs.conversation_id,
+                   vs.started_at,
+                   cis.state,
+                   cis.state_version
+            FROM public.voice_sessions vs
+            JOIN public.career_interview_states cis
+              ON cis.session_id = vs.id AND cis.candidate_id = vs.candidate_id
+            WHERE vs.id = $1::uuid
+              AND vs.candidate_id = $2::uuid
+              AND vs.session_type = 'career_chat'
+              AND vs.status = 'active'
+              AND vs.conversation_id IS NOT NULL
+              AND vs.started_at IS NOT NULL
+            FOR UPDATE OF cis
+            """,
+            session_id,
+            candidate_id,
+        )
+        if row is None or row["conversation_id"] != conversation_id:
+            raise ActiveCareerInterviewNotFoundError
+
+        interview = _active_interview_from_row(row)
+        updated = record_candidate_answer(interview.coverage, answer)
+        now = datetime.now(UTC)
+        started_at = interview.started_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=UTC)
+        elapsed_seconds = max(0.0, (now - started_at).total_seconds())
+        next_focus = select_next_focus(updated, elapsed_seconds=elapsed_seconds)
+        updated.current_focus = next_focus.topic
+        if next_focus.topic is not None and (
+            not updated.question_history or updated.question_history[-1] != next_focus.topic
+        ):
+            updated.question_history.append(next_focus.topic)
+
+        state_version = int(row["state_version"]) + 1
+        await db.execute(
+            """
+            UPDATE public.career_interview_states
+            SET state = $3::jsonb,
+                state_version = state_version + 1,
+                updated_at = NOW()
+            WHERE session_id = $1::uuid AND candidate_id = $2::uuid
+            """,
+            session_id,
+            candidate_id,
+            json.dumps(updated.model_dump(mode="json")),
+        )
+
+    return CareerInterviewTurn(
+        coverage=updated,
+        focus=next_focus.topic,
+        prompt_hint=next_focus.prompt_hint,
+        should_wrap=next_focus.should_wrap,
+        state_version=state_version,
+    )
 
 
 def _is_explicit_refusal(answer: str) -> bool:
