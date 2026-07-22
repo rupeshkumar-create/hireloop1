@@ -597,11 +597,14 @@ async def _complete_owned_career_call(
         recap = await db.fetchrow(
             """
             SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid AND role = 'assistant'
+            WHERE conversation_id = $1::uuid
+              AND voice_session_id = $2::uuid
+              AND role = 'assistant'
             ORDER BY created_at DESC
             LIMIT 1
             """,
             row["conversation_id"],
+            session_id,
         )
         summary = str(recap["content"]) if recap and recap.get("content") else None
         await db.execute(

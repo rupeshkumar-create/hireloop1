@@ -159,9 +159,11 @@ async def record_turn_and_select_focus(
     session_id: UUID,
     candidate_id: UUID,
     conversation_id: UUID,
-    answer: str,
+    message_id: UUID,
+    content: str,
+    content_type: str,
 ) -> CareerInterviewTurn:
-    """Persist one answer and deterministically select Aarya's next focus."""
+    """Atomically persist one private answer and advance its locked call state."""
     async with db.transaction():
         row = await db.fetchrow(
             """
@@ -180,7 +182,7 @@ async def record_turn_and_select_focus(
               AND vs.status = 'active'
               AND vs.conversation_id IS NOT NULL
               AND vs.started_at IS NOT NULL
-            FOR UPDATE OF cis
+            FOR UPDATE OF vs, cis
             """,
             session_id,
             candidate_id,
@@ -189,7 +191,7 @@ async def record_turn_and_select_focus(
             raise ActiveCareerInterviewNotFoundError
 
         interview = _active_interview_from_row(row)
-        updated = record_candidate_answer(interview.coverage, answer)
+        updated = record_candidate_answer(interview.coverage, content)
         now = datetime.now(UTC)
         started_at = interview.started_at
         if started_at.tzinfo is None:
@@ -212,6 +214,18 @@ async def record_turn_and_select_focus(
             session_id,
             candidate_id,
             json.dumps(updated.model_dump(mode="json")),
+        )
+        await db.execute(
+            """
+            INSERT INTO public.messages
+              (id, conversation_id, role, content, content_type, voice_session_id)
+            VALUES ($1::uuid, $2::uuid, 'user', $3, $4, $5::uuid)
+            """,
+            message_id,
+            conversation_id,
+            content,
+            content_type,
+            session_id,
         )
 
     return CareerInterviewTurn(

@@ -26,8 +26,8 @@ from hireloop_api.routes.chat import (
     SendMessageRequest,
     _memory_update_background,
     _persist_assistant_reply,
-    _persist_user_message,
     load_prompt_history,
+    load_recent_ordinary_assistant,
     prepare_career_interview_turn,
     resolve_chat_turn_routing,
 )
@@ -44,10 +44,16 @@ MIGRATION = (
 
 
 class _Transaction:
+    def __init__(self, db: InterviewDb) -> None:
+        self.db = db
+
     async def __aenter__(self) -> None:
+        self.db.in_transaction = True
         return None
 
-    async def __aexit__(self, *_args: object) -> None:
+    async def __aexit__(self, *args: object) -> None:
+        self.db.transaction_error = args[0]
+        self.db.in_transaction = False
         return None
 
 
@@ -65,9 +71,12 @@ class InterviewDb:
         self.state_version = 3
         self.fetch_queries: list[str] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.fail_message_insert = False
+        self.in_transaction = False
+        self.transaction_error: object = None
 
     def transaction(self) -> _Transaction:
-        return _Transaction()
+        return _Transaction(self)
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         normalized = " ".join(query.split())
@@ -85,11 +94,18 @@ class InterviewDb:
         }
 
     async def execute(self, query: str, *args: object) -> str:
+        assert self.in_transaction
         normalized = " ".join(query.split())
         self.execute_calls.append((normalized, args))
-        self.state = str(args[2])
-        self.state_version += 1
-        return "UPDATE 1"
+        if "UPDATE public.career_interview_states" in normalized:
+            self.state = str(args[2])
+            self.state_version += 1
+            return "UPDATE 1"
+        if "INSERT INTO public.messages" in normalized:
+            if self.fail_message_insert:
+                raise RuntimeError("message insert failed")
+            return "INSERT 0 1"
+        raise AssertionError(f"Unexpected execute: {normalized}")
 
 
 class CapturingChatModel:
@@ -287,52 +303,46 @@ def test_migration_durably_attributes_messages_to_voice_sessions() -> None:
     sql = MIGRATION.read_text()
 
     assert "ADD COLUMN IF NOT EXISTS voice_session_id UUID" in sql
-    assert "messages_voice_session_fk" in sql
-    assert "REFERENCES public.voice_sessions(id) ON DELETE SET NULL" in sql
+    assert "voice_sessions_id_conversation_unique" in sql
+    assert "messages_voice_session_conversation_fk" in sql
+    assert "FOREIGN KEY (voice_session_id, conversation_id)" in sql
+    assert "REFERENCES public.voice_sessions(id, conversation_id) ON DELETE CASCADE" in sql
     assert "idx_messages_voice_session" in sql
     assert "WHERE voice_session_id IS NOT NULL" in sql
 
 
 @pytest.mark.asyncio
-async def test_private_user_and_assistant_messages_persist_voice_session_attribution(
+async def test_assistant_persistence_is_idempotent_by_message_id_not_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = AsyncMock()
-    db.fetchrow.return_value = None
     voice_session_id = uuid4()
     conversation_id = uuid4()
-
-    await _persist_user_message(
-        db,
-        conversation_id=conversation_id,
-        content="My private career answer",
-        content_type="voice",
-        voice_session_id=voice_session_id,
-    )
-    user_sql, *user_args = db.execute.await_args.args
-    assert "voice_session_id" in user_sql
-    assert user_args[-1] == voice_session_id
-
-    db.reset_mock()
-    db.fetchrow.return_value = None
+    first_message_id = uuid4()
+    second_message_id = uuid4()
     monkeypatch.setattr(chat_routes, "get_db_pool", AsyncMock(return_value=_Pool(db)))
-    await _persist_assistant_reply(
-        object(),  # type: ignore[arg-type]
-        str(conversation_id),
-        "Private Aarya reply",
-        "private title",
-        voice_session_id=voice_session_id,
-    )
+    for message_id in (first_message_id, first_message_id, second_message_id):
+        await _persist_assistant_reply(
+            object(),  # type: ignore[arg-type]
+            str(conversation_id),
+            "Identical reply text",
+            "private title",
+            assistant_message_id=message_id,
+            voice_session_id=voice_session_id,
+        )
 
-    duplicate_sql, duplicate_conversation, duplicate_session = db.fetchrow.await_args.args
-    assert "voice_session_id IS NOT DISTINCT FROM $2::uuid" in duplicate_sql
-    assert duplicate_conversation == conversation_id
-    assert duplicate_session == voice_session_id
-    assistant_insert = next(
+    db.fetchrow.assert_not_awaited()
+    inserts = [
         call for call in db.execute.await_args_list if "INSERT INTO public.messages" in call.args[0]
-    )
-    assert "voice_session_id" in assistant_insert.args[0]
-    assert assistant_insert.args[-1] == voice_session_id
+    ]
+    assert len(inserts) == 3
+    assert all("ON CONFLICT (id) DO NOTHING" in call.args[0] for call in inserts)
+    assert [call.args[1] for call in inserts] == [
+        first_message_id,
+        first_message_id,
+        second_message_id,
+    ]
+    assert all(call.args[-1] == voice_session_id for call in inserts)
 
 
 @pytest.mark.asyncio
@@ -352,6 +362,18 @@ async def test_prompt_history_isolates_private_and_ordinary_transcripts() -> Non
     assert "voice_session_id = $2::uuid" in private_sql
     assert private_args == [conversation_id, voice_session_id]
     assert "IS NULL" not in private_sql
+
+
+@pytest.mark.asyncio
+async def test_career_path_recent_assistant_lookup_excludes_private_messages() -> None:
+    db = AsyncMock()
+    db.fetchrow.return_value = {"content": "ordinary reply"}
+
+    result = await load_recent_ordinary_assistant(db, uuid4())
+
+    sql = db.fetchrow.await_args.args[0]
+    assert "voice_session_id IS NULL" in sql
+    assert result == "ordinary reply"
 
 
 @pytest.mark.asyncio
@@ -375,7 +397,9 @@ async def test_record_turn_parses_jsonb_state_and_advances_focus(state_as_json: 
         session_id=db.session_id,
         candidate_id=db.candidate_id,
         conversation_id=db.conversation_id,
-        answer="I lead platform engineering at a fintech company.",
+        message_id=uuid4(),
+        content="I lead platform engineering at a fintech company.",
+        content_type="voice",
     )
 
     assert turn.focus is InterviewTopic.IMPACT
@@ -387,7 +411,10 @@ async def test_record_turn_parses_jsonb_state_and_advances_focus(state_as_json: 
     assert turn.state_version == 4
     persisted = json.loads(str(db.execute_calls[0][1][2]))
     assert persisted["current_focus"] == "impact"
-    assert "FOR UPDATE OF cis" in db.fetch_queries[0]
+    assert "FOR UPDATE OF vs, cis" in db.fetch_queries[0]
+    assert "UPDATE public.career_interview_states" in db.execute_calls[0][0]
+    assert "INSERT INTO public.messages" in db.execute_calls[1][0]
+    assert db.execute_calls[1][1][-1] == db.session_id
 
 
 @pytest.mark.asyncio
@@ -399,7 +426,9 @@ async def test_repeated_uncovered_focus_is_recorded_in_question_history() -> Non
         session_id=db.session_id,
         candidate_id=db.candidate_id,
         conversation_id=db.conversation_id,
-        answer="I'm not sure.",
+        message_id=uuid4(),
+        content="I'm not sure.",
+        content_type="voice",
     )
 
     assert turn.focus is InterviewTopic.CURRENT_WORK
@@ -407,6 +436,26 @@ async def test_repeated_uncovered_focus_is_recorded_in_question_history() -> Non
         InterviewTopic.CURRENT_WORK,
         InterviewTopic.CURRENT_WORK,
     ]
+
+
+@pytest.mark.asyncio
+async def test_private_message_insert_failure_aborts_the_locked_state_transaction() -> None:
+    db = InterviewDb()
+    db.fail_message_insert = True
+
+    with pytest.raises(RuntimeError, match="message insert failed"):
+        await record_turn_and_select_focus(
+            db,
+            session_id=db.session_id,
+            candidate_id=db.candidate_id,
+            conversation_id=db.conversation_id,
+            message_id=uuid4(),
+            content="A private answer",
+            content_type="voice",
+        )
+
+    assert db.transaction_error is RuntimeError
+    assert [call[0].split()[0] for call in db.execute_calls] == ["UPDATE", "INSERT"]
 
 
 @pytest.mark.asyncio
@@ -439,6 +488,7 @@ async def test_private_interview_turn_rejects_mismatch_or_inactive_session(
     with pytest.raises(HTTPException) as exc:
         await prepare_career_interview_turn(
             db=db,
+            message_id=uuid4(),
             body=SendMessageRequest(
                 content="My latest work was on payments.",
                 content_type="voice",
@@ -457,6 +507,7 @@ async def test_ordinary_voice_turn_remains_backward_compatible() -> None:
 
     turn = await prepare_career_interview_turn(
         db=db,
+        message_id=uuid4(),
         body=SendMessageRequest(content="Hello Aarya", content_type="voice"),
         candidate_id=db.candidate_id,
         conversation_id=db.conversation_id,

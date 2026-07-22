@@ -183,6 +183,9 @@ def test_career_call_migration_has_lifecycle_and_rls_contract() -> None:
     assert "recording_url IS NULL" in sql
     assert "conversations_id_candidate_unique" in sql
     assert "voice_sessions_id_candidate_unique" in sql
+    assert "voice_sessions_id_conversation_unique" in sql
+    assert "messages_voice_session_conversation_fk" in sql
+    assert "ON DELETE CASCADE" in sql
 
 
 @pytest.mark.asyncio
@@ -449,6 +452,25 @@ async def test_complete_updates_session_and_state_without_candidate_profile() ->
     assert any("transcript_version = transcript_version + 1" in sql for sql, _ in db.execute_calls)
     assert any("UPDATE public.career_interview_states" in sql for sql, _ in db.execute_calls)
     assert all("UPDATE public.candidates" not in sql for sql, _ in db.execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_complete_recap_ignores_ordinary_and_other_call_messages() -> None:
+    db = LifecycleDb.active_call()
+
+    await voice_sessions.complete_career_call(
+        db.session_id,
+        _complete_request(),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
+    recap_sql, recap_args = next(
+        call for call in db.fetchrow_calls if "FROM public.messages" in call[0]
+    )
+    assert "conversation_id = $1::uuid" in recap_sql
+    assert "voice_session_id = $2::uuid" in recap_sql
+    assert recap_args == (db.conversation_id, db.session_id)
 
 
 @pytest.mark.asyncio

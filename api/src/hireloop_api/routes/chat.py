@@ -412,6 +412,7 @@ def _memory_update_background(
 async def prepare_career_interview_turn(
     *,
     db: asyncpg.Connection,
+    message_id: uuid.UUID,
     body: SendMessageRequest,
     candidate_id: uuid.UUID,
     conversation_id: uuid.UUID,
@@ -425,7 +426,9 @@ async def prepare_career_interview_turn(
             session_id=body.voice_session_id,
             candidate_id=candidate_id,
             conversation_id=conversation_id,
-            answer=body.content,
+            message_id=message_id,
+            content=body.content,
+            content_type=body.content_type,
         )
     except ActiveCareerInterviewNotFoundError as exc:
         raise HTTPException(status_code=409, detail="Career call is no longer active") from exc
@@ -476,20 +479,17 @@ async def _persist_user_message(
     conversation_id: uuid.UUID,
     content: str,
     content_type: str,
-    voice_session_id: uuid.UUID | None,
 ) -> None:
-    """Persist a user turn with durable private-call attribution."""
+    """Persist an ordinary user turn; private turns use the locked repository."""
     await db.execute(
         """
-        INSERT INTO public.messages
-          (id, conversation_id, role, content, content_type, voice_session_id)
-        VALUES ($1::uuid, $2::uuid, 'user', $3, $4, $5::uuid)
+        INSERT INTO public.messages (id, conversation_id, role, content, content_type)
+        VALUES ($1::uuid, $2::uuid, 'user', $3, $4)
         """,
         uuid.uuid4(),
         conversation_id,
         content,
         content_type,
-        voice_session_id,
     )
 
 
@@ -532,42 +532,50 @@ async def load_prompt_history(
     )
 
 
+async def load_recent_ordinary_assistant(
+    db: asyncpg.Connection, conversation_id: uuid.UUID
+) -> str | None:
+    """Load career-path context without exposing private-call replies."""
+    row = await db.fetchrow(
+        """
+        SELECT content FROM public.messages
+        WHERE conversation_id = $1::uuid
+          AND role = 'assistant'
+          AND voice_session_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        conversation_id,
+    )
+    return str(row["content"]) if row and row.get("content") else None
+
+
 async def _persist_assistant_reply(
     settings: Settings,
     conversation_id: str,
     full_response: str,
     title_hint: str,
     *,
+    assistant_message_id: uuid.UUID,
     voice_session_id: uuid.UUID | None = None,
 ) -> None:
     """Save the assistant turn on a fresh pooled connection (avoids stale stream conn)."""
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
-        last_row = await conn.fetchrow(
-            """
-            SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid
-              AND role = 'assistant'
-              AND voice_session_id IS NOT DISTINCT FROM $2::uuid
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            coerce_uuid(conversation_id),
-            voice_session_id,
-        )
-        if last_row and (last_row["content"] or "").strip() == full_response.strip():
-            return
-        await conn.execute(
+        insert_result = await conn.execute(
             """
             INSERT INTO public.messages
               (id, conversation_id, role, content, content_type, voice_session_id)
             VALUES ($1::uuid, $2::uuid, 'assistant', $3, 'text', $4::uuid)
+            ON CONFLICT (id) DO NOTHING
             """,
-            uuid.uuid4(),
+            assistant_message_id,
             coerce_uuid(conversation_id),
             full_response,
             voice_session_id,
         )
+        if str(insert_result).endswith("0 0"):
+            return
         if voice_session_id is None:
             await conn.execute(
                 """
@@ -964,8 +972,10 @@ async def send_message(
 
         candidate_uuid = uuid.UUID(str(convo["candidate_id"]))
         candidate_id = str(candidate_uuid)
+        user_message_id = uuid.uuid4()
         career_interview_turn = await prepare_career_interview_turn(
             db=db,
+            message_id=user_message_id,
             body=body,
             candidate_id=candidate_uuid,
             conversation_id=coerce_uuid(conversation_id),
@@ -987,13 +997,13 @@ async def send_message(
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
 
-        await _persist_user_message(
-            db,
-            conversation_id=coerce_uuid(conversation_id),
-            content=body.content,
-            content_type=body.content_type,
-            voice_session_id=(body.voice_session_id if career_interview_mode else None),
-        )
+        if not career_interview_mode:
+            await _persist_user_message(
+                db,
+                conversation_id=coerce_uuid(conversation_id),
+                content=body.content,
+                content_type=body.content_type,
+            )
 
         career_path_row = await CareerPathService.get_latest(db, candidate_id)
         career_path_prioritized = (career_path_row or {}).get("prioritized_title") or None
@@ -1011,16 +1021,7 @@ async def send_message(
             else []
         )
 
-        last_assistant_row = await db.fetchrow(
-            """
-            SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid AND role = 'assistant'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            coerce_uuid(conversation_id),
-        )
-        recent_assistant = last_assistant_row["content"] if last_assistant_row else None
+        recent_assistant = await load_recent_ordinary_assistant(db, coerce_uuid(conversation_id))
 
         career_path_just_prioritized = None
         if turn_routing.normal_routing_enabled:
@@ -1152,6 +1153,7 @@ async def send_message(
 
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
+    assistant_message_id = uuid.uuid4()
     message_voice_session_id = body.voice_session_id if career_interview_mode else None
     title_hint = body.content[:60]
     application_kit_job_ids = turn_routing.application_kit_job_ids
@@ -1292,6 +1294,7 @@ async def send_message(
                         conversation_id,
                         full_response,
                         title_hint,
+                        assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
@@ -1337,6 +1340,7 @@ async def send_message(
                         conversation_id,
                         full_response,
                         title_hint,
+                        assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
@@ -1356,6 +1360,7 @@ async def send_message(
                         conversation_id,
                         full_response,
                         title_hint,
+                        assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
@@ -1437,6 +1442,7 @@ async def send_message(
                         conversation_id,
                         full_response,
                         title_hint,
+                        assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
@@ -1457,6 +1463,7 @@ async def send_message(
                         conversation_id,
                         full_response,
                         title_hint,
+                        assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:

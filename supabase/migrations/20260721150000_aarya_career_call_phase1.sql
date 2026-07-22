@@ -46,13 +46,31 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint
-    WHERE conname = 'messages_voice_session_fk'
+    WHERE conname = 'voice_sessions_id_conversation_unique'
+      AND conrelid = 'public.voice_sessions'::regclass
+  ) THEN
+    ALTER TABLE public.voice_sessions
+      ADD CONSTRAINT voice_sessions_id_conversation_unique
+      UNIQUE (id, conversation_id);
+  END IF;
+END
+$migration$;
+
+ALTER TABLE public.messages
+  DROP CONSTRAINT IF EXISTS messages_voice_session_fk;
+
+DO $migration$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'messages_voice_session_conversation_fk'
       AND conrelid = 'public.messages'::regclass
   ) THEN
     ALTER TABLE public.messages
-      ADD CONSTRAINT messages_voice_session_fk
-      FOREIGN KEY (voice_session_id)
-      REFERENCES public.voice_sessions(id) ON DELETE SET NULL;
+      ADD CONSTRAINT messages_voice_session_conversation_fk
+      FOREIGN KEY (voice_session_id, conversation_id)
+      REFERENCES public.voice_sessions(id, conversation_id) ON DELETE CASCADE;
   END IF;
 END
 $migration$;
