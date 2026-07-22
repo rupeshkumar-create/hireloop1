@@ -64,6 +64,8 @@ class InterviewDb:
         self.candidate_id = uuid4()
         self.conversation_id = uuid4()
         self.started_at = datetime.now(UTC) - timedelta(seconds=75)
+        self.transaction_now = datetime.now(UTC)
+        self.authoritative_now = self.transaction_now
         state = CareerInterviewCoverage(
             current_focus=InterviewTopic.CURRENT_WORK,
             question_history=[InterviewTopic.CURRENT_WORK],
@@ -71,6 +73,7 @@ class InterviewDb:
         self.state: dict[str, Any] | str = json.dumps(state) if state_as_json else state
         self.state_version = 3
         self.fetch_queries: list[str] = []
+        self.fetchval_queries: list[str] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.fail_message_insert = False
         self.in_transaction = False
@@ -93,10 +96,17 @@ class InterviewDb:
             "candidate_id": self.candidate_id,
             "conversation_id": self.conversation_id,
             "started_at": self.started_at,
-            "db_now": datetime.now(UTC),
+            "db_now": self.transaction_now,
             "state": self.state,
             "state_version": self.state_version,
         }
+
+    async def fetchval(self, query: str, *args: object) -> datetime:
+        assert self.in_transaction
+        assert not args
+        normalized = " ".join(query.split())
+        self.fetchval_queries.append(normalized)
+        return self.authoritative_now
 
     async def execute(self, query: str, *args: object) -> str:
         assert self.in_transaction
@@ -495,6 +505,31 @@ async def test_expired_turn_completes_call_without_advancing_state_or_message() 
     assert "WHERE id = $1::uuid" in db.execute_calls[0][0]
     assert "status = 'active'" in db.execute_calls[0][0]
     assert db.transaction_error is None
+
+
+@pytest.mark.asyncio
+async def test_lock_wait_crossing_deadline_uses_fresh_database_clock() -> None:
+    db = InterviewDb()
+    boundary = datetime.now(UTC)
+    db.started_at = boundary - timedelta(seconds=899)
+    db.transaction_now = boundary
+    db.authoritative_now = boundary + timedelta(seconds=2)
+
+    with pytest.raises(career_interview.CareerInterviewExpiredError):
+        await record_turn_and_select_focus(
+            db,
+            session_id=db.session_id,
+            candidate_id=db.candidate_id,
+            conversation_id=db.conversation_id,
+            message_id=uuid4(),
+            content="This arrived while the row lock was held.",
+            content_type="voice",
+        )
+
+    assert "FOR UPDATE OF vs, cis" in db.fetch_queries[0]
+    assert db.fetchval_queries == ["SELECT clock_timestamp()"]
+    assert db.session_status == "completed"
+    assert all("INSERT INTO public.messages" not in sql for sql, _ in db.execute_calls)
 
 
 @pytest.mark.asyncio

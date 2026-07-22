@@ -175,7 +175,6 @@ async def record_turn_and_select_focus(
                    vs.candidate_id,
                    vs.conversation_id,
                    vs.started_at,
-                   NOW() AS db_now,
                    cis.state,
                    cis.state_version
             FROM public.voice_sessions vs
@@ -196,7 +195,7 @@ async def record_turn_and_select_focus(
             raise ActiveCareerInterviewNotFoundError
 
         interview = _active_interview_from_row(row)
-        now = row["db_now"]
+        now = await db.fetchval("SELECT clock_timestamp()")
         if not isinstance(now, datetime):
             raise ValueError("Database clock must be a timestamp")
         if now.tzinfo is None:
@@ -214,13 +213,14 @@ async def record_turn_and_select_focus(
                     ended_at = started_at + INTERVAL '15 minutes',
                     duration_secs = 900,
                     completion_reason = 'time_limit',
-                    updated_at = NOW()
+                    updated_at = $3::timestamptz
                 WHERE id = $1::uuid
                   AND candidate_id = $2::uuid
                   AND status = 'active'
                 """,
                 session_id,
                 candidate_id,
+                now,
             )
         else:
             updated = record_candidate_answer(interview.coverage, content)
