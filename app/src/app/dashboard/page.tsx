@@ -5,6 +5,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardClient } from "./DashboardClient";
 import { VALID_JOBS_TABS, VALID_PANELS, VALID_PROFILE_TABS, LEGACY_PANEL_REDIRECT, LEGACY_JOBS_TAB_REDIRECT, type JobsTab, type PanelId, type ProfileTabId } from "@/lib/dashboard/panel-types";
@@ -39,6 +40,14 @@ type DashboardApiProfile = {
   candidate?: Partial<DashboardCandidate> & { id: string } | null;
   resume_filename?: string | null;
 };
+
+const voiceSessionSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    session_type: z.string(),
+    status: z.enum(["scheduled", "active", "completed", "no_show", "cancelled"]),
+  })
+  .passthrough();
 
 function candidateFromApi(
   candidate: DashboardApiProfile["candidate"],
@@ -239,14 +248,23 @@ export default async function DashboardPage({
   }
 
   // ── Profile readiness (frontend gates only — match APIs unchanged) ────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const voiceResult = await (supabase as any)
-    .from("voice_sessions")
-    .select("id", { count: "exact", head: true })
-    .eq("candidate_id", candidateId)
-    .eq("status", "completed") as { count: number | null };
-
-  const hasVoiceSession = (voiceResult.count ?? 0) > 0;
+  // Private session metadata crosses the authenticated API boundary; the
+  // dashboard never reads voice-session rows or transcripts from Supabase.
+  let hasVoiceSession = false;
+  if (token) {
+    try {
+      const voiceRes = await fetch(`${API_URL}/api/v1/voice-sessions`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (voiceRes.ok) {
+        const parsed = z.array(voiceSessionSummarySchema).safeParse(await voiceRes.json());
+        hasVoiceSession = parsed.success && parsed.data.some((item) => item.status === "completed");
+      }
+    } catch {
+      // Readiness is advisory; keep rendering if the API is temporarily unavailable.
+    }
+  }
   const profileForReadiness = {
     candidate: {
       location_city: candidateRaw.location_city,

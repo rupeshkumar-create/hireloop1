@@ -71,6 +71,9 @@ async def test_career_chat_reminder_uses_private_call_label_and_deep_link(
     assert "voice=deep&amp;scheduled_session_id=" in rendered["html"]
     assert "Start your private 15-minute call" in rendered["html"]
     assert in_app["title"] == "Reminder: Private 15-minute career call tomorrow"
+    assert in_app["data"]["deep_link"] == (
+        f"/dashboard?voice=deep&scheduled_session_id={session_id}"
+    )
 
 
 class _BookingDb:
@@ -115,6 +118,9 @@ async def test_career_chat_booking_confirmation_renders_as_a_noun(
     assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
     assert "Start your private 15-minute call" in rendered["html"]
     assert in_app["title"] == "Private 15-minute career call booked"
+    assert in_app["data"]["deep_link"] == (
+        f"/dashboard?voice=deep&scheduled_session_id={session_id}"
+    )
 
 
 def test_mock_interview_email_details_keep_existing_label_and_dashboard_cta() -> None:

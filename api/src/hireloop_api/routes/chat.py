@@ -881,6 +881,7 @@ async def list_sessions(
                (
                  SELECT count(*) FROM public.messages m
                  WHERE m.conversation_id = c.id
+                   AND m.voice_session_id IS NULL
                ) as message_count
         FROM public.conversations c
         JOIN public.candidates ca ON ca.id = c.candidate_id
@@ -920,6 +921,7 @@ async def get_user_chat_history(
         FROM public.messages m
         WHERE m.conversation_id = $1::uuid
           AND m.role IN ('user', 'assistant')
+          AND m.voice_session_id IS NULL
         ORDER BY m.created_at ASC
         LIMIT $2 OFFSET $3
         """,
@@ -932,6 +934,7 @@ async def get_user_chat_history(
         SELECT count(*) FROM public.messages m
         WHERE m.conversation_id = $1::uuid
           AND m.role IN ('user', 'assistant')
+          AND m.voice_session_id IS NULL
         """,
         uuid.UUID(convo_id),
     )
@@ -1519,7 +1522,10 @@ async def get_messages(
         FROM public.messages m
         JOIN public.conversations c ON c.id = m.conversation_id
         JOIN public.candidates ca ON ca.id = c.candidate_id
-        WHERE m.conversation_id = $1::uuid AND ca.user_id = $2 AND c.deleted_at IS NULL
+        WHERE m.conversation_id = $1::uuid
+          AND ca.user_id = $2
+          AND c.deleted_at IS NULL
+          AND m.voice_session_id IS NULL
         ORDER BY m.created_at ASC
         LIMIT $3 OFFSET $4
         """,

@@ -48,11 +48,19 @@ def _voice_session_email_details(
 ) -> tuple[str, str]:
     label = session_type.replace("_", " ").title()
     cta_url = f"{_app_base(settings)}/dashboard"
-    if session_type == "career_chat":
-        safe_session_id = str(uuid.UUID(session_id))
-        query = urlencode({"voice": "deep", "scheduled_session_id": safe_session_id})
-        return "Private 15-minute career call", f"{cta_url}?{query}"
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=session_type)
+    if deep_link is not None:
+        return "Private 15-minute career call", f"{_app_base(settings)}{deep_link}"
     return label, cta_url
+
+
+def _voice_session_deep_link(*, session_id: str, session_type: str) -> str | None:
+    """Return a validated in-app path for private career calls only."""
+    if session_type != "career_chat":
+        return None
+    safe_session_id = str(uuid.UUID(session_id))
+    query = urlencode({"voice": "deep", "scheduled_session_id": safe_session_id})
+    return f"/dashboard?{query}"
 
 
 def _voice_session_cta_label(session_type: str) -> str:
@@ -613,6 +621,7 @@ async def notify_interview_booked(
     label, cta_url = _voice_session_email_details(
         settings, session_id=session_id, session_type=session_type
     )
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=session_type)
     when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
     channels = ["in_app"]
     email_result = await send_category_email(
@@ -642,7 +651,11 @@ async def notify_interview_booked(
         notif_type="interview_booked",
         title=f"{label} booked",
         body=f"Scheduled for {when}",
-        data={"session_id": session_id, "dedupe_key": f"booked:{session_id}"},
+        data={
+            "session_id": session_id,
+            "dedupe_key": f"booked:{session_id}",
+            **({"deep_link": deep_link} if deep_link is not None else {}),
+        },
         channels=channels,
     )
 
@@ -701,6 +714,7 @@ async def send_interview_reminder_email(
     label, cta_url = _voice_session_email_details(
         settings, session_id=session_id, session_type=canonical_session_type
     )
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=canonical_session_type)
     when = canonical_scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
     result = await send_category_email(
         db,
@@ -726,7 +740,11 @@ async def send_interview_reminder_email(
             notif_type="interview_reminder",
             title=f"Reminder: {label} tomorrow",
             body=f"Your session is at {when}",
-            data={"session_id": session_id, "dedupe_key": dedupe_key},
+            data={
+                "session_id": session_id,
+                "dedupe_key": dedupe_key,
+                **({"deep_link": deep_link} if deep_link is not None else {}),
+            },
             channels=["in_app", "email"],
         )
     return result
