@@ -68,6 +68,25 @@ def test_next_interview_focus_requires_an_explicit_topic() -> None:
         NextInterviewFocus(prompt_hint="Continue the interview.")
 
 
+@pytest.mark.parametrize(
+    ("invalid_state", "invalid_value"),
+    [
+        ({"schema_version": 2}, 2),
+        ({"turn_count": -1}, -1),
+        ({"turn_count": "1"}, "1"),
+        ({"unexpected_field": True}, True),
+    ],
+)
+def test_coverage_rejects_invalid_persisted_contract(
+    invalid_state: dict[str, object],
+    invalid_value: object,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        CareerInterviewCoverage.model_validate(invalid_state)
+
+    assert str(invalid_value) in str(error.value)
+
+
 def test_first_focus_is_current_work_before_time_limit() -> None:
     result = select_next_focus(CareerInterviewCoverage(), elapsed_seconds=60)
 
@@ -111,6 +130,87 @@ def test_declined_compensation_is_not_selected_again() -> None:
     assert next_focus.topic is InterviewTopic.RELOCATION
 
 
+@pytest.mark.parametrize("answer", ["I don't want to", "I do not want to"])
+def test_minimal_refusal_is_declined(answer: str) -> None:
+    state = CareerInterviewCoverage(current_focus=InterviewTopic.COMPENSATION)
+
+    updated = record_candidate_answer(state, answer)
+
+    assert updated.declined_topics == [InterviewTopic.COMPENSATION]
+    assert updated.covered_topics == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["I don't want to go into that", "I do not want to go into that"],
+)
+def test_general_want_to_refusal_is_declined(answer: str) -> None:
+    state = CareerInterviewCoverage(current_focus=InterviewTopic.COMPENSATION)
+
+    updated = record_candidate_answer(state, answer)
+
+    assert updated.declined_topics == [InterviewTopic.COMPENSATION]
+    assert updated.covered_topics == []
+
+
+@pytest.mark.parametrize(
+    ("topic", "answer"),
+    [
+        (
+            InterviewTopic.TARGET_ROLES,
+            "I don't want to manage people; I prefer an IC role",
+        ),
+        (
+            InterviewTopic.RELOCATION,
+            "I don't want to relocate, but remote work is fine",
+        ),
+    ],
+)
+def test_want_to_preference_is_covered_not_declined(
+    topic: InterviewTopic,
+    answer: str,
+) -> None:
+    state = CareerInterviewCoverage(current_focus=topic)
+
+    updated = record_candidate_answer(state, answer)
+
+    assert updated.covered_topics == [topic]
+    assert updated.declined_topics == []
+
+
+@pytest.mark.parametrize(
+    ("topic", "answer"),
+    [
+        (
+            InterviewTopic.RELOCATION,
+            "I prefer not to relocate; remote work is fine",
+        ),
+        (
+            InterviewTopic.TARGET_ROLES,
+            "I'd rather not manage people; an IC role suits me",
+        ),
+        (
+            InterviewTopic.COMPENSATION,
+            "I prefer not to share my current CTC, but my target is 25 LPA",
+        ),
+        (
+            InterviewTopic.WORK_MODE,
+            "I'd rather not work night shifts; day shifts are fine",
+        ),
+    ],
+)
+def test_prefer_not_with_meaningful_detail_is_covered_not_declined(
+    topic: InterviewTopic,
+    answer: str,
+) -> None:
+    state = CareerInterviewCoverage(current_focus=topic)
+
+    updated = record_candidate_answer(state, answer)
+
+    assert updated.covered_topics == [topic]
+    assert updated.declined_topics == []
+
+
 def test_wraps_at_exactly_fourteen_minutes() -> None:
     result = select_next_focus(CareerInterviewCoverage(), elapsed_seconds=14 * 60)
 
@@ -131,6 +231,92 @@ def test_non_answer_is_not_covered_and_is_asked_again() -> None:
     assert updated.declined_topics == []
     assert updated.turn_count == 1
     assert next_focus.topic is InterviewTopic.CURRENT_WORK
+
+
+def test_long_standalone_uncertainty_is_not_covered() -> None:
+    state = CareerInterviewCoverage(current_focus=InterviewTopic.SKILLS)
+
+    updated = record_candidate_answer(
+        state,
+        "Honestly I am not sure what my strongest skills are",
+    )
+
+    assert updated.covered_topics == []
+    assert updated.declined_topics == []
+
+
+def test_comma_only_uncertainty_is_not_covered() -> None:
+    state = CareerInterviewCoverage(current_focus=InterviewTopic.SKILLS)
+
+    updated = record_candidate_answer(state, "I don't know, maybe")
+
+    assert updated.covered_topics == []
+    assert updated.declined_topics == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I don't know my official title; I lead platform engineering",
+        "I don't know the exact stack. I mainly use Python and Go",
+    ],
+)
+def test_uncertainty_with_substantive_hard_boundary_continuation_is_covered(
+    answer: str,
+) -> None:
+    state = CareerInterviewCoverage(current_focus=InterviewTopic.SKILLS)
+
+    updated = record_candidate_answer(state, answer)
+
+    assert updated.covered_topics == [InterviewTopic.SKILLS]
+    assert updated.declined_topics == []
+
+
+@pytest.mark.parametrize(
+    ("topic", "answer"),
+    [
+        (
+            InterviewTopic.NOTICE_PERIOD,
+            "I'm not sure of the exact date, but my notice period is 30 days.",
+        ),
+        (
+            InterviewTopic.COMPENSATION,
+            "I don't know the exact number, but my target is 25 LPA.",
+        ),
+        (
+            InterviewTopic.COMPENSATION,
+            "I don't want to skip this; my expected CTC is 25 LPA.",
+        ),
+    ],
+)
+def test_substantive_mixed_answer_is_covered_and_not_reasked(
+    topic: InterviewTopic,
+    answer: str,
+) -> None:
+    earlier_topics = [
+        candidate_topic
+        for candidate_topic in (
+            InterviewTopic.CURRENT_WORK,
+            InterviewTopic.IMPACT,
+            InterviewTopic.SKILLS,
+            InterviewTopic.TARGET_ROLES,
+            InterviewTopic.LOCATION_SCOPE,
+            InterviewTopic.WORK_MODE,
+            InterviewTopic.NOTICE_PERIOD,
+        )
+        if candidate_topic is not topic
+    ]
+    state = CareerInterviewCoverage(
+        covered_topics=earlier_topics,
+        current_focus=topic,
+    )
+
+    updated = record_candidate_answer(state, answer)
+    next_focus = select_next_focus(updated, elapsed_seconds=200)
+
+    assert topic in updated.covered_topics
+    assert topic not in updated.declined_topics
+    assert next_focus.topic is not topic
 
 
 def test_record_candidate_answer_does_not_mutate_input() -> None:

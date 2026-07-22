@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from hireloop_api.models.career_interview import (
     CareerInterviewCoverage,
     InterviewTopic,
@@ -43,19 +45,71 @@ PROMPT_HINTS: dict[InterviewTopic, str] = {
 }
 
 _WRAP_HINT = "Recap what was learned, name any uncertainty, and close the interview warmly."
-_DECLINE_PHRASES: tuple[str, ...] = (
-    "rather not",
-    "prefer not",
-    "don't want to",
-    "do not want to",
-    "skip this",
+_PREFER_NOT_REFUSAL_PATTERN = re.compile(r"\b(?:rather|prefer) not\b")
+_SKIP_REFUSAL_PATTERN = re.compile(r"\bskip this\b")
+_WANT_TO_REFUSAL_PATTERN = re.compile(
+    r"^\s*(?:i\s+)?(?:don't|do not) want to"
+    r"(?:\s+(?:discuss|share|answer|talk(?: about)?|go into|say|tell)\b"
+    r"(?:\s+[^,;.!?]+)?)?[.!?]*\s*$"
 )
-_NON_ANSWER_PHRASES: tuple[str, ...] = (
-    "don't know",
-    "do not know",
-    "not sure",
-    "no idea",
+_NEGATED_SKIP_PATTERN = re.compile(r"\b(?:(?:don't|do not) want to|not) skip this\b")
+_NON_ANSWER_PATTERN = re.compile(r"\b(?:don't know|do not know|not sure|no idea)\b")
+_CONTINUATION_PATTERN = re.compile(
+    r"(?:\b(?:but|however|although|though|yet)\b|[;.!?])(?P<detail>.*)$"
 )
+_SUBSTANTIVE_FACT_PATTERN = re.compile(r"\b\d|\b(?:lpa|ctc|days?)\b")
+_CONTRAST_FILLER_WORDS = frozenset(
+    {
+        "am",
+        "do",
+        "don't",
+        "honestly",
+        "i",
+        "idea",
+        "just",
+        "know",
+        "maybe",
+        "no",
+        "not",
+        "perhaps",
+        "really",
+        "still",
+        "sure",
+        "yet",
+    }
+)
+
+
+def _is_explicit_refusal(answer: str) -> bool:
+    refusal_candidate = _NEGATED_SKIP_PATTERN.sub("", answer)
+    if _WANT_TO_REFUSAL_PATTERN.fullmatch(refusal_candidate) and not _has_meaningful_continuation(
+        refusal_candidate
+    ):
+        return True
+    if _PREFER_NOT_REFUSAL_PATTERN.search(refusal_candidate):
+        return not _has_meaningful_continuation(refusal_candidate)
+    return _SKIP_REFUSAL_PATTERN.search(refusal_candidate) is not None
+
+
+def _has_meaningful_continuation(answer: str) -> bool:
+    for match in _CONTINUATION_PATTERN.finditer(answer):
+        detail = match.group("detail")
+        if _SUBSTANTIVE_FACT_PATTERN.search(detail):
+            return True
+        if _NON_ANSWER_PATTERN.search(detail):
+            continue
+        detail_words = re.findall(r"[a-z']+", detail)
+        if any(word not in _CONTRAST_FILLER_WORDS for word in detail_words):
+            return True
+    return False
+
+
+def _is_standalone_non_answer(answer: str) -> bool:
+    if not _NON_ANSWER_PATTERN.search(answer):
+        return False
+    if _SUBSTANTIVE_FACT_PATTERN.search(answer) or _has_meaningful_continuation(answer):
+        return False
+    return True
 
 
 def select_next_focus(
@@ -88,12 +142,12 @@ def record_candidate_answer(
         return updated
 
     normalized_answer = answer.casefold()
-    if any(phrase in normalized_answer for phrase in _DECLINE_PHRASES):
+    if _is_explicit_refusal(normalized_answer):
         if topic not in updated.declined_topics:
             updated.declined_topics.append(topic)
         return updated
 
-    is_non_answer = any(phrase in normalized_answer for phrase in _NON_ANSWER_PHRASES)
+    is_non_answer = _is_standalone_non_answer(normalized_answer)
     if not is_non_answer and len(answer.split()) >= 3 and topic not in updated.covered_topics:
         updated.covered_topics.append(topic)
 

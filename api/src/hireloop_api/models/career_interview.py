@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InterviewTopic(StrEnum):
@@ -29,17 +30,21 @@ class InterviewTopic(StrEnum):
 class CareerInterviewCoverage(BaseModel):
     """Versioned interview progress stored for a single session."""
 
-    schema_version: int = 1
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
     covered_topics: list[InterviewTopic] = Field(default_factory=list)
     declined_topics: list[InterviewTopic] = Field(default_factory=list)
     question_history: list[InterviewTopic] = Field(default_factory=list)
     current_focus: InterviewTopic | None = None
-    turn_count: int = 0
+    turn_count: int = Field(default=0, ge=0, strict=True)
     completion_reason: str | None = None
 
 
 class NextInterviewFocus(BaseModel):
     """Policy decision for Aarya's next interview turn."""
+
+    model_config = ConfigDict(extra="forbid")
 
     topic: InterviewTopic | None
     prompt_hint: str
@@ -48,6 +53,8 @@ class NextInterviewFocus(BaseModel):
 
 class ActiveCareerInterview(BaseModel):
     """Identity and coverage state for an active interview session."""
+
+    model_config = ConfigDict(extra="forbid")
 
     session_id: UUID
     candidate_id: UUID
