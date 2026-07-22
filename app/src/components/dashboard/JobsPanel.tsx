@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { MatchedJob } from "@/lib/api/matches";
 import type { JobsTab } from "@/lib/dashboard/panel-types";
 import { MatchFeed } from "@/components/jobs/MatchFeed";
@@ -8,6 +9,10 @@ import { SavedJobsPanel } from "@/components/jobs/SavedJobsPanel";
 import { JobTrackerPanel } from "@/components/jobs/JobTrackerPanel";
 import { JobsQueueStatusBar } from "@/components/jobs/JobsQueueStatusBar";
 import { ProfileBoosters } from "@/components/onboarding/ProfileBoosters";
+import { ScheduleCareerCall } from "@/components/chat/ScheduleCareerCall";
+import { Calendar, Phone } from "@/components/brand/icons";
+import { Button } from "@/components/ui";
+import { BTN_PRIMARY } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 
 export type JobsPanelProps = {
@@ -51,6 +56,7 @@ export function JobsPanel({
 }: JobsPanelProps) {
   const [tab, setTab] = useState<JobsTab>(initialTab ?? "matches");
   const [kitsReadyCount, setKitsReadyCount] = useState(0);
+  const [schedulingCareerCall, setSchedulingCareerCall] = useState(false);
 
   function selectTab(next: JobsTab) {
     setTab(next);
@@ -82,6 +88,43 @@ export function JobsPanel({
           />
         </div>
       )}
+
+      <section className="shrink-0 border-b border-ink-100 px-5 py-4" aria-labelledby="career-call-heading">
+        <div className="space-y-3">
+          <div>
+            <h3 id="career-call-heading" className="text-small font-semibold text-ink-900">
+              15-minute career call with Aarya
+            </h3>
+            <p className="mt-1 text-micro text-ink-600">
+              Your transcript stays private. Audio is not saved.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/dashboard?voice=deep&panel=jobs"
+              className={cn(BTN_PRIMARY, "h-9 gap-2 px-3 text-small")}
+            >
+              <Phone className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              Start now
+            </Link>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setSchedulingCareerCall((current) => !current)}
+              leftIcon={<Calendar className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />}
+              aria-expanded={schedulingCareerCall}
+              aria-controls="career-call-scheduler"
+            >
+              Schedule for later
+            </Button>
+          </div>
+          {schedulingCareerCall && (
+            <div id="career-call-scheduler">
+              <ScheduleCareerCall />
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="flex items-center gap-1 px-5 pt-4 border-b border-ink-100 shrink-0">
         <button

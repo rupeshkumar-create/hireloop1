@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase,
-  Calendar,
   Check,
   Circle,
   Eye,
@@ -46,7 +45,6 @@ import { FadeUp } from "@/components/ui/motion";
 import { cn } from "@/lib/utils";
 import { BTN_PRIMARY } from "@/lib/button-classes";
 import { Button, Card, CardBody, useToast } from "@/components/ui";
-import { ScheduleCareerCall } from "@/components/chat/ScheduleCareerCall";
 
 const VISIBILITY_OPTIONS: {
   id: CandidateVisibility;
@@ -264,7 +262,6 @@ export function HomePanel({
   const [intelCompleteness, setIntelCompleteness] = useState<number | null>(null);
   const [publishingPublic, setPublishingPublic] = useState(false);
   const [togglingPublic, setTogglingPublic] = useState(false);
-  const [schedulingCareerCall, setSchedulingCareerCall] = useState(false);
 
   const resolvedName =
     sanitizeDisplayName(profileData?.user?.full_name) ??
@@ -576,34 +573,15 @@ export function HomePanel({
       <CollapsibleSection title="Voice call" description="15-minute deep dive with Aarya">
         <div className="space-y-3 pt-3">
           <p className="text-micro text-ink-600">
-            A private career conversation to understand your experience and what you want next.
+            Discuss jobs, salary, or positioning — same thread as chat.
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href="/dashboard?voice=deep&panel=jobs"
-              className={cn(BTN_PRIMARY, "h-10 gap-2 px-4 text-body")}
-            >
-              <Phone className="h-3.5 w-3.5" strokeWidth={2} />
-              Start now
-            </Link>
-            <Button
-              variant="secondary"
-              onClick={() => setSchedulingCareerCall((current) => !current)}
-              leftIcon={<Calendar className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />}
-              aria-expanded={schedulingCareerCall}
-              aria-controls="career-call-scheduler"
-            >
-              Schedule for later
-            </Button>
-          </div>
-          <p className="text-micro text-ink-500">
-            Your transcript stays private. Audio is not saved.
-          </p>
-          {schedulingCareerCall && (
-            <div id="career-call-scheduler">
-              <ScheduleCareerCall />
-            </div>
-          )}
+          <Link
+            href="/dashboard?voice=deep&panel=jobs"
+            className={cn(BTN_PRIMARY, "h-10 gap-2 px-4 text-body")}
+          >
+            <Phone className="h-3.5 w-3.5" strokeWidth={2} />
+            Start call
+          </Link>
         </div>
       </CollapsibleSection>
 
