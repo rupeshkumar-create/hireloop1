@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 from hireloop_api.services.role_jd_fetch import (
@@ -21,7 +23,14 @@ def test_validate_public_url_rejects_localhost() -> None:
         _validate_public_url("http://localhost/jobs/1")
 
 
-def test_validate_public_url_accepts_https() -> None:
+def test_validate_public_url_accepts_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("99.86.1.1", 0)),
+        ],
+    )
     assert _validate_public_url("https://boards.greenhouse.io/acme/jobs/123") == (
         "https://boards.greenhouse.io/acme/jobs/123"
     )

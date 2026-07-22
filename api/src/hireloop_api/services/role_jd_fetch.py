@@ -187,9 +187,25 @@ class RoleImportError(Exception):
         self.warnings = warnings or []
 
 
+_WELL_KNOWN_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _addr_is_blocked(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Block any non-public address. is_link_local covers the cloud metadata
     IP (169.254.169.254); reserved/multicast/unspecified close the rest."""
+    if isinstance(addr, ipaddress.IPv6Address):
+        # Treat mapped addresses as IPv6 rather than allowing them to bypass
+        # policy through their otherwise-public embedded IPv4 address.
+        if addr.ipv4_mapped is not None:
+            return True
+
+        # RFC 6052's well-known DNS64 prefix is classified as reserved by
+        # ``ipaddress``. Validate its embedded IPv4 address with the same SSRF
+        # policy instead of rejecting a public destination solely for that.
+        if addr in _WELL_KNOWN_NAT64_PREFIX:
+            embedded_ipv4 = ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
+            return _addr_is_blocked(embedded_ipv4)
+
     return (
         addr.is_private
         or addr.is_loopback
