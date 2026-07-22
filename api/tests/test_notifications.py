@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -6,15 +6,20 @@ import pytest
 
 from hireloop_api.config import Settings
 from hireloop_api.services import notifications
+from hireloop_api.services.email.notification_templates import render_notification_email
 
 
 class _ReminderDb:
+    scheduled_at = datetime(2099, 8, 24, 6, tzinfo=UTC)
+
     async def fetchrow(self, query: str, *args: object) -> dict[str, Any] | None:
         if "FROM public.voice_sessions" in query:
             return {
                 "status": "scheduled",
                 "email": "candidate@example.com",
                 "full_name": "Priya",
+                "session_type": "career_chat",
+                "scheduled_at": self.scheduled_at,
             }
         if "FROM public.notifications" in query:
             return None
@@ -27,12 +32,20 @@ async def test_career_chat_reminder_uses_private_call_label_and_deep_link(
 ) -> None:
     session_id = uuid4()
     template_data: dict[str, Any] = {}
+    rendered: dict[str, str] = {}
+    in_app: dict[str, Any] = {}
 
     async def _send_category_email(*args: object, **kwargs: Any) -> dict[str, Any]:
         template_data.update(kwargs["template_data"])
-        return {"sent": False}
+        subject, html = render_notification_email(kwargs["category"], kwargs["template_data"])
+        rendered.update(subject=subject, html=html)
+        return {"sent": True}
+
+    async def _log_in_app(*args: object, **kwargs: Any) -> None:
+        in_app.update(kwargs)
 
     monkeypatch.setattr(notifications, "send_category_email", _send_category_email)
+    monkeypatch.setattr(notifications, "_log_in_app", _log_in_app)
 
     result = await notifications.send_interview_reminder_email(
         _ReminderDb(),  # type: ignore[arg-type]
@@ -43,15 +56,63 @@ async def test_career_chat_reminder_uses_private_call_label_and_deep_link(
         ),
         user_id=str(UUID("11111111-1111-4111-8111-111111111111")),
         session_id=str(session_id),
-        session_type="career_chat",
+        session_type="mock_interview",
         scheduled_at=datetime(2099, 7, 23, 5, tzinfo=UTC),
     )
 
-    assert result == {"sent": False}
-    assert template_data["session_label"] == "Start your private 15-minute call"
+    assert result == {"sent": True}
+    assert template_data["session_label"] == "Private 15-minute career call"
     assert template_data["cta_url"].endswith(
         f"/dashboard?voice=deep&scheduled_session_id={session_id}"
     )
+    assert rendered["subject"] == "Reminder: Private 15-minute career call tomorrow"
+    assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
+    assert "Mon 24 Aug 2099, 06:00 UTC" in rendered["html"]
+    assert "voice=deep&amp;scheduled_session_id=" in rendered["html"]
+    assert in_app["title"] == "Reminder: Private 15-minute career call tomorrow"
+
+
+class _BookingDb:
+    async def fetchrow(self, query: str, *args: object) -> dict[str, Any]:
+        assert "FROM public.users" in query
+        return {"email": "candidate@example.com", "full_name": "Priya"}
+
+
+@pytest.mark.asyncio
+async def test_career_chat_booking_confirmation_renders_as_a_noun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = uuid4()
+    rendered: dict[str, str] = {}
+    in_app: dict[str, Any] = {}
+
+    async def _send_category_email(*args: object, **kwargs: Any) -> dict[str, Any]:
+        subject, html = render_notification_email(kwargs["category"], kwargs["template_data"])
+        rendered.update(subject=subject, html=html)
+        return {"sent": True}
+
+    async def _log_in_app(*args: object, **kwargs: Any) -> None:
+        in_app.update(kwargs)
+
+    monkeypatch.setattr(notifications, "send_category_email", _send_category_email)
+    monkeypatch.setattr(notifications, "_log_in_app", _log_in_app)
+
+    await notifications.notify_interview_booked(
+        _BookingDb(),  # type: ignore[arg-type]
+        Settings(
+            _env_file=None,
+            environment="test",
+            public_app_url="https://www.hireschema.com",
+        ),
+        user_id=str(UUID("11111111-1111-4111-8111-111111111111")),
+        session_id=str(session_id),
+        session_type="career_chat",
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    assert rendered["subject"] == "Booked: Private 15-minute career call with Aarya"
+    assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
+    assert in_app["title"] == "Private 15-minute career call booked"
 
 
 def test_mock_interview_email_details_keep_existing_label_and_dashboard_cta() -> None:
@@ -69,6 +130,18 @@ def test_mock_interview_email_details_keep_existing_label_and_dashboard_cta() ->
 
     assert label == "Mock Interview"
     assert cta_url == "https://www.hireschema.com/dashboard"
+    subject, html = render_notification_email(
+        "interview_reminders",
+        {
+            "full_name": "Priya",
+            "session_label": label,
+            "scheduled_label": "Mon 24 Aug 2099, 06:00 UTC",
+            "is_reminder": False,
+            "cta_url": cta_url,
+        },
+    )
+    assert subject == "Booked: Mock Interview with Aarya"
+    assert "Your <strong>Mock Interview</strong> with Aarya" in html
 
 
 def test_career_chat_email_details_reject_invalid_session_id() -> None:

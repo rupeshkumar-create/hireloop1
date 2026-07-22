@@ -147,11 +147,11 @@ ORDER BY c.created_at DESC LIMIT 5;
 5. Try the mic button (Chrome/Edge) — speak a message
 ```
 
-**Model:** `anthropic/claude-opus-4.7` via OpenRouter (already configured)
+**Model:** `anthropic/claude-opus-4.7` via OpenRouter
 
-**Env needed (already set):**
+**Env needed (configure through the deployment secret manager):**
 ```
-OPENROUTER_API_KEY=sk-or-v1-770a06...
+OPENROUTER_API_KEY=<your-openrouter-api-key>
 OPENROUTER_PRIMARY_MODEL=anthropic/claude-opus-4.7
 ```
 
@@ -183,7 +183,7 @@ Mic → MediaRecorder → /api/v1/voice/stt (Deepgram Nova-3, language=multi) �
 - A private, persistent transcript; audio is not retained by default
 - Google Calendar is optional reminder enrichment and does not create or promise Google Meet
 - Profile and job-preference mutation is deferred to a candidate-confirmed Phase 2 review flow
-- On session end → `POST /api/v1/voice/sessions` → unlocks `/matches` gate
+- On session end → `POST /api/v1/voice-sessions/{session_id}/complete` records the final lifecycle state
 
 **How to test:**
 ```
@@ -195,13 +195,37 @@ Mic → MediaRecorder → /api/v1/voice/stt (Deepgram Nova-3, language=multi) �
 6. Have a short conversation, then tap End
 7. Should redirect to /dashboard
 8. Confirm the transcript persists, no audio URL is stored, and profile/preferences are unchanged
+9. In the browser network panel, confirm the completion request is
+   `POST /api/v1/voice-sessions/{session_id}/complete`
 ```
 
-**DB check (should unlock /matches):**
+**DB check (lifecycle + durable interview coverage):**
 ```sql
-SELECT vs.status, vs.duration_secs FROM public.voice_sessions vs
-JOIN public.candidates c ON c.id = vs.candidate_id ORDER BY vs.created_at DESC LIMIT 3;
+SELECT
+  vs.id,
+  vs.status,
+  vs.conversation_id,
+  vs.consent_version,
+  vs.started_at,
+  vs.ended_at,
+  vs.duration_secs,
+  vs.completion_reason,
+  vs.transcript_version,
+  vs.extraction_status,
+  vs.recording_url,
+  cis.state_version,
+  cis.state
+FROM public.voice_sessions vs
+JOIN public.candidates c ON c.id = vs.candidate_id
+LEFT JOIN public.career_interview_states cis ON cis.session_id = vs.id
+WHERE vs.session_type = 'career_chat'
+ORDER BY vs.created_at DESC
+LIMIT 3;
 ```
+
+Expected after completion: `status = 'completed'`, `ended_at` and
+`completion_reason` are set, `duration_secs` is at most 960, `recording_url IS NULL`,
+and the linked `career_interview_states` row contains the final coverage state.
 
 ---
 

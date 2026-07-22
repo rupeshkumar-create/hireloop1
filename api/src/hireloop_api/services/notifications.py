@@ -51,7 +51,7 @@ def _voice_session_email_details(
     if session_type == "career_chat":
         safe_session_id = str(uuid.UUID(session_id))
         query = urlencode({"voice": "deep", "scheduled_session_id": safe_session_id})
-        return "Start your private 15-minute call", f"{cta_url}?{query}"
+        return "Private 15-minute career call", f"{cta_url}?{query}"
     return label, cta_url
 
 
@@ -670,7 +670,7 @@ async def send_interview_reminder_email(
     """24h-before reminder (background job)."""
     row = await db.fetchrow(
         """
-        SELECT vs.status, u.email, u.full_name
+        SELECT vs.status, vs.session_type, vs.scheduled_at, u.email, u.full_name
         FROM public.voice_sessions vs
         JOIN public.candidates c ON c.id = vs.candidate_id
         JOIN public.users u ON u.id = c.user_id
@@ -688,10 +688,12 @@ async def send_interview_reminder_email(
     ):
         return {"sent": False, "skipped": "deduped"}
 
+    canonical_session_type = str(row["session_type"])
+    canonical_scheduled_at = row["scheduled_at"]
     label, cta_url = _voice_session_email_details(
-        settings, session_id=session_id, session_type=session_type
+        settings, session_id=session_id, session_type=canonical_session_type
     )
-    when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
+    when = canonical_scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
     result = await send_category_email(
         db,
         settings,
