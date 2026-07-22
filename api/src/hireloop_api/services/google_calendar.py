@@ -3,11 +3,10 @@ In-house voice-session booking — Google Calendar (P07).
 
 Replaces the former Cal.com integration. Booking is owned by Hireschema:
 
-  1. GET  /slots  → availability windows generated from business hours (IST),
-                    minus slots already taken in `voice_sessions`. No external call.
+  1. GET  /slots  → convenient future reminder times during business hours (IST).
   2. POST /book   → always creates a `voice_sessions` row. If the candidate has a
                     Google token with the `calendar.events` scope (same OAuth app
-                    as P13 Gmail), we also create a Calendar event WITH a Meet link
+                    as P13 Gmail), we also create a Calendar reminder event
                     and store its id in voice_sessions.calendar_event_id.
   3. Cancel       → deletes the Calendar event if present, marks the row cancelled.
 
@@ -19,7 +18,6 @@ Calendar API: https://developers.google.com/calendar/api/v3/reference/events
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -39,7 +37,7 @@ IST = ZoneInfo("Asia/Kolkata")
 # Business hours for AI career calls, in IST.
 BUSINESS_START_HOUR = 10  # first slot starts 10:00 IST
 BUSINESS_END_HOUR = 18  # last slot must END by 18:00 IST
-SLOT_MINUTES = 20
+SLOT_MINUTES = 15
 MAX_SLOTS = 40  # cap the list we hand the UI/agent
 
 
@@ -56,7 +54,7 @@ def generate_slots(
     now: datetime | None = None,
 ) -> list[AvailableSlot]:
     """
-    Build bookable 20-min slots across the next `days_ahead` days.
+    Build convenient 15-minute reminder slots across the next `days_ahead` days.
 
     Pure function (no I/O) so it's trivially testable:
       - Mon-Sat, BUSINESS_START_HOUR..BUSINESS_END_HOUR IST, SLOT_MINUTES grid.
@@ -184,8 +182,8 @@ class GoogleCalendarService:
         attendee_email: str,
     ) -> tuple[str | None, str | None]:
         """
-        Create a Calendar event with a Google Meet link.
-        Returns (event_id, meet_url), or (None, None) when no calendar token is
+        Create a Calendar reminder event for an in-app call.
+        Returns (event_id, None), or (None, None) when no calendar token is
         available (caller keeps the in-app slot as the booking).
         """
         token = await self._get_token(candidate_id)
@@ -198,19 +196,13 @@ class GoogleCalendarService:
             "start": {"dateTime": start_iso, "timeZone": "Asia/Kolkata"},
             "end": {"dateTime": end_iso, "timeZone": "Asia/Kolkata"},
             "attendees": [{"email": attendee_email}],
-            "conferenceData": {
-                "createRequest": {
-                    "requestId": str(uuid.uuid4()),
-                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                }
-            },
         }
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 res = await client.post(
                     f"{_CALENDAR_API}/calendars/{self._calendar_id}/events",
                     headers={"Authorization": f"Bearer {token}"},
-                    params={"conferenceDataVersion": 1, "sendUpdates": "all"},
+                    params={"sendUpdates": "all"},
                     json=body,
                 )
             if res.status_code not in (200, 201):
@@ -222,16 +214,10 @@ class GoogleCalendarService:
                 )
                 return None, None
             data = res.json()
-            meet_url = data.get("hangoutLink")
-            if not meet_url:
-                for ep in data.get("conferenceData", {}).get("entryPoints", []):
-                    if ep.get("entryPointType") == "video":
-                        meet_url = ep.get("uri")
-                        break
             logger.info(
                 "calendar_event_created", candidate_id=candidate_id, event_id=data.get("id")
             )
-            return data.get("id"), meet_url
+            return data.get("id"), None
         except Exception as exc:
             logger.error("calendar_create_error", candidate_id=candidate_id, error=str(exc))
             return None, None

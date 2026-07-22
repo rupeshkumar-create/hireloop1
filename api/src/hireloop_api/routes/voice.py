@@ -42,8 +42,10 @@ from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import _fetch_supabase_user, get_db, get_phone_verified_user
-from hireloop_api.routes.resumes import _build_profile_updates_from_resume
-from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
+from hireloop_api.routes.voice_sessions import (
+    CompleteCareerCallRequest,
+    _complete_owned_career_call,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -116,6 +118,7 @@ class VoiceSessionCreate(BaseModel):
     # Maps to voice_sessions.status CHECK: 'completed' | 'cancelled'
     status: str = "completed"
     conversation_id: str | None = None
+    session_id: uuid.UUID | None = None
 
 
 class VoiceSessionResponse(BaseModel):
@@ -285,6 +288,22 @@ async def create_voice_session(
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
 
+    if body.session_id and status == "completed":
+        completed = await _complete_owned_career_call(
+            session_id=body.session_id,
+            candidate_id=candidate["id"],
+            body=CompleteCareerCallRequest(
+                completion_reason="candidate_ended",
+                duration_seconds=min(max(0, body.duration_seconds), 16 * 60),
+            ),
+            db=db,
+        )
+        return {
+            "id": completed.id,
+            "status": completed.status,
+            "duration_seconds": body.duration_seconds,
+        }
+
     session_id = uuid.uuid4()
     await db.execute(
         """
@@ -299,13 +318,6 @@ async def create_voice_session(
         status,
         max(0, body.duration_seconds),
     )
-    if status == "completed" and body.conversation_id:
-        await _apply_voice_conversation_to_profile(
-            db=db,
-            user_id=current_user["id"],
-            candidate_id=str(candidate["id"]),
-            conversation_id=body.conversation_id,
-        )
     logger.info(
         "voice_session_recorded",
         candidate_id=str(candidate["id"]),
@@ -317,131 +329,6 @@ async def create_voice_session(
         "status": status,
         "duration_seconds": body.duration_seconds,
     }
-
-
-async def _apply_voice_conversation_to_profile(
-    *,
-    db: asyncpg.Connection,
-    user_id: str,
-    candidate_id: str,
-    conversation_id: str,
-) -> None:
-    """Best-effort profile fill from the completed Aarya voice conversation."""
-    try:
-        conv_id = uuid.UUID(conversation_id)
-    except ValueError:
-        logger.warning("voice_profile_invalid_conversation_id", conversation_id=conversation_id)
-        return
-
-    rows = await db.fetch(
-        """
-        SELECT m.content
-        FROM public.messages m
-        JOIN public.conversations c ON c.id = m.conversation_id
-        JOIN public.candidates ca ON ca.id = c.candidate_id
-        WHERE m.conversation_id = $1::uuid
-          AND ca.user_id = $2::uuid
-          AND ca.id = $3::uuid
-          AND m.role = 'user'
-        ORDER BY m.created_at ASC
-        LIMIT 100
-        """,
-        conv_id,
-        uuid.UUID(user_id),
-        uuid.UUID(candidate_id),
-    )
-    transcript = "\n".join(str(row["content"]) for row in rows if row["content"])
-    if not transcript.strip():
-        return
-
-    parsed = ResumeParserService.parse_from_text(transcript)
-    await _apply_parsed_profile_fields(
-        db=db,
-        user_id=user_id,
-        candidate_id=candidate_id,
-        parsed=parsed,
-        consent_purpose="voice_profile_enrichment",
-    )
-
-
-async def _apply_parsed_profile_fields(
-    *,
-    db: asyncpg.Connection,
-    user_id: str,
-    candidate_id: str,
-    parsed: ParsedResume,
-    consent_purpose: str,
-) -> None:
-    candidate = await db.fetchrow(
-        """
-        SELECT headline, summary, current_title, current_company,
-               years_experience, skills, linkedin_url, github_url,
-               location_city, location_state, career_profile, career_analysis
-        FROM public.candidates
-        WHERE id = $1::uuid AND deleted_at IS NULL
-        """,
-        uuid.UUID(candidate_id),
-    )
-    if not candidate:
-        return
-
-    updates, fields_updated = _build_profile_updates_from_resume(dict(candidate), parsed)
-
-    if updates:
-        set_clauses: list[str] = []
-        values: list[object] = []
-        for idx, (key, value) in enumerate(updates.items(), start=2):
-            if key in {"career_profile", "career_analysis"}:
-                set_clauses.append(f"{key} = ${idx}::jsonb")
-                values.append(json.dumps(value))
-            else:
-                set_clauses.append(f"{key} = ${idx}")
-                values.append(value)
-        # Field names come only from the fixed resume-profile update builder.
-        update_query = (
-            "UPDATE public.candidates SET "
-            f"{', '.join(set_clauses)}, updated_at = NOW() WHERE id = $1"
-        )
-        await db.execute(
-            update_query,
-            uuid.UUID(candidate_id),
-            *values,
-        )
-        logger.info(
-            "profile_updated_from_voice",
-            candidate_id=candidate_id,
-            fields=fields_updated,
-        )
-        from hireloop_api.services.background_jobs import (
-            MATCH_EMBED_CANDIDATE,
-            RESUME_EMBED_SCORE,
-            enqueue_job,
-        )
-
-        await enqueue_job(
-            db,
-            kind=RESUME_EMBED_SCORE,
-            payload={"candidate_id": candidate_id},
-            idempotency_key=f"resume_embed_score:{candidate_id}",
-        )
-        await enqueue_job(
-            db,
-            kind=MATCH_EMBED_CANDIDATE,
-            payload={"candidate_id": candidate_id},
-            idempotency_key=f"match_embed_candidate:{candidate_id}",
-        )
-
-    try:
-        await db.execute(
-            """
-            INSERT INTO public.consent_log (user_id, purpose, granted)
-            VALUES ($1, $2, TRUE)
-            """,
-            uuid.UUID(user_id),
-            consent_purpose,
-        )
-    except Exception as exc:
-        logger.error("consent_log_insert_failed", user_id=user_id, error=str(exc))
 
 
 # ── Live streaming STT (WebSocket proxy → Deepgram live) ───────────────────────
