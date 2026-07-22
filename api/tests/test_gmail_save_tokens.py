@@ -27,6 +27,4 @@ async def test_save_oauth_tokens_preserves_refresh_when_missing() -> None:
     sql = db.execute.await_args.args[0]
     assert "COALESCE(NULLIF(EXCLUDED.refresh_token, '')" in sql
     # Empty scopes fall back to gmail.send
-    assert db.execute.await_args.args[6] == [
-        "https://www.googleapis.com/auth/gmail.send"
-    ]
+    assert db.execute.await_args.args[6] == ["https://www.googleapis.com/auth/gmail.send"]

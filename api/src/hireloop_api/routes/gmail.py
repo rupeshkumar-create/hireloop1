@@ -208,15 +208,15 @@ async def gmail_callback(
                     body=body,
                 )
                 reason = "token_exchange"
-                err_payload = token_res.json() if "application/json" in (
-                    token_res.headers.get("content-type") or ""
-                ) else {}
+                err_payload = (
+                    token_res.json()
+                    if "application/json" in (token_res.headers.get("content-type") or "")
+                    else {}
+                )
                 err = err_payload.get("error") if isinstance(err_payload, dict) else None
                 if isinstance(err, str) and err:
                     reason = err  # e.g. invalid_client, invalid_grant
-                return _dashboard_gmail_redirect(
-                    settings, status="error", reason=reason
-                )
+                return _dashboard_gmail_redirect(settings, status="error", reason=reason)
 
             tokens = token_res.json()
 
@@ -233,9 +233,7 @@ async def gmail_callback(
             if not gmail_email:
                 gmail_email = _email_from_id_token(tokens.get("id_token"))
             if not gmail_email:
-                logger.error(
-                    "gmail_email_unresolved", userinfo_status=userinfo_res.status_code
-                )
+                logger.error("gmail_email_unresolved", userinfo_status=userinfo_res.status_code)
                 return _dashboard_gmail_redirect(
                     settings, status="error", reason="email_unresolved"
                 )
@@ -247,9 +245,7 @@ async def gmail_callback(
         )
         if not candidate:
             logger.warning("gmail_callback_no_candidate", user_id=user_id)
-            return _dashboard_gmail_redirect(
-                settings, status="error", reason="no_candidate"
-            )
+            return _dashboard_gmail_redirect(settings, status="error", reason="no_candidate")
 
         scope_raw = (tokens.get("scope") or "").strip() or _GOOGLE_SCOPE
         svc = GmailOAuthService(
@@ -267,9 +263,7 @@ async def gmail_callback(
                 scopes=scope_raw.split(),
             )
             if not ok:
-                return _dashboard_gmail_redirect(
-                    settings, status="error", reason="save_failed"
-                )
+                return _dashboard_gmail_redirect(settings, status="error", reason="save_failed")
         finally:
             await svc.close()
 

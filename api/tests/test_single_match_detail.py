@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,9 +45,7 @@ def test_serialize_single_match_detail_handles_null_computed_at() -> None:
         "explanation": "Solid skills overlap",
         "computed_at": None,
     }
-    out = matches._serialize_single_match_detail(
-        row, candidate={"skills": ["Python", "React"]}
-    )
+    out = matches._serialize_single_match_detail(row, candidate={"skills": ["Python", "React"]})
     assert out["job_id"] == str(job_id)
     assert out["computed_at"] is None
     assert out["is_remote"] is False
