@@ -1,8 +1,10 @@
 """Typed lifecycle service for user-visible durable AI operations.
 
 All write helpers rely on guarded SQL updates so lifecycle invariants hold even
-when multiple workers race. Callers own the connection and transaction; this
-module never commits independently.
+when multiple workers race. Enqueue and lifecycle writes compose with the
+caller's connection and transaction. ``retry_owned_operation`` preserves an
+existing caller transaction, or opens one only when necessary to hold its
+source-row lock through descendant detection and enqueue.
 """
 
 from __future__ import annotations
