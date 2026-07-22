@@ -106,6 +106,114 @@ def _career_call_response(row: asyncpg.Record | dict[str, object]) -> CareerCall
     )
 
 
+def _initial_coverage_json() -> str:
+    return CareerInterviewCoverage(
+        current_focus=InterviewTopic.CURRENT_WORK,
+        question_history=[InterviewTopic.CURRENT_WORK],
+    ).model_dump_json()
+
+
+async def _lock_active_career_call(
+    *,
+    db: asyncpg.Connection,
+    candidate_id: uuid.UUID,
+    user_id: uuid.UUID,
+    consent_version: str,
+) -> asyncpg.Record | dict[str, object] | None:
+    """Lock and return the active call plus its durable initialization flags."""
+    active = await db.fetchrow(
+        """
+        SELECT vs.id, vs.conversation_id, vs.status, vs.scheduled_at, vs.started_at,
+               vs.consent_version
+        FROM public.voice_sessions vs
+        WHERE vs.candidate_id = $1::uuid
+          AND vs.session_type = 'career_chat' AND vs.status = 'active'
+        LIMIT 1
+        FOR UPDATE OF vs
+        """,
+        candidate_id,
+    )
+    if not active:
+        return None
+    flags = await db.fetchrow(
+        """
+        SELECT EXISTS (
+                 SELECT 1 FROM public.career_interview_states cis
+                 WHERE cis.session_id = $1::uuid AND cis.candidate_id = $2::uuid
+               ) AS has_interview_state,
+               EXISTS (
+                 SELECT 1 FROM public.consent_log cl
+                 WHERE cl.user_id = $3::uuid AND cl.purpose = $4 AND cl.granted = TRUE
+               ) AS has_consent_audit
+        """,
+        active["id"],
+        candidate_id,
+        user_id,
+        f"voice_career_discovery:{consent_version}",
+    )
+    return {**dict(active), **dict(flags or {})}
+
+
+async def _reuse_or_recover_active_call(
+    *,
+    active: asyncpg.Record | dict[str, object] | None,
+    body: StartCareerCallRequest,
+    candidate_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: asyncpg.Connection,
+) -> CareerCallResponse | None:
+    """Return a verified active call, repairing legacy initialization if needed."""
+    if not active:
+        return None
+    if active["conversation_id"] != body.conversation_id:
+        raise HTTPException(status_code=409, detail="Another career call is already active")
+
+    existing_version = active.get("consent_version")
+    if existing_version is not None and existing_version != body.consent_version:
+        raise HTTPException(
+            status_code=409,
+            detail="Active career call uses a different consent version",
+        )
+
+    has_state = bool(active.get("has_interview_state"))
+    has_audit = bool(active.get("has_consent_audit"))
+    if existing_version == body.consent_version and has_state and has_audit:
+        return _career_call_response(active)
+
+    if existing_version != body.consent_version:
+        await db.execute(
+            """
+            UPDATE public.voice_sessions
+            SET consent_version = $3, updated_at = NOW()
+            WHERE id = $1::uuid AND candidate_id = $2::uuid AND status = 'active'
+            """,
+            active["id"],
+            candidate_id,
+            body.consent_version,
+        )
+    if not has_audit:
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1, $2, TRUE)
+            """,
+            user_id,
+            f"voice_career_discovery:{body.consent_version}",
+        )
+    if not has_state:
+        await db.execute(
+            """
+            INSERT INTO public.career_interview_states (session_id, candidate_id, state)
+            VALUES ($1, $2, $3::jsonb)
+            ON CONFLICT (session_id) DO NOTHING
+            """,
+            active["id"],
+            candidate_id,
+            _initial_coverage_json(),
+        )
+    return _career_call_response(active)
+
+
 @router.get("/slots", response_model=list[AvailableSlot])
 async def get_available_slots(
     days_ahead: int = 7,
@@ -303,20 +411,21 @@ async def start_career_call(
             if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
 
-            active = await db.fetchrow(
-                """
-                SELECT id, conversation_id, status, scheduled_at, started_at
-                FROM public.voice_sessions
-                WHERE candidate_id = $1::uuid
-                  AND session_type = 'career_chat' AND status = 'active'
-                LIMIT 1
-                """,
-                candidate_id,
+            active = await _lock_active_career_call(
+                db=db,
+                candidate_id=candidate_id,
+                user_id=user_id,
+                consent_version=body.consent_version,
             )
-            if active:
-                if active["conversation_id"] == body.conversation_id:
-                    return _career_call_response(active)
-                raise HTTPException(status_code=409, detail="Another career call is already active")
+            reused = await _reuse_or_recover_active_call(
+                active=active,
+                body=body,
+                candidate_id=candidate_id,
+                user_id=user_id,
+                db=db,
+            )
+            if reused:
+                return reused
 
             started_at = datetime.now(UTC)
             if body.scheduled_session_id:
@@ -332,23 +441,21 @@ async def start_career_call(
                     candidate_id,
                 )
                 if not scheduled:
-                    raced_active = await db.fetchrow(
-                        """
-                        SELECT id, conversation_id, status, scheduled_at, started_at
-                        FROM public.voice_sessions
-                        WHERE candidate_id = $1::uuid
-                          AND session_type = 'career_chat' AND status = 'active'
-                        LIMIT 1
-                        """,
-                        candidate_id,
+                    raced_active = await _lock_active_career_call(
+                        db=db,
+                        candidate_id=candidate_id,
+                        user_id=user_id,
+                        consent_version=body.consent_version,
                     )
-                    if raced_active and raced_active["conversation_id"] == body.conversation_id:
-                        return _career_call_response(raced_active)
-                    if raced_active:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="Another career call is already active",
-                        )
+                    reused = await _reuse_or_recover_active_call(
+                        active=raced_active,
+                        body=body,
+                        candidate_id=candidate_id,
+                        user_id=user_id,
+                        db=db,
+                    )
+                    if reused:
+                        return reused
                     raise HTTPException(status_code=404, detail="Scheduled career call not found")
                 session_id = scheduled["id"]
                 scheduled_at = scheduled["scheduled_at"]
@@ -389,10 +496,6 @@ async def start_career_call(
                 user_id,
                 f"voice_career_discovery:{body.consent_version}",
             )
-            coverage = CareerInterviewCoverage(
-                current_focus=InterviewTopic.CURRENT_WORK,
-                question_history=[InterviewTopic.CURRENT_WORK],
-            )
             await db.execute(
                 """
                 INSERT INTO public.career_interview_states (session_id, candidate_id, state)
@@ -400,7 +503,7 @@ async def start_career_call(
                 """,
                 session_id,
                 candidate_id,
-                coverage.model_dump_json(),
+                _initial_coverage_json(),
             )
             return CareerCallResponse(
                 id=str(session_id),
@@ -410,19 +513,28 @@ async def start_career_call(
                 started_at=started_at.isoformat(),
             )
     except asyncpg.UniqueViolationError as exc:
-        active = await db.fetchrow(
-            """
-            SELECT vs.id, vs.conversation_id, vs.status, vs.scheduled_at, vs.started_at
-            FROM public.voice_sessions vs
-            JOIN public.candidates c ON c.id = vs.candidate_id
-            WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
-              AND vs.session_type = 'career_chat' AND vs.status = 'active'
-            LIMIT 1
-            """,
-            user_id,
-        )
-        if active and active["conversation_id"] == body.conversation_id:
-            return _career_call_response(active)
+        async with db.transaction():
+            candidate = await db.fetchrow(
+                "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+                user_id,
+            )
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Candidate profile not found") from exc
+            active = await _lock_active_career_call(
+                db=db,
+                candidate_id=candidate["id"],
+                user_id=user_id,
+                consent_version=body.consent_version,
+            )
+            reused = await _reuse_or_recover_active_call(
+                active=active,
+                body=body,
+                candidate_id=candidate["id"],
+                user_id=user_id,
+                db=db,
+            )
+            if reused:
+                return reused
         raise HTTPException(
             status_code=409, detail="Another career call is already active"
         ) from exc

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
 from hireloop_api.routes import voice
 from hireloop_api.routes.voice import VoiceSessionCreate, create_voice_session
@@ -80,4 +81,22 @@ async def test_legacy_existing_session_delegates_without_inserting_or_mutating_p
     assert result["id"] == str(session_id)
     assert len(calls) == 1
     assert calls[0]["session_id"] == session_id
+    assert db.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_existing_session_rejects_cancelled_without_second_row() -> None:
+    db = LegacyDb()
+    with pytest.raises(HTTPException) as exc:
+        await create_voice_session(
+            VoiceSessionCreate(
+                session_id=uuid.uuid4(),
+                duration_seconds=0,
+                status="cancelled",
+            ),
+            current_user={"id": str(uuid.uuid4())},
+            db=db,
+        )
+
+    assert exc.value.status_code == 400
     assert db.execute_calls == []

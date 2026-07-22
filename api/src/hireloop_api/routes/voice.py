@@ -281,6 +281,12 @@ async def create_voice_session(
     """
     status = body.status if body.status in ("completed", "cancelled") else "completed"
 
+    if body.session_id and body.status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail="Use the voice-session cancellation endpoint for an existing session",
+        )
+
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
         uuid.UUID(current_user["id"]),

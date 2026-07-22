@@ -43,6 +43,10 @@ class LifecycleDb:
         self.inserted_voice_session = False
         self.in_transaction = False
         self.raise_unique_on_insert = False
+        self.consent_version: str | None = "career-call-v1"
+        self.has_interview_state = True
+        self.has_consent_audit = True
+        self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
 
     @classmethod
@@ -69,16 +73,29 @@ class LifecycleDb:
             "started_at": datetime(2099, 7, 23, 5, tzinfo=UTC),
             "duration_secs": 42,
             "completion_reason": "candidate_ended" if self.status == "completed" else None,
+            "consent_version": self.consent_version,
+            "has_interview_state": self.has_interview_state,
+            "has_consent_audit": self.has_consent_audit,
         }
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         normalized = " ".join(query.split())
+        self.fetchrow_calls.append((normalized, args))
         if "FROM public.candidates" in normalized and "user_id" in normalized:
             return {"id": self.candidate_id}
         if "FROM public.conversations" in normalized:
             if self.conversation_deleted or self.wrong_conversation_owner:
                 return None
             return {"id": self.conversation_id}
+        if "AS has_interview_state" in normalized:
+            return {
+                "has_interview_state": self.has_interview_state,
+                "has_consent_audit": self.has_consent_audit,
+            }
+        if "FROM public.voice_sessions vs" in normalized and "status = 'active'" in normalized:
+            if self.state == "active":
+                return self._session_row()
+            return None
         if "status = 'active'" in normalized and "FOR UPDATE" not in normalized:
             if self.state in {"active", "completed"}:
                 return self._session_row()
@@ -118,10 +135,14 @@ class LifecycleDb:
             elif "SET status = 'active'" in normalized:
                 self.status = "active"
                 self.state = "active"
+            elif "SET consent_version" in normalized:
+                self.consent_version = str(args[2])
             return "UPDATE 1"
         if "INSERT INTO public.consent_log" in normalized:
+            self.has_consent_audit = True
             return "INSERT 0 1"
         if "INSERT INTO public.career_interview_states" in normalized:
+            self.has_interview_state = True
             return "INSERT 0 1"
         if "UPDATE public.career_interview_states" in normalized:
             return "UPDATE 1"
@@ -211,6 +232,72 @@ async def test_start_is_idempotent_for_same_active_conversation() -> None:
     )
     assert out.id == str(db.session_id)
     assert db.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_active_same_conversation_with_different_consent_version() -> None:
+    db = LifecycleDb.active_call()
+    with pytest.raises(HTTPException) as exc:
+        await voice_sessions.start_career_call(
+            _start_request(
+                conversation_id=db.conversation_id,
+                consent_version="career-call-v2",
+            ),
+            current_user={"id": str(db.user_id)},
+            db=db,
+        )
+    assert exc.value.status_code == 409
+    assert db.execute_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "existing_version,missing_state,missing_audit",
+    [
+        (None, True, False),
+        ("career-call-v1", False, True),
+        (None, True, True),
+        ("career-call-v1", True, True),
+    ],
+)
+async def test_start_recovers_legacy_active_call_transactionally(
+    existing_version: str | None,
+    missing_state: bool,
+    missing_audit: bool,
+) -> None:
+    db = LifecycleDb.active_call()
+    db.consent_version = existing_version
+    db.has_interview_state = not missing_state
+    db.has_consent_audit = not missing_audit
+
+    first = await voice_sessions.start_career_call(
+        _start_request(conversation_id=db.conversation_id),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+    writes_after_recovery = len(db.execute_calls)
+    second = await voice_sessions.start_career_call(
+        _start_request(conversation_id=db.conversation_id),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
+    assert first == second
+    assert db.consent_version == "career-call-v1"
+    assert db.has_interview_state is True
+    assert db.has_consent_audit is True
+    assert len(db.execute_calls) == writes_after_recovery
+    active_queries = [sql for sql, _ in db.fetchrow_calls if "status = 'active'" in sql]
+    flag_queries = [sql for sql, _ in db.fetchrow_calls if "AS has_interview_state" in sql]
+    assert active_queries
+    assert all("FOR UPDATE" in sql for sql in active_queries)
+    assert flag_queries
+    lock_index = next(i for i, (sql, _) in enumerate(db.fetchrow_calls) if sql == active_queries[0])
+    flag_index = next(i for i, (sql, _) in enumerate(db.fetchrow_calls) if sql == flag_queries[0])
+    assert lock_index < flag_index
+    state_inserts = [sql for sql, _ in db.execute_calls if "career_interview_states" in sql]
+    if missing_state:
+        assert state_inserts and all("ON CONFLICT" in sql for sql in state_inserts)
 
 
 @pytest.mark.asyncio
