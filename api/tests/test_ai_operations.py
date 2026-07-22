@@ -304,6 +304,47 @@ async def test_enqueue_reuses_an_active_owned_operation_without_creating_a_job(
 
 
 @pytest.mark.asyncio
+async def test_terminal_operation_allows_new_attempt_with_same_logical_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The partial conflict target must ignore terminal attempts for this key."""
+    new_operation_id = uuid.uuid4()
+    logical_key = f"career_path_generate:{uuid.uuid4()}"
+    inserted = _operation_row(id=new_operation_id, kind="career_path_generate")
+    queued_payload = {"candidate_id": str(uuid.uuid4()), "operation_id": str(new_operation_id)}
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": queued_payload,
+        "idempotency_key": f"ai_operation:{new_operation_id}",
+    }
+    linked = _operation_row(
+        id=new_operation_id,
+        kind="career_path_generate",
+        background_job_id=JOB_ID,
+    )
+    db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    response = await ai_operations.enqueue_ai_operation(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={"candidate_id": queued_payload["candidate_id"]},
+        idempotency_key=logical_key,
+    )
+
+    insert_sql = db.calls[0][1]
+    assert response.id == new_operation_id
+    assert "ON CONFLICT (idempotency_key)" in insert_sql
+    assert "WHERE status IN ('queued', 'running') AND deleted_at IS NULL" in insert_sql
+
+
+@pytest.mark.asyncio
 async def test_running_and_success_transitions_are_atomic_and_guarded() -> None:
     running = _operation_row(
         status="running", progress_percent=1, stage="starting", message="Starting work."

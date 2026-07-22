@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -155,13 +155,42 @@ async def test_generation_submission_returns_202_without_awaiting_provider(
 
 
 @pytest.mark.asyncio
-async def test_career_path_double_click_reuses_same_five_minute_idempotency_scope(
+@pytest.mark.parametrize(
+    ("submit", "service", "latest_attr", "kind"),
+    [
+        (
+            career.generate_career_path,
+            career.CareerPathService,
+            "get_latest",
+            "career_path_generate",
+        ),
+        (
+            career.generate_career_intelligence,
+            career.CareerIntelligenceService,
+            "get",
+            "career_intelligence_generate",
+        ),
+    ],
+)
+async def test_long_running_active_generation_reuses_stable_logical_key(
     monkeypatch: pytest.MonkeyPatch,
+    submit: Any,
+    service: Any,
+    latest_attr: str,
+    kind: str,
 ) -> None:
     pool = _Pool()
     candidate_id = uuid.uuid4()
-    queued = _operation("career_path_generate")
+    user_id = uuid.uuid4()
+    queued = _operation(kind).model_copy(update={"status": "running"})
     keys: list[str] = []
+
+    class _Clock:
+        current = datetime(2026, 7, 22, 12, 4, tzinfo=UTC)
+
+        @classmethod
+        def now(cls, _tz: object = None) -> datetime:
+            return cls.current
 
     async def _enqueue(*_args: object, **kwargs: Any) -> AiOperationResponse:
         keys.append(str(kwargs["idempotency_key"]))
@@ -169,20 +198,22 @@ async def test_career_path_double_click_reuses_same_five_minute_idempotency_scop
 
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
-    monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, latest_attr, AsyncMock(return_value=None))
     monkeypatch.setattr(ai_operations, "enqueue_ai_operation", _enqueue)
     monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(career, "datetime", _Clock)
 
-    first = await career.generate_career_path(
-        response=Response(), current_user={"id": str(uuid.uuid4())}, settings=SimpleNamespace()
+    first = await submit(
+        response=Response(), current_user={"id": str(user_id)}, settings=SimpleNamespace()
     )
-    second = await career.generate_career_path(
-        response=Response(), current_user={"id": str(uuid.uuid4())}, settings=SimpleNamespace()
+    _Clock.current += timedelta(minutes=10)
+    second = await submit(
+        response=Response(), current_user={"id": str(user_id)}, settings=SimpleNamespace()
     )
 
     assert first.operation_id == second.operation_id == queued.id
     assert keys[0] == keys[1]
-    assert str(candidate_id) in keys[0]
+    assert keys[0] == f"{kind}:{candidate_id}"
 
 
 @pytest.mark.asyncio
@@ -226,7 +257,11 @@ async def test_recent_career_intelligence_returns_ready_result_without_enqueue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pool = _Pool()
-    recent = {"updated_at": datetime.now(UTC).isoformat(), "data_completeness": 90}
+    recent = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "updated_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+        "data_completeness": 90,
+    }
     enqueue = AsyncMock(side_effect=AssertionError("recent result must not enqueue"))
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(uuid.uuid4())))
@@ -243,6 +278,46 @@ async def test_recent_career_intelligence_returns_ready_result_without_enqueue(
     assert response.status_code == 200
     assert result == {"intelligence": recent}
     enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "generated_at",
+    [
+        (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        None,
+        "legacy-invalid-timestamp",
+    ],
+)
+async def test_completeness_update_does_not_make_stale_or_legacy_intelligence_recent(
+    monkeypatch: pytest.MonkeyPatch,
+    generated_at: str | None,
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    stale = {
+        "generated_at": generated_at,
+        # _sync_completeness updates this timestamp without rebuilding intelligence.
+        "updated_at": datetime.now(UTC).isoformat(),
+        "data_completeness": 95,
+    }
+    queued = _operation("career_intelligence_generate")
+    enqueue = AsyncMock(return_value=queued)
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(career.CareerIntelligenceService, "get", AsyncMock(return_value=stale))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    response = Response()
+
+    result = await career.generate_career_intelligence(
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 202
+    assert result.operation_id == queued.id
+    enqueue.assert_awaited_once()
 
 
 @pytest.mark.asyncio

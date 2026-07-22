@@ -37,7 +37,7 @@ from hireloop_api.routes.matches import (
     _fetch_starter_market_jobs,
     _serialize_cached_match_row,
 )
-from hireloop_api.services.career_intelligence import CareerIntelligenceService
+from hireloop_api.services.career_intelligence import CareerIntelligence, CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import default_prioritize_title
 from hireloop_api.services.matching import MatchingEngine
@@ -55,11 +55,7 @@ router = APIRouter(prefix="/career", tags=["career"])
 _GENERATION_REUSE_WINDOW = timedelta(minutes=5)
 
 
-def _is_recent_generation(result: dict[str, Any] | None) -> bool:
-    """Return whether a ready domain result is fresh enough to reuse."""
-    if not result:
-        return False
-    raw_timestamp = result.get("created_at") or result.get("updated_at")
+def _is_recent_timestamp(raw_timestamp: object) -> bool:
     if not raw_timestamp:
         return False
     try:
@@ -75,10 +71,25 @@ def _is_recent_generation(result: dict[str, Any] | None) -> bool:
     return datetime.now(UTC) - timestamp < _GENERATION_REUSE_WINDOW
 
 
+def _is_recent_career_path(path: dict[str, Any] | None) -> bool:
+    """Use only the immutable career-path artifact creation timestamp."""
+    return bool(path) and _is_recent_timestamp(path.get("created_at"))
+
+
+def _is_recent_career_intelligence(intelligence: dict[str, Any] | None) -> bool:
+    """Use the validated artifact generation time, never candidate update time."""
+    if not intelligence:
+        return False
+    try:
+        artifact = CareerIntelligence.model_validate(intelligence)
+    except (TypeError, ValueError):
+        return False
+    return _is_recent_timestamp(artifact.generated_at)
+
+
 def _generation_idempotency_key(candidate_id: uuid.UUID, kind: str) -> str:
-    """Scope duplicate submissions to one candidate and five-minute UTC bucket."""
-    window = int(datetime.now(UTC).timestamp()) // int(_GENERATION_REUSE_WINDOW.total_seconds())
-    return f"{kind}:{candidate_id}:{window}"
+    """Stable logical key; the DB partial index permits one active attempt."""
+    return f"{kind}:{candidate_id}"
 
 
 def _accepted_operation(
@@ -460,7 +471,7 @@ async def generate_career_path(
         await check_rate_limit(str(user_id), "career_path_generate", max_per_hour=10, db=db)
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
         recent = await CareerPathService.get_latest(db, candidate_id)
-        if _is_recent_generation(recent):
+        if _is_recent_career_path(recent):
             return {"path": recent}
         candidate_uuid = uuid.UUID(candidate_id)
         operation = await enqueue_ai_operation(
@@ -825,7 +836,7 @@ async def generate_career_intelligence(
     async with pool.acquire() as db, db.transaction():
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
         recent = await CareerIntelligenceService.get(db, candidate_id)
-        if _is_recent_generation(recent):
+        if _is_recent_career_intelligence(recent):
             return {"intelligence": recent}
         candidate_uuid = uuid.UUID(candidate_id)
         operation = await enqueue_ai_operation(
