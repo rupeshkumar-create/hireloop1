@@ -27,6 +27,7 @@ from hireloop_api.agents.nitya.agent import NityaWorker
 from hireloop_api.config import get_settings
 from hireloop_api.rate_limit import rate_limit_middleware
 from hireloop_api.routes.admin import router as admin_router
+from hireloop_api.routes.ai_operations import router as ai_operations_router
 from hireloop_api.routes.application_kits import router as application_kits_router
 from hireloop_api.routes.auth import router as auth_router
 from hireloop_api.routes.career import router as career_router
@@ -217,6 +218,9 @@ app.middleware("http")(rate_limit_middleware)
 # P01: health + public market catalog
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(markets_router, prefix="/api/v1")
+
+# Owned lifecycle state for durable AI generation tasks
+app.include_router(ai_operations_router, prefix="/api/v1")
 
 # P04: auth (LinkedIn OAuth callback + MSG91 SMS OTP)
 app.include_router(auth_router, prefix="/api/v1")

@@ -88,3 +88,71 @@ async def test_candidate_cannot_read_another_candidates_mock_interview(
     assert res.status_code == 404, (
         f"IDOR: A read B's mock interview session (got {res.status_code})"
     )
+
+
+@pytest.mark.asyncio
+async def test_candidate_cannot_access_another_users_ai_operations(
+    api_client: AsyncClient,
+    db_conn: asyncpg.Connection,
+    candidate_user: dict[str, str],
+) -> None:
+    """Operation status, mutations, and result references are owner-private."""
+    cand_b = await _seed_victim_candidate(db_conn)
+    user_b = await db_conn.fetchval(
+        "SELECT user_id FROM public.candidates WHERE id = $1::uuid",
+        cand_b,
+    )
+    private_result_id = uuid.uuid4()
+    completed_b = await db_conn.fetchval(
+        """
+        INSERT INTO public.ai_operations
+          (user_id, candidate_id, kind, idempotency_key, status,
+           progress_percent, stage, message, result_type, result_id, completed_at)
+        VALUES
+          ($1, $2::uuid, 'application_kit', $3, 'succeeded',
+           100, 'ready', 'Your result is ready.', 'application_kit', $4, NOW())
+        RETURNING id
+        """,
+        user_b,
+        cand_b,
+        f"idor-b-completed:{uuid.uuid4()}",
+        private_result_id,
+    )
+
+    for action in ("", "/cancel", "/retry"):
+        method = api_client.get if not action else api_client.post
+        response = await method(f"/api/v1/ai-operations/{completed_b}{action}")
+        assert response.status_code == 404
+        assert response.json() == {"detail": "AI operation not found"}
+        assert str(private_result_id) not in response.text
+
+    active_a = await db_conn.fetchval(
+        """
+        INSERT INTO public.ai_operations
+          (user_id, candidate_id, kind, idempotency_key, status, stage, message)
+        VALUES
+          ($1::uuid, $2::uuid, 'career_path_generate', $3, 'queued', 'queued', 'Queued.')
+        RETURNING id
+        """,
+        candidate_user["user_id"],
+        candidate_user["candidate_id"],
+        f"idor-a-active:{uuid.uuid4()}",
+    )
+    active_b = await db_conn.fetchval(
+        """
+        INSERT INTO public.ai_operations
+          (user_id, candidate_id, kind, idempotency_key, status, stage, message)
+        VALUES
+          ($1, $2::uuid, 'career_path_generate', $3, 'queued', 'queued', 'Queued.')
+        RETURNING id
+        """,
+        user_b,
+        cand_b,
+        f"idor-b-active:{uuid.uuid4()}",
+    )
+
+    listed = await api_client.get("/api/v1/ai-operations?status=active")
+    assert listed.status_code == 200
+    listed_ids = {item["id"] for item in listed.json()}
+    assert str(active_a) in listed_ids
+    assert str(active_b) not in listed_ids
