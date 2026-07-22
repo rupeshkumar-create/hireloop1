@@ -121,7 +121,20 @@ Production DB: real data only.
 11. No synchronous file I/O in FastAPI endpoints
 12. No blocking sleep() in agent loops — use asyncio.sleep()
 13. No direct DB writes from frontend — always via API
-14. No unauthenticated API endpoints except /health, /markets, and /auth/callback
+14. Public (no user Bearer JWT) API surfaces MUST match the documented allow-list
+    below — update this list when adding routes; every entry needs a stated
+    rate-limit / abuse model in docs/audit/14-security-remediation-plan.md:
+    - GET /api/v1/health, /health/ready (public)
+    - GET /api/v1/health/deep (X-Service-Secret)
+    - GET /api/v1/markets (public)
+    - POST /api/v1/jobs/ingest, /ingest/cron (X-Service-Secret)
+    - POST /api/v1/matches/embed, /recompute (X-Service-Secret)
+    - GET/POST /api/v1/gmail/callback (HMAC-signed OAuth state)
+    - POST /api/v1/webhooks/msg91-whatsapp (X-Service-Secret)
+    - GET /api/v1/public/profiles/{slug}, chat/history, apply (public + rate limits)
+    - GET /api/v1/public/roles/{slug}, POST apply (public + rate limits)
+    SPA /auth/callback is browser-side Supabase PKCE (not FastAPI).
+    Prefer timing-safe compare (hmac.compare_digest) for all service secrets.
 15. No Cloudflare bypass in production
 16. No OpenRouter calls without model fallback configured
 17. No Deepgram TTS calls without audio timeout guard (max 10s)

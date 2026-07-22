@@ -151,7 +151,7 @@ ORDER BY c.created_at DESC LIMIT 5;
 
 **Env needed (already set):**
 ```
-OPENROUTER_API_KEY=sk-or-v1-770a06...
+OPENROUTER_API_KEY=<set in api/.env / Railway — never commit>
 OPENROUTER_PRIMARY_MODEL=anthropic/claude-opus-4.7
 ```
 

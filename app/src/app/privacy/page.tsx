@@ -12,7 +12,7 @@ const SECTIONS = [
   {
     id: "overview",
     title: "1. Overview",
-    content: `Hireschema ("Hireschema", "we", "us") operates an AI-powered recruiting platform for candidates and recruiters in India (phone-verified with +91 when configured). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
+    content: `Hireschema ("Hireschema", "we", "us") operates an AI-powered recruiting platform for candidates and recruiters in India (+91 phone collection; SMS OTP verification when enabled). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
 
 By using Hireschema, you consent to the practices described in this policy. If you do not agree, please do not use the platform.`,
   },

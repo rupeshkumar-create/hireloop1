@@ -12,6 +12,7 @@ POST /api/v1/matches/embed/candidate/{id} → embed + score a single candidate i
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import uuid
 from datetime import UTC, datetime
@@ -353,7 +354,8 @@ async def _enqueue_candidate_match_scoring(
 
 
 def _require_service_secret(x_service_secret: str | None, settings: Settings) -> None:
-    if not x_service_secret or x_service_secret != settings.service_secret:
+    expected = settings.service_secret or ""
+    if not x_service_secret or not expected or not hmac.compare_digest(x_service_secret, expected):
         raise HTTPException(status_code=403, detail="Invalid or missing service secret")
 
 
@@ -2112,9 +2114,7 @@ async def get_single_match(
             score = await engine.score_pair(str(candidate["id"]), job_id)
         except Exception:
             logger.exception("get_single_match_score_pair_failed", job_id=job_id)
-            raise HTTPException(
-                status_code=404, detail="Job not found or scoring failed"
-            ) from None
+            raise HTTPException(status_code=404, detail="Job not found or scoring failed") from None
         if score is None:
             raise HTTPException(status_code=404, detail="Job not found or scoring failed")
         row = await db.fetchrow(

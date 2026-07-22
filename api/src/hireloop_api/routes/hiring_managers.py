@@ -13,6 +13,7 @@ GET endpoints require India-verified user.
 
 from __future__ import annotations
 
+import hmac
 import uuid
 
 import asyncpg
@@ -31,7 +32,8 @@ router = APIRouter(prefix="/hiring-managers", tags=["hiring-managers"])
 
 
 def _require_secret(x_service_secret: str | None, settings: Settings) -> None:
-    if not x_service_secret or x_service_secret != settings.service_secret:
+    expected = settings.service_secret or ""
+    if not x_service_secret or not expected or not hmac.compare_digest(x_service_secret, expected):
         raise HTTPException(status_code=403, detail="Invalid or missing service secret")
 
 

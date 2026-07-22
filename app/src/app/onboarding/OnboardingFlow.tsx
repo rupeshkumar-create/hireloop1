@@ -302,7 +302,7 @@ function ActivationStep({
           <div className="space-y-2">
             <p className="text-small font-medium text-ink-700">Home job market</p>
             <p className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900">
-              India · salaries in INR · +91 phone verification
+              India · salaries in INR · optional +91 phone (OTP when enabled)
             </p>
             <p className="text-micro text-ink-400">
               Hireschema is built for Indian candidates and Indian recruiters.

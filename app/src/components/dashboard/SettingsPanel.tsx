@@ -176,7 +176,7 @@ export function SettingsPanel({
         />
         <CardBody className="space-y-3 !pt-0">
           <p className="rounded-md border border-ink-100 bg-paper-1 px-3 py-2.5 text-small text-ink-900">
-            India · +91 phone verification via MSG91
+            India · optional +91 phone (MSG91 OTP when verification is enabled)
           </p>
           <p className="text-micro text-ink-500">
             Fully remote roles may still show when eligible worldwide and allowed for India.

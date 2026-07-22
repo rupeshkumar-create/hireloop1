@@ -20,7 +20,7 @@ These Terms constitute a binding agreement between you and Hireschema, a company
     id: "eligibility",
     title: "2. Eligibility",
     content: `Hireschema is available to:
-• Residents of India with a verified +91 phone number when phone verification is enabled
+• Residents of India (optional +91 phone; SMS OTP verification when enabled)
 • Persons aged 18 or older
 • Individuals legally permitted to use recruiting services in their jurisdiction
 

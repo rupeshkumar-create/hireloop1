@@ -7,9 +7,10 @@ Flow:
   3. POST /api/v1/auth/verify-otp   → optional OTP verification
   4. GET  /api/v1/auth/me           → returns current user profile
 
-Onboarding uses save-phone and marks phone_verified (OTP deferred for now).
-The number is used for
-WhatsApp job-match and intro alerts.
+Onboarding may collect a phone via save-phone without marking it verified.
+`phone_verified` is set ONLY by `/auth/verify-otp` after a real OTP check.
+OTP SMS remains available when MSG91 is configured; gate routes with
+REQUIRE_PHONE_VERIFICATION when ready.
 
 Note: LinkedIn OAuth is handled entirely by Supabase Auth + /auth/callback
 on the Next.js side.
@@ -731,9 +732,9 @@ async def save_phone(
     """
     Save the user's +91 mobile number (format-validated, unique).
 
-    Onboarding flow: collect the number and mark phone_verified so gated routes
-    unlock. OTP SMS is deferred for now — re-enable via REQUIRE_PHONE_VERIFICATION
-    + /auth/verify-otp when MSG91 is ready.
+    Does NOT set phone_verified — that flag is only written by /auth/verify-otp
+    after a successful OTP check (SEC-7). OTP remains deferred until MSG91 +
+    REQUIRE_PHONE_VERIFICATION are enabled for beta.
     """
     phone = body.phone
     market = normalize_market(body.market)
@@ -746,7 +747,6 @@ async def save_phone(
                 """
                 UPDATE public.users SET
                   phone = $2,
-                  phone_verified = TRUE,
                   market = $3,
                   phone_country = $3,
                   updated_at = NOW()
@@ -767,7 +767,6 @@ async def save_phone(
                     """
                     UPDATE public.users SET
                       phone = $2,
-                      phone_verified = TRUE,
                       market = $3,
                       phone_country = $3,
                       updated_at = NOW()
@@ -830,7 +829,7 @@ async def save_phone(
                 user_id=user_id,
                 phone=phone,
                 supabase_user=supabase_user,
-                phone_verified=True,
+                phone_verified=False,
             )
             try:
                 await rest_users.log_consent_rest(
@@ -875,9 +874,23 @@ async def save_phone(
     except Exception as exc:
         logger.error("signup_confirmation_email_failed", user_id=str(user_id), error=str(exc))
 
+    verified = False
+    if db is not None and not saved_via_rest:
+        verified = bool(
+            await db.fetchval(
+                "SELECT phone_verified FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+                user_id,
+            )
+        )
+    elif saved_via_rest:
+        from hireloop_api.services import supabase_users as rest_users
+
+        row = await rest_users.fetch_user(settings, user_id)
+        verified = bool(row and row.get("phone_verified"))
+
     return SavePhoneResponse(
         message="Phone number saved",
-        phone_verified=True,
+        phone_verified=verified,
     )
 
 
