@@ -163,11 +163,11 @@ JOIN public.candidates ca ON ca.id = c.candidate_id ORDER BY c.created_at DESC L
 
 ---
 
-## S05 — Voice Chat (15-min Aarya Session)  ✅ 🧪
+## S05 — Private Aarya Career Discovery (15-minute call)  ✅ 🧪
 
-> User taps the phone icon → `/voice` page.
-> Aarya speaks to them, they reply by voice.
-> Same Aarya agent as text chat. STT runs via Deepgram for reliability.
+> A candidate can start now or schedule a private 15-minute conversation with Aarya.
+> Aarya learns about their experience, skills, languages, location, and job preferences.
+> The same Aarya agent handles text and voice; STT runs via Deepgram for reliability.
 
 **Architecture (Deepgram STT + browser TTS):**
 ```
@@ -176,20 +176,25 @@ Mic → MediaRecorder → /api/v1/voice/stt (Deepgram Nova-3, language=multi) �
 ```
 
 **What's built:**
-- `/voice` page with animated waveform UI
+- Start-now and scheduled-call entry points in the dashboard voice experience
+- Scheduling is non-exclusive across candidates; a candidate cannot double-book the same minute
 - `useVoice.ts` — MediaRecorder → Deepgram STT (server-side) + SpeechSynthesis TTS
-- Conversation loop (listen → stream → speak → repeat)
+- A deterministic 15-minute coverage policy and conversation loop (listen → stream → speak → repeat)
+- A private, persistent transcript; audio is not retained by default
+- Google Calendar is optional reminder enrichment and does not create or promise Google Meet
+- Profile and job-preference mutation is deferred to a candidate-confirmed Phase 2 review flow
 - On session end → `POST /api/v1/voice/sessions` → unlocks `/matches` gate
 
 **How to test:**
 ```
 1. Add `DEEPGRAM_API_KEY` to `api/.env` and restart API
-2. Open /voice in Chrome or Edge
-3. Tap the mic button
+2. Open `/dashboard` in Chrome or Edge
+3. Choose Start now, or schedule a time and open the reminder deep link
 4. Say: "Hi Aarya, I'm a senior software engineer looking for roles in Bengaluru"
 5. Aarya should respond via speaker
 6. Have a short conversation, then tap End
 7. Should redirect to /dashboard
+8. Confirm the transcript persists, no audio URL is stored, and profile/preferences are unchanged
 ```
 
 **DB check (should unlock /matches):**

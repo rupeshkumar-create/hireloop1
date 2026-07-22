@@ -11,6 +11,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 import asyncpg
 import structlog
@@ -40,6 +41,18 @@ def _app_base(settings: Settings) -> str:
                 return origin.rstrip("/")
         return settings.allowed_origins[0].rstrip("/")
     return "https://www.hireschema.com"
+
+
+def _voice_session_email_details(
+    settings: Settings, *, session_id: str, session_type: str
+) -> tuple[str, str]:
+    label = session_type.replace("_", " ").title()
+    cta_url = f"{_app_base(settings)}/dashboard"
+    if session_type == "career_chat":
+        safe_session_id = str(uuid.UUID(session_id))
+        query = urlencode({"voice": "deep", "scheduled_session_id": safe_session_id})
+        return "Start your private 15-minute call", f"{cta_url}?{query}"
+    return label, cta_url
 
 
 def _email_provider_configured(settings: Settings) -> bool:
@@ -591,9 +604,10 @@ async def notify_interview_booked(
     if not user or not user["email"]:
         return
 
-    label = session_type.replace("_", " ").title()
+    label, cta_url = _voice_session_email_details(
+        settings, session_id=session_id, session_type=session_type
+    )
     when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
-    app_base = _app_base(settings)
     channels = ["in_app"]
     email_result = await send_category_email(
         db,
@@ -608,7 +622,7 @@ async def notify_interview_booked(
             "scheduled_label": when,
             "scheduled_at": when,
             "is_reminder": False,
-            "cta_url": f"{app_base}/dashboard",
+            "cta_url": cta_url,
         },
         template_id=settings.sg_template_interview_reminder,
     )
@@ -674,9 +688,10 @@ async def send_interview_reminder_email(
     ):
         return {"sent": False, "skipped": "deduped"}
 
-    label = session_type.replace("_", " ").title()
+    label, cta_url = _voice_session_email_details(
+        settings, session_id=session_id, session_type=session_type
+    )
     when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
-    app_base = _app_base(settings)
     result = await send_category_email(
         db,
         settings,
@@ -689,7 +704,7 @@ async def send_interview_reminder_email(
             "session_label": label,
             "scheduled_label": when,
             "is_reminder": True,
-            "cta_url": f"{app_base}/dashboard",
+            "cta_url": cta_url,
         },
         template_id=settings.sg_template_interview_reminder,
     )
