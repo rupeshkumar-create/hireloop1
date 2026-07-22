@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiAuthFetch, getAccessToken } from "@/lib/api/auth-fetch";
 import { getApiWsBaseUrl } from "@/lib/api/base-url";
+import { voiceWebSocketProtocols } from "@/lib/voice/websocket-auth";
 
 // ── Browser Web Speech API (SpeechRecognition) — STT fallback ─────────────────
 // Used when the server has no Deepgram key. Requires no API key and runs in the
@@ -526,9 +527,7 @@ export function useVoice() {
     captureCtxRef.current = ctx;
     const sampleRate = Math.round(ctx.sampleRate);
 
-    const wsUrl =
-      `${getApiWsBaseUrl()}/api/v1/voice/stream` +
-      `?token=${encodeURIComponent(token)}&sr=${sampleRate}`;
+    const wsUrl = `${getApiWsBaseUrl()}/api/v1/voice/stream?sr=${sampleRate}`;
 
     liveFinalRef.current = "";
 
@@ -536,7 +535,7 @@ export function useVoice() {
       let settled = false;
       let ws: WebSocket;
       try {
-        ws = new WebSocket(wsUrl);
+        ws = new WebSocket(wsUrl, voiceWebSocketProtocols(token));
       } catch {
         // Constructor threw → batch fallback.
         ctx.close().catch(() => {});

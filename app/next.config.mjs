@@ -7,10 +7,13 @@ const isProduction = process.env.NODE_ENV === "production";
 const apiUrl =
   process.env.NEXT_PUBLIC_API_URL?.trim() || "http://127.0.0.1:8000";
 let apiConnectOrigin = "";
+let apiWebSocketOrigin = "";
 try {
   apiConnectOrigin = new URL(apiUrl).origin;
+  apiWebSocketOrigin = apiConnectOrigin.replace(/^http/, "ws");
 } catch {
   apiConnectOrigin = "http://127.0.0.1:8000";
+  apiWebSocketOrigin = "ws://127.0.0.1:8000";
 }
 
 const backendUrl = apiUrl.replace(/\/$/, "");
@@ -77,7 +80,7 @@ const nextConfig = {
               "img-src 'self' data: https://*.supabase.co https://media.licdn.com",
               "font-src 'self' data:",
               // Voice is browser-native (Web Speech API) — no external voice API calls needed
-              `connect-src 'self' ${apiConnectOrigin} wss://127.0.0.1:8000 wss://localhost:8000 https://*.supabase.co wss://*.supabase.co`,
+              `connect-src 'self' ${apiConnectOrigin} ${apiWebSocketOrigin} ws://127.0.0.1:8000 ws://localhost:8000 https://*.supabase.co wss://*.supabase.co`,
               "media-src 'self' blob:",
               "object-src 'none'",
               "base-uri 'self'",

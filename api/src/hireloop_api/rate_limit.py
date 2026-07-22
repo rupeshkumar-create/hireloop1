@@ -9,11 +9,9 @@ quota. Swap the store for Redis if you need a cluster-wide limit.
 
 Limits are generous so legitimate use is never blocked; they only catch floods.
 
-Important: the browser talks to Railway via the Vercel `/hireloop-api` rewrite, so
-the socket peer is often a shared Vercel egress IP. We prefer CF-Connecting-IP /
-X-Forwarded-For / X-Real-IP for the real client. Counters are also keyed by
-path tier so auth and general traffic do not share one bucket against mismatched
-limits.
+Important: forwarded IP headers are attacker-controlled unless the immediate
+socket peer is a known reverse proxy. They are ignored by default and consulted
+only when TRUSTED_PROXY_CIDRS explicitly identifies the deployment's proxies.
 """
 
 from __future__ import annotations
@@ -24,6 +22,8 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+
+from hireloop_api.config import get_settings
 
 _WINDOW_SECONDS = 60
 _DEFAULT_MAX = 600  # requests / minute / IP for general endpoints
@@ -43,40 +43,41 @@ _EXEMPT_EXACT_PREFIXES = (
 _buckets: dict[tuple[str, str, int], int] = {}
 
 
-def _is_public_ip(host: str) -> bool:
+def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
-        addr = ipaddress.ip_address(host)
+        return ipaddress.ip_address(host.strip())
     except ValueError:
-        return False
-    return not (
-        addr.is_private
-        or addr.is_loopback
-        or addr.is_link_local
-        or addr.is_reserved
-        or addr.is_multicast
-        or addr.is_unspecified
-    )
+        return None
 
 
-def _client_ip(request: Request) -> str:
-    """Best-effort real client IP behind Cloudflare / Vercel / Railway."""
-    candidates: list[str] = []
-    cf = request.headers.get("cf-connecting-ip")
-    if cf:
-        candidates.append(cf.strip())
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        candidates.append(real_ip.strip())
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        candidates.extend(part.strip() for part in xff.split(",") if part.strip())
-    if request.client and request.client.host:
-        candidates.append(request.client.host)
+def _client_ip(request: Request, trusted_proxy_cidrs: list[str] | None = None) -> str:
+    """Return the direct peer, or the rightmost untrusted XFF hop."""
+    peer_host = request.client.host if request.client and request.client.host else ""
+    peer = _parse_ip(peer_host)
+    if peer is None:
+        return peer_host or "unknown"
 
-    for host in candidates:
-        if _is_public_ip(host):
-            return host
-    return candidates[0] if candidates else "unknown"
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for cidr in trusted_proxy_cidrs or []:
+        try:
+            networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            continue
+
+    def is_trusted(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        return any(
+            address.version == network.version and address in network for network in networks
+        )
+
+    if not networks or not is_trusted(peer):
+        return str(peer)
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    chain = [address for part in forwarded.split(",") if (address := _parse_ip(part)) is not None]
+    for address in reversed(chain):
+        if not is_trusted(address):
+            return str(address)
+    return str(peer)
 
 
 def _tier_for(path: str) -> str:
@@ -128,7 +129,9 @@ async def rate_limit_middleware(
     if request.method == "OPTIONS" or _is_exempt(path):
         return await call_next(request)
 
-    allowed, retry_after = check_rate_limit(_client_ip(request), path)
+    allowed, retry_after = check_rate_limit(
+        _client_ip(request, get_settings().trusted_proxy_cidrs), path
+    )
     if not allowed:
         return JSONResponse(
             status_code=429,

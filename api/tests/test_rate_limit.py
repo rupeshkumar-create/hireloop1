@@ -45,21 +45,49 @@ def test_window_resets_and_ips_isolated() -> None:
     assert rl.check_rate_limit("5.5.5.5", "/api/v1/x", now=t + rl._WINDOW_SECONDS)[0] is True
 
 
-def test_client_ip_prefers_cloudflare_and_xff() -> None:
+def test_client_ip_ignores_spoofed_forwarding_headers_from_untrusted_peer() -> None:
     req = SimpleNamespace(
         headers={
-            "cf-connecting-ip": "203.0.113.10",
-            "x-forwarded-for": "198.51.100.7, 10.0.0.1",
+            "cf-connecting-ip": "1.1.1.1",
+            "x-real-ip": "2.2.2.2",
+            "x-forwarded-for": "3.3.3.3",
+        },
+        client=SimpleNamespace(host="8.8.8.8"),
+    )
+    assert rl._client_ip(req, trusted_proxy_cidrs=["10.0.0.0/8"]) == "8.8.8.8"  # type: ignore[arg-type]
+
+
+def test_client_ip_uses_rightmost_untrusted_address_in_trusted_proxy_chain() -> None:
+    req = SimpleNamespace(
+        headers={
+            "cf-connecting-ip": "1.1.1.1",
+            "x-forwarded-for": "9.9.9.9, 172.16.0.8, 10.0.0.3",
         },
         client=SimpleNamespace(host="10.0.0.2"),
     )
-    assert rl._client_ip(req) == "203.0.113.10"  # type: ignore[arg-type]
+    assert (
+        rl._client_ip(  # type: ignore[arg-type]
+            req,
+            trusted_proxy_cidrs=["10.0.0.0/8", "172.16.0.0/12"],
+        )
+        == "9.9.9.9"
+    )
 
-    req2 = SimpleNamespace(
-        headers={"x-forwarded-for": "198.51.100.9, 10.0.0.1"},
+
+def test_client_ip_ignores_malformed_forwarded_addresses() -> None:
+    req = SimpleNamespace(
+        headers={"x-forwarded-for": "not-an-ip, 9.9.9.9, also-bad"},
         client=SimpleNamespace(host="10.0.0.2"),
     )
-    assert rl._client_ip(req2) == "198.51.100.9"  # type: ignore[arg-type]
+    assert rl._client_ip(req, trusted_proxy_cidrs=["10.0.0.0/8"]) == "9.9.9.9"  # type: ignore[arg-type]
+
+
+def test_client_ip_defaults_to_direct_peer_without_trusted_proxy_config() -> None:
+    req = SimpleNamespace(
+        headers={"x-forwarded-for": "9.9.9.9"},
+        client=SimpleNamespace(host="10.0.0.2"),
+    )
+    assert rl._client_ip(req) == "10.0.0.2"  # type: ignore[arg-type]
 
 
 def test_chat_and_matches_are_exempt_from_ip_middleware() -> None:

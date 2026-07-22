@@ -21,6 +21,8 @@ The /matches gate checks:
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import re
 import uuid
@@ -343,6 +345,38 @@ async def create_voice_session(
 # almost always 44100 or 48000; we pass it straight through to Deepgram.
 _MIN_SAMPLE_RATE = 8000
 _MAX_SAMPLE_RATE = 48000
+VOICE_WEBSOCKET_PROTOCOL = "hireschema.voice.v1"
+_VOICE_AUTH_PROTOCOL_PREFIX = "auth."
+_MAX_VOICE_ACCESS_TOKEN_BYTES = 4096
+
+
+def _extract_voice_auth_token(protocol_header: str | None) -> str | None:
+    """Decode a private auth subprotocol without selecting it in the response."""
+    if not protocol_header:
+        return None
+    protocols = [part.strip() for part in protocol_header.split(",") if part.strip()]
+    if VOICE_WEBSOCKET_PROTOCOL not in protocols:
+        return None
+    auth_protocols = [
+        protocol for protocol in protocols if protocol.startswith(_VOICE_AUTH_PROTOCOL_PREFIX)
+    ]
+    if len(auth_protocols) != 1 or len(protocols) != 2:
+        return None
+    encoded = auth_protocols[0][len(_VOICE_AUTH_PROTOCOL_PREFIX) :]
+    max_encoded_length = (_MAX_VOICE_ACCESS_TOKEN_BYTES * 4 + 2) // 3
+    if not encoded or len(encoded) > max_encoded_length:
+        return None
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        raw = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
+        token = raw.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    if not token or len(raw) > _MAX_VOICE_ACCESS_TOKEN_BYTES:
+        return None
+    if any(char.isspace() for char in token):
+        return None
+    return token
 
 
 @router.websocket("/stream")
@@ -355,8 +389,9 @@ async def voice_stream(
     to Deepgram's live endpoint and relay interim + final transcripts back so
     the voice UI can show word-by-word captions.
 
-    Auth: browsers can't set headers on the WS handshake, so the Supabase access
-    token is passed as `?token=...` and validated here. The client also sends
+    Auth: browsers can't set Authorization on the WS handshake, so they offer a
+    fixed application subprotocol plus a private base64url auth subprotocol.
+    Only the fixed protocol is selected in the response. The client sends
     `?sr=<sample_rate>` (its AudioContext rate) so we avoid resampling.
 
     Protocol (client → server):
@@ -367,7 +402,7 @@ async def voice_stream(
       - {"utterance_end": true}
       - {"error": str}  (then the socket closes)
     """
-    token = websocket.query_params.get("token")
+    token = _extract_voice_auth_token(websocket.headers.get("sec-websocket-protocol"))
     try:
         sample_rate = int(websocket.query_params.get("sr", "48000"))
     except (TypeError, ValueError):
@@ -375,19 +410,19 @@ async def voice_stream(
     sample_rate = max(_MIN_SAMPLE_RATE, min(_MAX_SAMPLE_RATE, sample_rate))
 
     # Reject before accepting the socket where we can — keeps the handshake clean.
-    if not settings.deepgram_api_key:
-        await websocket.close(code=1011, reason="STT not configured")
-        return
     if not token:
-        await websocket.close(code=1008, reason="Missing auth token")
+        await websocket.close(code=1008, reason="Authentication required")
         return
     try:
         await _fetch_supabase_user(token, settings)
     except HTTPException:
-        await websocket.close(code=1008, reason="Invalid auth token")
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    if not settings.deepgram_api_key:
+        await websocket.close(code=1011, reason="Service unavailable")
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=VOICE_WEBSOCKET_PROTOCOL)
 
     from websockets.exceptions import ConnectionClosed
 
