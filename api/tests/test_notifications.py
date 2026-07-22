@@ -69,6 +69,7 @@ async def test_career_chat_reminder_uses_private_call_label_and_deep_link(
     assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
     assert "Mon 24 Aug 2099, 06:00 UTC" in rendered["html"]
     assert "voice=deep&amp;scheduled_session_id=" in rendered["html"]
+    assert "Start your private call" in rendered["html"]
     assert in_app["title"] == "Reminder: Private 15-minute career call tomorrow"
 
 
@@ -112,6 +113,7 @@ async def test_career_chat_booking_confirmation_renders_as_a_noun(
 
     assert rendered["subject"] == "Booked: Private 15-minute career call with Aarya"
     assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
+    assert "Start your private call" in rendered["html"]
     assert in_app["title"] == "Private 15-minute career call booked"
 
 
@@ -142,6 +144,8 @@ def test_mock_interview_email_details_keep_existing_label_and_dashboard_cta() ->
     )
     assert subject == "Booked: Mock Interview with Aarya"
     assert "Your <strong>Mock Interview</strong> with Aarya" in html
+    assert "Open Hireschema" in html
+    assert "Start your private call" not in html
 
 
 def test_career_chat_email_details_reject_invalid_session_id() -> None:
@@ -153,3 +157,34 @@ def test_career_chat_email_details_reject_invalid_session_id() -> None:
             session_id="not-a-uuid&redirect=https://evil.example",
             session_type="career_chat",
         )
+
+
+@pytest.mark.asyncio
+async def test_reminder_skips_deleted_or_missing_owner_without_sending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+
+    class _MissingOwnerDb:
+        async def fetchrow(self, query: str, *args: object) -> None:
+            queries.append(query)
+            return None
+
+    async def _unexpected(*args: object, **kwargs: Any) -> None:
+        raise AssertionError("Deleted or missing owners must not receive reminders")
+
+    monkeypatch.setattr(notifications, "send_category_email", _unexpected)
+    monkeypatch.setattr(notifications, "_log_in_app", _unexpected)
+
+    result = await notifications.send_interview_reminder_email(
+        _MissingOwnerDb(),  # type: ignore[arg-type]
+        Settings(_env_file=None, environment="test"),
+        user_id=str(UUID("11111111-1111-4111-8111-111111111111")),
+        session_id=str(uuid4()),
+        session_type="career_chat",
+        scheduled_at=datetime(2099, 7, 23, 5, tzinfo=UTC),
+    )
+
+    assert result == {"sent": False, "skipped": "not_scheduled"}
+    assert "c.deleted_at IS NULL" in queries[0]
+    assert "u.deleted_at IS NULL" in queries[0]

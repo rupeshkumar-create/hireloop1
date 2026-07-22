@@ -55,6 +55,12 @@ def _voice_session_email_details(
     return label, cta_url
 
 
+def _voice_session_cta_label(session_type: str) -> str:
+    if session_type == "career_chat":
+        return "Start your private call"
+    return "Open Hireschema"
+
+
 def _email_provider_configured(settings: Settings) -> bool:
     return bool((settings.resend_api_key or "").strip())
 
@@ -623,6 +629,7 @@ async def notify_interview_booked(
             "scheduled_at": when,
             "is_reminder": False,
             "cta_url": cta_url,
+            "cta_label": _voice_session_cta_label(session_type),
         },
         template_id=settings.sg_template_interview_reminder,
     )
@@ -675,6 +682,7 @@ async def send_interview_reminder_email(
         JOIN public.candidates c ON c.id = vs.candidate_id
         JOIN public.users u ON u.id = c.user_id
         WHERE vs.id = $1::uuid AND u.id = $2::uuid
+          AND c.deleted_at IS NULL AND u.deleted_at IS NULL
         """,
         uuid.UUID(session_id),
         uuid.UUID(user_id),
@@ -707,6 +715,7 @@ async def send_interview_reminder_email(
             "scheduled_label": when,
             "is_reminder": True,
             "cta_url": cta_url,
+            "cta_label": _voice_session_cta_label(canonical_session_type),
         },
         template_id=settings.sg_template_interview_reminder,
     )
