@@ -219,11 +219,22 @@ async def test_non_owned_mutation_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_malformed_operation_uuid_is_rejected(
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/ai-operations/not-a-uuid"),
+        ("POST", "/api/v1/ai-operations/not-a-uuid/cancel"),
+        ("POST", "/api/v1/ai-operations/not-a-uuid/retry"),
+    ],
+)
+async def test_malformed_operation_uuid_is_indistinguishable_from_missing(
+    method: str,
+    path: str,
     route_client: tuple[AsyncClient, _FakeDb],
 ) -> None:
     client, _ = route_client
 
-    response = await client.get("/api/v1/ai-operations/not-a-uuid")
+    response = await client.request(method, path)
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    assert response.json() == {"detail": "AI operation not found"}
