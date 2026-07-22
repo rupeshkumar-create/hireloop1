@@ -116,6 +116,8 @@ export function VoiceSession({
   } | null>(null);
   const timeLimitTriggeredRef = useRef(false);
   const endCallRef = useRef<((reason: CompletionReason) => Promise<void>) | null>(null);
+  // Invalidates queued TTS sentences when speech is interrupted or superseded.
+  const speechQueueGenerationRef = useRef(0);
   // Lets listenForUser call the latest doTurn without a useCallback dep cycle.
   const doTurnRef       = useRef<((c: string, t: string) => Promise<void>) | null>(null);
 
@@ -368,6 +370,7 @@ export function VoiceSession({
       // Sentence-streaming TTS: each complete sentence is appended to a serial
       // speech chain the moment it arrives, so Aarya starts talking ~1-2s into
       // generation instead of after the whole reply (was the main dead air).
+      const speechQueueGeneration = ++speechQueueGenerationRef.current;
       let speechChain: Promise<void> = Promise.resolve();
       let startedSpeaking = false;
       let coverageComplete = false;
@@ -378,7 +381,10 @@ export function VoiceSession({
           setTurnState("aarya_speaking");
         }
         speechChain = speechChain.then(() =>
-          isEndingRef.current ? undefined : speak(sentence, "aarya").catch(() => undefined)
+          isEndingRef.current ||
+          speechQueueGenerationRef.current !== speechQueueGeneration
+            ? undefined
+            : speak(sentence, "aarya").catch(() => undefined)
         );
       };
 
@@ -527,6 +533,7 @@ export function VoiceSession({
       }
 
       isEndingRef.current = true;
+      speechQueueGenerationRef.current += 1;
       if (isMountedRef.current) {
         setTurnState("ending");
         setErrorMsg(null);
@@ -649,6 +656,7 @@ export function VoiceSession({
   /** Tap mic: barge-in while Aarya speaks, or force-stop capture while listening */
   const handleMicTap = useCallback(async () => {
     if (turnState === "aarya_speaking" || (turnState === "processing" && isPlaying)) {
+      speechQueueGenerationRef.current += 1;
       stopSpeaking();
       abortRef.current?.abort();
       if (conversationIdRef.current) {
@@ -708,6 +716,7 @@ export function VoiceSession({
     return () => {
       isMountedRef.current = false;
       isEndingRef.current = true;
+      speechQueueGenerationRef.current += 1;
       stopSpeaking();
       abortRef.current?.abort();
       releaseListenWaitRef.current?.();
