@@ -1563,7 +1563,9 @@ async def get_actions(
     last_user_at = await db.fetchval(
         """
         SELECT created_at FROM public.messages
-        WHERE conversation_id = $1::uuid AND role = 'user'
+        WHERE conversation_id = $1::uuid
+          AND role = 'user'
+          AND voice_session_id IS NULL
         ORDER BY created_at DESC
         LIMIT 1
         """,
