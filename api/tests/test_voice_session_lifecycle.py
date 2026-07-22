@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import asyncpg
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -41,6 +42,7 @@ class LifecycleDb:
         self.wrong_session_owner = False
         self.inserted_voice_session = False
         self.in_transaction = False
+        self.raise_unique_on_insert = False
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
 
     @classmethod
@@ -88,7 +90,7 @@ class LifecycleDb:
         if "FROM public.voice_sessions" in normalized and "FOR UPDATE" in normalized:
             if self.wrong_session_owner:
                 return None
-            if self.state in {"active", "completed"}:
+            if self.state in {"scheduled", "active", "completed"}:
                 return self._session_row()
             return None
         if "FROM public.messages" in normalized:
@@ -100,18 +102,22 @@ class LifecycleDb:
         normalized = " ".join(query.split())
         self.execute_calls.append((normalized, args))
         if "INSERT INTO public.voice_sessions" in normalized:
+            if self.raise_unique_on_insert:
+                self.state = "active"
+                self.status = "active"
+                raise asyncpg.UniqueViolationError("active career call race")
             self.inserted_voice_session = True
             self.session_id = args[0]  # type: ignore[assignment]
             self.status = "active"
             self.state = "active"
             return "INSERT 0 1"
         if "UPDATE public.voice_sessions" in normalized:
-            if "status = 'active'" in normalized:
-                self.status = "active"
-                self.state = "active"
-            elif "status = 'completed'" in normalized:
+            if "SET status = 'completed'" in normalized:
                 self.status = "completed"
                 self.state = "completed"
+            elif "SET status = 'active'" in normalized:
+                self.status = "active"
+                self.state = "active"
             return "UPDATE 1"
         if "INSERT INTO public.consent_log" in normalized:
             return "INSERT 0 1"
@@ -220,6 +226,31 @@ async def test_start_rejects_active_different_conversation() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_conversation", [True, False])
+async def test_start_handles_unique_active_call_race(same_conversation: bool) -> None:
+    db = LifecycleDb.new_candidate()
+    db.raise_unique_on_insert = True
+    requested_conversation = db.conversation_id if same_conversation else db.other_conversation_id
+
+    if same_conversation:
+        out = await voice_sessions.start_career_call(
+            _start_request(conversation_id=requested_conversation),
+            current_user={"id": str(db.user_id)},
+            db=db,
+        )
+        assert out.id == str(db.session_id)
+        assert out.status == "active"
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await voice_sessions.start_career_call(
+                _start_request(conversation_id=requested_conversation),
+                current_user={"id": str(db.user_id)},
+                db=db,
+            )
+        assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_start_writes_consent_and_initial_coverage_transactionally() -> None:
     db = LifecycleDb.new_candidate()
     await voice_sessions.start_career_call(
@@ -262,6 +293,66 @@ async def test_complete_enforces_ownership() -> None:
             db=db,
         )
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_repeat_identical_completion_is_idempotent() -> None:
+    db = LifecycleDb.active_call()
+    first = await voice_sessions.complete_career_call(
+        db.session_id,
+        _complete_request(),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+    writes_after_first = len(db.execute_calls)
+
+    second = await voice_sessions.complete_career_call(
+        db.session_id,
+        _complete_request(),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
+    assert second == first
+    assert len(db.execute_calls) == writes_after_first
+
+
+@pytest.mark.asyncio
+async def test_conflicting_repeat_completion_returns_409_without_writes() -> None:
+    db = LifecycleDb.active_call()
+    await voice_sessions.complete_career_call(
+        db.session_id,
+        _complete_request(),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+    writes_after_first = len(db.execute_calls)
+
+    with pytest.raises(HTTPException) as exc:
+        await voice_sessions.complete_career_call(
+            db.session_id,
+            _complete_request(duration_seconds=43),
+            current_user={"id": str(db.user_id)},
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert len(db.execute_calls) == writes_after_first
+    assert all("UPDATE public.candidates" not in sql for sql, _ in db.execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_complete_rejects_non_active_session_without_profile_mutation() -> None:
+    db = LifecycleDb.scheduled_call()
+    with pytest.raises(HTTPException) as exc:
+        await voice_sessions.complete_career_call(
+            db.session_id,
+            _complete_request(),
+            current_user={"id": str(db.user_id)},
+            db=db,
+        )
+    assert exc.value.status_code == 409
+    assert all("UPDATE public.candidates" not in sql for sql, _ in db.execute_calls)
 
 
 @pytest.mark.parametrize("duration", [-1, 961])

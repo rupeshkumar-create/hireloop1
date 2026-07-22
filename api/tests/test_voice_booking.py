@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,11 +28,14 @@ def _now_ist(y: int, m: int, d: int, h: int, mi: int) -> datetime:
 
 
 class _Transaction:
+    def __init__(self, db: BookingDb) -> None:
+        self.db = db
+
     async def __aenter__(self) -> None:
-        return None
+        self.db.events.append("transaction_enter")
 
     async def __aexit__(self, *args: object) -> None:
-        return None
+        self.db.events.append("transaction_exit")
 
 
 class BookingDb:
@@ -41,9 +45,17 @@ class BookingDb:
         self.duplicate = duplicate
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.events: list[str] = []
 
     def transaction(self) -> _Transaction:
-        return _Transaction()
+        return _Transaction(self)
+
+    async def fetchval(self, query: str, *args: object) -> None:
+        normalized = " ".join(query.split())
+        if "pg_advisory_xact_lock" in normalized and "hashtextextended" in normalized:
+            self.events.append("advisory_lock")
+            return None
+        raise AssertionError(f"Unrecognised fetchval query: {normalized}")
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         self.fetchrow_calls.append((query, args))
@@ -51,6 +63,7 @@ class BookingDb:
         if "FROM public.candidates" in normalized:
             return {"id": self.candidate_id}
         if "date_trunc('minute', scheduled_at)" in normalized:
+            self.events.append("duplicate_check")
             return {"id": uuid.uuid4()} if self.duplicate else None
         if "FROM public.gmail_tokens" in normalized:
             return None
@@ -63,7 +76,11 @@ class BookingDb:
         normalized = " ".join(query.split())
         self.execute_calls.append((normalized, args))
         if "INSERT INTO public.voice_sessions" in normalized:
+            self.events.append("session_insert")
             return "INSERT 0 1"
+        if "UPDATE public.voice_sessions" in normalized and "calendar_event_id" in normalized:
+            self.events.append("calendar_id_update")
+            return "UPDATE 1"
         raise AssertionError(f"Unrecognised execute query: {normalized}")
 
 
@@ -74,6 +91,70 @@ class _Calendar:
     async def create_event(self, **kwargs: str) -> tuple[str, None]:
         self.calls.append(kwargs)
         return "event-1", None
+
+
+class _UnavailableCalendar(_Calendar):
+    async def create_event(self, **kwargs: str) -> tuple[None, None]:
+        self.calls.append(kwargs)
+        return None, None
+
+
+class ConcurrentBookingDb(BookingDb):
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = asyncio.Lock()
+        self._lock_owner: asyncio.Task[object] | None = None
+        self.booked = False
+
+    async def fetchval(self, query: str, *args: object) -> None:
+        normalized = " ".join(query.split())
+        if "pg_advisory_xact_lock" not in normalized:
+            raise AssertionError(f"Unrecognised fetchval query: {normalized}")
+        await self._lock.acquire()
+        self._lock_owner = asyncio.current_task()
+        self.events.append("advisory_lock")
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        normalized = " ".join(query.split())
+        if "FROM public.candidates" in normalized:
+            return {"id": self.candidate_id}
+        if "date_trunc('minute', scheduled_at)" in normalized:
+            assert self._lock_owner is asyncio.current_task()
+            self.events.append("duplicate_check")
+            return {"id": uuid.uuid4()} if self.booked else None
+        if "FROM public.gmail_tokens" in normalized:
+            return None
+        raise AssertionError(f"Unrecognised fetchrow query: {normalized}")
+
+    async def execute(self, query: str, *args: object) -> str:
+        normalized = " ".join(query.split())
+        self.execute_calls.append((normalized, args))
+        if "INSERT INTO public.voice_sessions" in normalized:
+            assert self._lock_owner is asyncio.current_task()
+            assert args[4] is None, "calendar enrichment must happen after booking commit"
+            self.booked = True
+            self.events.append("session_insert")
+            return "INSERT 0 1"
+        if "UPDATE public.voice_sessions" in normalized and "calendar_event_id" in normalized:
+            assert self._lock_owner is None
+            self.events.append("calendar_id_update")
+            return "UPDATE 1"
+        raise AssertionError(f"Unrecognised execute query: {normalized}")
+
+    def transaction(self) -> _ConcurrentTransaction:
+        return _ConcurrentTransaction(self)
+
+
+class _ConcurrentTransaction(_Transaction):
+    def __init__(self, db: ConcurrentBookingDb) -> None:
+        super().__init__(db)
+        self.db = db
+
+    async def __aexit__(self, *args: object) -> None:
+        self.db.events.append("transaction_exit")
+        if self.db._lock_owner is asyncio.current_task():
+            self.db._lock_owner = None
+            self.db._lock.release()
 
 
 def test_slots_are_15min_within_business_hours() -> None:
@@ -142,6 +223,56 @@ async def test_duplicate_candidate_career_chat_in_same_minute_is_rejected(
 
     assert exc.value.status_code == 409
     assert calendar.calls == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_candidate_minute_creates_one_booking_and_calendar_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = ConcurrentBookingDb()
+    calendar = _Calendar()
+    monkeypatch.setattr(voice_sessions, "_get_calendar_service", lambda settings, db: calendar)
+    body = voice_sessions.BookSessionRequest(start_time="2099-07-23T05:00:20Z")
+    user = {"id": str(db.user_id), "email": "candidate@example.com"}
+    settings = Settings(_env_file=None, environment="test")
+
+    results = await asyncio.gather(
+        voice_sessions.book_session(body, current_user=user, settings=settings, db=db),
+        voice_sessions.book_session(body, current_user=user, settings=settings, db=db),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, voice_sessions.BookSessionResponse) for result in results) == 1
+    conflicts = [result for result in results if isinstance(result, voice_sessions.HTTPException)]
+    assert len(conflicts) == 1
+    assert conflicts[0].status_code == 409
+    assert len(calendar.calls) == 1
+    assert db.events.count("session_insert") == 1
+    assert db.events.index("advisory_lock") < db.events.index("duplicate_check")
+    assert db.events.index("duplicate_check") < db.events.index("session_insert")
+    assert db.events.index("session_insert") < db.events.index("transaction_exit")
+    assert db.events.index("transaction_exit") < db.events.index("calendar_id_update")
+
+
+@pytest.mark.asyncio
+async def test_calendar_failure_keeps_in_app_booking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = BookingDb()
+    calendar = _UnavailableCalendar()
+    monkeypatch.setattr(voice_sessions, "_get_calendar_service", lambda settings, db: calendar)
+
+    response = await voice_sessions.book_session(
+        voice_sessions.BookSessionRequest(start_time="2099-07-23T05:00:00Z"),
+        current_user={"id": str(db.user_id), "email": "candidate@example.com"},
+        settings=Settings(_env_file=None, environment="test"),
+        db=db,
+    )
+
+    assert response.session_id
+    assert response.calendar_event_id is None
+    assert db.events.count("session_insert") == 1
+    assert "calendar_id_update" not in db.events
 
 
 @pytest.mark.asyncio

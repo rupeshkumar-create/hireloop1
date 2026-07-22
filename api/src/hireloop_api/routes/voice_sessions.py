@@ -145,28 +145,49 @@ async def book_session(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate profile not found")
 
-    if body.session_type == "career_chat":
-        duplicate = await db.fetchrow(
-            """
-            SELECT id
-            FROM public.voice_sessions
-            WHERE candidate_id = $1::uuid
-              AND session_type = 'career_chat'
-              AND status = 'scheduled'
-              AND date_trunc('minute', scheduled_at) = date_trunc('minute', $2::timestamptz)
-            LIMIT 1
-            """,
-            candidate["id"],
-            start_dt,
-        )
-        if duplicate:
-            raise HTTPException(
-                status_code=409,
-                detail="You already scheduled a career call for that minute.",
-            )
-
-    # Create the Calendar event (enrichment; degrades to in-app slot if no scope).
     session_id = str(uuid.uuid4())
+    async with db.transaction():
+        if body.session_type == "career_chat":
+            lock_key = (
+                f"voice-booking:{candidate['id']}:{start_dt.strftime('%Y-%m-%dT%H:%M')}:career_chat"
+            )
+            await db.fetchval(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+                lock_key,
+            )
+            duplicate = await db.fetchrow(
+                """
+                SELECT id
+                FROM public.voice_sessions
+                WHERE candidate_id = $1::uuid
+                  AND session_type = 'career_chat'
+                  AND status = 'scheduled'
+                  AND date_trunc('minute', scheduled_at) = date_trunc('minute', $2::timestamptz)
+                LIMIT 1
+                """,
+                candidate["id"],
+                start_dt,
+            )
+            if duplicate:
+                raise HTTPException(
+                    status_code=409,
+                    detail="You already scheduled a career call for that minute.",
+                )
+
+        await db.execute(
+            """
+            INSERT INTO public.voice_sessions
+              (id, candidate_id, session_type, status, scheduled_at, calendar_event_id)
+            VALUES ($1, $2, $3, 'scheduled', $4, $5)
+            """,
+            uuid.UUID(session_id),
+            candidate["id"],
+            body.session_type,
+            start_dt,
+            None,
+        )
+
+    # Calendar enrichment is deliberately outside the booking transaction.
     deep_link = (
         f"{settings.public_app_url.rstrip('/')}/dashboard"
         f"?voice=deep&scheduled_session_id={session_id}"
@@ -181,19 +202,17 @@ async def book_session(
         description=f"Your private 15-minute in-app call with Aarya. Start here: {deep_link}",
         attendee_email=current_user["email"],
     )
-
-    await db.execute(
-        """
-        INSERT INTO public.voice_sessions
-          (id, candidate_id, session_type, status, scheduled_at, calendar_event_id)
-        VALUES ($1, $2, $3, 'scheduled', $4, $5)
-        """,
-        uuid.UUID(session_id),
-        candidate["id"],
-        body.session_type,
-        start_dt,
-        event_id,
-    )
+    if event_id:
+        await db.execute(
+            """
+            UPDATE public.voice_sessions
+            SET calendar_event_id = $2, updated_at = NOW()
+            WHERE id = $1::uuid AND candidate_id = $3::uuid
+            """,
+            uuid.UUID(session_id),
+            event_id,
+            candidate["id"],
+        )
 
     logger.info(
         "voice_session_booked",

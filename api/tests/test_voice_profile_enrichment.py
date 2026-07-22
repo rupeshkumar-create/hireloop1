@@ -6,7 +6,9 @@ import uuid
 
 import pytest
 
+from hireloop_api.routes import voice
 from hireloop_api.routes.voice import VoiceSessionCreate, create_voice_session
+from hireloop_api.routes.voice_sessions import CareerCallResponse
 
 
 class LegacyDb:
@@ -44,3 +46,38 @@ async def test_legacy_completion_without_session_id_never_updates_candidate_prof
     assert result["status"] == "completed"
     assert any("INSERT INTO public.voice_sessions" in sql for sql, _ in db.execute_calls)
     assert all("UPDATE public.candidates" not in sql for sql, _ in db.execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_legacy_existing_session_delegates_without_inserting_or_mutating_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = LegacyDb()
+    session_id = uuid.uuid4()
+    conversation_id = uuid.uuid4()
+    calls: list[dict[str, object]] = []
+
+    async def complete_existing(**kwargs: object) -> CareerCallResponse:
+        calls.append(kwargs)
+        return CareerCallResponse(
+            id=str(session_id),
+            conversation_id=str(conversation_id),
+            status="completed",
+        )
+
+    monkeypatch.setattr(voice, "_complete_owned_career_call", complete_existing)
+    result = await create_voice_session(
+        VoiceSessionCreate(
+            session_id=session_id,
+            duration_seconds=120,
+            status="completed",
+            conversation_id=str(conversation_id),
+        ),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,
+    )
+
+    assert result["id"] == str(session_id)
+    assert len(calls) == 1
+    assert calls[0]["session_id"] == session_id
+    assert db.execute_calls == []
