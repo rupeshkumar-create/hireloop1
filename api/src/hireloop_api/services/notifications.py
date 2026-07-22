@@ -57,7 +57,7 @@ def _voice_session_email_details(
 
 def _voice_session_cta_label(session_type: str) -> str:
     if session_type == "career_chat":
-        return "Start your private call"
+        return "Start your private 15-minute call"
     return "Open Hireschema"
 
 

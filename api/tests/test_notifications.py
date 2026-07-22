@@ -69,7 +69,7 @@ async def test_career_chat_reminder_uses_private_call_label_and_deep_link(
     assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
     assert "Mon 24 Aug 2099, 06:00 UTC" in rendered["html"]
     assert "voice=deep&amp;scheduled_session_id=" in rendered["html"]
-    assert "Start your private call" in rendered["html"]
+    assert "Start your private 15-minute call" in rendered["html"]
     assert in_app["title"] == "Reminder: Private 15-minute career call tomorrow"
 
 
@@ -113,7 +113,7 @@ async def test_career_chat_booking_confirmation_renders_as_a_noun(
 
     assert rendered["subject"] == "Booked: Private 15-minute career call with Aarya"
     assert "Your <strong>Private 15-minute career call</strong> with Aarya" in rendered["html"]
-    assert "Start your private call" in rendered["html"]
+    assert "Start your private 15-minute call" in rendered["html"]
     assert in_app["title"] == "Private 15-minute career call booked"
 
 
@@ -145,7 +145,7 @@ def test_mock_interview_email_details_keep_existing_label_and_dashboard_cta() ->
     assert subject == "Booked: Mock Interview with Aarya"
     assert "Your <strong>Mock Interview</strong> with Aarya" in html
     assert "Open Hireschema" in html
-    assert "Start your private call" not in html
+    assert "Start your private 15-minute call" not in html
 
 
 def test_career_chat_email_details_reject_invalid_session_id() -> None:
