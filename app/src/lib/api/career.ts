@@ -78,9 +78,13 @@ export async function fetchCareerPath(): Promise<CareerPath | null> {
 
 /** (Re)generate the candidate's career path from their profile. */
 export async function generateCareerPath(): Promise<CareerPath> {
-  const res = await apiAuthFetch("/api/v1/career/path/generate", {
-    method: "POST",
-  });
+  const res = await apiAuthFetch(
+    "/api/v1/career/path/generate",
+    {
+      method: "POST",
+    },
+    { timeoutMs: 120_000 },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Career path generation failed: ${res.status}`);
