@@ -38,6 +38,29 @@ ALTER TABLE public.voice_sessions
     REFERENCES public.conversations(id, candidate_id)
     ON DELETE SET NULL (conversation_id);
 
+ALTER TABLE public.messages
+  ADD COLUMN IF NOT EXISTS voice_session_id UUID;
+
+DO $migration$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'messages_voice_session_fk'
+      AND conrelid = 'public.messages'::regclass
+  ) THEN
+    ALTER TABLE public.messages
+      ADD CONSTRAINT messages_voice_session_fk
+      FOREIGN KEY (voice_session_id)
+      REFERENCES public.voice_sessions(id) ON DELETE SET NULL;
+  END IF;
+END
+$migration$;
+
+CREATE INDEX IF NOT EXISTS idx_messages_voice_session
+  ON public.messages(voice_session_id, created_at ASC)
+  WHERE voice_session_id IS NOT NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_sessions_active_candidate
   ON public.voice_sessions(candidate_id)
   WHERE session_type = 'career_chat' AND status = 'active';

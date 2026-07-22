@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -19,9 +21,13 @@ from hireloop_api.agents.aarya.agent import (
 )
 from hireloop_api.config import Settings
 from hireloop_api.models.career_interview import CareerInterviewCoverage, InterviewTopic
+from hireloop_api.routes import chat as chat_routes
 from hireloop_api.routes.chat import (
     SendMessageRequest,
     _memory_update_background,
+    _persist_assistant_reply,
+    _persist_user_message,
+    load_prompt_history,
     prepare_career_interview_turn,
     resolve_chat_turn_routing,
 )
@@ -29,7 +35,12 @@ from hireloop_api.services.career_interview import (
     load_active_interview,
     record_turn_and_select_focus,
 )
+from hireloop_api.services.chat_sessions import load_candidate_chat_messages
 from hireloop_api.services.memory import run_memory_update
+
+MIGRATION = (
+    Path(__file__).parents[2] / "supabase/migrations/20260721150000_aarya_career_call_phase1.sql"
+)
 
 
 class _Transaction:
@@ -96,6 +107,25 @@ class CapturingChatModel:
     async def ainvoke(self, messages: list[object]) -> AIMessage:
         self.invocations.append(messages)
         return AIMessage(content="Thanks for sharing. What kind of impact did that work have?")
+
+
+class _Acquire:
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> object:
+        return self.connection
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Pool:
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _Acquire:
+        return _Acquire(self.connection)
 
 
 def test_career_interview_prompt_is_single_question_private_discovery_guidance() -> None:
@@ -251,6 +281,88 @@ def test_private_interview_background_does_not_run_memory_extraction() -> None:
     )
     assert ordinary is not None
     assert ordinary.func is run_memory_update
+
+
+def test_migration_durably_attributes_messages_to_voice_sessions() -> None:
+    sql = MIGRATION.read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS voice_session_id UUID" in sql
+    assert "messages_voice_session_fk" in sql
+    assert "REFERENCES public.voice_sessions(id) ON DELETE SET NULL" in sql
+    assert "idx_messages_voice_session" in sql
+    assert "WHERE voice_session_id IS NOT NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_private_user_and_assistant_messages_persist_voice_session_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+    db.fetchrow.return_value = None
+    voice_session_id = uuid4()
+    conversation_id = uuid4()
+
+    await _persist_user_message(
+        db,
+        conversation_id=conversation_id,
+        content="My private career answer",
+        content_type="voice",
+        voice_session_id=voice_session_id,
+    )
+    user_sql, *user_args = db.execute.await_args.args
+    assert "voice_session_id" in user_sql
+    assert user_args[-1] == voice_session_id
+
+    db.reset_mock()
+    db.fetchrow.return_value = None
+    monkeypatch.setattr(chat_routes, "get_db_pool", AsyncMock(return_value=_Pool(db)))
+    await _persist_assistant_reply(
+        object(),  # type: ignore[arg-type]
+        str(conversation_id),
+        "Private Aarya reply",
+        "private title",
+        voice_session_id=voice_session_id,
+    )
+
+    duplicate_sql, duplicate_conversation, duplicate_session = db.fetchrow.await_args.args
+    assert "voice_session_id IS NOT DISTINCT FROM $2::uuid" in duplicate_sql
+    assert duplicate_conversation == conversation_id
+    assert duplicate_session == voice_session_id
+    assistant_insert = next(
+        call for call in db.execute.await_args_list if "INSERT INTO public.messages" in call.args[0]
+    )
+    assert "voice_session_id" in assistant_insert.args[0]
+    assert assistant_insert.args[-1] == voice_session_id
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_isolates_private_and_ordinary_transcripts() -> None:
+    db = AsyncMock()
+    db.fetch.return_value = []
+    conversation_id = uuid4()
+    voice_session_id = uuid4()
+
+    await load_prompt_history(db, conversation_id, voice_session_id=None)
+    ordinary_sql, *ordinary_args = db.fetch.await_args.args
+    assert "voice_session_id IS NULL" in ordinary_sql
+    assert ordinary_args == [conversation_id]
+
+    await load_prompt_history(db, conversation_id, voice_session_id=voice_session_id)
+    private_sql, *private_args = db.fetch.await_args.args
+    assert "voice_session_id = $2::uuid" in private_sql
+    assert private_args == [conversation_id, voice_session_id]
+    assert "IS NULL" not in private_sql
+
+
+@pytest.mark.asyncio
+async def test_memory_source_excludes_private_voice_session_messages() -> None:
+    db = AsyncMock()
+    db.fetch.return_value = []
+
+    await load_candidate_chat_messages(db, str(uuid4()))
+
+    sql = db.fetch.await_args.args[0]
+    assert "m.voice_session_id IS NULL" in sql
 
 
 @pytest.mark.asyncio

@@ -470,11 +470,75 @@ def _build_match_explanation_reply(result: dict[str, Any]) -> str:
     return f"**{round(overall)}% match — {title} at {company}**\n\n{explanation}{suffix}"
 
 
+async def _persist_user_message(
+    db: asyncpg.Connection,
+    *,
+    conversation_id: uuid.UUID,
+    content: str,
+    content_type: str,
+    voice_session_id: uuid.UUID | None,
+) -> None:
+    """Persist a user turn with durable private-call attribution."""
+    await db.execute(
+        """
+        INSERT INTO public.messages
+          (id, conversation_id, role, content, content_type, voice_session_id)
+        VALUES ($1::uuid, $2::uuid, 'user', $3, $4, $5::uuid)
+        """,
+        uuid.uuid4(),
+        conversation_id,
+        content,
+        content_type,
+        voice_session_id,
+    )
+
+
+async def load_prompt_history(
+    db: asyncpg.Connection,
+    conversation_id: uuid.UUID,
+    *,
+    voice_session_id: uuid.UUID | None,
+) -> list[asyncpg.Record]:
+    """Load either ordinary chat or one private call, never a mixed transcript."""
+    if voice_session_id is None:
+        return await db.fetch(
+            """
+            SELECT role, content FROM (
+                SELECT m.role, m.content, m.created_at
+                FROM public.messages m
+                WHERE m.conversation_id = $1::uuid
+                  AND m.voice_session_id IS NULL
+                ORDER BY m.created_at DESC
+                LIMIT 50
+            ) recent
+            ORDER BY created_at ASC
+            """,
+            conversation_id,
+        )
+    return await db.fetch(
+        """
+        SELECT role, content FROM (
+            SELECT m.role, m.content, m.created_at
+            FROM public.messages m
+            WHERE m.conversation_id = $1::uuid
+              AND m.voice_session_id = $2::uuid
+            ORDER BY m.created_at DESC
+            LIMIT 50
+        ) recent
+        ORDER BY created_at ASC
+        """,
+        conversation_id,
+        voice_session_id,
+    )
+
+
 async def _persist_assistant_reply(
     settings: Settings,
     conversation_id: str,
     full_response: str,
     title_hint: str,
+    *,
+    voice_session_id: uuid.UUID | None = None,
 ) -> None:
     """Save the assistant turn on a fresh pooled connection (avoids stale stream conn)."""
     pool = await get_db_pool(settings)
@@ -482,33 +546,39 @@ async def _persist_assistant_reply(
         last_row = await conn.fetchrow(
             """
             SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid AND role = 'assistant'
+            WHERE conversation_id = $1::uuid
+              AND role = 'assistant'
+              AND voice_session_id IS NOT DISTINCT FROM $2::uuid
             ORDER BY created_at DESC
             LIMIT 1
             """,
             coerce_uuid(conversation_id),
+            voice_session_id,
         )
         if last_row and (last_row["content"] or "").strip() == full_response.strip():
             return
         await conn.execute(
             """
-            INSERT INTO public.messages (id, conversation_id, role, content, content_type)
-            VALUES ($1::uuid, $2::uuid, 'assistant', $3, 'text')
+            INSERT INTO public.messages
+              (id, conversation_id, role, content, content_type, voice_session_id)
+            VALUES ($1::uuid, $2::uuid, 'assistant', $3, 'text', $4::uuid)
             """,
             uuid.uuid4(),
             coerce_uuid(conversation_id),
             full_response,
+            voice_session_id,
         )
-        await conn.execute(
-            """
-            UPDATE public.conversations
-            SET title = CASE WHEN title = 'New conversation' THEN $1 ELSE title END,
-                updated_at = NOW()
-            WHERE id = $2::uuid
-            """,
-            title_hint[:60],
-            coerce_uuid(conversation_id),
-        )
+        if voice_session_id is None:
+            await conn.execute(
+                """
+                UPDATE public.conversations
+                SET title = CASE WHEN title = 'New conversation' THEN $1 ELSE title END,
+                    updated_at = NOW()
+                WHERE id = $2::uuid
+                """,
+                title_hint[:60],
+                coerce_uuid(conversation_id),
+            )
 
 
 async def _prefetch_top_jobs(
@@ -917,16 +987,12 @@ async def send_message(
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
 
-        user_msg_id = str(uuid.uuid4())
-        await db.execute(
-            """
-            INSERT INTO public.messages (id, conversation_id, role, content, content_type)
-            VALUES ($1::uuid, $2::uuid, 'user', $3, $4)
-            """,
-            user_msg_id,
-            coerce_uuid(conversation_id),
-            body.content,
-            body.content_type,
+        await _persist_user_message(
+            db,
+            conversation_id=coerce_uuid(conversation_id),
+            content=body.content,
+            content_type=body.content_type,
+            voice_session_id=(body.voice_session_id if career_interview_mode else None),
         )
 
         career_path_row = await CareerPathService.get_latest(db, candidate_id)
@@ -1029,17 +1095,10 @@ async def send_message(
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
         # conversation never loses its latest turns to the window.
-        history = await db.fetch(
-            """
-            SELECT role, content FROM (
-                SELECT role, content, created_at FROM public.messages
-                WHERE conversation_id = $1::uuid
-                ORDER BY created_at DESC
-                LIMIT 50
-            ) recent
-            ORDER BY created_at ASC
-            """,
+        history = await load_prompt_history(
+            db,
             coerce_uuid(conversation_id),
+            voice_session_id=(body.voice_session_id if career_interview_mode else None),
         )
 
     # Long threads: keep only the latest turns in the LLM window. Older context
@@ -1093,6 +1152,7 @@ async def send_message(
 
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
+    message_voice_session_id = body.voice_session_id if career_interview_mode else None
     title_hint = body.content[:60]
     application_kit_job_ids = turn_routing.application_kit_job_ids
 
@@ -1228,7 +1288,11 @@ async def send_message(
                 yield sse_text(full_response)
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1269,7 +1333,11 @@ async def send_message(
                 yield sse_text(full_response)
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1284,7 +1352,11 @@ async def send_message(
                 yield sse_text(deterministic_job_reply)
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1361,7 +1433,11 @@ async def send_message(
             if full_response:
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1377,7 +1453,11 @@ async def send_message(
             if full_response:
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
