@@ -20,6 +20,7 @@ from typing import Any
 
 import asyncpg
 import structlog
+from pydantic import BaseModel, ConfigDict, Field
 
 from hireloop_api.config import Settings
 
@@ -35,6 +36,8 @@ RESUME_PARSE = "resume_parse"
 NITYA_INTRO_DRAFT = "nitya_intro_draft"
 CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
 CAREER_PATH_UPDATE = "career_path_update"
+CAREER_INTELLIGENCE_GENERATE = "career_intelligence_generate"
+CAREER_PATH_GENERATE = "career_path_generate"
 PROFILE_COMPLETENESS = "profile_completeness"
 TAILORED_RESUME = "tailored_resume"
 CAREER_PATH_RESUMES = "career_path_resumes"
@@ -78,6 +81,17 @@ class HandlerResult:
 
 Handler = Callable[[Settings, dict[str, Any]], Awaitable[HandlerResult | None]]
 
+
+class _CareerGenerationPayload(BaseModel):
+    """Validated private payload for candidate-scoped generation jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: uuid.UUID
+    operation_id: uuid.UUID
+    lease_token: str = Field(alias="_job_lease_token")
+
+
 _BACKOFF_BASE_SECONDS = 30
 _BACKOFF_MAX_SECONDS = 900
 
@@ -90,6 +104,8 @@ _INTERACTIVE_JOB_KINDS = frozenset(
         RESUME_PARSE,
         TAILORED_RESUME,
         CAREER_PATH_RESUMES,
+        CAREER_PATH_GENERATE,
+        CAREER_INTELLIGENCE_GENERATE,
         LEARNING_ROADMAP,
         AARYA_DAILY_DIGEST,
     }
@@ -472,6 +488,90 @@ async def _handle_career_path_update(settings: Settings, payload: dict[str, Any]
     await run_career_path_update(settings, str(payload["candidate_id"]))
 
 
+async def _handle_career_path_generate(
+    settings: Settings,
+    payload: dict[str, Any],
+) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.career_path import CareerPathService
+
+    job = _CareerGenerationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=10,
+        stage="loading_profile",
+        message="Loading your career profile.",
+    )
+    pool = await get_db_pool(settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="generating",
+        message="Aarya is mapping your career directions.",
+    )
+    prepared = await CareerPathService.prepare(pool, str(job.candidate_id), settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your career path.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await CareerPathService.persist(db, str(job.candidate_id), prepared)
+
+    return HandlerResult(
+        result_type="career_path",
+        result_id=prepared.id,
+        persist=_persist,
+    )
+
+
+async def _handle_career_intelligence_generate(
+    settings: Settings,
+    payload: dict[str, Any],
+) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.career_intelligence import CareerIntelligenceService
+
+    job = _CareerGenerationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=10,
+        stage="loading_profile",
+        message="Loading your career evidence.",
+    )
+    pool = await get_db_pool(settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="generating",
+        message="Aarya is building your career intelligence.",
+    )
+    prepared = await CareerIntelligenceService.prepare(pool, str(job.candidate_id), settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your career intelligence.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await CareerIntelligenceService.persist(db, str(job.candidate_id), prepared)
+
+    return HandlerResult(
+        result_type="career_intelligence",
+        result_id=prepared.id,
+        persist=_persist,
+    )
+
+
 async def _handle_profile_completeness(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.services.career_intelligence import recompute_completeness_only
 
@@ -764,6 +864,8 @@ _HANDLERS: dict[str, Handler] = {
     NITYA_INTRO_DRAFT: _handle_nitya_intro_draft,
     CAREER_INTELLIGENCE_UPDATE: _handle_career_intelligence_update,
     CAREER_PATH_UPDATE: _handle_career_path_update,
+    CAREER_INTELLIGENCE_GENERATE: _handle_career_intelligence_generate,
+    CAREER_PATH_GENERATE: _handle_career_path_generate,
     PROFILE_COMPLETENESS: _handle_profile_completeness,
     TAILORED_RESUME: _handle_tailored_resume,
     CAREER_PATH_RESUMES: _handle_career_path_resumes,

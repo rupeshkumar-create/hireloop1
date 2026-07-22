@@ -16,7 +16,8 @@ find-jobs strategy ("search existing + background top-up"):
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, cast
 
 import asyncpg
 import httpx
@@ -29,6 +30,7 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.routes.matches import (
     MatchedJob,
     _fetch_fallback_match_rows,
@@ -49,6 +51,45 @@ from hireloop_api.services.test_jobs import (
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/career", tags=["career"])
+
+_GENERATION_REUSE_WINDOW = timedelta(minutes=5)
+
+
+def _is_recent_generation(result: dict[str, Any] | None) -> bool:
+    """Return whether a ready domain result is fresh enough to reuse."""
+    if not result:
+        return False
+    raw_timestamp = result.get("created_at") or result.get("updated_at")
+    if not raw_timestamp:
+        return False
+    try:
+        timestamp = (
+            raw_timestamp
+            if isinstance(raw_timestamp, datetime)
+            else datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+        )
+    except (TypeError, ValueError):
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - timestamp < _GENERATION_REUSE_WINDOW
+
+
+def _generation_idempotency_key(candidate_id: uuid.UUID, kind: str) -> str:
+    """Scope duplicate submissions to one candidate and five-minute UTC bucket."""
+    window = int(datetime.now(UTC).timestamp()) // int(_GENERATION_REUSE_WINDOW.total_seconds())
+    return f"{kind}:{candidate_id}:{window}"
+
+
+def _accepted_operation(
+    operation_id: uuid.UUID,
+    status: Literal["queued", "running"],
+) -> AiOperationAccepted:
+    return AiOperationAccepted(
+        operation_id=operation_id,
+        status=status,
+        status_url=f"/api/v1/ai-operations/{operation_id}",
+    )
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -402,30 +443,43 @@ async def get_career_path(
     return {"path": path}
 
 
-@router.post("/path/generate", response_model=CareerPathResponse)
+@router.post("/path/generate", response_model=CareerPathResponse | AiOperationAccepted)
 async def generate_career_path(
-    current_user: dict = Depends(get_phone_verified_user),
+    response: Response,
+    current_user: dict[str, Any] = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    """(Re)generate the candidate's career path from their profile.
+) -> dict[str, Any] | AiOperationAccepted:
+    """Reuse a recent path or durably queue generation without awaiting the LLM."""
+    from hireloop_api.services.ai_operations import enqueue_ai_operation
+    from hireloop_api.services.background_jobs import CAREER_PATH_GENERATE
 
-    Deliberately NOT Depends(get_db): the LLM build takes 30-45s and a request
-    connection held that long (× concurrent mounts waiting on the in-flight
-    build) starves the pool for every other route.
-    """
     pool = await get_db_pool(settings)
-    # #48: full path generation is a heavy LLM call — cap per user per hour.
-    async with pool.acquire() as rl_db:
-        await check_rate_limit(
-            str(current_user["id"]), "career_path_generate", max_per_hour=10, db=rl_db
-        )
-    async with pool.acquire() as db:
+    user_id = uuid.UUID(str(current_user["id"]))
+    async with pool.acquire() as db, db.transaction():
+        # #48: full path generation is a heavy LLM call — cap per user per hour.
+        await check_rate_limit(str(user_id), "career_path_generate", max_per_hour=10, db=db)
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
-    try:
-        path = await CareerPathService.generate(pool, candidate_id, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"path": path}
+        recent = await CareerPathService.get_latest(db, candidate_id)
+        if _is_recent_generation(recent):
+            return {"path": recent}
+        candidate_uuid = uuid.UUID(candidate_id)
+        operation = await enqueue_ai_operation(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_PATH_GENERATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=_generation_idempotency_key(candidate_uuid, CAREER_PATH_GENERATE),
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career path is queued.",
+        )
+    response.status_code = 202
+    if operation.status not in {"queued", "running"}:
+        raise RuntimeError("Enqueued career path operation is not active")
+    active_status = cast(Literal["queued", "running"], operation.status)
+    return _accepted_operation(operation.id, active_status)
 
 
 @router.post("/path/prioritize", response_model=CareerPathResponse)
@@ -758,22 +812,41 @@ async def get_career_intelligence(
 
 @router.post("/intelligence/generate")
 async def generate_career_intelligence(
-    current_user: dict = Depends(get_phone_verified_user),
+    response: Response,
+    current_user: dict[str, Any] = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    """
-    (Re)compute the candidate's full 24-layer Career Intelligence from their
-    resume, LinkedIn, and chat data. Synchronous (deliberate "analyze me"
-    action); falls back to a deterministic profile if the LLM is unavailable.
-    """
+) -> dict[str, Any] | AiOperationAccepted:
+    """Reuse recent intelligence or durably queue its generation."""
+    from hireloop_api.services.ai_operations import enqueue_ai_operation
+    from hireloop_api.services.background_jobs import CAREER_INTELLIGENCE_GENERATE
+
     pool = await get_db_pool(settings)
-    async with pool.acquire() as db:
+    user_id = uuid.UUID(str(current_user["id"]))
+    async with pool.acquire() as db, db.transaction():
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
-    try:
-        intel = await CareerIntelligenceService.generate(pool, candidate_id, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"intelligence": intel}
+        recent = await CareerIntelligenceService.get(db, candidate_id)
+        if _is_recent_generation(recent):
+            return {"intelligence": recent}
+        candidate_uuid = uuid.UUID(candidate_id)
+        operation = await enqueue_ai_operation(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_INTELLIGENCE_GENERATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=_generation_idempotency_key(
+                candidate_uuid, CAREER_INTELLIGENCE_GENERATE
+            ),
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career intelligence is queued.",
+        )
+    response.status_code = 202
+    if operation.status not in {"queued", "running"}:
+        raise RuntimeError("Enqueued career intelligence operation is not active")
+    active_status = cast(Literal["queued", "running"], operation.status)
+    return _accepted_operation(operation.id, active_status)
 
 
 # ── Career-path resumes (one per direction, up to 3) ────────────────────────

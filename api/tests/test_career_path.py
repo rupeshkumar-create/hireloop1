@@ -1,11 +1,317 @@
-"""Tests for career path helpers."""
+"""Tests for career path helpers and durable generation submission."""
 
+from __future__ import annotations
+
+import time
+import uuid
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+from fastapi import Response
+
+from hireloop_api import deps
+from hireloop_api.models.ai_operation import AiOperationResponse
+from hireloop_api.routes import career
+from hireloop_api.services import ai_operations, background_jobs
+from hireloop_api.services.career_intelligence.engine import PreparedCareerIntelligence
+from hireloop_api.services.career_intelligence.schema import CareerIntelligence
 from hireloop_api.services.career_path import (
     _build_profile_brief,
     _profile_ready_for_path,
     build_career_path_system_prompt,
     path_from_career_intelligence,
 )
+
+
+class _Transaction(AbstractAsyncContextManager[None]):
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        return None
+
+
+class _Db:
+    def transaction(self) -> _Transaction:
+        return _Transaction()
+
+
+class _Acquire(AbstractAsyncContextManager[_Db]):
+    def __init__(self, db: _Db) -> None:
+        self.db = db
+
+    async def __aenter__(self) -> _Db:
+        return self.db
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        return None
+
+
+class _Pool:
+    def __init__(self) -> None:
+        self.db = _Db()
+
+    def acquire(self) -> _Acquire:
+        return _Acquire(self.db)
+
+
+def _operation(kind: str, *, operation_id: uuid.UUID | None = None) -> AiOperationResponse:
+    now = datetime.now(UTC)
+    return AiOperationResponse.model_validate(
+        {
+            "id": operation_id or uuid.uuid4(),
+            "kind": kind,
+            "status": "queued",
+            "progress_percent": 0,
+            "stage": "queued",
+            "message": "Your request is queued.",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("submit", "kind", "latest_attr", "provider_attr"),
+    [
+        (
+            career.generate_career_path,
+            "career_path_generate",
+            "get_latest",
+            "generate",
+        ),
+        (
+            career.generate_career_intelligence,
+            "career_intelligence_generate",
+            "get",
+            "generate",
+        ),
+    ],
+)
+async def test_generation_submission_returns_202_without_awaiting_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    submit: Any,
+    kind: str,
+    latest_attr: str,
+    provider_attr: str,
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    queued = _operation(kind)
+    enqueue = AsyncMock(return_value=queued)
+    provider = AsyncMock(side_effect=AssertionError("provider work ran in request"))
+    service = (
+        career.CareerPathService
+        if kind == "career_path_generate"
+        else career.CareerIntelligenceService
+    )
+
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(service, latest_attr, AsyncMock(return_value=None))
+    monkeypatch.setattr(service, provider_attr, provider)
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    rate_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
+
+    response = Response()
+    started = time.monotonic()
+    result = await submit(
+        response=response,
+        current_user={"id": str(user_id)},
+        settings=SimpleNamespace(),
+    )
+
+    assert time.monotonic() - started < 1
+    assert response.status_code == 202
+    assert result.operation_id == queued.id
+    assert result.status == "queued"
+    assert result.status_url == f"/api/v1/ai-operations/{queued.id}"
+    assert result.retry_after_ms == 1500
+    provider.assert_not_awaited()
+    assert enqueue.await_args.kwargs["kind"] == kind
+    assert enqueue.await_args.kwargs["candidate_id"] == candidate_id
+    assert enqueue.await_args.kwargs["payload"] == {"candidate_id": str(candidate_id)}
+    if kind == "career_path_generate":
+        rate_limit.assert_awaited_once_with(
+            str(user_id), "career_path_generate", max_per_hour=10, db=pool.db
+        )
+
+
+@pytest.mark.asyncio
+async def test_career_path_double_click_reuses_same_five_minute_idempotency_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    queued = _operation("career_path_generate")
+    keys: list[str] = []
+
+    async def _enqueue(*_args: object, **kwargs: Any) -> AiOperationResponse:
+        keys.append(str(kwargs["idempotency_key"]))
+        return queued
+
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", _enqueue)
+    monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+
+    first = await career.generate_career_path(
+        response=Response(), current_user={"id": str(uuid.uuid4())}, settings=SimpleNamespace()
+    )
+    second = await career.generate_career_path(
+        response=Response(), current_user={"id": str(uuid.uuid4())}, settings=SimpleNamespace()
+    )
+
+    assert first.operation_id == second.operation_id == queued.id
+    assert keys[0] == keys[1]
+    assert str(candidate_id) in keys[0]
+
+
+@pytest.mark.asyncio
+async def test_recent_career_path_returns_ready_result_without_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    recent = {
+        "id": str(uuid.uuid4()),
+        "current_role": "Engineer",
+        "summary": "Ready",
+        "steps": [],
+        "target_titles": ["Senior Engineer"],
+        "target_locations": ["India"],
+        "model": "test",
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    enqueue = AsyncMock(side_effect=AssertionError("recent result must not enqueue"))
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=recent))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+    response = Response()
+
+    result = await career.generate_career_path(
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 200
+    assert result == {"path": recent}
+    enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recent_career_intelligence_returns_ready_result_without_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool()
+    recent = {"updated_at": datetime.now(UTC).isoformat(), "data_completeness": 90}
+    enqueue = AsyncMock(side_effect=AssertionError("recent result must not enqueue"))
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(uuid.uuid4())))
+    monkeypatch.setattr(career.CareerIntelligenceService, "get", AsyncMock(return_value=recent))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    response = Response()
+
+    result = await career.generate_career_intelligence(
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 200
+    assert result == {"intelligence": recent}
+    enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "service", "result_type"),
+    [
+        ("_handle_career_path_generate", career.CareerPathService, "career_path"),
+        (
+            "_handle_career_intelligence_generate",
+            career.CareerIntelligenceService,
+            "career_intelligence",
+        ),
+    ],
+)
+async def test_generation_handler_defers_domain_write_to_completion_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    service: Any,
+    result_type: str,
+) -> None:
+    candidate_id = uuid.uuid4()
+    operation_id = uuid.uuid4()
+    artifact_id = uuid.uuid4()
+    prepared = SimpleNamespace(id=artifact_id)
+    prepare = AsyncMock(return_value=prepared)
+    persist = AsyncMock(return_value=None)
+    stages: list[int] = []
+
+    async def _progress(*_args: object, progress_percent: int, **_kwargs: object) -> None:
+        stages.append(progress_percent)
+
+    monkeypatch.setattr(service, "prepare", prepare, raising=False)
+    monkeypatch.setattr(service, "persist", persist, raising=False)
+    monkeypatch.setattr(background_jobs, "publish_operation_progress", _progress)
+    monkeypatch.setattr(deps, "get_db_pool", AsyncMock(return_value=_Pool()))
+
+    handler = getattr(background_jobs, handler_name)
+    result = await handler(
+        SimpleNamespace(),
+        {
+            "candidate_id": str(candidate_id),
+            "operation_id": str(operation_id),
+            "_job_lease_token": "worker:lease",
+        },
+    )
+
+    assert isinstance(result, background_jobs.HandlerResult)
+    assert result.result_type == result_type
+    assert result.result_id == artifact_id
+    assert stages == [10, 35, 80]
+    persist.assert_not_awaited()
+
+    completion_db = object()
+    await result.persist(completion_db)  # type: ignore[arg-type]
+    persist.assert_awaited_once_with(completion_db, str(candidate_id), prepared)
+
+
+@pytest.mark.asyncio
+async def test_intelligence_persist_rejects_missing_candidate_artifact() -> None:
+    candidate_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = "UPDATE 0"
+    prepared = PreparedCareerIntelligence(
+        id=candidate_id,
+        intelligence=CareerIntelligence(),
+    )
+
+    with pytest.raises(ValueError, match="Candidate not found"):
+        await career.CareerIntelligenceService.persist(db, str(candidate_id), prepared)
 
 
 def test_profile_ready_with_current_title() -> None:
