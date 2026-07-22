@@ -121,7 +121,11 @@ async def test_ai_operations_schema_and_rls(db_conn: asyncpg.Connection) -> None
     )
 
 
-async def _create_user(db_conn: asyncpg.Connection) -> uuid.UUID:
+async def _create_user(
+    db_conn: asyncpg.Connection,
+    *,
+    role: str = "candidate",
+) -> uuid.UUID:
     user_id = uuid.uuid4()
     email = f"ai-operation-schema-{user_id.hex[:10]}@hireloop.test"
     await db_conn.execute("INSERT INTO auth.users (id, email) VALUES ($1, $2)", user_id, email)
@@ -129,10 +133,11 @@ async def _create_user(db_conn: asyncpg.Connection) -> uuid.UUID:
         """
         INSERT INTO public.users
           (id, email, full_name, role, phone_verified, market, phone_country)
-        VALUES ($1, $2, 'AI Operation Schema', 'candidate', TRUE, 'IN', 'IN')
+        VALUES ($1, $2, 'AI Operation Schema', $3, TRUE, 'IN', 'IN')
         """,
         user_id,
         email,
+        role,
     )
     return user_id
 
@@ -279,3 +284,123 @@ async def test_ai_operations_has_expected_select_policies_and_indexes(
     )
     assert "UNIQUE" in active_index
     assert "queued" in active_index and "running" in active_index
+
+
+async def _set_authenticated_identity(
+    db_conn: asyncpg.Connection,
+    user_id: uuid.UUID,
+) -> None:
+    await db_conn.execute("RESET ROLE")
+    await db_conn.execute("SELECT set_config('request.jwt.claim.sub', $1, TRUE)", str(user_id))
+    await db_conn.execute("SELECT set_config('request.jwt.claim.role', 'authenticated', TRUE)")
+    await db_conn.execute("SET LOCAL ROLE authenticated")
+
+
+@pytest.mark.asyncio
+async def test_ai_operations_rls_enforces_read_visibility_and_denies_mutations(
+    db_conn: asyncpg.Connection,
+) -> None:
+    transaction = db_conn.transaction()
+    await transaction.start()
+    try:
+        owner_id = await _create_user(db_conn)
+        other_candidate_id = await _create_user(db_conn)
+        admin_id = await _create_user(db_conn, role="admin")
+        visible_operation_id = await _insert_operation(
+            db_conn,
+            owner_id,
+            idempotency_key=f"rls-owner-visible-{uuid.uuid4()}",
+        )
+        deleted_operation_id = await _insert_operation(
+            db_conn,
+            owner_id,
+            idempotency_key=f"rls-owner-deleted-{uuid.uuid4()}",
+        )
+        other_operation_id = await _insert_operation(
+            db_conn,
+            other_candidate_id,
+            idempotency_key=f"rls-other-visible-{uuid.uuid4()}",
+        )
+        await db_conn.execute(
+            "UPDATE public.ai_operations SET deleted_at = NOW() WHERE id = $1",
+            deleted_operation_id,
+        )
+
+        # The plain-Postgres integration prelude does not install Supabase's
+        # authenticated table grants. Add them transactionally so RLS, rather
+        # than a table-level privilege failure, decides each operation.
+        await db_conn.execute(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON public.ai_operations TO authenticated"
+        )
+        await db_conn.execute("GRANT SELECT ON public.users TO authenticated")
+
+        await _set_authenticated_identity(db_conn, owner_id)
+        owner_visible_ids = {
+            row["id"]
+            for row in await db_conn.fetch(
+                "SELECT id FROM public.ai_operations ORDER BY created_at, id"
+            )
+        }
+        assert owner_visible_ids == {visible_operation_id}
+
+        await _set_authenticated_identity(db_conn, other_candidate_id)
+        assert (
+            await db_conn.fetchval(
+                "SELECT id FROM public.ai_operations WHERE id = $1",
+                visible_operation_id,
+            )
+            is None
+        )
+        assert (
+            await db_conn.fetchval(
+                "SELECT id FROM public.ai_operations WHERE id = $1",
+                other_operation_id,
+            )
+            == other_operation_id
+        )
+
+        await _set_authenticated_identity(db_conn, admin_id)
+        admin_visible_ids = {
+            row["id"]
+            for row in await db_conn.fetch(
+                "SELECT id FROM public.ai_operations ORDER BY created_at, id"
+            )
+        }
+        assert admin_visible_ids == {visible_operation_id, other_operation_id}
+        assert deleted_operation_id not in admin_visible_ids
+
+        await _set_authenticated_identity(db_conn, owner_id)
+        assert (
+            await db_conn.fetchval(
+                "SELECT id FROM public.ai_operations WHERE id = $1",
+                deleted_operation_id,
+            )
+            is None
+        )
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            async with db_conn.transaction():
+                await db_conn.execute(
+                    """
+                    INSERT INTO public.ai_operations
+                      (user_id, kind, idempotency_key, status, stage, message)
+                    VALUES ($1, 'rls_test', $2, 'queued', 'queued', 'Denied insert')
+                    """,
+                    owner_id,
+                    f"rls-denied-insert-{uuid.uuid4()}",
+                )
+        assert (
+            await db_conn.execute(
+                "UPDATE public.ai_operations SET message = 'Denied update' WHERE id = $1",
+                visible_operation_id,
+            )
+            == "UPDATE 0"
+        )
+        assert (
+            await db_conn.execute(
+                "DELETE FROM public.ai_operations WHERE id = $1",
+                visible_operation_id,
+            )
+            == "DELETE 0"
+        )
+    finally:
+        await transaction.rollback()
