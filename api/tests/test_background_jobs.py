@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import asyncpg
 import pytest
 
 from hireloop_api.config import Settings
@@ -21,12 +22,15 @@ from hireloop_api.services.background_jobs import (
     HandlerResult,
     claim_next_job,
     enqueue_job,
-    ensure_operation_active,
     mark_job_failed,
     process_job,
     publish_operation_progress,
 )
 from tests.pool_shim import ConnectionPoolShim
+
+
+async def _persist_nothing(_db: asyncpg.Connection) -> None:
+    return None
 
 
 class _JobDB:
@@ -92,6 +96,7 @@ class _JobDB:
 
             job = sorted(pending, key=_prio)[0]
             job["status"] = "running"
+            job["worker_id"] = str(args[0])
             job["attempts"] += 1
             return {
                 "id": job["id"],
@@ -99,6 +104,7 @@ class _JobDB:
                 "payload": job["payload"],
                 "attempts": job["attempts"],
                 "max_attempts": job["max_attempts"],
+                "worker_id": job["worker_id"],
             }
         return None
 
@@ -173,6 +179,7 @@ async def test_mark_failed_retries_then_dead() -> None:
         "status": "running",
         "attempts": 1,
         "max_attempts": 2,
+        "worker_id": "test-worker",
         "run_after": datetime.now(UTC),
     }
     await mark_job_failed(
@@ -181,6 +188,7 @@ async def test_mark_failed_retries_then_dead() -> None:
         error="boom",
         attempts=1,
         max_attempts=2,
+        worker_id="test-worker",
     )
     assert db.jobs[job_id]["status"] == "pending"
 
@@ -190,6 +198,7 @@ async def test_mark_failed_retries_then_dead() -> None:
         error="boom again",
         attempts=2,
         max_attempts=2,
+        worker_id="test-worker",
     )
     assert db.jobs[job_id]["status"] == "failed"
 
@@ -348,13 +357,17 @@ async def test_linked_operation_runs_before_handler_and_completes_with_result(
 
     async def _complete(*_args: object, **kwargs: object) -> bool:
         result = kwargs["result"]
-        assert result == HandlerResult(result_type="career_path", result_id=result_id)
+        assert result == HandlerResult(
+            result_type="career_path", result_id=result_id, persist=_persist_nothing
+        )
         events.append("operation-and-job-succeeded")
         return True
 
     async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
         events.append("handler")
-        return HandlerResult(result_type="career_path", result_id=result_id)
+        return HandlerResult(
+            result_type="career_path", result_id=result_id, persist=_persist_nothing
+        )
 
     monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
     monkeypatch.setattr(bj, "_complete_linked_operation", _complete)
@@ -370,6 +383,7 @@ async def test_linked_operation_runs_before_handler_and_completes_with_result(
             "payload": {"operation_id": str(operation_id)},
             "attempts": 1,
             "max_attempts": 3,
+            "worker_id": "test-worker",
         },
     )
 
@@ -405,6 +419,7 @@ async def test_linked_operation_requires_valid_result_metadata(
             "payload": {"operation_id": str(uuid.uuid4())},
             "attempts": 3,
             "max_attempts": 3,
+            "worker_id": "test-worker",
         },
     )
 
@@ -441,6 +456,7 @@ async def test_linked_retry_keeps_operation_nonterminal(
             "payload": {"operation_id": str(uuid.uuid4())},
             "attempts": 1,
             "max_attempts": 3,
+            "worker_id": "test-worker",
         },
     )
 
@@ -463,7 +479,9 @@ async def test_cancel_while_handler_blocked_discards_late_result(
     async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
         started.set()
         await release.wait()
-        return HandlerResult(result_type="application_kit", result_id=uuid.uuid4())
+        return HandlerResult(
+            result_type="application_kit", result_id=uuid.uuid4(), persist=_persist_nothing
+        )
 
     async def _complete(*_args: object, **_kwargs: object) -> bool:
         nonlocal success_calls
@@ -487,6 +505,7 @@ async def test_cancel_while_handler_blocked_discards_late_result(
                 "payload": {"operation_id": str(operation_id)},
                 "attempts": 1,
                 "max_attempts": 3,
+                "worker_id": "test-worker",
             },
         )
     )
@@ -500,7 +519,7 @@ async def test_cancel_while_handler_blocked_discards_late_result(
 
 
 @pytest.mark.asyncio
-async def test_progress_and_handler_guard_ignore_legacy_payloads() -> None:
+async def test_progress_helper_ignores_legacy_payloads() -> None:
     settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
     await publish_operation_progress(
         settings,
@@ -509,7 +528,6 @@ async def test_progress_and_handler_guard_ignore_legacy_payloads() -> None:
         stage="generating",
         message="Generating.",
     )
-    await ensure_operation_active(settings, {"candidate_id": "legacy"})
 
 
 @pytest.mark.asyncio
@@ -546,27 +564,6 @@ async def test_progress_helper_publishes_linked_operation(
 
 
 @pytest.mark.asyncio
-async def test_handler_guard_raises_when_linked_operation_is_not_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    operation_id = uuid.uuid4()
-
-    class _GuardDB(_JobDB):
-        async def fetchval(self, query: str, *args: object) -> object | None:
-            if "SELECT EXISTS" in query and "ai_operations" in query:
-                return False
-            return await super().fetchval(query, *args)
-
-    async def _pool(_settings: Settings) -> ConnectionPoolShim:
-        return ConnectionPoolShim(_GuardDB())  # type: ignore[arg-type]
-
-    monkeypatch.setattr("hireloop_api.deps.get_db_pool", _pool)
-    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
-    with pytest.raises(bj.InactiveAiOperationError):
-        await ensure_operation_active(settings, {"operation_id": str(operation_id)})
-
-
-@pytest.mark.asyncio
 async def test_cancelled_operation_is_released_before_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -578,7 +575,7 @@ async def test_cancelled_operation_is_released_before_handler(
     async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
         nonlocal handler_called
         handler_called = True
-        return HandlerResult(result_type="test", result_id=uuid.uuid4())
+        return HandlerResult(result_type="test", result_id=uuid.uuid4(), persist=_persist_nothing)
 
     monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
     monkeypatch.setitem(bj._HANDLERS, "cancelled-before-start", _handler)
@@ -592,6 +589,7 @@ async def test_cancelled_operation_is_released_before_handler(
             "payload": {"operation_id": str(uuid.uuid4())},
             "attempts": 1,
             "max_attempts": 3,
+            "worker_id": "test-worker",
         },
     )
     assert handler_called is False
@@ -630,6 +628,7 @@ async def test_unknown_linked_handler_uses_operation_failure_path(
             "payload": {"operation_id": str(uuid.uuid4())},
             "attempts": attempts,
             "max_attempts": max_attempts,
+            "worker_id": "test-worker",
         },
     )
     assert len(failures) == 1
@@ -649,7 +648,12 @@ async def test_non_retryable_linked_error_fails_immediately(
     progress_calls = 0
 
     async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"operation_status": "running", "job_status": "running", "progress_percent": 20}
+        return {
+            "operation_status": "running",
+            "job_status": "running",
+            "worker_id": "test-worker",
+            "progress_percent": 20,
+        }
 
     async def _queue_fail(
         _db: object,
@@ -658,6 +662,7 @@ async def test_non_retryable_linked_error_fails_immediately(
         error: str,
         attempts: int,
         max_attempts: int,
+        worker_id: str,
     ) -> bool:
         queue_calls.append((attempts, max_attempts))
         return True
@@ -687,6 +692,7 @@ async def test_non_retryable_linked_error_fails_immediately(
         error=error,
         attempts=1,
         max_attempts=3,
+        worker_id="test-worker",
     )
 
     assert operation_failures == [error]
@@ -704,7 +710,12 @@ async def test_transient_linked_error_schedules_retry_without_terminal_failure(
     progress_stages: list[str] = []
 
     async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"operation_status": "running", "job_status": "running", "progress_percent": 20}
+        return {
+            "operation_status": "running",
+            "job_status": "running",
+            "worker_id": "test-worker",
+            "progress_percent": 20,
+        }
 
     async def _queue_fail(
         _db: object,
@@ -713,6 +724,7 @@ async def test_transient_linked_error_schedules_retry_without_terminal_failure(
         error: str,
         attempts: int,
         max_attempts: int,
+        worker_id: str,
     ) -> bool:
         queue_calls.append((attempts, max_attempts))
         return True
@@ -746,6 +758,7 @@ async def test_transient_linked_error_schedules_retry_without_terminal_failure(
         error=TimeoutError("provider timed out"),
         attempts=1,
         max_attempts=3,
+        worker_id="test-worker",
     )
 
     assert queue_calls == [(1, 3)]
@@ -767,7 +780,12 @@ async def test_programming_errors_from_process_fail_linked_job_immediately(
         return True
 
     async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"operation_status": "running", "job_status": "running", "progress_percent": 1}
+        return {
+            "operation_status": "running",
+            "job_status": "running",
+            "worker_id": "test-worker",
+            "progress_percent": 1,
+        }
 
     async def _operation_fail(
         _db: object, _operation_id: uuid.UUID, failure: BaseException
@@ -782,6 +800,7 @@ async def test_programming_errors_from_process_fail_linked_job_immediately(
         error: str,
         attempts: int,
         max_attempts: int,
+        worker_id: str,
     ) -> bool:
         queue_calls.append((attempts, max_attempts))
         return True
@@ -808,6 +827,7 @@ async def test_programming_errors_from_process_fail_linked_job_immediately(
             "payload": {"operation_id": str(uuid.uuid4())},
             "attempts": 1,
             "max_attempts": 3,
+            "worker_id": "test-worker",
         },
     )
 
@@ -823,13 +843,19 @@ async def test_failure_path_preserves_cancelled_operation_and_queue(
     terminal_calls = 0
 
     async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"operation_status": "cancelled", "job_status": "cancelled", "progress_percent": 10}
+        return {
+            "operation_status": "cancelled",
+            "job_status": "cancelled",
+            "worker_id": "test-worker",
+            "progress_percent": 10,
+        }
 
     async def _sync(
         _db: object,
         *,
         job_id: str,
         operation_status: str,
+        worker_id: str,
     ) -> None:
         synced.append(operation_status)
 
@@ -849,6 +875,7 @@ async def test_failure_path_preserves_cancelled_operation_and_queue(
         error=ValueError("late"),
         attempts=1,
         max_attempts=3,
+        worker_id="test-worker",
     )
     assert synced == ["cancelled"]
     assert terminal_calls == 0
@@ -862,7 +889,12 @@ async def test_classified_cancellation_cancels_queue_instead_of_failing_it(
     queue_failures = 0
 
     async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"operation_status": "running", "job_status": "running", "progress_percent": 10}
+        return {
+            "operation_status": "running",
+            "job_status": "running",
+            "worker_id": "test-worker",
+            "progress_percent": 10,
+        }
 
     async def _operation_fail(*_args: object, **_kwargs: object) -> SimpleNamespace:
         return SimpleNamespace(status="cancelled")
@@ -872,6 +904,7 @@ async def test_classified_cancellation_cancels_queue_instead_of_failing_it(
         *,
         job_id: str,
         operation_status: str,
+        worker_id: str,
     ) -> None:
         synced.append(operation_status)
 
@@ -894,6 +927,113 @@ async def test_classified_cancellation_cancels_queue_instead_of_failing_it(
         error=RuntimeError("cancelled by candidate"),
         attempts=1,
         max_attempts=3,
+        worker_id="test-worker",
     )
     assert synced == ["cancelled"]
     assert queue_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_old_worker_lease_cannot_persist_or_finalize_linked_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    persisted: list[str] = []
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "operation_status": "running",
+            "job_status": "running",
+            "worker_id": "new-worker",
+            "progress_percent": 20,
+        }
+
+    async def _persist(_db: asyncpg.Connection) -> None:
+        persisted.append("written")
+
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    completed = await bj._complete_linked_operation(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        operation_id=uuid.uuid4(),
+        job_id=str(uuid.uuid4()),
+        worker_id="old-worker",
+        result=HandlerResult(
+            result_type="test_result",
+            result_id=uuid.uuid4(),
+            persist=_persist,
+        ),
+    )
+    assert completed is False
+    assert persisted == []
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_renews_lease_periodically_and_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = asyncio.Event()
+    renewals: list[tuple[str, str]] = []
+
+    async def _renew(
+        _pool: object,
+        *,
+        job_id: str,
+        worker_id: str,
+    ) -> bool:
+        renewals.append((job_id, worker_id))
+        if len(renewals) == 2:
+            stop.set()
+        return True
+
+    monkeypatch.setattr(bj, "_renew_job_lease", _renew)
+    await bj._heartbeat_job_lease(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        job_id="00000000-0000-0000-0000-000000000001",
+        worker_id="lease-owner",
+        stop_event=stop,
+        interval_seconds=0.001,
+    )
+    assert renewals == [
+        ("00000000-0000-0000-0000-000000000001", "lease-owner"),
+        ("00000000-0000-0000-0000-000000000001", "lease-owner"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("link_mode", ["invalid_payload", "broken_link"])
+async def test_corrupt_operation_link_terminally_fails_claimed_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    link_mode: str,
+) -> None:
+    db = _JobDB()
+    job_id = uuid.uuid4()
+    payload = {"operation_id": "not-a-uuid"}
+    if link_mode == "broken_link":
+        payload = {"operation_id": str(uuid.uuid4())}
+
+        async def _broken(*_args: object, **_kwargs: object) -> bool:
+            raise ValueError("Queue job is not linked to its AI operation")
+
+        monkeypatch.setattr(bj, "_prepare_linked_operation", _broken)
+    db.jobs[job_id] = {
+        "id": job_id,
+        "kind": "corrupt-linked-job",
+        "status": "running",
+        "worker_id": "test-worker",
+        "attempts": 1,
+        "max_attempts": 3,
+        "run_after": datetime.now(UTC),
+    }
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(db),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(job_id),
+            "kind": "corrupt-linked-job",
+            "payload": payload,
+            "attempts": 1,
+            "max_attempts": 3,
+            "worker_id": "test-worker",
+        },
+    )
+    assert db.jobs[job_id]["status"] == "failed"

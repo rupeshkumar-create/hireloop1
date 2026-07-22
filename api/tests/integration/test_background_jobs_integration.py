@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import asyncpg
@@ -105,16 +106,18 @@ async def _insert_linked_running_job(
     kind: str,
     attempts: int = 1,
     max_attempts: int = 3,
+    age: timedelta = timedelta(0),
 ) -> tuple[uuid.UUID, uuid.UUID, dict[str, Any]]:
     operation_id = uuid.uuid4()
     job_id = uuid.uuid4()
     await db_conn.execute(
         """
         INSERT INTO public.background_jobs
-          (id, kind, payload, idempotency_key, status, attempts, max_attempts, started_at)
+          (id, kind, payload, idempotency_key, status, attempts, max_attempts,
+           started_at, worker_id, updated_at)
         VALUES
           ($1, $2, jsonb_build_object('operation_id', $3::text), $4,
-           'running', $5, $6, NOW())
+           'running', $5, $6, NOW(), 'integration-worker', NOW() - $7::interval)
         """,
         job_id,
         kind,
@@ -122,6 +125,7 @@ async def _insert_linked_running_job(
         f"worker-operation:{operation_id}",
         attempts,
         max_attempts,
+        age,
     )
     await db_conn.execute(
         """
@@ -146,6 +150,7 @@ async def _insert_linked_running_job(
             "payload": {"operation_id": str(operation_id)},
             "attempts": attempts,
             "max_attempts": max_attempts,
+            "worker_id": "integration-worker",
         },
     )
 
@@ -193,7 +198,11 @@ async def test_linked_job_success_keeps_queue_and_operation_consistent(
             operation_id,
         )
         assert status == "running"
-        return HandlerResult(result_type="test_result", result_id=result_id)
+
+        async def _persist(_db: asyncpg.Connection) -> None:
+            return None
+
+        return HandlerResult(result_type="test_result", result_id=result_id, persist=_persist)
 
     bj._HANDLERS[kind] = _noop
     try:
@@ -313,11 +322,21 @@ async def test_linked_job_cancel_race_discards_late_success(
     )
     started = asyncio.Event()
     release = asyncio.Event()
+    await db_conn.execute("CREATE TEMP TABLE operation_race_writes (id uuid PRIMARY KEY)")
+    persisted_id = uuid.uuid4()
 
     async def _blocked(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
         started.set()
         await release.wait()
-        return HandlerResult(result_type="test_result", result_id=uuid.uuid4())
+
+        async def _persist(db: asyncpg.Connection) -> None:
+            await db.execute("INSERT INTO operation_race_writes (id) VALUES ($1)", persisted_id)
+
+        return HandlerResult(
+            result_type="test_result",
+            result_id=uuid.uuid4(),
+            persist=_persist,
+        )
 
     bj._HANDLERS[job["kind"]] = _blocked
     try:
@@ -361,4 +380,104 @@ async def test_linked_job_cancel_race_discards_late_success(
         "operation_status": "cancelled",
         "result_id": None,
         "job_status": "cancelled",
+    }
+    assert await db_conn.fetchval("SELECT COUNT(*) FROM operation_race_writes") == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_renewal_prevents_stale_reclaim(
+    db_conn: asyncpg.Connection,
+    candidate_user: dict[str, str],
+) -> None:
+    operation_id, job_id, _job = await _insert_linked_running_job(
+        db_conn, candidate_user, kind="integration_heartbeat", age=timedelta(minutes=30)
+    )
+    renewed = await bj._renew_job_lease(
+        ConnectionPoolShim(db_conn),
+        job_id=str(job_id),
+        worker_id="integration-worker",
+    )
+    assert renewed is True
+    reclaimed = await bj.reclaim_stale_jobs(db_conn, stale_after=timedelta(minutes=20))
+    assert job_id not in reclaimed
+    assert (
+        await db_conn.fetchval("SELECT status FROM public.background_jobs WHERE id = $1", job_id)
+        == "running"
+    )
+    assert (
+        await db_conn.fetchval(
+            "SELECT status FROM public.ai_operations WHERE id = $1", operation_id
+        )
+        == "queued"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reclaim_retry_keeps_linked_operation_running(
+    db_conn: asyncpg.Connection,
+    candidate_user: dict[str, str],
+) -> None:
+    operation_id, job_id, _job = await _insert_linked_running_job(
+        db_conn,
+        candidate_user,
+        kind="integration_reclaim_retry",
+        attempts=1,
+        max_attempts=2,
+        age=timedelta(minutes=30),
+    )
+    await db_conn.execute(
+        "UPDATE public.ai_operations SET status = 'running', stage = 'generating' WHERE id = $1",
+        operation_id,
+    )
+    reclaimed = await bj.reclaim_stale_jobs(db_conn, stale_after=timedelta(minutes=20))
+    assert reclaimed == [job_id]
+    row = await db_conn.fetchrow(
+        """
+        SELECT j.status AS job_status, j.worker_id, o.status AS operation_status, o.stage
+        FROM public.background_jobs j JOIN public.ai_operations o ON o.background_job_id = j.id
+        WHERE j.id = $1
+        """,
+        job_id,
+    )
+    assert dict(row) == {
+        "job_status": "pending",
+        "worker_id": None,
+        "operation_status": "running",
+        "stage": "recovery_scheduled",
+    }
+
+
+@pytest.mark.asyncio
+async def test_reclaim_exhausted_fails_queue_and_linked_operation_atomically(
+    db_conn: asyncpg.Connection,
+    candidate_user: dict[str, str],
+) -> None:
+    operation_id, job_id, _job = await _insert_linked_running_job(
+        db_conn,
+        candidate_user,
+        kind="integration_reclaim_failed",
+        attempts=2,
+        max_attempts=2,
+        age=timedelta(minutes=30),
+    )
+    await db_conn.execute(
+        "UPDATE public.ai_operations SET status = 'running', stage = 'generating' WHERE id = $1",
+        operation_id,
+    )
+    reclaimed = await bj.reclaim_stale_jobs(db_conn, stale_after=timedelta(minutes=20))
+    assert reclaimed == [job_id]
+    row = await db_conn.fetchrow(
+        """
+        SELECT j.status AS job_status, o.status AS operation_status,
+               o.error_code, o.completed_at IS NOT NULL AS operation_completed
+        FROM public.background_jobs j JOIN public.ai_operations o ON o.background_job_id = j.id
+        WHERE j.id = $1
+        """,
+        job_id,
+    )
+    assert dict(row) == {
+        "job_status": "failed",
+        "operation_status": "failed",
+        "error_code": "internal_error",
+        "operation_completed": True,
     }
