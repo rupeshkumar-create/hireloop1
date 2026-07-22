@@ -345,6 +345,85 @@ async def test_enqueue_outcome_distinguishes_created_from_reused_operation(
 
 
 @pytest.mark.asyncio
+async def test_enqueue_retries_when_conflicting_operation_terminalizes_between_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conflict loser gets a fresh INSERT snapshot after the winner finishes."""
+    inserted = _operation_row(background_job_id=None)
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": {"operation_id": str(OPERATION_ID)},
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    linked = _operation_row(background_job_id=JOB_ID)
+    # INSERT conflicts, active SELECT sees no row because the winner terminalized,
+    # then the retry INSERT creates the next attempt.
+    db = ScriptedConnection(fetchrows=[None, None, inserted, queue_row, linked])
+    queue_calls = 0
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        nonlocal queue_calls
+        queue_calls += 1
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    outcome = await ai_operations.enqueue_ai_operation_outcome(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+
+    insert_calls = [
+        query
+        for method, query, _args in db.calls
+        if method == "fetchrow" and "INSERT INTO public.ai_operations" in query
+    ]
+    assert outcome.created is True
+    assert outcome.operation.id == OPERATION_ID
+    assert len(insert_calls) == 2
+    assert queue_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_contention_retry_is_bounded_and_does_not_create_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = ScriptedConnection(fetchrows=[None, None, None, None, None, None])
+    queue_calls = 0
+
+    async def unexpected_enqueue(*_args: object, **_kwargs: object) -> uuid.UUID:
+        nonlocal queue_calls
+        queue_calls += 1
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", unexpected_enqueue)
+
+    with pytest.raises(
+        ai_operations.AiOperationLifecycleError,
+        match="could not be queued due to contention",
+    ):
+        await ai_operations.enqueue_ai_operation_outcome(
+            db,  # type: ignore[arg-type]
+            user_id=USER_ID,
+            kind="career_path_generate",
+            payload={},
+            idempotency_key="career_path_generate:candidate",
+        )
+
+    insert_calls = [
+        query
+        for method, query, _args in db.calls
+        if method == "fetchrow" and "INSERT INTO public.ai_operations" in query
+    ]
+    assert len(insert_calls) == ai_operations._MAX_ENQUEUE_CONTENTION_ATTEMPTS
+    assert queue_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_terminal_operation_allows_new_attempt_with_same_logical_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -26,6 +26,7 @@ logger = structlog.get_logger()
 
 MAX_SAFE_ERROR_MESSAGE_LENGTH = 240
 _MAX_STAGE_LENGTH = 80
+_MAX_ENQUEUE_CONTENTION_ATTEMPTS = 3
 _RETRYABLE_CODES = frozenset(
     {"network_unreachable", "provider_timeout", "provider_rate_limited", "provider_unavailable"}
 )
@@ -255,32 +256,35 @@ async def enqueue_ai_operation_outcome(
     The partial-conflict clause handles duplicate concurrent submissions. The
     caller must wrap this call and any domain changes in its own transaction.
     """
-    row = await db.fetchrow(
-        f"""
-        INSERT INTO public.ai_operations
-          (user_id, candidate_id, recruiter_id, kind, resource_type, resource_id,
-           retry_of, idempotency_key, status, progress_percent, stage, message,
-           expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', 0, $9, $10, $11)
-        ON CONFLICT (idempotency_key)
-          WHERE status IN ('queued', 'running') AND deleted_at IS NULL
-        DO NOTHING
-        RETURNING {_OPERATION_COLUMNS}
-        """,
-        user_id,
-        candidate_id,
-        recruiter_id,
-        kind,
-        resource_type,
-        resource_id,
-        retry_of,
-        idempotency_key,
-        _safe_text(stage, limit=_MAX_STAGE_LENGTH),
-        _safe_text(message, limit=MAX_SAFE_ERROR_MESSAGE_LENGTH),
-        expires_at,
-    )
-    if row is None:
-        row = await db.fetchrow(
+
+    async def _try_insert() -> asyncpg.Record | None:
+        return await db.fetchrow(
+            f"""
+            INSERT INTO public.ai_operations
+              (user_id, candidate_id, recruiter_id, kind, resource_type, resource_id,
+               retry_of, idempotency_key, status, progress_percent, stage, message,
+               expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', 0, $9, $10, $11)
+            ON CONFLICT (idempotency_key)
+              WHERE status IN ('queued', 'running') AND deleted_at IS NULL
+            DO NOTHING
+            RETURNING {_OPERATION_COLUMNS}
+            """,
+            user_id,
+            candidate_id,
+            recruiter_id,
+            kind,
+            resource_type,
+            resource_id,
+            retry_of,
+            idempotency_key,
+            _safe_text(stage, limit=_MAX_STAGE_LENGTH),
+            _safe_text(message, limit=MAX_SAFE_ERROR_MESSAGE_LENGTH),
+            expires_at,
+        )
+
+    async def _find_active() -> asyncpg.Record | None:
+        return await db.fetchrow(
             f"""
             SELECT {_OPERATION_COLUMNS}
             FROM public.ai_operations
@@ -292,9 +296,19 @@ async def enqueue_ai_operation_outcome(
             idempotency_key,
             user_id,
         )
-        if row is None:
-            raise AiOperationLifecycleError("Active idempotency key belongs to another operation")
-        return EnqueueAiOperationOutcome(operation=_to_response(row), created=False)
+
+    row: asyncpg.Record | None = None
+    for _attempt in range(_MAX_ENQUEUE_CONTENTION_ATTEMPTS):
+        row = await _try_insert()
+        if row is not None:
+            break
+        active = await _find_active()
+        if active is not None:
+            return EnqueueAiOperationOutcome(operation=_to_response(active), created=False)
+        # The conflicting operation terminalized between INSERT and SELECT.
+        # Retry INSERT to obtain a fresh READ COMMITTED statement snapshot.
+    if row is None:
+        raise AiOperationLifecycleError("The operation could not be queued due to contention")
 
     operation_id = uuid.UUID(str(row["id"]))
     private_payload = dict(payload)
