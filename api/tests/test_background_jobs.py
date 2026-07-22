@@ -7,6 +7,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -634,3 +635,265 @@ async def test_unknown_linked_handler_uses_operation_failure_path(
     assert len(failures) == 1
     assert failures[0][1:] == (attempts, max_attempts)
     assert "unknown job kind" in failures[0][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ValueError("invalid"), PermissionError("denied")])
+async def test_non_retryable_linked_error_fails_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+) -> None:
+    operation_id = uuid.uuid4()
+    queue_calls: list[tuple[int, int]] = []
+    operation_failures: list[BaseException] = []
+    progress_calls = 0
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"operation_status": "running", "job_status": "running", "progress_percent": 20}
+
+    async def _queue_fail(
+        _db: object,
+        _job_id: str,
+        *,
+        error: str,
+        attempts: int,
+        max_attempts: int,
+    ) -> bool:
+        queue_calls.append((attempts, max_attempts))
+        return True
+
+    async def _operation_fail(
+        _db: object, _operation_id: uuid.UUID, failure: BaseException
+    ) -> object:
+        operation_failures.append(failure)
+        return SimpleNamespace(status="failed")
+
+    async def _progress(*_args: object, **_kwargs: object) -> object:
+        nonlocal progress_calls
+        progress_calls += 1
+        return object()
+
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    monkeypatch.setattr(bj, "mark_job_failed", _queue_fail)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.mark_operation_failed", _operation_fail
+    )
+    monkeypatch.setattr("hireloop_api.services.ai_operations.update_operation_progress", _progress)
+
+    await bj._fail_linked_operation(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        operation_id=operation_id,
+        job_id=str(uuid.uuid4()),
+        error=error,
+        attempts=1,
+        max_attempts=3,
+    )
+
+    assert operation_failures == [error]
+    assert queue_calls == [(1, 1)]
+    assert progress_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_transient_linked_error_schedules_retry_without_terminal_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+    queue_calls: list[tuple[int, int]] = []
+    operation_failures = 0
+    progress_stages: list[str] = []
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"operation_status": "running", "job_status": "running", "progress_percent": 20}
+
+    async def _queue_fail(
+        _db: object,
+        _job_id: str,
+        *,
+        error: str,
+        attempts: int,
+        max_attempts: int,
+    ) -> bool:
+        queue_calls.append((attempts, max_attempts))
+        return True
+
+    async def _operation_fail(*_args: object, **_kwargs: object) -> object:
+        nonlocal operation_failures
+        operation_failures += 1
+        return SimpleNamespace(status="failed")
+
+    async def _progress(
+        _db: object,
+        _operation_id: uuid.UUID,
+        _percent: int,
+        stage: str,
+        _message: str,
+    ) -> object:
+        progress_stages.append(stage)
+        return object()
+
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    monkeypatch.setattr(bj, "mark_job_failed", _queue_fail)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.mark_operation_failed", _operation_fail
+    )
+    monkeypatch.setattr("hireloop_api.services.ai_operations.update_operation_progress", _progress)
+
+    await bj._fail_linked_operation(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        operation_id=operation_id,
+        job_id=str(uuid.uuid4()),
+        error=TimeoutError("provider timed out"),
+        attempts=1,
+        max_attempts=3,
+    )
+
+    assert queue_calls == [(1, 3)]
+    assert operation_failures == 0
+    assert progress_stages == ["retry_scheduled"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_mode", ["unknown", "missing_result"])
+async def test_programming_errors_from_process_fail_linked_job_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+    handler_mode: str,
+) -> None:
+    operation_failures: list[BaseException] = []
+    queue_calls: list[tuple[int, int]] = []
+    kind = f"programming-error-{uuid.uuid4()}"
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"operation_status": "running", "job_status": "running", "progress_percent": 1}
+
+    async def _operation_fail(
+        _db: object, _operation_id: uuid.UUID, failure: BaseException
+    ) -> object:
+        operation_failures.append(failure)
+        return SimpleNamespace(status="failed")
+
+    async def _queue_fail(
+        _db: object,
+        _job_id: str,
+        *,
+        error: str,
+        attempts: int,
+        max_attempts: int,
+    ) -> bool:
+        queue_calls.append((attempts, max_attempts))
+        return True
+
+    async def _missing_result(_settings: Settings, _payload: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    monkeypatch.setattr(bj, "mark_job_failed", _queue_fail)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.mark_operation_failed", _operation_fail
+    )
+    if handler_mode == "missing_result":
+        monkeypatch.setitem(bj._HANDLERS, kind, _missing_result)
+
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": kind,
+            "payload": {"operation_id": str(uuid.uuid4())},
+            "attempts": 1,
+            "max_attempts": 3,
+        },
+    )
+
+    assert len(operation_failures) == 1
+    assert queue_calls == [(1, 1)]
+
+
+@pytest.mark.asyncio
+async def test_failure_path_preserves_cancelled_operation_and_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synced: list[str] = []
+    terminal_calls = 0
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"operation_status": "cancelled", "job_status": "cancelled", "progress_percent": 10}
+
+    async def _sync(
+        _db: object,
+        *,
+        job_id: str,
+        operation_status: str,
+    ) -> None:
+        synced.append(operation_status)
+
+    async def _terminal(*_args: object, **_kwargs: object) -> object:
+        nonlocal terminal_calls
+        terminal_calls += 1
+        return object()
+
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    monkeypatch.setattr(bj, "_sync_queue_with_terminal_operation", _sync)
+    monkeypatch.setattr("hireloop_api.services.ai_operations.mark_operation_failed", _terminal)
+
+    await bj._fail_linked_operation(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        operation_id=uuid.uuid4(),
+        job_id=str(uuid.uuid4()),
+        error=ValueError("late"),
+        attempts=1,
+        max_attempts=3,
+    )
+    assert synced == ["cancelled"]
+    assert terminal_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_classified_cancellation_cancels_queue_instead_of_failing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synced: list[str] = []
+    queue_failures = 0
+
+    async def _state(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"operation_status": "running", "job_status": "running", "progress_percent": 10}
+
+    async def _operation_fail(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(status="cancelled")
+
+    async def _sync(
+        _db: object,
+        *,
+        job_id: str,
+        operation_status: str,
+    ) -> None:
+        synced.append(operation_status)
+
+    async def _queue_fail(*_args: object, **_kwargs: object) -> bool:
+        nonlocal queue_failures
+        queue_failures += 1
+        return True
+
+    monkeypatch.setattr(bj, "_linked_state", _state)
+    monkeypatch.setattr(bj, "_sync_queue_with_terminal_operation", _sync)
+    monkeypatch.setattr(bj, "mark_job_failed", _queue_fail)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.mark_operation_failed", _operation_fail
+    )
+
+    await bj._fail_linked_operation(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        operation_id=uuid.uuid4(),
+        job_id=str(uuid.uuid4()),
+        error=RuntimeError("cancelled by candidate"),
+        attempts=1,
+        max_attempts=3,
+    )
+    assert synced == ["cancelled"]
+    assert queue_failures == 0

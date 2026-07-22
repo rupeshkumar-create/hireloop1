@@ -12,6 +12,7 @@ from httpx import AsyncClient
 
 from hireloop_api.config import Settings
 from hireloop_api.services import background_jobs as bj
+from hireloop_api.services.ai_operations import enqueue_ai_operation
 from hireloop_api.services.background_jobs import (
     AARYA_AUTO_INGEST,
     HandlerResult,
@@ -154,20 +155,52 @@ async def test_linked_job_success_keeps_queue_and_operation_consistent(
     db_conn: asyncpg.Connection,
     candidate_user: dict[str, str],
 ) -> None:
-    operation_id, job_id, job = await _insert_linked_running_job(
-        db_conn, candidate_user, kind="integration_operation_success"
+    kind = "integration_operation_success"
+    async with db_conn.transaction():
+        operation = await enqueue_ai_operation(
+            db_conn,
+            user_id=uuid.UUID(candidate_user["user_id"]),
+            candidate_id=uuid.UUID(candidate_user["candidate_id"]),
+            kind=kind,
+            payload={"test": "no-op"},
+            idempotency_key=f"worker-operation:{uuid.uuid4()}",
+        )
+    operation_id = operation.id
+    queued = await db_conn.fetchrow(
+        """
+        SELECT j.id, j.status
+        FROM public.background_jobs j
+        JOIN public.ai_operations o ON o.background_job_id = j.id
+        WHERE o.id = $1
+        """,
+        operation_id,
     )
+    assert queued is not None
+    assert queued["status"] == "pending"
+    job = await claim_next_job(
+        db_conn,
+        worker_id="integration-operation-worker",
+        kinds=frozenset({kind}),
+    )
+    assert job is not None
+    job_id = uuid.UUID(job["id"])
+    assert job_id == queued["id"]
     result_id = uuid.uuid4()
 
     async def _noop(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
+        status = await db_conn.fetchval(
+            "SELECT status FROM public.ai_operations WHERE id = $1",
+            operation_id,
+        )
+        assert status == "running"
         return HandlerResult(result_type="test_result", result_id=result_id)
 
-    bj._HANDLERS[job["kind"]] = _noop
+    bj._HANDLERS[kind] = _noop
     try:
         settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
         await process_job(ConnectionPoolShim(db_conn), settings, job)
     finally:
-        bj._HANDLERS.pop(job["kind"], None)
+        bj._HANDLERS.pop(kind, None)
 
     row = await db_conn.fetchrow(
         """

@@ -935,7 +935,8 @@ async def _fail_linked_operation(
             )
             return
 
-        if attempts < max_attempts:
+        classified = classify_operation_error(error)
+        if classified.retryable and attempts < max_attempts:
             if not await mark_job_failed(
                 db,
                 job_id,
@@ -944,7 +945,6 @@ async def _fail_linked_operation(
                 max_attempts=max_attempts,
             ):
                 raise RuntimeError("Queue retry could not be scheduled")
-            classified = classify_operation_error(error)
             updated = await update_operation_progress(
                 db,
                 operation_id,
@@ -957,12 +957,21 @@ async def _fail_linked_operation(
             return
 
         failed = await mark_operation_failed(db, operation_id, error)
-        if failed is None or not await mark_job_failed(
+        if failed is None:
+            raise RuntimeError("AI operation failure could not be committed atomically")
+        if failed.status == "cancelled":
+            await _sync_queue_with_terminal_operation(
+                db,
+                job_id=job_id,
+                operation_status="cancelled",
+            )
+            return
+        if not await mark_job_failed(
             db,
             job_id,
             error=str(error),
             attempts=attempts,
-            max_attempts=max_attempts,
+            max_attempts=attempts,
         ):
             raise RuntimeError("AI operation failure could not be committed atomically")
 
