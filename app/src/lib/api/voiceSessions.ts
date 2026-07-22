@@ -16,6 +16,14 @@ export const CareerCallSchema = z
 
 export type CareerCall = z.infer<typeof CareerCallSchema>;
 
+const sessionIdSchema = z.string().uuid();
+
+function validSessionId(sessionId: string): string {
+  const parsed = sessionIdSchema.safeParse(sessionId);
+  if (!parsed.success) throw new Error("Invalid career call session id.");
+  return parsed.data;
+}
+
 const apiErrorSchema = z
   .object({
     detail: z.unknown().optional(),
@@ -89,7 +97,8 @@ export async function completeCareerCall(
       | "interrupted";
   }
 ): Promise<CareerCall> {
-  const response = await apiAuthFetch(`/api/v1/voice-sessions/${sessionId}/complete`, {
+  const validatedSessionId = validSessionId(sessionId);
+  const response = await apiAuthFetch(`/api/v1/voice-sessions/${validatedSessionId}/complete`, {
     method: "POST",
     body: JSON.stringify({
       duration_seconds: input.durationSeconds,
@@ -125,7 +134,7 @@ const voiceSessionListItemSchema = z
   .object({
     id: z.string().uuid(),
     session_type: z.string(),
-    status: z.enum(["scheduled", "active", "completed", "cancelled"]),
+    status: z.enum(["scheduled", "active", "completed", "no_show", "cancelled"]),
     conversation_id: z.string().uuid().nullable().optional(),
     scheduled_at: nullableOptionalDateTime,
     started_at: nullableOptionalDateTime,
@@ -136,7 +145,9 @@ export async function listCareerCalls(): Promise<CareerCall[]> {
   const response = await apiAuthFetch("/api/v1/voice-sessions", { cache: "no-store" });
   const sessions = await parseOrThrow(response, z.array(voiceSessionListItemSchema));
   return sessions
-    .filter((session) => session.session_type === "career_chat")
+    .filter(
+      (session) => session.session_type === "career_chat" && session.status !== "no_show"
+    )
     .map((session) =>
       CareerCallSchema.parse({
         id: session.id,
@@ -151,7 +162,8 @@ export async function listCareerCalls(): Promise<CareerCall[]> {
 const cancelResponseSchema = z.object({ message: z.string().min(1) }).passthrough();
 
 export async function cancelCareerCall(sessionId: string): Promise<void> {
-  const response = await apiAuthFetch(`/api/v1/voice-sessions/${sessionId}/cancel`, {
+  const validatedSessionId = validSessionId(sessionId);
+  const response = await apiAuthFetch(`/api/v1/voice-sessions/${validatedSessionId}/cancel`, {
     method: "DELETE",
   });
   await parseOrThrow(response, cancelResponseSchema);
