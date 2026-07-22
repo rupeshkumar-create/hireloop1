@@ -103,6 +103,26 @@ def _accepted_operation(
     )
 
 
+async def _cancel_redundant_generation(
+    db: asyncpg.Connection,
+    operation_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> None:
+    """Cancel a still-active duplicate; tolerate a worker winning the race."""
+    from hireloop_api.services.ai_operations import (
+        AiOperationLifecycleError,
+        AiOperationNotFoundError,
+        cancel_owned_operation,
+    )
+
+    try:
+        await cancel_owned_operation(db, operation_id, user_id)
+    except (AiOperationLifecycleError, AiOperationNotFoundError):
+        # The worker may have committed the fresh artifact and terminal operation
+        # between our post-enqueue read and this guarded cancellation.
+        return
+
+
 # ── Response models ───────────────────────────────────────────────────────────
 
 
@@ -461,20 +481,18 @@ async def generate_career_path(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any] | AiOperationAccepted:
     """Reuse a recent path or durably queue generation without awaiting the LLM."""
-    from hireloop_api.services.ai_operations import enqueue_ai_operation
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
     from hireloop_api.services.background_jobs import CAREER_PATH_GENERATE
 
     pool = await get_db_pool(settings)
     user_id = uuid.UUID(str(current_user["id"]))
     async with pool.acquire() as db, db.transaction():
-        # #48: full path generation is a heavy LLM call — cap per user per hour.
-        await check_rate_limit(str(user_id), "career_path_generate", max_per_hour=10, db=db)
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
         recent = await CareerPathService.get_latest(db, candidate_id)
         if _is_recent_career_path(recent):
             return {"path": recent}
         candidate_uuid = uuid.UUID(candidate_id)
-        operation = await enqueue_ai_operation(
+        outcome = await enqueue_ai_operation_outcome(
             db,
             user_id=user_id,
             candidate_id=candidate_uuid,
@@ -486,6 +504,15 @@ async def generate_career_path(
             stage="queued",
             message="Your career path is queued.",
         )
+        recent = await CareerPathService.get_latest(db, candidate_id)
+        if _is_recent_career_path(recent):
+            await _cancel_redundant_generation(db, outcome.operation.id, user_id)
+            return {"path": recent}
+        if outcome.created:
+            # Charge only provider work created by this transaction. A 429 rolls
+            # back the operation and its linked queue row with the outer tx.
+            await check_rate_limit(str(user_id), "career_path_generate", max_per_hour=10, db=db)
+        operation = outcome.operation
     response.status_code = 202
     if operation.status not in {"queued", "running"}:
         raise RuntimeError("Enqueued career path operation is not active")
@@ -828,7 +855,7 @@ async def generate_career_intelligence(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any] | AiOperationAccepted:
     """Reuse recent intelligence or durably queue its generation."""
-    from hireloop_api.services.ai_operations import enqueue_ai_operation
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
     from hireloop_api.services.background_jobs import CAREER_INTELLIGENCE_GENERATE
 
     pool = await get_db_pool(settings)
@@ -839,7 +866,7 @@ async def generate_career_intelligence(
         if _is_recent_career_intelligence(recent):
             return {"intelligence": recent}
         candidate_uuid = uuid.UUID(candidate_id)
-        operation = await enqueue_ai_operation(
+        outcome = await enqueue_ai_operation_outcome(
             db,
             user_id=user_id,
             candidate_id=candidate_uuid,
@@ -853,6 +880,11 @@ async def generate_career_intelligence(
             stage="queued",
             message="Your career intelligence is queued.",
         )
+        recent = await CareerIntelligenceService.get(db, candidate_id)
+        if _is_recent_career_intelligence(recent):
+            await _cancel_redundant_generation(db, outcome.operation.id, user_id)
+            return {"intelligence": recent}
+        operation = outcome.operation
     response.status_code = 202
     if operation.status not in {"queued", "running"}:
         raise RuntimeError("Enqueued career intelligence operation is not active")

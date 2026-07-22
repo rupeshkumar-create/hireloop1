@@ -11,12 +11,13 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import Response
+from fastapi import HTTPException, Response
 
 from hireloop_api import deps
 from hireloop_api.models.ai_operation import AiOperationResponse
 from hireloop_api.routes import career
 from hireloop_api.services import ai_operations, background_jobs
+from hireloop_api.services import rate_limit as rate_limit_service
 from hireloop_api.services.career_intelligence.engine import PreparedCareerIntelligence
 from hireloop_api.services.career_intelligence.schema import CareerIntelligence
 from hireloop_api.services.career_path import (
@@ -85,6 +86,14 @@ def _operation(kind: str, *, operation_id: uuid.UUID | None = None) -> AiOperati
     )
 
 
+def _enqueue_outcome(
+    operation: AiOperationResponse,
+    *,
+    created: bool = True,
+) -> SimpleNamespace:
+    return SimpleNamespace(operation=operation, created=created)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("submit", "kind", "latest_attr", "provider_attr"),
@@ -114,7 +123,7 @@ async def test_generation_submission_returns_202_without_awaiting_provider(
     candidate_id = uuid.uuid4()
     user_id = uuid.uuid4()
     queued = _operation(kind)
-    enqueue = AsyncMock(return_value=queued)
+    enqueue = AsyncMock(return_value=_enqueue_outcome(queued))
     provider = AsyncMock(side_effect=AssertionError("provider work ran in request"))
     service = (
         career.CareerPathService
@@ -126,7 +135,7 @@ async def test_generation_submission_returns_202_without_awaiting_provider(
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
     monkeypatch.setattr(service, latest_attr, AsyncMock(return_value=None))
     monkeypatch.setattr(service, provider_attr, provider)
-    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
     rate_limit = AsyncMock(return_value=None)
     monkeypatch.setattr(career, "check_rate_limit", rate_limit)
 
@@ -192,15 +201,16 @@ async def test_long_running_active_generation_reuses_stable_logical_key(
         def now(cls, _tz: object = None) -> datetime:
             return cls.current
 
-    async def _enqueue(*_args: object, **kwargs: Any) -> AiOperationResponse:
+    async def _enqueue(*_args: object, **kwargs: Any) -> SimpleNamespace:
         keys.append(str(kwargs["idempotency_key"]))
-        return queued
+        return _enqueue_outcome(queued, created=False)
 
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
     monkeypatch.setattr(service, latest_attr, AsyncMock(return_value=None))
-    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", _enqueue)
-    monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", _enqueue)
+    rate_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
     monkeypatch.setattr(career, "datetime", _Clock)
 
     first = await submit(
@@ -214,6 +224,7 @@ async def test_long_running_active_generation_reuses_stable_logical_key(
     assert first.operation_id == second.operation_id == queued.id
     assert keys[0] == keys[1]
     assert keys[0] == f"{kind}:{candidate_id}"
+    rate_limit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -237,8 +248,9 @@ async def test_recent_career_path_returns_ready_result_without_enqueue(
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
     monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=recent))
-    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
-    monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
+    rate_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
     response = Response()
 
     result = await career.generate_career_path(
@@ -250,6 +262,7 @@ async def test_recent_career_path_returns_ready_result_without_enqueue(
     assert response.status_code == 200
     assert result == {"path": recent}
     enqueue.assert_not_awaited()
+    rate_limit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -266,7 +279,7 @@ async def test_recent_career_intelligence_returns_ready_result_without_enqueue(
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(uuid.uuid4())))
     monkeypatch.setattr(career.CareerIntelligenceService, "get", AsyncMock(return_value=recent))
-    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
     response = Response()
 
     result = await career.generate_career_intelligence(
@@ -302,11 +315,11 @@ async def test_completeness_update_does_not_make_stale_or_legacy_intelligence_re
         "data_completeness": 95,
     }
     queued = _operation("career_intelligence_generate")
-    enqueue = AsyncMock(return_value=queued)
+    enqueue = AsyncMock(return_value=_enqueue_outcome(queued))
     monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
     monkeypatch.setattr(career.CareerIntelligenceService, "get", AsyncMock(return_value=stale))
-    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", enqueue)
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
     response = Response()
 
     result = await career.generate_career_intelligence(
@@ -318,6 +331,251 @@ async def test_completeness_update_does_not_make_stale_or_legacy_intelligence_re
     assert response.status_code == 202
     assert result.operation_id == queued.id
     enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("submit", "service", "latest_attr", "kind", "result_key", "fresh"),
+    [
+        (
+            career.generate_career_path,
+            career.CareerPathService,
+            "get_latest",
+            "career_path_generate",
+            "path",
+            {
+                "id": str(uuid.uuid4()),
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+        ),
+        (
+            career.generate_career_intelligence,
+            career.CareerIntelligenceService,
+            "get",
+            "career_intelligence_generate",
+            "intelligence",
+            {"generated_at": datetime.now(UTC).isoformat()},
+        ),
+    ],
+)
+async def test_completion_between_initial_read_and_enqueue_cancels_redundant_operation(
+    monkeypatch: pytest.MonkeyPatch,
+    submit: Any,
+    service: Any,
+    latest_attr: str,
+    kind: str,
+    result_key: str,
+    fresh: dict[str, Any],
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    queued = _operation(kind)
+    active = True
+    provider = AsyncMock(side_effect=AssertionError("duplicate provider work must not run"))
+    latest = AsyncMock(side_effect=[None, fresh])
+    enqueue = AsyncMock(return_value=_enqueue_outcome(queued))
+    rate_limit = AsyncMock(return_value=None)
+
+    async def _cancel(*_args: object, **_kwargs: object) -> AiOperationResponse:
+        nonlocal active
+        active = False
+        return queued.model_copy(update={"status": "cancelled"})
+
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(service, latest_attr, latest)
+    monkeypatch.setattr(service, "generate", provider)
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
+    monkeypatch.setattr(ai_operations, "cancel_owned_operation", _cancel)
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
+    response = Response()
+
+    result = await submit(
+        response=response,
+        current_user={"id": str(user_id)},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 200
+    assert result == {result_key: fresh}
+    assert latest.await_count == 2
+    assert active is False
+    provider.assert_not_awaited()
+    rate_limit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fresh_race_returns_result_when_worker_already_made_operation_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool()
+    candidate_id = uuid.uuid4()
+    fresh = {
+        "id": str(uuid.uuid4()),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    queued = _operation("career_path_generate")
+    rate_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(
+        career.CareerPathService,
+        "get_latest",
+        AsyncMock(side_effect=[None, fresh]),
+    )
+    monkeypatch.setattr(
+        ai_operations,
+        "enqueue_ai_operation_outcome",
+        AsyncMock(return_value=_enqueue_outcome(queued)),
+    )
+    monkeypatch.setattr(
+        ai_operations,
+        "cancel_owned_operation",
+        AsyncMock(
+            side_effect=ai_operations.AiOperationLifecycleError("operation already succeeded")
+        ),
+    )
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
+    response = Response()
+
+    result = await career.generate_career_path(
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 200
+    assert result == {"path": fresh}
+    rate_limit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_path_operation_rolls_back_when_generation_quota_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RollbackDb(_Db):
+        def __init__(self) -> None:
+            self.active_operation = False
+
+        def transaction(self) -> AbstractAsyncContextManager[None]:
+            db = self
+
+            class _Rollback(AbstractAsyncContextManager[None]):
+                async def __aenter__(self) -> None:
+                    return None
+
+                async def __aexit__(
+                    self,
+                    exc_type: type[BaseException] | None,
+                    exc_value: BaseException | None,
+                    traceback: object,
+                ) -> None:
+                    if exc_type is not None:
+                        db.active_operation = False
+
+            return _Rollback()
+
+    class _RollbackPool(_Pool):
+        def __init__(self) -> None:
+            self.db = _RollbackDb()
+
+    pool = _RollbackPool()
+    candidate_id = uuid.uuid4()
+    queued = _operation("career_path_generate")
+
+    async def _enqueue(db: _RollbackDb, **_kwargs: object) -> SimpleNamespace:
+        db.active_operation = True
+        return _enqueue_outcome(queued)
+
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", _enqueue)
+    monkeypatch.setattr(
+        career,
+        "check_rate_limit",
+        AsyncMock(side_effect=HTTPException(status_code=429, detail="quota reached")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await career.generate_career_path(
+            response=Response(),
+            current_user={"id": str(uuid.uuid4())},
+            settings=SimpleNamespace(),
+        )
+
+    assert exc.value.status_code == 429
+    assert pool.db.active_operation is False
+
+
+@pytest.mark.asyncio
+async def test_distributed_quota_db_error_falls_back_without_aborting_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _NestedDb(_Db):
+        def __init__(self) -> None:
+            self.aborted = False
+            self.depth = 0
+
+        def transaction(self) -> AbstractAsyncContextManager[None]:
+            db = self
+
+            class _NestedTransaction(AbstractAsyncContextManager[None]):
+                async def __aenter__(self) -> None:
+                    db.depth += 1
+
+                async def __aexit__(
+                    self,
+                    exc_type: type[BaseException] | None,
+                    exc_value: BaseException | None,
+                    traceback: object,
+                ) -> None:
+                    db.depth -= 1
+                    if exc_type is not None:
+                        db.aborted = False
+
+            return _NestedTransaction()
+
+    class _NestedPool(_Pool):
+        def __init__(self) -> None:
+            self.db = _NestedDb()
+
+    pool = _NestedPool()
+    candidate_id = uuid.uuid4()
+    queued = _operation("career_path_generate")
+    rate_limit_service.reset_rate_limits()
+
+    async def _distributed_failure(db: _NestedDb, **_kwargs: object) -> None:
+        db.aborted = True
+        raise RuntimeError("rate limit table unavailable")
+
+    monkeypatch.setattr(career, "get_db_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(career.CareerPathService, "get_latest", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        ai_operations,
+        "enqueue_ai_operation_outcome",
+        AsyncMock(return_value=_enqueue_outcome(queued)),
+    )
+    monkeypatch.setattr(
+        rate_limit_service,
+        "check_distributed_rate_limit",
+        _distributed_failure,
+    )
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit_service.check_rate_limit)
+
+    response = Response()
+    result = await career.generate_career_path(
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=SimpleNamespace(),
+    )
+
+    assert response.status_code == 202
+    assert result.operation_id == queued.id
+    assert pool.db.aborted is False
+    assert pool.db.depth == 0
 
 
 @pytest.mark.asyncio

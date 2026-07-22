@@ -69,12 +69,17 @@ async def check_rate_limit(
     """
     if db is not None:
         try:
-            await check_distributed_rate_limit(
-                db,
-                identity_hash=_user_identity_hash(user_id),
-                bucket=bucket,
-                max_per_hour=max_per_hour,
-            )
+            # When the caller owns an outer transaction asyncpg creates a
+            # savepoint here. A missing table or transient statement error must
+            # roll back that failed statement before the in-memory fallback;
+            # otherwise PostgreSQL leaves the caller transaction aborted.
+            async with db.transaction():
+                await check_distributed_rate_limit(
+                    db,
+                    identity_hash=_user_identity_hash(user_id),
+                    bucket=bucket,
+                    max_per_hour=max_per_hour,
+                )
             return
         except HTTPException:
             raise

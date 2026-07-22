@@ -304,6 +304,47 @@ async def test_enqueue_reuses_an_active_owned_operation_without_creating_a_job(
 
 
 @pytest.mark.asyncio
+async def test_enqueue_outcome_distinguishes_created_from_reused_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inserted = _operation_row(background_job_id=None)
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": {"operation_id": str(OPERATION_ID)},
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    linked = _operation_row(background_job_id=JOB_ID)
+    created_db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
+    reused_db = ScriptedConnection(fetchrows=[None, _operation_row(status="running")])
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    created = await ai_operations.enqueue_ai_operation_outcome(
+        created_db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+    reused = await ai_operations.enqueue_ai_operation_outcome(
+        reused_db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+
+    assert created.created is True
+    assert created.operation.id == OPERATION_ID
+    assert reused.created is False
+    assert reused.operation.status == "running"
+
+
+@pytest.mark.asyncio
 async def test_terminal_operation_allows_new_attempt_with_same_logical_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

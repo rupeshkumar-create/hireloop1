@@ -8,12 +8,15 @@ suite so a regression in a security control fails the build immediately.
 from __future__ import annotations
 
 import uuid
+from contextlib import AbstractAsyncContextManager
+from types import TracebackType
 
 import pytest
 from fastapi import HTTPException
 
 from hireloop_api import deps
 from hireloop_api.config import Settings
+from hireloop_api.services import rate_limit
 from hireloop_api.services.rate_limit import check_rate_limit, reset_rate_limits
 
 
@@ -53,6 +56,60 @@ async def test_rate_limit_is_scoped_per_user_and_bucket() -> None:
     await check_rate_limit(a, "other", max_per_hour=1)  # different bucket — unaffected
     with pytest.raises(HTTPException):
         await check_rate_limit(a, "bk", max_per_hour=1)  # same user+bucket — blocked
+
+
+class _RateLimitSavepoint(AbstractAsyncContextManager[None]):
+    def __init__(self, db: _RateLimitDb) -> None:
+        self.db = db
+
+    async def __aenter__(self) -> None:
+        self.db.savepoints += 1
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if exc_type is not None:
+            self.db.aborted = False
+
+
+class _RateLimitDb:
+    def __init__(self) -> None:
+        self.aborted = False
+        self.savepoints = 0
+
+    def transaction(self) -> _RateLimitSavepoint:
+        return _RateLimitSavepoint(self)
+
+    async def assert_usable(self) -> None:
+        if self.aborted:
+            raise RuntimeError("current transaction is aborted")
+
+
+@pytest.mark.asyncio
+async def test_distributed_rate_limit_error_rolls_back_savepoint_before_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_rate_limits()
+    db = _RateLimitDb()
+
+    async def _distributed_failure(*_args: object, **_kwargs: object) -> None:
+        db.aborted = True
+        raise RuntimeError("api_rate_limits unavailable")
+
+    monkeypatch.setattr(rate_limit, "check_distributed_rate_limit", _distributed_failure)
+
+    await check_rate_limit(
+        str(uuid.uuid4()),
+        "career_path_generate",
+        max_per_hour=10,
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert db.savepoints == 1
+    await db.assert_usable()
 
 
 # ── Webhook / service-secret auth (spoofing) ──────────────────────────────────

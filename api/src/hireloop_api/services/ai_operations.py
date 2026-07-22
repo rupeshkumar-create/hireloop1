@@ -54,6 +54,14 @@ class ClassifiedOperationError:
     retryable: bool
 
 
+@dataclass(frozen=True, slots=True)
+class EnqueueAiOperationOutcome:
+    """Operation plus whether this transaction created its queue attempt."""
+
+    operation: AiOperationResponse
+    created: bool
+
+
 _ERROR_DETAILS: dict[str, tuple[str, bool]] = {
     "network_unreachable": (
         "The service could not reach the AI provider. Please try again.",
@@ -224,7 +232,7 @@ def _to_response(row: asyncpg.Record | dict[str, Any]) -> AiOperationResponse:
     return AiOperationResponse.model_validate(data)
 
 
-async def enqueue_ai_operation(
+async def enqueue_ai_operation_outcome(
     db: asyncpg.Connection,
     *,
     user_id: uuid.UUID,
@@ -241,7 +249,7 @@ async def enqueue_ai_operation(
     run_after: datetime | None = None,
     max_attempts: int = 3,
     expires_at: datetime | None = None,
-) -> AiOperationResponse:
+) -> EnqueueAiOperationOutcome:
     """Create/reuse an operation and enqueue its private job on ``db``.
 
     The partial-conflict clause handles duplicate concurrent submissions. The
@@ -286,7 +294,7 @@ async def enqueue_ai_operation(
         )
         if row is None:
             raise AiOperationLifecycleError("Active idempotency key belongs to another operation")
-        return _to_response(row)
+        return EnqueueAiOperationOutcome(operation=_to_response(row), created=False)
 
     operation_id = uuid.UUID(str(row["id"]))
     private_payload = dict(payload)
@@ -345,7 +353,46 @@ async def enqueue_ai_operation(
     )
     if linked is None:
         raise AiOperationLifecycleError("Operation changed before its queue job could be linked")
-    return _to_response(linked)
+    return EnqueueAiOperationOutcome(operation=_to_response(linked), created=True)
+
+
+async def enqueue_ai_operation(
+    db: asyncpg.Connection,
+    *,
+    user_id: uuid.UUID,
+    kind: str,
+    payload: dict[str, Any],
+    idempotency_key: str,
+    candidate_id: uuid.UUID | None = None,
+    recruiter_id: uuid.UUID | None = None,
+    resource_type: str | None = None,
+    resource_id: uuid.UUID | None = None,
+    retry_of: uuid.UUID | None = None,
+    stage: str = "queued",
+    message: str = "Your request is queued.",
+    run_after: datetime | None = None,
+    max_attempts: int = 3,
+    expires_at: datetime | None = None,
+) -> AiOperationResponse:
+    """Compatibility wrapper returning only the operation projection."""
+    outcome = await enqueue_ai_operation_outcome(
+        db,
+        user_id=user_id,
+        kind=kind,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        candidate_id=candidate_id,
+        recruiter_id=recruiter_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        retry_of=retry_of,
+        stage=stage,
+        message=message,
+        run_after=run_after,
+        max_attempts=max_attempts,
+        expires_at=expires_at,
+    )
+    return outcome.operation
 
 
 async def get_owned_operation(
