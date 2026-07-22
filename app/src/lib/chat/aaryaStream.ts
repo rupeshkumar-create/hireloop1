@@ -315,7 +315,7 @@ export async function streamAaryaMessage(
   contentType: AaryaContentType,
   callbacks: AaryaStreamCallbacks = {},
   signal?: AbortSignal,
-  context?: { jobId?: string }
+  context?: { jobId?: string; voiceSessionId?: string }
 ): Promise<AaryaStreamResult> {
   const res = await apiAuthFetch(
     `/api/v1/chat/sessions/${conversationId}/messages`,
@@ -328,6 +328,7 @@ export async function streamAaryaMessage(
         content,
         content_type: contentType,
         job_id: context?.jobId,
+        voice_session_id: context?.voiceSessionId,
       }),
       signal,
     }
