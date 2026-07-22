@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
+import httpx
 import structlog
 
 from hireloop_api.models.ai_operation import AiOperationResponse
@@ -104,20 +105,53 @@ def _classified(code: str) -> ClassifiedOperationError:
 
 def classify_operation_error(error: BaseException) -> ClassifiedOperationError:
     """Map internal failures to the stable, non-sensitive public error contract."""
-    if isinstance(error, asyncio.CancelledError):
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+
+    if any(isinstance(item, asyncio.CancelledError) for item in chain):
         return _classified("cancelled")
-    if isinstance(error, PermissionError):
+    if any(isinstance(item, PermissionError) for item in chain):
         return _classified("permission_denied")
-    if isinstance(error, TimeoutError):
+
+    http_statuses = [
+        item.response.status_code for item in chain if isinstance(item, httpx.HTTPStatusError)
+    ]
+    if any(status in {401, 403} for status in http_statuses):
+        return _classified("permission_denied")
+    if any(isinstance(item, (TimeoutError, httpx.TimeoutException)) for item in chain):
         return _classified("provider_timeout")
-    if isinstance(error, ConnectionError):
+    if 429 in http_statuses:
+        return _classified("provider_rate_limited")
+    if any(500 <= status <= 599 for status in http_statuses):
         return _classified("provider_unavailable")
+
+    # ConnectError is how httpx exposes DNS lookup failures, unreachable hosts,
+    # and exhausted connection attempts. SDKs frequently wrap it, so inspect
+    # the bounded cause chain rather than only the outer exception.
+    if any(isinstance(item, httpx.ConnectError) for item in chain):
+        return _classified("network_unreachable")
+    if any(isinstance(item, ConnectionError) for item in chain):
+        return _classified("provider_unavailable")
+    if any(
+        isinstance(item, httpx.TransportError)
+        and not isinstance(item, (httpx.TimeoutException, httpx.ConnectError))
+        for item in chain
+    ):
+        return _classified("provider_unavailable")
+
     # DNS resolution and unreachable-network failures are commonly surfaced as
     # OSError subclasses. Keep this after TimeoutError and ConnectionError so
     # those more specific retry categories retain precedence, and do not label
     # unrelated local OS errors (for example, a full disk) as network failures.
-    if isinstance(error, OSError):
-        os_detail = f"{type(error).__name__} {error}".lower()
+    for item in chain:
+        if not isinstance(item, OSError):
+            continue
+        os_detail = f"{type(item).__name__} {item}".lower()
         if any(
             token in os_detail
             for token in (
@@ -131,9 +165,7 @@ def classify_operation_error(error: BaseException) -> ClassifiedOperationError:
         ):
             return _classified("network_unreachable")
 
-    name = type(error).__name__.lower()
-    detail = str(error).lower()
-    searchable = f"{name} {detail}"
+    searchable = " ".join(f"{type(item).__name__} {item}".lower() for item in chain)
 
     if any(token in searchable for token in ("cancelled", "canceled")):
         return _classified("cancelled")
@@ -393,7 +425,6 @@ async def mark_operation_succeeded(
     result_type: str | None = None,
     result_id: uuid.UUID | None = None,
     message: str = "Your result is ready.",
-    allow_resultless: bool = False,
 ) -> AiOperationResponse | None:
     normalized_result_type = result_type.strip() if result_type is not None else None
     has_result_type = bool(normalized_result_type)
@@ -402,10 +433,8 @@ async def mark_operation_succeeded(
         raise AiOperationLifecycleError(
             "Successful operations require both result_type and result_id"
         )
-    if not has_result_type and not allow_resultless:
-        raise AiOperationLifecycleError(
-            "Successful operations require a result reference unless explicitly result-less"
-        )
+    if not has_result_type:
+        raise AiOperationLifecycleError("Successful operations require a result reference")
 
     row = await db.fetchrow(
         f"""

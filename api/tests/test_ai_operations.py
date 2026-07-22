@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 
 from hireloop_api.models.ai_operation import AiOperationAccepted, AiOperationResponse
@@ -16,6 +19,17 @@ NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 USER_ID = uuid.uuid4()
 OPERATION_ID = uuid.uuid4()
 JOB_ID = uuid.uuid4()
+
+
+def _httpx_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://provider.invalid/generate")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError("provider response detail", request=request, response=response)
+
+
+def _with_cause(error: BaseException, cause: BaseException) -> BaseException:
+    error.__cause__ = cause
+    return error
 
 
 def _operation_row(**overrides: object) -> dict[str, object]:
@@ -105,6 +119,38 @@ def test_accepted_response_uses_the_approved_polling_contract() -> None:
         (ConnectionError("provider unavailable"), "provider_unavailable", True),
         (OSError("DNS network unreachable: secret.internal"), "network_unreachable", True),
         (OSError("local disk is full"), "internal_error", False),
+        (
+            httpx.ConnectError(
+                "All connection attempts failed: private-host",
+                request=httpx.Request("POST", "https://provider.invalid/generate"),
+            ),
+            "network_unreachable",
+            True,
+        ),
+        (
+            _with_cause(
+                RuntimeError("provider SDK request failed"),
+                _with_cause(
+                    httpx.ConnectError(
+                        "connection failed",
+                        request=httpx.Request("POST", "https://provider.invalid/generate"),
+                    ),
+                    socket.gaierror(-2, "Name or service not known"),
+                ),
+            ),
+            "network_unreachable",
+            True,
+        ),
+        (
+            httpx.ReadTimeout(
+                "private timeout detail",
+                request=httpx.Request("POST", "https://provider.invalid/generate"),
+            ),
+            "provider_timeout",
+            True,
+        ),
+        (_httpx_status_error(429), "provider_rate_limited", True),
+        (_httpx_status_error(503), "provider_unavailable", True),
         (ValueError("malformed provider response"), "invalid_input", False),
         (RuntimeError("candidate profile is insufficient"), "insufficient_profile", False),
         (PermissionError("forbidden"), "permission_denied", False),
@@ -230,13 +276,12 @@ async def test_running_and_success_transitions_are_atomic_and_guarded() -> None:
 @pytest.mark.parametrize(
     ("result_type", "result_id"),
     [
-        (None, None),
         ("application_kit", None),
         (None, uuid.uuid4()),
         ("   ", uuid.uuid4()),
     ],
 )
-async def test_success_rejects_missing_or_partial_result_references(
+async def test_result_bearing_operation_rejects_missing_or_partial_result_references(
     result_type: str | None,
     result_id: uuid.UUID | None,
 ) -> None:
@@ -254,24 +299,22 @@ async def test_success_rejects_missing_or_partial_result_references(
 
 
 @pytest.mark.asyncio
-async def test_success_allows_explicitly_resultless_operation() -> None:
-    succeeded = _operation_row(
-        status="succeeded",
-        progress_percent=100,
-        stage="ready",
-        message="Maintenance is complete.",
-        completed_at=NOW,
-    )
-    db = ScriptedConnection(fetchrows=[succeeded])
+async def test_application_kit_cannot_succeed_without_a_result_reference() -> None:
+    db = ScriptedConnection()
 
-    response = await ai_operations.mark_operation_succeeded(
-        db,  # type: ignore[arg-type]
-        OPERATION_ID,
-        message="Maintenance is complete.",
-        allow_resultless=True,
-    )
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.mark_operation_succeeded(
+            db,  # type: ignore[arg-type]
+            OPERATION_ID,
+        )
 
-    assert response is not None and response.status == "succeeded"
+    assert db.calls == []
+
+
+def test_success_has_no_unrestricted_resultless_bypass() -> None:
+    parameters = inspect.signature(ai_operations.mark_operation_succeeded).parameters
+
+    assert "allow_resultless" not in parameters
 
 
 @pytest.mark.asyncio
