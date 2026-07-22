@@ -119,12 +119,138 @@ async def test_candidate_cannot_access_another_users_ai_operations(
         private_result_id,
     )
 
-    for action in ("", "/cancel", "/retry"):
-        method = api_client.get if not action else api_client.post
-        response = await method(f"/api/v1/ai-operations/{completed_b}{action}")
-        assert response.status_code == 404
-        assert response.json() == {"detail": "AI operation not found"}
-        assert str(private_result_id) not in response.text
+    read = await api_client.get(f"/api/v1/ai-operations/{completed_b}")
+    assert read.status_code == 404
+    assert read.json() == {"detail": "AI operation not found"}
+    assert str(private_result_id) not in read.text
+
+    cancel_job = await db_conn.fetchval(
+        """
+        INSERT INTO public.background_jobs (kind, payload, idempotency_key, status)
+        VALUES ('application_kit', '{"input":"private"}'::jsonb, $1, 'pending')
+        RETURNING id
+        """,
+        f"idor-b-cancel-job:{uuid.uuid4()}",
+    )
+    cancellable_b = await db_conn.fetchval(
+        """
+        INSERT INTO public.ai_operations
+          (user_id, candidate_id, kind, background_job_id, idempotency_key,
+           status, stage, message)
+        VALUES
+          ($1, $2::uuid, 'application_kit', $3, $4, 'queued', 'queued', 'Queued.')
+        RETURNING id
+        """,
+        user_b,
+        cand_b,
+        cancel_job,
+        f"idor-b-cancel:{uuid.uuid4()}",
+    )
+    cancel_operation_before = dict(
+        await db_conn.fetchrow(
+            "SELECT status, completed_at, updated_at FROM public.ai_operations WHERE id = $1",
+            cancellable_b,
+        )
+    )
+    cancel_job_before = dict(
+        await db_conn.fetchrow(
+            "SELECT status, completed_at, updated_at FROM public.background_jobs WHERE id = $1",
+            cancel_job,
+        )
+    )
+
+    cancel = await api_client.post(f"/api/v1/ai-operations/{cancellable_b}/cancel")
+    assert cancel.status_code == 404
+    assert cancel.json() == {"detail": "AI operation not found"}
+    assert (
+        dict(
+            await db_conn.fetchrow(
+                "SELECT status, completed_at, updated_at FROM public.ai_operations WHERE id = $1",
+                cancellable_b,
+            )
+        )
+        == cancel_operation_before
+    )
+    assert (
+        dict(
+            await db_conn.fetchrow(
+                "SELECT status, completed_at, updated_at FROM public.background_jobs WHERE id = $1",
+                cancel_job,
+            )
+        )
+        == cancel_job_before
+    )
+
+    retryable_b = uuid.uuid4()
+    retry_job = await db_conn.fetchval(
+        """
+        INSERT INTO public.background_jobs
+          (kind, payload, idempotency_key, status, attempts, completed_at)
+        VALUES
+          ('application_kit', jsonb_build_object('operation_id', $1::text, 'input', 'private'),
+           $2, 'failed', 3, NOW())
+        RETURNING id
+        """,
+        retryable_b,
+        f"idor-b-retry-job:{uuid.uuid4()}",
+    )
+    await db_conn.execute(
+        """
+        INSERT INTO public.ai_operations
+          (id, user_id, candidate_id, kind, background_job_id, idempotency_key,
+           status, stage, message, error_code, error_message, completed_at, expires_at)
+        VALUES
+          ($1, $2, $3::uuid, 'application_kit', $4, $5, 'failed', 'failed',
+           'The provider timed out.', 'provider_timeout', 'The provider timed out.',
+           NOW(), NOW() + INTERVAL '1 day')
+        """,
+        retryable_b,
+        user_b,
+        cand_b,
+        retry_job,
+        f"idor-b-retry:{uuid.uuid4()}",
+    )
+    retry_operation_before = dict(
+        await db_conn.fetchrow(
+            "SELECT status, completed_at, updated_at FROM public.ai_operations WHERE id = $1",
+            retryable_b,
+        )
+    )
+    retry_job_before = dict(
+        await db_conn.fetchrow(
+            "SELECT status, completed_at, updated_at FROM public.background_jobs WHERE id = $1",
+            retry_job,
+        )
+    )
+
+    retry = await api_client.post(f"/api/v1/ai-operations/{retryable_b}/retry")
+    assert retry.status_code == 404
+    assert retry.json() == {"detail": "AI operation not found"}
+    assert (
+        dict(
+            await db_conn.fetchrow(
+                "SELECT status, completed_at, updated_at FROM public.ai_operations WHERE id = $1",
+                retryable_b,
+            )
+        )
+        == retry_operation_before
+    )
+    assert (
+        dict(
+            await db_conn.fetchrow(
+                "SELECT status, completed_at, updated_at FROM public.background_jobs WHERE id = $1",
+                retry_job,
+            )
+        )
+        == retry_job_before
+    )
+    assert (
+        await db_conn.fetchval(
+            "SELECT COUNT(*) FROM public.ai_operations WHERE retry_of = $1",
+            retryable_b,
+        )
+        == 0
+    )
 
     active_a = await db_conn.fetchval(
         """
