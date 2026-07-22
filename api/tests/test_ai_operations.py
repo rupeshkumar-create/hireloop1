@@ -66,6 +66,14 @@ class ScriptedConnection:
         self.fetchvals = list(fetchvals or [])
         self.fetch_result = list(fetch_result or [])
         self.calls: list[tuple[str, str, tuple[object, ...]]] = []
+        self._in_transaction = False
+        self.transaction_entries = 0
+
+    def is_in_transaction(self) -> bool:
+        return self._in_transaction
+
+    def transaction(self) -> ScriptedTransaction:
+        return ScriptedTransaction(self)
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         self.calls.append(("fetchrow", query, args))
@@ -82,6 +90,23 @@ class ScriptedConnection:
     async def execute(self, query: str, *args: object) -> str:
         self.calls.append(("execute", query, args))
         return "UPDATE 1"
+
+
+class ScriptedTransaction:
+    def __init__(self, db: ScriptedConnection) -> None:
+        self.db = db
+
+    async def __aenter__(self) -> None:
+        self.db._in_transaction = True
+        self.db.transaction_entries += 1
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        self.db._in_transaction = False
 
 
 def test_response_serialization_omits_private_queue_and_raw_error_fields() -> None:
@@ -178,8 +203,18 @@ async def test_enqueue_creates_operation_and_job_on_the_caller_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inserted = _operation_row(background_job_id=None)
+    queued_payload = {
+        "candidate_id": "private-candidate-id",
+        "operation_id": str(OPERATION_ID),
+    }
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "application_kit",
+        "payload": queued_payload,
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
     linked = _operation_row(background_job_id=JOB_ID)
-    db = ScriptedConnection(fetchrows=[inserted, linked])
+    db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
     observed: dict[str, object] = {}
 
     async def fake_enqueue_job(db_arg: object, **kwargs: object) -> uuid.UUID:
@@ -202,13 +237,48 @@ async def test_enqueue_creates_operation_and_job_on_the_caller_connection(
 
     assert response.id == OPERATION_ID
     assert observed["db"] is db
-    assert observed["payload"] == {
-        "candidate_id": "private-candidate-id",
-        "operation_id": str(OPERATION_ID),
-    }
-    assert observed["idempotency_key"] == f"application_kit:{USER_ID}:job"
+    assert observed["payload"] == queued_payload
+    assert observed["idempotency_key"] == f"ai_operation:{OPERATION_ID}"
     assert not any("COMMIT" in query.upper() for _, query, _ in db.calls)
     assert any("background_job_id" in query for _, query, _ in db.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued_operation_id", [None, str(uuid.uuid4())])
+async def test_enqueue_refuses_incompatible_reused_queue_job(
+    monkeypatch: pytest.MonkeyPatch,
+    queued_operation_id: str | None,
+) -> None:
+    inserted = _operation_row(background_job_id=None)
+    queue_payload: dict[str, object] = {"candidate_id": "private-candidate-id"}
+    if queued_operation_id is not None:
+        queue_payload["operation_id"] = queued_operation_id
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "application_kit",
+        "payload": queue_payload,
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    db = ScriptedConnection(fetchrows=[inserted, queue_row])
+
+    async def fake_enqueue_job(db_arg: object, **kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.enqueue_ai_operation(
+            db,  # type: ignore[arg-type]
+            user_id=USER_ID,
+            candidate_id=uuid.uuid4(),
+            kind="application_kit",
+            payload={"candidate_id": "private-candidate-id"},
+            idempotency_key=f"application_kit:{USER_ID}:job",
+        )
+
+    assert not any(
+        method == "fetchrow" and "SET background_job_id" in query for method, query, _ in db.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -450,6 +520,83 @@ async def test_retry_requires_owned_retryable_failure_and_reuses_private_payload
     assert observed["retry_of"] == OPERATION_ID
     assert observed["payload"] == {"candidate_id": old_payload["candidate_id"]}
     assert observed["db"] is db
+    assert "FOR UPDATE OF o" in db.calls[0][1]
+    assert "retry_of = $1" in db.calls[1][1]
+    assert db.transaction_entries == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_returns_existing_active_child_without_enqueuing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": {"candidate_id": str(uuid.uuid4())},
+        "max_attempts": 3,
+    }
+    active_child = _operation_row(id=uuid.uuid4(), user_id=USER_ID, status="running")
+    db = ScriptedConnection(fetchrows=[source, active_child])
+
+    async def unexpected_enqueue(*args: object, **kwargs: object) -> AiOperationResponse:
+        raise AssertionError("an active retry child must be reused")
+
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", unexpected_enqueue)
+
+    response = await ai_operations.retry_owned_operation(
+        db,
+        OPERATION_ID,
+        USER_ID,
+        now=NOW,  # type: ignore[arg-type]
+    )
+
+    assert response.id == active_child["id"]
+    assert response.status == "running"
+    assert "FOR UPDATE OF o" in db.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_retry_refuses_source_with_completed_child() -> None:
+    source = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": {"candidate_id": str(uuid.uuid4())},
+        "max_attempts": 3,
+    }
+    completed_child = _operation_row(
+        id=uuid.uuid4(),
+        user_id=USER_ID,
+        status="succeeded",
+        progress_percent=100,
+        result_type="application_kit",
+        result_id=uuid.uuid4(),
+        completed_at=NOW,
+    )
+    db = ScriptedConnection(fetchrows=[source, completed_child])
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+    assert "FOR UPDATE OF o" in db.calls[0][1]
 
 
 @pytest.mark.asyncio

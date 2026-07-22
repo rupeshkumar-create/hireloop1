@@ -298,10 +298,37 @@ async def enqueue_ai_operation(
         db,
         kind=kind,
         payload=private_payload,
-        idempotency_key=idempotency_key,
+        idempotency_key=f"ai_operation:{operation_id}",
         run_after=run_after,
         max_attempts=max_attempts,
     )
+    queue_row = await db.fetchrow(
+        """
+        SELECT id, kind, payload, idempotency_key
+        FROM public.background_jobs
+        WHERE id = $1
+          AND status IN ('pending', 'running')
+        """,
+        background_job_id,
+    )
+    if queue_row is None:
+        raise AiOperationLifecycleError("The operation queue job is unavailable")
+    queue_data = dict(queue_row)
+    queue_payload = queue_data.get("payload")
+    if isinstance(queue_payload, str):
+        try:
+            queue_payload = json.loads(queue_payload)
+        except json.JSONDecodeError as exc:
+            raise AiOperationLifecycleError("The operation queue payload is invalid") from exc
+    expected_queue_key = f"ai_operation:{operation_id}"
+    if (
+        queue_data.get("kind") != kind
+        or queue_data.get("idempotency_key") != expected_queue_key
+        or not isinstance(queue_payload, dict)
+        or queue_payload.get("operation_id") != str(operation_id)
+    ):
+        raise AiOperationLifecycleError("The operation queue job is incompatible")
+
     linked = await db.fetchrow(
         f"""
         UPDATE public.ai_operations
@@ -585,6 +612,24 @@ async def retry_owned_operation(
     *,
     now: datetime | None = None,
 ) -> AiOperationResponse:
+    """Retry once per failed source attempt under a source-row lock.
+
+    When the caller has not already opened a transaction, this service opens
+    one so ``FOR UPDATE`` remains held through descendant detection and enqueue.
+    """
+    if not db.is_in_transaction():
+        async with db.transaction():
+            return await _retry_owned_operation_locked(db, operation_id, user_id, now=now)
+    return await _retry_owned_operation_locked(db, operation_id, user_id, now=now)
+
+
+async def _retry_owned_operation_locked(
+    db: asyncpg.Connection,
+    operation_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    now: datetime | None,
+) -> AiOperationResponse:
     row = await db.fetchrow(
         """
         SELECT o.id, o.kind, o.candidate_id, o.recruiter_id,
@@ -598,6 +643,7 @@ async def retry_owned_operation(
           AND o.user_id = $2
           AND o.status = 'failed'
           AND o.deleted_at IS NULL
+        FOR UPDATE OF o
         """,
         operation_id,
         user_id,
@@ -605,6 +651,26 @@ async def retry_owned_operation(
     if row is None:
         await _raise_owned_transition_error(db, operation_id, user_id, "retry")
         raise AssertionError("unreachable")
+
+    child = await db.fetchrow(
+        f"""
+        SELECT {_OPERATION_COLUMNS}, user_id, deleted_at
+        FROM public.ai_operations
+        WHERE retry_of = $1
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        operation_id,
+    )
+    if child is not None:
+        child_data = dict(child)
+        if (
+            child_data.get("user_id") == user_id
+            and child_data.get("deleted_at") is None
+            and child_data.get("status") in {"queued", "running"}
+        ):
+            return _to_response(child_data)
+        raise AiOperationLifecycleError("This operation attempt has already been retried")
 
     data = dict(row)
     if not is_retryable_error_code(data.get("error_code")):
