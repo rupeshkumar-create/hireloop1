@@ -124,7 +124,7 @@ async def _lock_active_career_call(
     active = await db.fetchrow(
         """
         SELECT vs.id, vs.conversation_id, vs.status, vs.scheduled_at, vs.started_at,
-               vs.consent_version
+               vs.created_at, vs.consent_version
         FROM public.voice_sessions vs
         WHERE vs.candidate_id = $1::uuid
           AND vs.session_type = 'career_chat' AND vs.status = 'active'
@@ -144,12 +144,14 @@ async def _lock_active_career_call(
                EXISTS (
                  SELECT 1 FROM public.consent_log cl
                  WHERE cl.user_id = $3::uuid AND cl.purpose = $4 AND cl.granted = TRUE
+                   AND cl.created_at >= $5::timestamptz
                ) AS has_consent_audit
         """,
         active["id"],
         candidate_id,
         user_id,
         f"voice_career_discovery:{consent_version}",
+        active.get("started_at") or active["created_at"],
     )
     return {**dict(active), **dict(flags or {})}
 

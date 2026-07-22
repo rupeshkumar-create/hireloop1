@@ -46,6 +46,7 @@ class LifecycleDb:
         self.consent_version: str | None = "career-call-v1"
         self.has_interview_state = True
         self.has_consent_audit = True
+        self.consent_audit_created_at = datetime(2099, 7, 23, 5, tzinfo=UTC)
         self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
 
@@ -71,6 +72,7 @@ class LifecycleDb:
             "status": self.status,
             "scheduled_at": datetime(2099, 7, 23, 5, tzinfo=UTC),
             "started_at": datetime(2099, 7, 23, 5, tzinfo=UTC),
+            "created_at": datetime(2099, 7, 23, 4, 55, tzinfo=UTC),
             "duration_secs": 42,
             "completion_reason": "candidate_ended" if self.status == "completed" else None,
             "consent_version": self.consent_version,
@@ -88,9 +90,12 @@ class LifecycleDb:
                 return None
             return {"id": self.conversation_id}
         if "AS has_interview_state" in normalized:
+            audit_is_current = self.has_consent_audit
+            if "cl.created_at >=" in normalized:
+                audit_is_current = audit_is_current and self.consent_audit_created_at >= args[4]
             return {
                 "has_interview_state": self.has_interview_state,
-                "has_consent_audit": self.has_consent_audit,
+                "has_consent_audit": audit_is_current,
             }
         if "FROM public.voice_sessions vs" in normalized and "status = 'active'" in normalized:
             if self.state == "active":
@@ -247,6 +252,35 @@ async def test_start_rejects_active_same_conversation_with_different_consent_ver
             db=db,
         )
     assert exc.value.status_code == 409
+    assert db.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_reuse_prior_call_consent_audit() -> None:
+    db = LifecycleDb.active_call()
+    db.consent_audit_created_at = datetime(2099, 7, 23, 4, 59, tzinfo=UTC)
+
+    await voice_sessions.start_career_call(
+        _start_request(conversation_id=db.conversation_id),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
+    consent_writes = [call for call in db.execute_calls if "consent_log" in call[0]]
+    assert len(consent_writes) == 1
+
+
+@pytest.mark.asyncio
+async def test_start_reuses_current_call_consent_audit_without_writes() -> None:
+    db = LifecycleDb.active_call()
+    db.consent_audit_created_at = datetime(2099, 7, 23, 5, 0, 1, tzinfo=UTC)
+
+    await voice_sessions.start_career_call(
+        _start_request(conversation_id=db.conversation_id),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
     assert db.execute_calls == []
 
 
