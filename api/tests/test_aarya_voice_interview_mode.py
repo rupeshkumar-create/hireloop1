@@ -4,22 +4,32 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from hireloop_api.agents.aarya import agent as aarya_agent
 from hireloop_api.agents.aarya.agent import (
+    _career_interview_prompt_from_state,
     blocked_career_interview_mutation,
     build_career_interview_prompt,
 )
+from hireloop_api.config import Settings
 from hireloop_api.models.career_interview import CareerInterviewCoverage, InterviewTopic
-from hireloop_api.routes.chat import SendMessageRequest, prepare_career_interview_turn
+from hireloop_api.routes.chat import (
+    SendMessageRequest,
+    _memory_update_background,
+    prepare_career_interview_turn,
+    resolve_chat_turn_routing,
+)
 from hireloop_api.services.career_interview import (
     load_active_interview,
     record_turn_and_select_focus,
 )
+from hireloop_api.services.memory import run_memory_update
 
 
 class _Transaction:
@@ -71,6 +81,23 @@ class InterviewDb:
         return "UPDATE 1"
 
 
+class CapturingChatModel:
+    instances: ClassVar[list[CapturingChatModel]] = []
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.bound = False
+        self.invocations: list[list[object]] = []
+        self.instances.append(self)
+
+    def bind_tools(self, _tools: object) -> CapturingChatModel:
+        self.bound = True
+        return self
+
+    async def ainvoke(self, messages: list[object]) -> AIMessage:
+        self.invocations.append(messages)
+        return AIMessage(content="Thanks for sharing. What kind of impact did that work have?")
+
+
 def test_career_interview_prompt_is_single_question_private_discovery_guidance() -> None:
     prompt = build_career_interview_prompt(
         focus=InterviewTopic.SKILLS,
@@ -109,10 +136,121 @@ def test_career_interview_prompt_has_explicit_wrap_up_guidance() -> None:
 
 
 def test_private_interview_blocks_profile_and_preference_mutations_only() -> None:
-    assert blocked_career_interview_mutation("update_profile", True)
-    assert blocked_career_interview_mutation("update_job_preferences", True)
-    assert not blocked_career_interview_mutation("profile_read", True)
-    assert not blocked_career_interview_mutation("update_profile", False)
+    advisory = {"error": "Profile changes from this private call require candidate review."}
+
+    assert (
+        blocked_career_interview_mutation(tool_name="update_profile", career_interview_mode=True)
+        == advisory
+    )
+    assert (
+        blocked_career_interview_mutation(
+            tool_name="update_job_preferences", career_interview_mode=True
+        )
+        == advisory
+    )
+    assert (
+        blocked_career_interview_mutation(tool_name="profile_read", career_interview_mode=True)
+        is None
+    )
+    assert (
+        blocked_career_interview_mutation(tool_name="update_profile", career_interview_mode=False)
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I want a remote product role in Bengaluru.",
+        "Please show me jobs and apply to job 11111111-1111-1111-1111-111111111111.",
+    ],
+)
+def test_private_interview_answers_stay_on_prompt_path_without_job_routing(answer: str) -> None:
+    body = SendMessageRequest(
+        content=answer,
+        content_type="voice",
+        voice_session_id=uuid4(),
+    )
+
+    routing = resolve_chat_turn_routing(body, career_interview_mode=True)
+    prompt = _career_interview_prompt_from_state(
+        {
+            "messages": [HumanMessage(content=answer)],
+            "career_interview_mode": True,
+            "career_interview_focus": InterviewTopic.TARGET_ROLES,
+            "career_interview_prompt_hint": "Ask which responsibilities they want next.",
+            "career_interview_should_wrap": False,
+        }
+    )
+
+    assert routing.normal_routing_enabled is False
+    assert routing.user_intent == "general"
+    assert routing.application_kit_job_ids == []
+    assert prompt is not None
+    assert "Private career interview mode is active" in prompt
+    assert "target_roles" in prompt
+
+
+@pytest.mark.asyncio
+async def test_graph_uses_tool_free_private_prompt_for_job_like_interview_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    CapturingChatModel.instances = []
+    monkeypatch.setattr(aarya_agent, "ChatOpenAI", CapturingChatModel)
+    graph = aarya_agent.build_aarya_graph(
+        Settings(_env_file=None, environment="development")  # type: ignore[call-arg]
+    )
+
+    await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="I want remote product roles and would apply to fintech jobs.")
+            ],
+            "user_id": str(uuid4()),
+            "session_id": str(uuid4()),
+            "action_count": 0,
+            "tool_rounds": 0,
+            "voice_mode": True,
+            "career_interview_mode": True,
+            "career_interview_focus": InterviewTopic.TARGET_ROLES,
+            "career_interview_prompt_hint": "Ask which responsibilities they want next.",
+            "career_interview_should_wrap": False,
+        },
+        config={"configurable": {"db": object()}},
+    )
+
+    invoked = [instance for instance in CapturingChatModel.instances if instance.invocations]
+    assert len(invoked) == 1
+    assert invoked[0].bound is False
+    system_prompt = next(
+        message.content
+        for message in invoked[0].invocations[0]
+        if isinstance(message, SystemMessage)
+    )
+    assert "Private career interview mode is active" in system_prompt
+    assert "likely_intent: job_search" not in system_prompt
+
+
+def test_private_interview_background_does_not_run_memory_extraction() -> None:
+    settings = object()
+
+    assert (
+        _memory_update_background(
+            settings=settings,
+            candidate_id="candidate",
+            conversation_id="conversation",
+            career_interview_mode=True,
+        )
+        is None
+    )
+    ordinary = _memory_update_background(
+        settings=settings,
+        candidate_id="candidate",
+        conversation_id="conversation",
+        career_interview_mode=False,
+    )
+    assert ordinary is not None
+    assert ordinary.func is run_memory_update
 
 
 @pytest.mark.asyncio
@@ -138,6 +276,25 @@ async def test_record_turn_parses_jsonb_state_and_advances_focus(state_as_json: 
     persisted = json.loads(str(db.execute_calls[0][1][2]))
     assert persisted["current_focus"] == "impact"
     assert "FOR UPDATE OF cis" in db.fetch_queries[0]
+
+
+@pytest.mark.asyncio
+async def test_repeated_uncovered_focus_is_recorded_in_question_history() -> None:
+    db = InterviewDb()
+
+    turn = await record_turn_and_select_focus(
+        db,
+        session_id=db.session_id,
+        candidate_id=db.candidate_id,
+        conversation_id=db.conversation_id,
+        answer="I'm not sure.",
+    )
+
+    assert turn.focus is InterviewTopic.CURRENT_WORK
+    assert turn.coverage.question_history == [
+        InterviewTopic.CURRENT_WORK,
+        InterviewTopic.CURRENT_WORK,
+    ]
 
 
 @pytest.mark.asyncio

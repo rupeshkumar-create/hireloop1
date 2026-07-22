@@ -197,9 +197,7 @@ async def record_turn_and_select_focus(
         elapsed_seconds = max(0.0, (now - started_at).total_seconds())
         next_focus = select_next_focus(updated, elapsed_seconds=elapsed_seconds)
         updated.current_focus = next_focus.topic
-        if next_focus.topic is not None and (
-            not updated.question_history or updated.question_history[-1] != next_focus.topic
-        ):
+        if next_focus.topic is not None:
             updated.question_history.append(next_focus.topic)
 
         state_version = int(row["state_version"]) + 1

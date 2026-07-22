@@ -367,6 +367,48 @@ class SendMessageRequest(BaseModel):
     voice_session_id: uuid.UUID | None = None
 
 
+class ChatTurnRouting(BaseModel):
+    """Deterministic routing inputs kept separate from private interview turns."""
+
+    normal_routing_enabled: bool
+    user_intent: str
+    application_kit_job_ids: list[str]
+
+
+def resolve_chat_turn_routing(
+    body: SendMessageRequest, *, career_interview_mode: bool
+) -> ChatTurnRouting:
+    """Disable job/career-path/application routing during a private interview."""
+    if career_interview_mode:
+        return ChatTurnRouting(
+            normal_routing_enabled=False,
+            user_intent="general",
+            application_kit_job_ids=[],
+        )
+    user_intent = _detect_likely_intent(body.content)
+    application_kit_job_ids = (
+        _extract_application_kit_job_ids(body.content) if user_intent == "job_application" else []
+    )
+    return ChatTurnRouting(
+        normal_routing_enabled=True,
+        user_intent=user_intent,
+        application_kit_job_ids=application_kit_job_ids,
+    )
+
+
+def _memory_update_background(
+    *,
+    settings: Settings,
+    candidate_id: str,
+    conversation_id: str,
+    career_interview_mode: bool,
+) -> BackgroundTask | None:
+    """Keep private-call facts out of automatic profile and preference extraction."""
+    if career_interview_mode:
+        return None
+    return BackgroundTask(run_memory_update, settings, candidate_id, conversation_id)
+
+
 async def prepare_career_interview_turn(
     *,
     db: asyncpg.Connection,
@@ -858,6 +900,8 @@ async def send_message(
             candidate_id=candidate_uuid,
             conversation_id=coerce_uuid(conversation_id),
         )
+        career_interview_mode = career_interview_turn is not None
+        turn_routing = resolve_chat_turn_routing(body, career_interview_mode=career_interview_mode)
         candidate_market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
         memory_summary = await CandidateMemoryService.get_memory_summary(db, candidate_id)
         career_facts = await CandidateMemoryService.get_career_facts(db, candidate_id)
@@ -912,18 +956,20 @@ async def send_message(
         )
         recent_assistant = last_assistant_row["content"] if last_assistant_row else None
 
-        career_path_just_prioritized = await try_apply_career_path_selection(
-            db,
-            candidate_id,
-            body.content,
-            recent_assistant_message=recent_assistant,
-        )
+        career_path_just_prioritized = None
+        if turn_routing.normal_routing_enabled:
+            career_path_just_prioritized = await try_apply_career_path_selection(
+                db,
+                candidate_id,
+                body.content,
+                recent_assistant_message=recent_assistant,
+            )
         if career_path_just_prioritized:
             career_path_prioritized = career_path_just_prioritized
             career_path_pending = []
             clear_session_tool_cache(conversation_id, "job_search")
 
-        user_intent = _detect_likely_intent(body.content)
+        user_intent = turn_routing.user_intent
         match_explanation_job_id = _match_explanation_job_id(body, user_intent)
         wants_jobs = user_intent == "job_search" or bool(career_path_just_prioritized)
         prefetched_jobs: list[dict] = []
@@ -932,25 +978,27 @@ async def send_message(
         if wants_jobs:
             await _enqueue_background_match_embed(db, candidate_id)
 
-        search_title = resolve_job_search_query(
-            body.content,
-            user_intent=user_intent,
-            career_path=career_path_row,
-            prioritized_title=career_path_prioritized,
-            just_prioritized=career_path_just_prioritized,
-            current_title=(
-                str(cand_prefs["current_title"]).strip()
-                if cand_prefs and cand_prefs.get("current_title")
-                else None
-            ),
-            looking_for=(
-                str(cand_prefs["looking_for"]).strip()
-                if cand_prefs and cand_prefs.get("looking_for")
-                else None
-            ),
-        )
+        search_title = None
+        if turn_routing.normal_routing_enabled:
+            search_title = resolve_job_search_query(
+                body.content,
+                user_intent=user_intent,
+                career_path=career_path_row,
+                prioritized_title=career_path_prioritized,
+                just_prioritized=career_path_just_prioritized,
+                current_title=(
+                    str(cand_prefs["current_title"]).strip()
+                    if cand_prefs and cand_prefs.get("current_title")
+                    else None
+                ),
+                looking_for=(
+                    str(cand_prefs["looking_for"]).strip()
+                    if cand_prefs and cand_prefs.get("looking_for")
+                    else None
+                ),
+            )
         search_city: str | None = None
-        fresh_jobs = wants_fresh_job_results(body.content)
+        fresh_jobs = turn_routing.normal_routing_enabled and wants_fresh_job_results(body.content)
         exclude_job_ids: list[str] = []
         if fresh_jobs:
             clear_session_tool_cache(conversation_id, "job_search")
@@ -1026,21 +1074,27 @@ async def send_message(
         "profile_completeness": profile_completeness,
         "prefetched_jobs": prefetched_jobs if include_prefetch else [],
         "candidate_display_name": display_name,
-        "career_path_prioritized_title": career_path_prioritized,
-        "career_path_just_prioritized": career_path_just_prioritized,
-        "career_path_pending_options": career_path_pending,
-        "career_interview_mode": career_interview_turn is not None,
-        "focus": career_interview_turn.focus if career_interview_turn else None,
-        "prompt_hint": career_interview_turn.prompt_hint if career_interview_turn else None,
-        "should_wrap": career_interview_turn.should_wrap if career_interview_turn else False,
+        "career_path_prioritized_title": (
+            career_path_prioritized if not career_interview_mode else None
+        ),
+        "career_path_just_prioritized": (
+            career_path_just_prioritized if not career_interview_mode else None
+        ),
+        "career_path_pending_options": career_path_pending if not career_interview_mode else [],
+        "career_interview_mode": career_interview_mode,
+        "career_interview_focus": career_interview_turn.focus if career_interview_turn else None,
+        "career_interview_prompt_hint": (
+            career_interview_turn.prompt_hint if career_interview_turn else None
+        ),
+        "career_interview_should_wrap": (
+            career_interview_turn.should_wrap if career_interview_turn else False
+        ),
     }
 
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
     title_hint = body.content[:60]
-    application_kit_job_ids = (
-        _extract_application_kit_job_ids(body.content) if user_intent == "job_application" else []
-    )
+    application_kit_job_ids = turn_routing.application_kit_job_ids
 
     logger.info(
         "aarya_turn_start",
@@ -1348,7 +1402,12 @@ async def send_message(
         # After the reply is fully streamed, remember this exchange: extract
         # profile facts (newer-wins) + refresh the rolling cross-conversation
         # memory. Runs on its own pooled connection and never raises.
-        background=BackgroundTask(run_memory_update, settings, candidate_id, conversation_id),
+        background=_memory_update_background(
+            settings=settings,
+            candidate_id=candidate_id,
+            conversation_id=conversation_id,
+            career_interview_mode=career_interview_mode,
+        ),
     )
 
 
