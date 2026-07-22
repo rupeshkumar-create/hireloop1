@@ -101,6 +101,15 @@ export function VoiceSession({
   const startInFlightRef = useRef(false);
   const completionInFlightRef = useRef(false);
   const recordingActiveRef = useRef(false);
+  const recordingStartingRef = useRef(false);
+  const recordingStartPromiseRef = useRef<Promise<void> | null>(null);
+  const recordingStoppingRef = useRef(false);
+  const recordingStopPromiseRef = useRef<Promise<string> | null>(null);
+  const captureCycleInFlightRef = useRef(false);
+  const discardCaptureRef = useRef(false);
+  const listeningParkedRef = useRef(false);
+  const resumeAfterDiscardRef = useRef(false);
+  const micMutedRef = useRef(false);
   const pendingCompletionRef = useRef<{
     durationSeconds: number;
     completionReason: CompletionReason;
@@ -113,6 +122,24 @@ export function VoiceSession({
   const voiceSupport = typeof window !== "undefined" ? getVoiceSupportStatus() : "unsupported";
   const canSpeak   = voiceSupport !== "unsupported";
   const canListen  = voiceSupport === "supported" || voiceSupport === "stt_only";
+
+  const stopRecordingOnce = useCallback(async (): Promise<string> => {
+    if (recordingStopPromiseRef.current) return recordingStopPromiseRef.current;
+    if (!recordingActiveRef.current) return "";
+
+    recordingActiveRef.current = false;
+    recordingStoppingRef.current = true;
+    const stopPromise = stopRecording().catch(() => "");
+    recordingStopPromiseRef.current = stopPromise;
+    try {
+      return await stopPromise;
+    } finally {
+      if (recordingStopPromiseRef.current === stopPromise) {
+        recordingStopPromiseRef.current = null;
+        recordingStoppingRef.current = false;
+      }
+    }
+  }, [stopRecording]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -193,22 +220,58 @@ export function VoiceSession({
     async (conversationId: string): Promise<void> => {
       if (isEndingRef.current || !isMountedRef.current) return;
 
-      if (!canListen || micMuted) {
+      if (!canListen || micMutedRef.current) {
         // Fallback: no STT (or muted) — keep waiting; the end-call button and
         // the mic-tap control stay available.
+        listeningParkedRef.current = true;
         setTurnState("user_listening");
         return;
       }
+      if (
+        captureCycleInFlightRef.current ||
+        recordingStartingRef.current ||
+        recordingActiveRef.current ||
+        recordingStoppingRef.current
+      ) return;
 
+      listeningParkedRef.current = false;
+      captureCycleInFlightRef.current = true;
+      recordingStartingRef.current = true;
       setTurnState("user_listening");
       setIsListening(true);
       setStreamStatus(null);
       try {
-        await startRecording();
+        const startPromise = startRecording();
+        recordingStartPromiseRef.current = startPromise;
+        await startPromise;
+        if (recordingStartPromiseRef.current === startPromise) {
+          recordingStartPromiseRef.current = null;
+          recordingStartingRef.current = false;
+        }
         recordingActiveRef.current = true;
-        if (isEndingRef.current || !isMountedRef.current) {
-          recordingActiveRef.current = false;
-          await stopRecording().catch(() => "");
+        if (
+          isEndingRef.current ||
+          !isMountedRef.current ||
+          micMutedRef.current ||
+          discardCaptureRef.current
+        ) {
+          await stopRecordingOnce();
+          discardCaptureRef.current = false;
+          if (isMountedRef.current && !isEndingRef.current) {
+            setIsListening(false);
+            setTurnState("user_listening");
+            listeningParkedRef.current = true;
+            if (resumeAfterDiscardRef.current && !micMutedRef.current) {
+              resumeAfterDiscardRef.current = false;
+              listeningParkedRef.current = false;
+              captureCycleInFlightRef.current = false;
+              void Promise.resolve().then(() => listenForUser(conversationId));
+            } else {
+              captureCycleInFlightRef.current = false;
+            }
+          } else {
+            captureCycleInFlightRef.current = false;
+          }
           return;
         }
 
@@ -222,7 +285,10 @@ export function VoiceSession({
         if ((err as Error).name !== "AbortError") {
           if (isMountedRef.current) setErrorMsg((err as Error).message);
         }
+        recordingStartPromiseRef.current = null;
+        recordingStartingRef.current = false;
         recordingActiveRef.current = false;
+        captureCycleInFlightRef.current = false;
         if (isMountedRef.current) setIsListening(false);
         return;
       }
@@ -231,13 +297,42 @@ export function VoiceSession({
       listenTimerRef.current = null;
       releaseListenWaitRef.current = null;
 
-      if (!recordingActiveRef.current) return;
-      recordingActiveRef.current = false;
-      const userTranscript = await stopRecording().catch(() => "");
-      if (!isMountedRef.current) return;
+      if (
+        !recordingActiveRef.current &&
+        !recordingStopPromiseRef.current &&
+        !discardCaptureRef.current
+      ) {
+        captureCycleInFlightRef.current = false;
+        if (isMountedRef.current) setIsListening(false);
+        return;
+      }
+      const userTranscript = await stopRecordingOnce();
+      if (!isMountedRef.current) {
+        captureCycleInFlightRef.current = false;
+        return;
+      }
       setIsListening(false);
 
-      if (isEndingRef.current) return;
+      if (isEndingRef.current) {
+        captureCycleInFlightRef.current = false;
+        return;
+      }
+      const discardCapture = discardCaptureRef.current || micMutedRef.current;
+      discardCaptureRef.current = false;
+      if (discardCapture) {
+        setTurnState("user_listening");
+        listeningParkedRef.current = true;
+        if (resumeAfterDiscardRef.current && !micMutedRef.current) {
+          resumeAfterDiscardRef.current = false;
+          listeningParkedRef.current = false;
+          captureCycleInFlightRef.current = false;
+          void Promise.resolve().then(() => listenForUser(conversationId));
+        } else {
+          captureCycleInFlightRef.current = false;
+        }
+        return;
+      }
+      captureCycleInFlightRef.current = false;
       setTranscript(userTranscript);
 
       if (!userTranscript.trim()) {
@@ -255,7 +350,7 @@ export function VoiceSession({
 
       void doTurnRef.current?.(conversationId, userTranscript);
     },
-    [canListen, micMuted, startRecording, stopRecording]
+    [canListen, startRecording, stopRecordingOnce]
   );
 
   /** One full turn: stream Aarya's reply → speak it → hand the mic back. */
@@ -339,12 +434,10 @@ export function VoiceSession({
     releaseListenWaitRef.current = null;
     if (listenTimerRef.current) clearTimeout(listenTimerRef.current);
     listenTimerRef.current = null;
-    if (recordingActiveRef.current) {
-      recordingActiveRef.current = false;
-      await stopRecording().catch(() => "");
-    }
+    await recordingStartPromiseRef.current?.catch(() => undefined);
+    await stopRecordingOnce();
     if (isMountedRef.current) setIsListening(false);
-  }, [stopRecording, stopSpeaking]);
+  }, [stopRecordingOnce, stopSpeaking]);
 
   const finishCompletedCall = useCallback(
     async (durationSeconds: number) => {
@@ -412,7 +505,11 @@ export function VoiceSession({
 
   const endCall = useCallback(
     async (completionReason: CompletionReason) => {
-      if (pendingCompletionRef.current || completionInFlightRef.current) return;
+      if (
+        isEndingRef.current ||
+        pendingCompletionRef.current ||
+        completionInFlightRef.current
+      ) return;
       const voiceSessionId = voiceSessionIdRef.current;
       if (!voiceSessionId) {
         if (isMountedRef.current) setErrorMsg("Start the call before trying to finish it.");
@@ -420,6 +517,10 @@ export function VoiceSession({
       }
 
       isEndingRef.current = true;
+      if (isMountedRef.current) {
+        setTurnState("ending");
+        setErrorMsg(null);
+      }
       clearCallTimer();
       await stopLocalMedia();
       const measuredDuration = startTimeRef.current
@@ -547,7 +648,45 @@ export function VoiceSession({
     }
   }, [turnState, isListening, isPlaying, stopSpeaking, listenForUser]);
 
-  const toggleMute = useCallback(() => setMicMuted((v) => !v), []);
+  const toggleMute = useCallback(() => {
+    const nextMuted = !micMutedRef.current;
+    micMutedRef.current = nextMuted;
+    setMicMuted(nextMuted);
+
+    if (nextMuted) {
+      listeningParkedRef.current = true;
+      resumeAfterDiscardRef.current = false;
+      if (
+        captureCycleInFlightRef.current ||
+        recordingStartingRef.current ||
+        recordingActiveRef.current ||
+        recordingStoppingRef.current
+      ) {
+        // The recorder owner performs the one stop operation. Marking the
+        // capture first guarantees its transcript is discarded after flush.
+        discardCaptureRef.current = true;
+        releaseListenWaitRef.current?.();
+        void stopRecordingOnce();
+      }
+      return;
+    }
+
+    if (turnState !== "user_listening" || !listeningParkedRef.current) return;
+    if (
+      captureCycleInFlightRef.current ||
+      recordingStartingRef.current ||
+      recordingActiveRef.current ||
+      recordingStoppingRef.current
+    ) {
+      resumeAfterDiscardRef.current = true;
+      return;
+    }
+
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || isEndingRef.current) return;
+    listeningParkedRef.current = false;
+    void listenForUser(conversationId);
+  }, [listenForUser, stopRecordingOnce, turnState]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -558,15 +697,12 @@ export function VoiceSession({
       stopSpeaking();
       abortRef.current?.abort();
       releaseListenWaitRef.current?.();
-      if (recordingActiveRef.current) {
-        recordingActiveRef.current = false;
-        void stopRecording().catch(() => "");
-      }
+      void stopRecordingOnce();
       if (timerRef.current) clearInterval(timerRef.current);
       if (listenTimerRef.current) clearTimeout(listenTimerRef.current);
       if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
     };
-  }, [stopRecording, stopSpeaking]);
+  }, [stopRecordingOnce, stopSpeaking]);
 
   // ── Derived UI state ──────────────────────────────────────────────────────
 
@@ -594,6 +730,8 @@ export function VoiceSession({
   const visibleStatus =
     isActive && elapsedSecs >= WRAP_WARNING_SECONDS
       ? "Aarya is wrapping up."
+      : isActive && micMuted
+        ? "Microphone muted."
       : streamStatus ?? statusLabel[turnState];
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -751,6 +889,8 @@ export function VoiceSession({
               type="button"
               onClick={toggleMute}
               title={micMuted ? "Unmute mic" : "Mute mic"}
+              aria-label={micMuted ? "Unmute microphone and resume listening" : "Mute microphone"}
+              aria-pressed={micMuted}
               className={cn(
                 "w-14 h-14 rounded-full flex items-center justify-center transition-colors",
                 micMuted ? "bg-destructive/10 text-destructive" : "bg-ink-100 text-ink-600 hover:bg-ink-200"
