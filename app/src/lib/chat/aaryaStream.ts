@@ -21,7 +21,12 @@ export type AaryaStreamCallbacks = {
   onStatus?: (status: string, meta?: AaryaStatusMeta) => void;
   onText?: (chunk: string, accumulated: string) => void;
   onJobs?: (jobs: MatchedJob[]) => void;
+  onMetadata?: (metadata: AaryaStreamMetadata) => void;
   onError?: (error: string) => void;
+};
+
+export type AaryaStreamMetadata = {
+  coverageComplete: boolean;
 };
 
 export type AaryaStreamResult = {
@@ -30,6 +35,7 @@ export type AaryaStreamResult = {
   sawDone: boolean;
   jobs: MatchedJob[];
   hinglishHint: boolean;
+  coverageComplete: boolean;
 };
 
 type StreamPayload = {
@@ -40,7 +46,19 @@ type StreamPayload = {
   eta_sec?: number;
   hinglish_hint?: boolean;
   jobs?: MatchedJob[];
+  metadata?: unknown;
 };
+
+export function parseCareerInterviewCoverageComplete(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const metadata = (payload as { metadata?: unknown }).metadata;
+  if (typeof metadata !== "object" || metadata === null) return false;
+  const careerInterview = (metadata as { career_interview?: unknown }).career_interview;
+  if (typeof careerInterview !== "object" || careerInterview === null) return false;
+  return (
+    (careerInterview as { coverage_complete?: unknown }).coverage_complete === true
+  );
+}
 
 export const AARYA_SESSION_STORAGE_KEY = "hireloop_aarya_session_id";
 export const VOICE_SEND_ON_PAUSE_KEY = "hireloop_voice_send_on_pause";
@@ -315,7 +333,7 @@ export async function streamAaryaMessage(
   contentType: AaryaContentType,
   callbacks: AaryaStreamCallbacks = {},
   signal?: AbortSignal,
-  context?: { jobId?: string }
+  context?: { jobId?: string; voiceSessionId?: string }
 ): Promise<AaryaStreamResult> {
   const res = await apiAuthFetch(
     `/api/v1/chat/sessions/${conversationId}/messages`,
@@ -328,6 +346,7 @@ export async function streamAaryaMessage(
         content,
         content_type: contentType,
         job_id: context?.jobId,
+        voice_session_id: context?.voiceSessionId,
       }),
       signal,
     }
@@ -352,6 +371,7 @@ export async function streamAaryaMessage(
   let sawDone = false;
   let buffer = "";
   let hinglishHint = false;
+  let coverageComplete = false;
   const jobs: MatchedJob[] = [];
 
   async function readNextChunk(): Promise<ReadableStreamReadResult<Uint8Array>> {
@@ -389,6 +409,10 @@ export async function streamAaryaMessage(
 
       try {
         const parsed = JSON.parse(data) as StreamPayload;
+        if (parseCareerInterviewCoverageComplete(parsed)) {
+          coverageComplete = true;
+          callbacks.onMetadata?.({ coverageComplete: true });
+        }
         if (parsed.error) {
           streamError = parsed.error;
           callbacks.onError?.(parsed.error);
@@ -444,5 +468,6 @@ export async function streamAaryaMessage(
     sawDone,
     jobs,
     hinglishHint,
+    coverageComplete,
   };
 }

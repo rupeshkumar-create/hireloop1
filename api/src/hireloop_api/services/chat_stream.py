@@ -44,5 +44,28 @@ def sse_chips(chips: list[dict[str, Any]]) -> str:
     return sse_event({"chips": chips})
 
 
+def sse_career_interview_metadata(*, coverage_complete: bool) -> str:
+    """Emit typed metadata for a successful private career-interview turn."""
+    return sse_event(
+        {
+            "metadata": {
+                "career_interview": {"coverage_complete": coverage_complete},
+            }
+        }
+    )
+
+
+def career_interview_completion_event(
+    *,
+    career_interview_mode: bool,
+    should_wrap: bool,
+    reply_persisted: bool,
+) -> str | None:
+    """Return completion metadata only after a durable private wrap reply."""
+    if not (career_interview_mode and should_wrap and reply_persisted):
+        return None
+    return sse_career_interview_metadata(coverage_complete=True)
+
+
 def sse_error(message: str) -> str:
     return sse_event({"error": message[:500]})

@@ -282,6 +282,7 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
     if cat == "interview_reminders":
         when = escape(str(data.get("scheduled_label") or data.get("scheduled_at") or "soon"))
         session = escape(str(data.get("session_label") or "AI career call"))
+        cta_label = str(data.get("cta_label") or "Open Hireschema")
         body = paragraph(
             f"Your <strong>{session}</strong> with Aarya is scheduled for <strong>{when}</strong>."
         ) + muted_paragraph("Join from Hireschema — voice or text, your choice.")
@@ -290,7 +291,7 @@ def render_notification_email(category: str, data: dict[str, Any]) -> tuple[str,
             f"Reminder: {session} tomorrow" if is_reminder else f"Booked: {session} with Aarya"
         )
         heading = f"Reminder, {name}" if is_reminder else f"You're booked, {name}"
-        return subject, brand_shell(heading, body, cta_url, "Open Hireschema", app_base=app_base)
+        return subject, brand_shell(heading, body, cta_url, cta_label, app_base=app_base)
 
     if cat == "aarya_digest":
         matches = int(data.get("match_count") or 0)

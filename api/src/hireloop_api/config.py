@@ -30,6 +30,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3001",
         "http://127.0.0.1:3000",
     ]
+    # Forwarded client IP headers are accepted only when the TCP peer belongs to
+    # one of these operator-configured proxy networks. Empty is fail-safe.
+    trusted_proxy_cidrs: list[str] = []
+    # Railway documents X-Real-IP as an edge-overwritten single client IP. This
+    # must be enabled only when the API is reachable exclusively through that edge.
+    trust_railway_proxy_headers: bool = False
 
     # Browser-reachable URL of THIS API (FastAPI). Used to build OAuth redirect
     # URIs that Google must redirect the browser to.
@@ -249,6 +255,13 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @field_validator("trusted_proxy_cidrs", mode="before")
+    @classmethod
+    def split_trusted_proxy_cidrs(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            return [network.strip() for network in v.split(",") if network.strip()]
+        return [str(network).strip() for network in v if str(network).strip()]
 
     @field_validator("super_admin_emails", mode="before")
     @classmethod

@@ -11,6 +11,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 import asyncpg
 import structlog
@@ -40,6 +41,32 @@ def _app_base(settings: Settings) -> str:
                 return origin.rstrip("/")
         return settings.allowed_origins[0].rstrip("/")
     return "https://www.hireschema.com"
+
+
+def _voice_session_email_details(
+    settings: Settings, *, session_id: str, session_type: str
+) -> tuple[str, str]:
+    label = session_type.replace("_", " ").title()
+    cta_url = f"{_app_base(settings)}/dashboard"
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=session_type)
+    if deep_link is not None:
+        return "Private 15-minute career call", f"{_app_base(settings)}{deep_link}"
+    return label, cta_url
+
+
+def _voice_session_deep_link(*, session_id: str, session_type: str) -> str | None:
+    """Return a validated in-app path for private career calls only."""
+    if session_type != "career_chat":
+        return None
+    safe_session_id = str(uuid.UUID(session_id))
+    query = urlencode({"voice": "deep", "scheduled_session_id": safe_session_id})
+    return f"/dashboard?{query}"
+
+
+def _voice_session_cta_label(session_type: str) -> str:
+    if session_type == "career_chat":
+        return "Start your private 15-minute call"
+    return "Open Hireschema"
 
 
 def _email_provider_configured(settings: Settings) -> bool:
@@ -591,9 +618,11 @@ async def notify_interview_booked(
     if not user or not user["email"]:
         return
 
-    label = session_type.replace("_", " ").title()
+    label, cta_url = _voice_session_email_details(
+        settings, session_id=session_id, session_type=session_type
+    )
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=session_type)
     when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
-    app_base = _app_base(settings)
     channels = ["in_app"]
     email_result = await send_category_email(
         db,
@@ -608,7 +637,8 @@ async def notify_interview_booked(
             "scheduled_label": when,
             "scheduled_at": when,
             "is_reminder": False,
-            "cta_url": f"{app_base}/dashboard",
+            "cta_url": cta_url,
+            "cta_label": _voice_session_cta_label(session_type),
         },
         template_id=settings.sg_template_interview_reminder,
     )
@@ -621,7 +651,11 @@ async def notify_interview_booked(
         notif_type="interview_booked",
         title=f"{label} booked",
         body=f"Scheduled for {when}",
-        data={"session_id": session_id, "dedupe_key": f"booked:{session_id}"},
+        data={
+            "session_id": session_id,
+            "dedupe_key": f"booked:{session_id}",
+            **({"deep_link": deep_link} if deep_link is not None else {}),
+        },
         channels=channels,
     )
 
@@ -656,11 +690,12 @@ async def send_interview_reminder_email(
     """24h-before reminder (background job)."""
     row = await db.fetchrow(
         """
-        SELECT vs.status, u.email, u.full_name
+        SELECT vs.status, vs.session_type, vs.scheduled_at, u.email, u.full_name
         FROM public.voice_sessions vs
         JOIN public.candidates c ON c.id = vs.candidate_id
         JOIN public.users u ON u.id = c.user_id
         WHERE vs.id = $1::uuid AND u.id = $2::uuid
+          AND c.deleted_at IS NULL AND u.deleted_at IS NULL
         """,
         uuid.UUID(session_id),
         uuid.UUID(user_id),
@@ -674,9 +709,13 @@ async def send_interview_reminder_email(
     ):
         return {"sent": False, "skipped": "deduped"}
 
-    label = session_type.replace("_", " ").title()
-    when = scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
-    app_base = _app_base(settings)
+    canonical_session_type = str(row["session_type"])
+    canonical_scheduled_at = row["scheduled_at"]
+    label, cta_url = _voice_session_email_details(
+        settings, session_id=session_id, session_type=canonical_session_type
+    )
+    deep_link = _voice_session_deep_link(session_id=session_id, session_type=canonical_session_type)
+    when = canonical_scheduled_at.astimezone(UTC).strftime("%a %d %b %Y, %H:%M UTC")
     result = await send_category_email(
         db,
         settings,
@@ -689,7 +728,8 @@ async def send_interview_reminder_email(
             "session_label": label,
             "scheduled_label": when,
             "is_reminder": True,
-            "cta_url": f"{app_base}/dashboard",
+            "cta_url": cta_url,
+            "cta_label": _voice_session_cta_label(canonical_session_type),
         },
         template_id=settings.sg_template_interview_reminder,
     )
@@ -700,7 +740,11 @@ async def send_interview_reminder_email(
             notif_type="interview_reminder",
             title=f"Reminder: {label} tomorrow",
             body=f"Your session is at {when}",
-            data={"session_id": session_id, "dedupe_key": dedupe_key},
+            data={
+                "session_id": session_id,
+                "dedupe_key": dedupe_key,
+                **({"deep_link": deep_link} if deep_link is not None else {}),
+            },
             channels=["in_app", "email"],
         )
     return result

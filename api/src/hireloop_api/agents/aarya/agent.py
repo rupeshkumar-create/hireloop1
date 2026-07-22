@@ -37,6 +37,7 @@ from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.config import Settings
+from hireloop_api.models.career_interview import InterviewTopic
 from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
@@ -52,6 +53,44 @@ logger = structlog.get_logger()
 
 MAX_VOICE_TOOL_ROUNDS = 1
 MAX_TEXT_TOOL_ROUNDS = 3
+
+_CAREER_INTERVIEW_BLOCKED_TOOLS = frozenset({"update_profile", "update_job_preferences"})
+_CAREER_INTERVIEW_MUTATION_ADVISORY = {
+    "error": "Profile changes from this private call require candidate review."
+}
+
+
+def blocked_career_interview_mutation(
+    *, tool_name: str, career_interview_mode: bool
+) -> dict[str, str] | None:
+    """Return the advisory for a forbidden private-call mutation, if any."""
+    if career_interview_mode and tool_name in _CAREER_INTERVIEW_BLOCKED_TOOLS:
+        return dict(_CAREER_INTERVIEW_MUTATION_ADVISORY)
+    return None
+
+
+def build_career_interview_prompt(
+    *,
+    focus: InterviewTopic | None,
+    prompt_hint: str,
+    should_wrap: bool,
+) -> str:
+    """Build strict, deterministic guidance for one private interview turn."""
+    focus_label = focus.value if focus is not None else "wrap_up"
+    guidance = (
+        "Private career interview mode is active. "
+        f"Current focus: {focus_label}. Prompt hint: {prompt_hint} "
+        "Briefly acknowledge the candidate's answer, then ask exactly one natural "
+        "follow-up question. Do not update the candidate profile or job preferences; "
+        "facts from this private call require candidate review. Do not infer age, gender, "
+        "religion, caste, disability, family status, accent, emotion, or personality. "
+        "Treat mentions of roles, locations, remote work, jobs, or applications as interview "
+        "answers. Do not call job, application, profile, or preference tools."
+    )
+    if should_wrap:
+        guidance += " Wrap up now. Do not ask another discovery question."
+    return guidance
+
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -611,6 +650,23 @@ class AaryaState(TypedDict, total=False):
     career_path_prioritized_title: str | None
     career_path_just_prioritized: str | None
     career_path_pending_options: list[str]
+    career_interview_mode: bool
+    career_interview_focus: InterviewTopic | None
+    career_interview_prompt_hint: str | None
+    career_interview_should_wrap: bool
+
+
+def _career_interview_prompt_from_state(state: AaryaState) -> str | None:
+    """Build private-call guidance from the namespaced graph state contract."""
+    if not state.get("career_interview_mode"):
+        return None
+    return build_career_interview_prompt(
+        focus=state.get("career_interview_focus"),
+        prompt_hint=(
+            state.get("career_interview_prompt_hint") or "Continue the interview naturally."
+        ),
+        should_wrap=bool(state.get("career_interview_should_wrap")),
+    )
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -988,6 +1044,7 @@ def build_aarya_graph(settings: Settings) -> Any:
         # spoken-style rules so the reply sounds natural when read aloud.
         if not any(isinstance(m, SystemMessage) for m in messages):
             voice = bool(state.get("voice_mode"))
+            career_interview_mode = bool(state.get("career_interview_mode"))
             prompt = AARYA_SYSTEM_PROMPT
             if voice:
                 prompt += AARYA_VOICE_PROMPT
@@ -1010,6 +1067,8 @@ def build_aarya_graph(settings: Settings) -> Any:
             # In voice mode pass at most ONE gap (shorter prompt, and a spoken
             # reply should never juggle multiple profiling questions anyway).
             open_questions = [q for q in (state.get("open_questions") or []) if q.strip()]
+            if career_interview_mode:
+                open_questions = []
             if voice:
                 open_questions = open_questions[:1]
             if open_questions:
@@ -1022,21 +1081,27 @@ def build_aarya_graph(settings: Settings) -> Any:
                     "interrogation). Once they answer, it's saved automatically.\n"
                     + "\n".join(f"- {q}" for q in open_questions[:8])
                 )
-            prompt += "\n\n" + build_turn_context_prompt(
-                messages=messages,
-                voice_mode=bool(state.get("voice_mode")),
-                memory=memory,
-                open_questions=open_questions,
-                profile_completeness=state.get("profile_completeness"),
-                known_facts=(state.get("known_facts") or ""),
-                candidate_display_name=state.get("candidate_display_name"),
-                career_path_prioritized_title=state.get("career_path_prioritized_title"),
-                career_path_just_prioritized=state.get("career_path_just_prioritized"),
-                career_path_pending_options=state.get("career_path_pending_options"),
-            )
+            career_interview_prompt = _career_interview_prompt_from_state(state)
+            if career_interview_prompt:
+                prompt += "\n\n" + career_interview_prompt
+            else:
+                prompt += "\n\n" + build_turn_context_prompt(
+                    messages=messages,
+                    voice_mode=bool(state.get("voice_mode")),
+                    memory=memory,
+                    open_questions=open_questions,
+                    profile_completeness=state.get("profile_completeness"),
+                    known_facts=(state.get("known_facts") or ""),
+                    candidate_display_name=state.get("candidate_display_name"),
+                    career_path_prioritized_title=state.get("career_path_prioritized_title"),
+                    career_path_just_prioritized=state.get("career_path_just_prioritized"),
+                    career_path_pending_options=state.get("career_path_pending_options"),
+                )
             messages = [SystemMessage(content=prompt), *messages]
 
-        prefetched = state.get("prefetched_jobs") or []
+        prefetched = (
+            [] if state.get("career_interview_mode") else state.get("prefetched_jobs") or []
+        )
         if prefetched:
             titles = ", ".join(str(j.get("title") or "role")[:40] for j in prefetched[:3])
             messages = [
@@ -1054,7 +1119,9 @@ def build_aarya_graph(settings: Settings) -> Any:
         has_tool_results = any(isinstance(m, ToolMessage) for m in state["messages"])
         last_human = _last_human_text(state["messages"])
         turn_intent = _detect_likely_intent(last_human)
-        no_tools_turn = turn_intent in _NO_TOOL_INTENTS and not has_tool_results
+        no_tools_turn = bool(state.get("career_interview_mode")) or (
+            turn_intent in _NO_TOOL_INTENTS and not has_tool_results
+        )
         use_fast = _prefer_fast_model(
             voice_mode=bool(state.get("voice_mode")),
             last_human_text=last_human,
@@ -1176,6 +1243,19 @@ def build_aarya_graph(settings: Settings) -> Any:
         async def _execute_one(tool_call: dict[str, Any]) -> tuple[ToolMessage, int, list[dict]]:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
+            blocked_result = blocked_career_interview_mutation(
+                tool_name=tool_name,
+                career_interview_mode=bool(state.get("career_interview_mode")),
+            )
+            if blocked_result is not None:
+                return (
+                    ToolMessage(
+                        content=json.dumps(blocked_result),
+                        tool_call_id=tool_call["id"],
+                    ),
+                    0,
+                    [],
+                )
             user_id = state["user_id"]
             session_id = state["session_id"]
             local_actions = 0

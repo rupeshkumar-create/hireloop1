@@ -123,6 +123,7 @@ async def load_candidate_chat_messages(
           AND c.agent = 'aarya'
           AND c.deleted_at IS NULL
           AND m.role IN ('user', 'assistant')
+          AND m.voice_session_id IS NULL
         ORDER BY m.created_at DESC
         LIMIT $2
         """,
