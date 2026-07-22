@@ -72,6 +72,19 @@ _INTERVIEW_PREP_REQUIRED_SECTIONS = (
 )
 
 
+def _normalize_profile_enrichment(value: object) -> dict[str, Any]:
+    """Decode asyncpg JSONB values and accept only a top-level JSON object."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _kit_llm_model(settings: Settings) -> str:
     return settings.openrouter_fallback_model or settings.openrouter_primary_model
 
@@ -528,8 +541,10 @@ async def _prepare_application_kit_for_candidate_row(
         "SELECT profile_enrichment FROM public.candidates WHERE id = $1::uuid",
         candidate_id,
     )
-    if enrich_row and enrich_row["profile_enrichment"]:
-        profile["profile_enrichment"] = enrich_row["profile_enrichment"]
+    if enrich_row:
+        profile["profile_enrichment"] = _normalize_profile_enrichment(
+            enrich_row["profile_enrichment"]
+        )
     job = dict(job_row)
     job["id"] = str(job["id"])
     job["skills_required"] = job.get("skills_required") or []
