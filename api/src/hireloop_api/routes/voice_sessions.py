@@ -67,12 +67,7 @@ class StartCareerCallRequest(BaseModel):
     conversation_id: uuid.UUID
     scheduled_session_id: uuid.UUID | None = None
     consent: bool = Field(strict=True)
-    consent_version: str = Field(
-        default="career-call-v1",
-        min_length=1,
-        max_length=64,
-        pattern=r"^[A-Za-z0-9._-]+$",
-    )
+    consent_version: Literal["career-call-v1"] = "career-call-v1"
 
 
 class CareerCallResponse(BaseModel):
@@ -675,7 +670,7 @@ async def list_sessions(
                vs.started_at, vs.ended_at, vs.duration_secs, vs.calendar_event_id
         FROM public.voice_sessions vs
         JOIN public.candidates c ON c.id = vs.candidate_id
-        WHERE c.user_id = $1
+        WHERE c.user_id = $1 AND c.deleted_at IS NULL
         ORDER BY vs.scheduled_at DESC
         LIMIT 50
         """,
@@ -697,7 +692,7 @@ async def cancel_session(
         SELECT vs.id, vs.candidate_id, vs.calendar_event_id, vs.status
         FROM public.voice_sessions vs
         JOIN public.candidates c ON c.id = vs.candidate_id
-        WHERE vs.id = $1 AND c.user_id = $2
+        WHERE vs.id = $1 AND c.user_id = $2 AND c.deleted_at IS NULL
         """,
         uuid.UUID(session_id),
         uuid.UUID(current_user["id"]),

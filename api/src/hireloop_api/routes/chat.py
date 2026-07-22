@@ -43,6 +43,7 @@ from hireloop_api.services.candidate_display_name import resolve_candidate_displ
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
 from hireloop_api.services.career_interview import (
     ActiveCareerInterviewNotFoundError,
+    CareerInterviewExpiredError,
     CareerInterviewTurn,
     record_turn_and_select_focus,
 )
@@ -432,6 +433,11 @@ async def prepare_career_interview_turn(
         )
     except ActiveCareerInterviewNotFoundError as exc:
         raise HTTPException(status_code=409, detail="Career call is no longer active") from exc
+    except CareerInterviewExpiredError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Career call reached its 15-minute limit",
+        ) from exc
 
 
 def _match_explanation_job_id(body: SendMessageRequest, user_intent: str) -> str | None:

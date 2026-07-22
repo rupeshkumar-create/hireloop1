@@ -105,6 +105,10 @@ class ActiveCareerInterviewNotFoundError(LookupError):
     """Raised when a requested call is not active and owned by the candidate."""
 
 
+class CareerInterviewExpiredError(RuntimeError):
+    """Raised after an expired call is durably completed at its time limit."""
+
+
 def _coverage_from_jsonb(value: object) -> CareerInterviewCoverage:
     if isinstance(value, str):
         return CareerInterviewCoverage.model_validate_json(value)
@@ -171,6 +175,7 @@ async def record_turn_and_select_focus(
                    vs.candidate_id,
                    vs.conversation_id,
                    vs.started_at,
+                   NOW() AS db_now,
                    cis.state,
                    cis.state_version
             FROM public.voice_sessions vs
@@ -191,42 +196,67 @@ async def record_turn_and_select_focus(
             raise ActiveCareerInterviewNotFoundError
 
         interview = _active_interview_from_row(row)
-        updated = record_candidate_answer(interview.coverage, content)
-        now = datetime.now(UTC)
+        now = row["db_now"]
+        if not isinstance(now, datetime):
+            raise ValueError("Database clock must be a timestamp")
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
         started_at = interview.started_at
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=UTC)
         elapsed_seconds = max(0.0, (now - started_at).total_seconds())
-        next_focus = select_next_focus(updated, elapsed_seconds=elapsed_seconds)
-        updated.current_focus = next_focus.topic
-        if next_focus.topic is not None:
-            updated.question_history.append(next_focus.topic)
+        expired = elapsed_seconds >= 15 * 60
+        if expired:
+            await db.execute(
+                """
+                UPDATE public.voice_sessions
+                SET status = 'completed',
+                    ended_at = started_at + INTERVAL '15 minutes',
+                    duration_secs = 900,
+                    completion_reason = 'time_limit',
+                    updated_at = NOW()
+                WHERE id = $1::uuid
+                  AND candidate_id = $2::uuid
+                  AND status = 'active'
+                """,
+                session_id,
+                candidate_id,
+            )
+        else:
+            updated = record_candidate_answer(interview.coverage, content)
+            next_focus = select_next_focus(updated, elapsed_seconds=elapsed_seconds)
+            updated.current_focus = next_focus.topic
+            if next_focus.topic is not None:
+                updated.question_history.append(next_focus.topic)
 
-        state_version = int(row["state_version"]) + 1
-        await db.execute(
-            """
-            UPDATE public.career_interview_states
-            SET state = $3::jsonb,
-                state_version = state_version + 1,
-                updated_at = NOW()
-            WHERE session_id = $1::uuid AND candidate_id = $2::uuid
-            """,
-            session_id,
-            candidate_id,
-            json.dumps(updated.model_dump(mode="json")),
-        )
-        await db.execute(
-            """
-            INSERT INTO public.messages
-              (id, conversation_id, role, content, content_type, voice_session_id)
-            VALUES ($1::uuid, $2::uuid, 'user', $3, $4, $5::uuid)
-            """,
-            message_id,
-            conversation_id,
-            content,
-            content_type,
-            session_id,
-        )
+            state_version = int(row["state_version"]) + 1
+            await db.execute(
+                """
+                UPDATE public.career_interview_states
+                SET state = $3::jsonb,
+                    state_version = state_version + 1,
+                    updated_at = NOW()
+                WHERE session_id = $1::uuid AND candidate_id = $2::uuid
+                """,
+                session_id,
+                candidate_id,
+                json.dumps(updated.model_dump(mode="json")),
+            )
+            await db.execute(
+                """
+                INSERT INTO public.messages
+                  (id, conversation_id, role, content, content_type, voice_session_id)
+                VALUES ($1::uuid, $2::uuid, 'user', $3, $4, $5::uuid)
+                """,
+                message_id,
+                conversation_id,
+                content,
+                content_type,
+                session_id,
+            )
+
+    if expired:
+        raise CareerInterviewExpiredError
 
     return CareerInterviewTurn(
         coverage=updated,

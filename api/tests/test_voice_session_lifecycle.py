@@ -4,12 +4,14 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from hireloop_api.config import Settings
 from hireloop_api.routes import voice_sessions
 
 MIGRATION = (
@@ -201,6 +203,17 @@ async def test_start_instant_call_requires_consent() -> None:
     assert db.execute_calls == []
 
 
+def test_start_request_accepts_only_deployed_consent_notice() -> None:
+    request = _start_request(consent_version="career-call-v1")
+
+    assert request.consent_version == "career-call-v1"
+
+
+def test_start_request_rejects_unknown_plausible_consent_notice() -> None:
+    with pytest.raises(ValidationError):
+        _start_request(consent_version="career-call-v2")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deleted,wrong_owner", [(True, False), (False, True)])
 async def test_start_enforces_conversation_ownership_and_soft_delete(
@@ -249,12 +262,10 @@ async def test_start_is_idempotent_for_same_active_conversation() -> None:
 @pytest.mark.asyncio
 async def test_start_rejects_active_same_conversation_with_different_consent_version() -> None:
     db = LifecycleDb.active_call()
+    db.consent_version = "legacy-career-call-v0"
     with pytest.raises(HTTPException) as exc:
         await voice_sessions.start_career_call(
-            _start_request(
-                conversation_id=db.conversation_id,
-                consent_version="career-call-v2",
-            ),
+            _start_request(conversation_id=db.conversation_id),
             current_user={"id": str(db.user_id)},
             db=db,
         )
@@ -427,12 +438,12 @@ async def test_start_handles_unique_active_call_race(same_conversation: bool) ->
 async def test_start_writes_consent_and_initial_coverage_transactionally() -> None:
     db = LifecycleDb.new_candidate()
     await voice_sessions.start_career_call(
-        _start_request(conversation_id=db.conversation_id, consent_version="career-call-v2"),
+        _start_request(conversation_id=db.conversation_id),
         current_user={"id": str(db.user_id)},
         db=db,
     )
     consent_call = next(call for call in db.execute_calls if "consent_log" in call[0])
-    assert consent_call[1][1] == "voice_career_discovery:career-call-v2"
+    assert consent_call[1][1] == "voice_career_discovery:career-call-v1"
     state_call = next(call for call in db.execute_calls if "career_interview_states" in call[0])
     state = json.loads(str(state_call[1][2]))
     assert state["current_focus"] == "current_work"
@@ -551,3 +562,35 @@ async def test_complete_rejects_non_active_session_without_profile_mutation() ->
 def test_complete_enforces_duration_bounds(duration: int) -> None:
     with pytest.raises(ValidationError):
         _complete_request(duration_seconds=duration)
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_hides_soft_deleted_candidate() -> None:
+    db = AsyncMock()
+    db.fetch.return_value = []
+
+    sessions = await voice_sessions.list_sessions(
+        current_user={"id": str(uuid.uuid4())},
+        db=db,
+    )
+
+    assert sessions == []
+    assert "c.deleted_at IS NULL" in db.fetch.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_rejects_soft_deleted_candidate() -> None:
+    db = AsyncMock()
+    db.fetchrow.return_value = None
+
+    with pytest.raises(HTTPException) as exc:
+        await voice_sessions.cancel_session(
+            str(uuid.uuid4()),
+            current_user={"id": str(uuid.uuid4())},
+            settings=Settings(_env_file=None, environment="test"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 404
+    assert "c.deleted_at IS NULL" in db.fetchrow.await_args.args[0]
+    db.execute.assert_not_awaited()

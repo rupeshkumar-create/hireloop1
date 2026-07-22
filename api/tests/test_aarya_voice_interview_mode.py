@@ -31,6 +31,7 @@ from hireloop_api.routes.chat import (
     prepare_career_interview_turn,
     resolve_chat_turn_routing,
 )
+from hireloop_api.services import career_interview
 from hireloop_api.services.career_interview import (
     load_active_interview,
     record_turn_and_select_focus,
@@ -74,6 +75,9 @@ class InterviewDb:
         self.fail_message_insert = False
         self.in_transaction = False
         self.transaction_error: object = None
+        self.session_status = "active"
+        self.completion_reason: str | None = None
+        self.duration_secs: int | None = None
 
     def transaction(self) -> _Transaction:
         return _Transaction(self)
@@ -89,6 +93,7 @@ class InterviewDb:
             "candidate_id": self.candidate_id,
             "conversation_id": self.conversation_id,
             "started_at": self.started_at,
+            "db_now": datetime.now(UTC),
             "state": self.state,
             "state_version": self.state_version,
         }
@@ -97,6 +102,11 @@ class InterviewDb:
         assert self.in_transaction
         normalized = " ".join(query.split())
         self.execute_calls.append((normalized, args))
+        if "UPDATE public.voice_sessions" in normalized:
+            self.session_status = "completed"
+            self.completion_reason = "time_limit"
+            self.duration_secs = 900
+            return "UPDATE 1"
         if "UPDATE public.career_interview_states" in normalized:
             self.state = str(args[2])
             self.state_version += 1
@@ -456,6 +466,60 @@ async def test_private_message_insert_failure_aborts_the_locked_state_transactio
 
     assert db.transaction_error is RuntimeError
     assert [call[0].split()[0] for call in db.execute_calls] == ["UPDATE", "INSERT"]
+
+
+@pytest.mark.asyncio
+async def test_expired_turn_completes_call_without_advancing_state_or_message() -> None:
+    db = InterviewDb()
+    db.started_at = datetime.now(UTC) - timedelta(minutes=16)
+    original_state = db.state
+    original_version = db.state_version
+
+    with pytest.raises(career_interview.CareerInterviewExpiredError):
+        await record_turn_and_select_focus(
+            db,
+            session_id=db.session_id,
+            candidate_id=db.candidate_id,
+            conversation_id=db.conversation_id,
+            message_id=uuid4(),
+            content="This answer arrived after the call deadline.",
+            content_type="voice",
+        )
+
+    assert db.session_status == "completed"
+    assert db.completion_reason == "time_limit"
+    assert db.duration_secs == 900
+    assert db.state == original_state
+    assert db.state_version == original_version
+    assert len(db.execute_calls) == 1
+    assert "WHERE id = $1::uuid" in db.execute_calls[0][0]
+    assert "status = 'active'" in db.execute_calls[0][0]
+    assert db.transaction_error is None
+
+
+@pytest.mark.asyncio
+async def test_expired_turn_maps_to_distinct_chat_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def reject_expired(*_args: object, **_kwargs: object) -> None:
+        raise career_interview.CareerInterviewExpiredError
+
+    monkeypatch.setattr(chat_routes, "record_turn_and_select_focus", reject_expired)
+    db = InterviewDb()
+
+    with pytest.raises(HTTPException) as exc:
+        await prepare_career_interview_turn(
+            db=db,
+            message_id=uuid4(),
+            body=SendMessageRequest(
+                content="A late answer",
+                content_type="voice",
+                voice_session_id=db.session_id,
+            ),
+            candidate_id=db.candidate_id,
+            conversation_id=db.conversation_id,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Career call reached its 15-minute limit"
 
 
 @pytest.mark.asyncio
