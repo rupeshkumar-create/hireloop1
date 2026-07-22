@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Forwarded client IP headers are accepted only when the TCP peer belongs to
     # one of these operator-configured proxy networks. Empty is fail-safe.
     trusted_proxy_cidrs: list[str] = []
+    # Railway documents X-Real-IP as an edge-overwritten single client IP. This
+    # must be enabled only when the API is reachable exclusively through that edge.
+    trust_railway_proxy_headers: bool = False
 
     # Browser-reachable URL of THIS API (FastAPI). Used to build OAuth redirect
     # URIs that Google must redirect the browser to.

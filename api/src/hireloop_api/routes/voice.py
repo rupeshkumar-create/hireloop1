@@ -348,13 +348,17 @@ _MAX_SAMPLE_RATE = 48000
 VOICE_WEBSOCKET_PROTOCOL = "hireschema.voice.v1"
 _VOICE_AUTH_PROTOCOL_PREFIX = "auth."
 _MAX_VOICE_ACCESS_TOKEN_BYTES = 4096
+_UNPADDED_BASE64URL_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _extract_voice_auth_token(protocol_header: str | None) -> str | None:
     """Decode a private auth subprotocol without selecting it in the response."""
     if not protocol_header:
         return None
-    protocols = [part.strip() for part in protocol_header.split(",") if part.strip()]
+    raw_protocols = protocol_header.split(",")
+    if any(not part.strip() for part in raw_protocols):
+        return None
+    protocols = [part.strip() for part in raw_protocols]
     if VOICE_WEBSOCKET_PROTOCOL not in protocols:
         return None
     auth_protocols = [
@@ -364,7 +368,11 @@ def _extract_voice_auth_token(protocol_header: str | None) -> str | None:
         return None
     encoded = auth_protocols[0][len(_VOICE_AUTH_PROTOCOL_PREFIX) :]
     max_encoded_length = (_MAX_VOICE_ACCESS_TOKEN_BYTES * 4 + 2) // 3
-    if not encoded or len(encoded) > max_encoded_length:
+    if (
+        not encoded
+        or len(encoded) > max_encoded_length
+        or _UNPADDED_BASE64URL_RE.fullmatch(encoded) is None
+    ):
         return None
     try:
         padding = "=" * (-len(encoded) % 4)

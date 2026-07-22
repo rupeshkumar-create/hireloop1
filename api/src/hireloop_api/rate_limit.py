@@ -50,12 +50,22 @@ def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None
         return None
 
 
-def _client_ip(request: Request, trusted_proxy_cidrs: list[str] | None = None) -> str:
+def _client_ip(
+    request: Request,
+    trusted_proxy_cidrs: list[str] | None = None,
+    *,
+    trust_railway_proxy_headers: bool = False,
+) -> str:
     """Return the direct peer, or the rightmost untrusted XFF hop."""
     peer_host = request.client.host if request.client and request.client.host else ""
     peer = _parse_ip(peer_host)
     if peer is None:
         return peer_host or "unknown"
+
+    if trust_railway_proxy_headers:
+        railway_ip = _parse_ip(request.headers.get("x-real-ip", ""))
+        if railway_ip is not None:
+            return str(railway_ip)
 
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for cidr in trusted_proxy_cidrs or []:
@@ -129,8 +139,14 @@ async def rate_limit_middleware(
     if request.method == "OPTIONS" or _is_exempt(path):
         return await call_next(request)
 
+    settings = get_settings()
     allowed, retry_after = check_rate_limit(
-        _client_ip(request, get_settings().trusted_proxy_cidrs), path
+        _client_ip(
+            request,
+            settings.trusted_proxy_cidrs,
+            trust_railway_proxy_headers=settings.trust_railway_proxy_headers,
+        ),
+        path,
     )
     if not allowed:
         return JSONResponse(

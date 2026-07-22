@@ -90,6 +90,31 @@ def test_client_ip_defaults_to_direct_peer_without_trusted_proxy_config() -> Non
     assert rl._client_ip(req) == "10.0.0.2"  # type: ignore[arg-type]
 
 
+def test_railway_proxy_headers_are_ignored_unless_explicitly_enabled() -> None:
+    req = SimpleNamespace(
+        headers={"x-real-ip": "9.9.9.9"},
+        client=SimpleNamespace(host="10.0.0.2"),
+    )
+    assert rl._client_ip(req, trust_railway_proxy_headers=False) == "10.0.0.2"  # type: ignore[arg-type]
+
+
+def test_railway_proxy_uses_overwritten_single_x_real_ip_when_enabled() -> None:
+    req = SimpleNamespace(
+        headers={"x-real-ip": "9.9.9.9", "x-forwarded-for": "1.1.1.1"},
+        client=SimpleNamespace(host="10.0.0.2"),
+    )
+    assert rl._client_ip(req, trust_railway_proxy_headers=True) == "9.9.9.9"  # type: ignore[arg-type]
+
+
+def test_railway_proxy_rejects_invalid_or_multiple_x_real_ip_values() -> None:
+    for x_real_ip in ("not-an-ip", "9.9.9.9, 1.1.1.1", "9.9.9.9 1.1.1.1", ""):
+        req = SimpleNamespace(
+            headers={"x-real-ip": x_real_ip},
+            client=SimpleNamespace(host="10.0.0.2"),
+        )
+        assert rl._client_ip(req, trust_railway_proxy_headers=True) == "10.0.0.2"  # type: ignore[arg-type]
+
+
 def test_chat_and_matches_are_exempt_from_ip_middleware() -> None:
     assert rl._is_exempt("/api/v1/health")
     assert rl._is_exempt("/api/v1/chat/sessions/primary")

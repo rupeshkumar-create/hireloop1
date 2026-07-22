@@ -9,12 +9,23 @@ const apiUrl =
 let apiConnectOrigin = "";
 let apiWebSocketOrigin = "";
 try {
-  apiConnectOrigin = new URL(apiUrl).origin;
-  apiWebSocketOrigin = apiConnectOrigin.replace(/^http/, "ws");
+  const parsedApiUrl = new URL(apiUrl);
+  const isLocalApi = ["localhost", "127.0.0.1", "[::1]"].includes(parsedApiUrl.hostname);
+  const isSecureApi = parsedApiUrl.protocol === "https:";
+  if (!isProduction || (!isLocalApi && isSecureApi)) {
+    apiConnectOrigin = parsedApiUrl.origin;
+    apiWebSocketOrigin = apiConnectOrigin.replace(/^http/, "ws");
+  }
 } catch {
-  apiConnectOrigin = "http://127.0.0.1:8000";
-  apiWebSocketOrigin = "ws://127.0.0.1:8000";
+  if (!isProduction) {
+    apiConnectOrigin = "http://127.0.0.1:8000";
+    apiWebSocketOrigin = "ws://127.0.0.1:8000";
+  }
 }
+
+const developmentWebSocketOrigins = isProduction
+  ? ""
+  : " ws://127.0.0.1:8000 ws://localhost:8000";
 
 const backendUrl = apiUrl.replace(/\/$/, "");
 
@@ -79,8 +90,8 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https://*.supabase.co https://media.licdn.com",
               "font-src 'self' data:",
-              // Voice is browser-native (Web Speech API) — no external voice API calls needed
-              `connect-src 'self' ${apiConnectOrigin} ${apiWebSocketOrigin} ws://127.0.0.1:8000 ws://localhost:8000 https://*.supabase.co wss://*.supabase.co`,
+              // Live voice upgrades directly to the configured FastAPI origin.
+              `connect-src 'self' ${apiConnectOrigin} ${apiWebSocketOrigin}${developmentWebSocketOrigins} https://*.supabase.co wss://*.supabase.co`,
               "media-src 'self' blob:",
               "object-src 'none'",
               "base-uri 'self'",
