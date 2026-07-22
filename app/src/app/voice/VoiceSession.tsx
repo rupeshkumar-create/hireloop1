@@ -9,9 +9,8 @@
  *     → sentence-streaming TTS (Deepgram Aura or browser SpeechSynthesis)
  *   Same Aarya agent, memory, and tools as ChatInterface.
  *
- * Session unlock:
- *   On end → POST /api/v1/voice/sessions (status='completed')
- *   This writes a voice_sessions row → unlocks and redirects to /matches.
+ * Career-call lifecycle is durable: the server owns start/resume/completion,
+ * while this component owns only the browser microphone, timer, and playback.
  */
 
 import { useRouter } from "next/navigation";
@@ -20,6 +19,7 @@ import { Mic, MicOff, PhoneOff } from "@/components/brand/icons";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { markClientOnboardingComplete } from "@/lib/auth/onboarding-complete";
 import { createClient } from "@/lib/supabase/client";
+import { completeCareerCall, startCareerCall } from "@/lib/api/voiceSessions";
 import { streamAaryaMessage, ensureAaryaSession, prefetchAaryaWarmup, readStoredAaryaSession, storeAaryaSession } from "@/lib/chat/aaryaStream";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { warmupChatContext } from "@/lib/chat/warmup";
@@ -35,21 +35,32 @@ type TurnState =
   | "user_listening" // mic open, waiting for user
   | "processing"     // streaming Aarya's reply
   | "ending"         // recording session + redirecting
+  | "save_failed"    // local media stopped; server completion needs retry
   | "done";
 
-interface VoiceSessionProps {
+type VoiceSessionProps = {
   candidateName?: string;
   fromOnboarding?: boolean;
+  consent: boolean;
+  scheduledSessionId?: string;
   /** When set, render inside a modal/sheet and call back instead of navigating away. */
   embedded?: boolean;
   onComplete?: () => void;
-}
+};
+
+const CALL_SECONDS = 15 * 60;
+const WRAP_WARNING_SECONDS = 14 * 60;
+const MAX_RECORDED_SECONDS = 16 * 60;
+
+type CompletionReason = Parameters<typeof completeCareerCall>[1]["completionReason"];
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function VoiceSession({
   candidateName,
   fromOnboarding,
+  consent,
+  scheduledSessionId,
   embedded = false,
   onComplete,
 }: VoiceSessionProps) {
@@ -77,11 +88,24 @@ export function VoiceSession({
   const lastJobsRef = useRef<Array<{ title?: string; company_name?: string | null }>>([]);
 
   // Refs (mutable, no re-render needed)
-  const sessionIdRef    = useRef<string | null>(null);
-  const startTimeRef    = useRef<Date | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const voiceSessionIdRef = useRef<string | null>(null);
+  const startTimeRef    = useRef<number | null>(null);
   const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const releaseListenWaitRef = useRef<(() => void) | null>(null);
   const abortRef        = useRef<AbortController | null>(null);
   const isEndingRef     = useRef(false); // guard against double-end
+  const isMountedRef = useRef(true);
+  const startInFlightRef = useRef(false);
+  const completionInFlightRef = useRef(false);
+  const recordingActiveRef = useRef(false);
+  const pendingCompletionRef = useRef<{
+    durationSeconds: number;
+    completionReason: CompletionReason;
+  } | null>(null);
+  const timeLimitTriggeredRef = useRef(false);
   // Lets listenForUser call the latest doTurn without a useCallback dep cycle.
   const doTurnRef       = useRef<((c: string, t: string) => Promise<void>) | null>(null);
 
@@ -104,6 +128,8 @@ export function VoiceSession({
       conversationId: string,
       onSentence?: (sentence: string) => void
     ): Promise<string> => {
+      const voiceSessionId = voiceSessionIdRef.current;
+      if (!voiceSessionId) throw new Error("The career call has not started yet.");
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       let emittedUpTo = 0;
@@ -148,13 +174,14 @@ export function VoiceSession({
             emitCompleteSentences(full);
           },
         },
-        ctrl.signal
+        ctrl.signal,
+        { voiceSessionId }
       );
       accumulated = result.text;
       if (result.jobs.length > 0) lastJobsRef.current = result.jobs;
 
       emitCompleteSentences(accumulated, true);
-      abortRef.current = null;
+      if (abortRef.current === ctrl) abortRef.current = null;
       setStreamRecovery(null);
       return accumulated;
     },
@@ -164,7 +191,7 @@ export function VoiceSession({
   /** Open the mic, wait for the user's utterance, then drive the next turn. */
   const listenForUser = useCallback(
     async (conversationId: string): Promise<void> => {
-      if (isEndingRef.current) return;
+      if (isEndingRef.current || !isMountedRef.current) return;
 
       if (!canListen || micMuted) {
         // Fallback: no STT (or muted) — keep waiting; the end-call button and
@@ -178,21 +205,42 @@ export function VoiceSession({
       setStreamStatus(null);
       try {
         await startRecording();
-        // Auto-stop after 30s of silence (SpeechRecognition times out anyway)
-        await new Promise<void>((res) => setTimeout(res, 30_000));
+        recordingActiveRef.current = true;
+        if (isEndingRef.current || !isMountedRef.current) {
+          recordingActiveRef.current = false;
+          await stopRecording().catch(() => "");
+          return;
+        }
+
+        // The mic button releases this wait early; otherwise capture ends after
+        // 30 seconds. One owner then stops STT and dispatches exactly one turn.
+        await new Promise<void>((resolve) => {
+          releaseListenWaitRef.current = resolve;
+          listenTimerRef.current = setTimeout(resolve, 30_000);
+        });
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          setErrorMsg((err as Error).message);
+          if (isMountedRef.current) setErrorMsg((err as Error).message);
         }
-        setIsListening(false);
+        recordingActiveRef.current = false;
+        if (isMountedRef.current) setIsListening(false);
         return;
       }
 
-      const userTranscript = await stopRecording();
+      if (listenTimerRef.current) clearTimeout(listenTimerRef.current);
+      listenTimerRef.current = null;
+      releaseListenWaitRef.current = null;
+
+      if (!recordingActiveRef.current) return;
+      recordingActiveRef.current = false;
+      const userTranscript = await stopRecording().catch(() => "");
+      if (!isMountedRef.current) return;
       setIsListening(false);
+
+      if (isEndingRef.current) return;
       setTranscript(userTranscript);
 
-      if (!userTranscript.trim() || isEndingRef.current) {
+      if (!userTranscript.trim()) {
         if (!isEndingRef.current) {
           setErrorMsg(
             "I didn’t catch that — try once more, or tap end call if you’re done."
@@ -243,8 +291,8 @@ export function VoiceSession({
         if ((err as Error).name === "AbortError") return;
         setStreamRecovery("Connection dropped — tap the mic when you're ready to continue.");
         setErrorMsg("Couldn't reach Aarya. Tap the mic to retry.");
-        if (sessionIdRef.current) {
-          await listenForUser(sessionIdRef.current);
+        if (conversationIdRef.current) {
+          await listenForUser(conversationIdRef.current);
         }
         return;
       }
@@ -278,166 +326,259 @@ export function VoiceSession({
 
   // ── Call lifecycle ────────────────────────────────────────────────────────
 
-  const startCall = useCallback(async () => {
-    setErrorMsg(null);
-    isEndingRef.current = false;
-    setElapsedSecs(0);
-
-    const firstName = candidateName?.split(" ")[0] ?? "there";
-    // A real senior recruiter picking up the phone — warm, in control, and it
-    // ends on an open question so the candidate knows it's their turn.
-    const greeting =
-      `Hi ${firstName}, this is Aarya — I'm a senior recruiter here at Hireschema. ` +
-      `Thanks for hopping on. I've got about fifteen minutes blocked to really understand ` +
-      `your background and what you want next, and then I'll line up the roles that genuinely fit. ` +
-      `So, to kick us off — tell me a bit about what you're doing right now, and where you'd love to go from here.`;
-
-    // ── 0-second start ────────────────────────────────────────────────────────
-    // The call "connects" instantly: start the timer and speak the greeting out
-    // loud right away, while the backend chat session is created IN PARALLEL.
-    // We no longer wait on the LLM before any audio plays — that was the dead air.
-    startTimeRef.current = new Date();
+  const clearCallTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => setElapsedSecs((s) => s + 1), 1000);
+    timerRef.current = null;
+  }, []);
 
-    setTurnState("aarya_speaking");
-    setTranscript("");
-    setAaryaText(greeting);
-
-    // Create the session without blocking the greeting on the round-trip.
-    const sessionPromise = (async () => {
-      const id = await ensureAaryaSession(readStoredAaryaSession(), storeAaryaSession);
-      sessionIdRef.current = id;
-    })();
-
-    // Speak immediately — this is the instant "pickup".
-    if (canSpeak) {
-      try {
-        await speak(greeting, "aarya");
-      } catch {
-        // TTS hiccup is non-fatal — fall through and still hand over the mic.
-      }
+  const stopLocalMedia = useCallback(async () => {
+    stopSpeaking();
+    abortRef.current?.abort();
+    abortRef.current = null;
+    releaseListenWaitRef.current?.();
+    releaseListenWaitRef.current = null;
+    if (listenTimerRef.current) clearTimeout(listenTimerRef.current);
+    listenTimerRef.current = null;
+    if (recordingActiveRef.current) {
+      recordingActiveRef.current = false;
+      await stopRecording().catch(() => "");
     }
+    if (isMountedRef.current) setIsListening(false);
+  }, [stopRecording, stopSpeaking]);
 
-    // Greeting delivered — make sure the session exists before the user replies.
+  const finishCompletedCall = useCallback(
+    async (durationSeconds: number) => {
+      if (fromOnboarding) {
+        try {
+          await apiAuthFetch("/api/v1/me/complete-onboarding", {
+            method: "POST",
+            body: JSON.stringify({ skipped_voice: false }),
+          });
+          const { data: authData } = await createClient().auth.getUser();
+          markClientOnboardingComplete(authData.user?.id);
+        } catch {
+          /* Career-call completion remains authoritative. */
+        }
+      }
+
+      if (!isMountedRef.current) return;
+      setTurnState("done");
+      try {
+        sessionStorage.setItem(
+          "hireloop_voice_session_summary",
+          JSON.stringify({
+            conversationId: conversationIdRef.current,
+            durationSeconds,
+            jobCount: lastJobsRef.current.length,
+          })
+        );
+      } catch {
+        /* Browser storage is optional. */
+      }
+      redirectTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        if (embedded && onComplete) onComplete();
+        else router.push("/dashboard?kickoff=career");
+      }, 1200);
+    },
+    [embedded, fromOnboarding, onComplete, router]
+  );
+
+  const persistCompletion = useCallback(async () => {
+    const voiceSessionId = voiceSessionIdRef.current;
+    const completion = pendingCompletionRef.current;
+    if (!voiceSessionId || !completion || completionInFlightRef.current) return;
+
+    completionInFlightRef.current = true;
+    if (isMountedRef.current) {
+      setTurnState("ending");
+      setErrorMsg(null);
+    }
     try {
-      await sessionPromise;
-    } catch (err) {
-      setErrorMsg((err as Error).message ?? "Couldn't connect to Aarya");
-      if (timerRef.current) clearInterval(timerRef.current);
-      setTurnState("idle");
+      await completeCareerCall(voiceSessionId, completion);
+      pendingCompletionRef.current = null;
+      await finishCompletedCall(completion.durationSeconds);
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrorMsg(
+          `${(error as Error).message || "Aarya couldn't save the call."} Your call is still active on the server. Retry saving to finish.`
+        );
+        setTurnState("save_failed");
+      }
+    } finally {
+      completionInFlightRef.current = false;
+    }
+  }, [finishCompletedCall]);
+
+  const endCall = useCallback(
+    async (completionReason: CompletionReason) => {
+      if (pendingCompletionRef.current || completionInFlightRef.current) return;
+      const voiceSessionId = voiceSessionIdRef.current;
+      if (!voiceSessionId) {
+        if (isMountedRef.current) setErrorMsg("Start the call before trying to finish it.");
+        return;
+      }
+
+      isEndingRef.current = true;
+      clearCallTimer();
+      await stopLocalMedia();
+      const measuredDuration = startTimeRef.current
+        ? Math.round((Date.now() - startTimeRef.current) / 1000)
+        : elapsedSecs;
+      pendingCompletionRef.current = {
+        durationSeconds: Math.min(MAX_RECORDED_SECONDS, Math.max(0, measuredDuration)),
+        completionReason,
+      };
+      await persistCompletion();
+    },
+    [clearCallTimer, elapsedSecs, persistCompletion, stopLocalMedia]
+  );
+
+  const startCall = useCallback(async () => {
+    if (startInFlightRef.current || turnState !== "idle") return;
+    if (!consent) {
+      setErrorMsg("Please consent before starting this private career call.");
       return;
     }
 
-    if (isEndingRef.current) return;
-    await listenForUser(sessionIdRef.current!);
-  }, [candidateName, canSpeak, speak, listenForUser]);
+    startInFlightRef.current = true;
+    isEndingRef.current = false;
+    timeLimitTriggeredRef.current = false;
+    setTurnState("starting");
+    setErrorMsg(null);
+    setElapsedSecs(0);
 
-  const endCall = useCallback(async () => {
-    if (isEndingRef.current) return;
-    isEndingRef.current = true;
-    setTurnState("ending");
-    setErrorMsg(null);  // clear any "didn't catch that" hint as we wrap up
-
-    // Stop any in-flight operations
-    stopSpeaking();
-    abortRef.current?.abort();
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    const duration = startTimeRef.current
-      ? Math.round((Date.now() - startTimeRef.current.getTime()) / 1000)
-      : elapsedSecs;
-
-    // Record session → unlocks /matches gate
     try {
-      await apiAuthFetch("/api/v1/voice/sessions", {
-        method: "POST",
-        body: JSON.stringify({
-          conversation_id: sessionIdRef.current,
-          duration_seconds: duration,
-          status: "completed",
-        }),
-      });
-    } catch {
-      // Non-fatal — matches gate may stay locked until retry
-    }
-
-    if (fromOnboarding) {
-      try {
-        await apiAuthFetch("/api/v1/me/complete-onboarding", {
-          method: "POST",
-          body: JSON.stringify({ skipped_voice: false }),
-        });
-        const { data: authData } = await createClient().auth.getUser();
-        markClientOnboardingComplete(authData.user?.id);
-      } catch {
-        /* non-fatal */
-      }
-    }
-
-    setTurnState("done");
-    try {
-      sessionStorage.setItem(
-        "hireloop_voice_session_summary",
-        JSON.stringify({
-          conversationId: sessionIdRef.current,
-          durationSeconds: duration,
-          jobCount: lastJobsRef.current.length,
-        })
+      const conversationId = await ensureAaryaSession(
+        readStoredAaryaSession(),
+        storeAaryaSession
       );
-    } catch {
-      /* ignore */
-    }
-    setTimeout(() => {
-      if (embedded && onComplete) {
-        onComplete();
-      } else {
-        router.push("/dashboard?kickoff=career");
+      if (!isMountedRef.current) return;
+      const careerCall = await startCareerCall({
+        conversationId,
+        scheduledSessionId,
+        consent,
+      });
+      if (!isMountedRef.current) return;
+
+      conversationIdRef.current = conversationId;
+      voiceSessionIdRef.current = careerCall.id;
+      const parsedStartedAt = careerCall.started_at
+        ? Date.parse(careerCall.started_at)
+        : Number.NaN;
+      startTimeRef.current = Number.isFinite(parsedStartedAt) ? parsedStartedAt : Date.now();
+      const initialElapsed = Math.max(
+        0,
+        Math.floor((Date.now() - startTimeRef.current) / 1000)
+      );
+      setElapsedSecs(initialElapsed);
+
+      if (initialElapsed >= CALL_SECONDS) {
+        await endCall("time_limit");
+        return;
       }
-    }, 1200);
-  }, [elapsedSecs, embedded, fromOnboarding, onComplete, router, stopSpeaking]);
+
+      clearCallTimer();
+      timerRef.current = setInterval(() => {
+        if (!startTimeRef.current || !isMountedRef.current) return;
+        setElapsedSecs(Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000)));
+      }, 1000);
+
+      const firstName = candidateName?.split(" ")[0] ?? "there";
+      const resumed = initialElapsed > 5;
+      const greeting = resumed
+        ? `Welcome back, ${firstName}. We can continue right where we left off — what would you like me to understand next?`
+        : `Hi ${firstName}, this is Aarya — I'm a senior recruiter here at Hireschema. ` +
+          `Thanks for hopping on. I've got about fifteen minutes blocked to really understand ` +
+          `your background and what you want next, and then I'll line up the roles that genuinely fit. ` +
+          `So, to kick us off — tell me a bit about what you're doing right now, and where you'd love to go from here.`;
+
+      setTurnState("aarya_speaking");
+      setTranscript("");
+      setAaryaText(greeting);
+      if (canSpeak) await speak(greeting, "aarya").catch(() => undefined);
+      if (!isEndingRef.current && isMountedRef.current) await listenForUser(conversationId);
+    } catch (error) {
+      if (isMountedRef.current) {
+        clearCallTimer();
+        setErrorMsg((error as Error).message || "Couldn't connect to Aarya. Please retry.");
+        setTurnState("idle");
+      }
+    } finally {
+      startInFlightRef.current = false;
+    }
+  }, [
+    candidateName,
+    canSpeak,
+    clearCallTimer,
+    consent,
+    endCall,
+    listenForUser,
+    scheduledSessionId,
+    speak,
+    turnState,
+  ]);
+
+  useEffect(() => {
+    if (
+      elapsedSecs >= CALL_SECONDS &&
+      voiceSessionIdRef.current &&
+      !timeLimitTriggeredRef.current &&
+      !isEndingRef.current
+    ) {
+      timeLimitTriggeredRef.current = true;
+      void endCall("time_limit");
+    }
+  }, [elapsedSecs, endCall]);
 
   /** Tap mic: barge-in while Aarya speaks, or force-stop capture while listening */
   const handleMicTap = useCallback(async () => {
     if (turnState === "aarya_speaking" || (turnState === "processing" && isPlaying)) {
       stopSpeaking();
       abortRef.current?.abort();
-      if (sessionIdRef.current) {
+      if (conversationIdRef.current) {
         setTurnState("user_listening");
-        await listenForUser(sessionIdRef.current);
+        await listenForUser(conversationIdRef.current);
       }
       return;
     }
     if (turnState === "user_listening" && isListening) {
-      const text = await stopRecording();
-      setIsListening(false);
-      setTranscript(text);
-      if (text.trim() && sessionIdRef.current) {
-        void doTurn(sessionIdRef.current, text);
-      } else if (sessionIdRef.current) {
-        setErrorMsg("I didn't catch that — trying again…");
-        await new Promise<void>((res) => setTimeout(res, 800));
-        await listenForUser(sessionIdRef.current);
-      }
+      releaseListenWaitRef.current?.();
     }
-  }, [turnState, isListening, isPlaying, stopRecording, stopSpeaking, doTurn, listenForUser]);
+  }, [turnState, isListening, isPlaying, stopSpeaking, listenForUser]);
 
   const toggleMute = useCallback(() => setMicMuted((v) => !v), []);
 
   // Clean up on unmount
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
+      isEndingRef.current = true;
       stopSpeaking();
       abortRef.current?.abort();
+      releaseListenWaitRef.current?.();
+      if (recordingActiveRef.current) {
+        recordingActiveRef.current = false;
+        void stopRecording().catch(() => "");
+      }
       if (timerRef.current) clearInterval(timerRef.current);
+      if (listenTimerRef.current) clearTimeout(listenTimerRef.current);
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
     };
-  }, [stopSpeaking]);
+  }, [stopRecording, stopSpeaking]);
 
   // ── Derived UI state ──────────────────────────────────────────────────────
 
-  const isActive     = turnState !== "idle" && turnState !== "starting" && turnState !== "done" && turnState !== "ending";
+  const isActive =
+    turnState !== "idle" &&
+    turnState !== "starting" &&
+    turnState !== "done" &&
+    turnState !== "ending" &&
+    turnState !== "save_failed";
   const isConnecting = turnState === "starting";
   const isDone       = turnState === "done" || turnState === "ending";
+  const saveFailed = turnState === "save_failed";
   const formattedTime = `${String(Math.floor(elapsedSecs / 60)).padStart(2, "0")}:${String(elapsedSecs % 60).padStart(2, "0")}`;
 
   const statusLabel: Record<TurnState, string> = {
@@ -447,9 +588,13 @@ export function VoiceSession({
     user_listening: "Your turn — speak now",
     processing:     "Aarya is thinking…",
     ending:         "Saving session…",
+    save_failed:    "Saving needs your attention",
     done:           embedded ? "Session complete" : "Session complete — heading to dashboard",
   };
-  const visibleStatus = streamStatus ?? statusLabel[turnState];
+  const visibleStatus =
+    isActive && elapsedSecs >= WRAP_WARNING_SECONDS
+      ? "Aarya is wrapping up."
+      : streamStatus ?? statusLabel[turnState];
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -650,7 +795,7 @@ export function VoiceSession({
           {isActive && (
             <button
               type="button"
-              onClick={() => void endCall()}
+              onClick={() => void endCall("candidate_ended")}
               title="End session"
               className="w-14 h-14 rounded-full bg-destructive text-paper-0 flex items-center justify-center shadow-2 hover:bg-red-700 transition-all hover:scale-105"
             >
@@ -663,6 +808,16 @@ export function VoiceSession({
             <div className="w-20 h-20 rounded-full bg-ink-100 flex items-center justify-center">
               <div className="w-7 h-7 rounded-full border-2 border-ink-400 border-t-transparent animate-spin" />
             </div>
+          )}
+
+          {saveFailed && (
+            <button
+              type="button"
+              onClick={() => void persistCompletion()}
+              className="rounded-full bg-accent px-5 py-3 text-small font-semibold text-on-accent shadow-2 transition-colors hover:bg-accent-hover"
+            >
+              Retry saving
+            </button>
           )}
         </div>
 

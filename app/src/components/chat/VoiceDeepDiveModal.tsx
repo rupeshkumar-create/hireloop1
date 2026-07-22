@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentProps, type ComponentType } from "react";
+import { useEffect, useState } from "react";
 import { Button, Modal } from "@/components/ui";
 import { VoiceSession } from "@/app/voice/VoiceSession";
 import { ShieldCheck } from "@/components/brand/icons";
@@ -11,15 +11,6 @@ type VoiceDeepDiveModalProps = {
   candidateName?: string;
   scheduledSessionId?: string;
 };
-
-type CareerVoiceSessionProps = ComponentProps<typeof VoiceSession> & {
-  consent: boolean;
-  scheduledSessionId?: string;
-};
-
-// Task 7 implements these lifecycle props in VoiceSession. Keeping the contract
-// explicit here ensures consent and a scheduled booking are never browser-only state.
-const CareerVoiceSession = VoiceSession as ComponentType<CareerVoiceSessionProps>;
 
 export function VoiceDeepDiveModal({
   open,
@@ -47,7 +38,7 @@ export function VoiceDeepDiveModal({
       className="max-h-[min(720px,92vh)] overflow-y-auto"
     >
       {continued ? (
-        <CareerVoiceSession
+        <VoiceSession
           candidateName={candidateName}
           embedded
           onComplete={onClose}
