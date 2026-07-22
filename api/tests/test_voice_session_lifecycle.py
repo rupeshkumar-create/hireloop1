@@ -44,6 +44,7 @@ class LifecycleDb:
         self.in_transaction = False
         self.raise_unique_on_insert = False
         self.consent_version: str | None = "career-call-v1"
+        self.active_conversation_id: uuid.UUID | None = self.conversation_id
         self.has_interview_state = True
         self.has_consent_audit = True
         self.consent_audit_created_at = datetime(2099, 7, 23, 5, tzinfo=UTC)
@@ -68,7 +69,7 @@ class LifecycleDb:
     def _session_row(self) -> dict[str, object]:
         return {
             "id": self.session_id,
-            "conversation_id": self.conversation_id,
+            "conversation_id": self.active_conversation_id,
             "status": self.status,
             "scheduled_at": datetime(2099, 7, 23, 5, tzinfo=UTC),
             "started_at": datetime(2099, 7, 23, 5, tzinfo=UTC),
@@ -142,6 +143,9 @@ class LifecycleDb:
                 self.state = "active"
             elif "SET consent_version" in normalized:
                 self.consent_version = str(args[2])
+            elif "SET conversation_id" in normalized:
+                self.active_conversation_id = args[2]  # type: ignore[assignment]
+                self.consent_version = str(args[3])
             return "UPDATE 1"
         if "INSERT INTO public.consent_log" in normalized:
             self.has_consent_audit = True
@@ -251,6 +255,51 @@ async def test_start_rejects_active_same_conversation_with_different_consent_ver
             current_user={"id": str(db.user_id)},
             db=db,
         )
+    assert exc.value.status_code == 409
+    assert db.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_attaches_true_uninitialized_legacy_active_call() -> None:
+    db = LifecycleDb.active_call()
+    db.active_conversation_id = None
+    db.consent_version = None
+    db.has_interview_state = False
+    db.has_consent_audit = False
+
+    out = await voice_sessions.start_career_call(
+        _start_request(conversation_id=db.conversation_id),
+        current_user={"id": str(db.user_id)},
+        db=db,
+    )
+
+    assert out.conversation_id == str(db.conversation_id)
+    assert db.active_conversation_id == db.conversation_id
+    assert db.consent_version == "career-call-v1"
+    assert db.has_interview_state is True
+    assert db.has_consent_audit is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "active_conversation,consent_version",
+    [(None, "career-call-v1"), ("different", None), ("different", "career-call-v1")],
+)
+async def test_start_rejects_ambiguous_legacy_active_call(
+    active_conversation: str | None,
+    consent_version: str | None,
+) -> None:
+    db = LifecycleDb.active_call()
+    db.active_conversation_id = None if active_conversation is None else db.other_conversation_id
+    db.consent_version = consent_version
+
+    with pytest.raises(HTTPException) as exc:
+        await voice_sessions.start_career_call(
+            _start_request(conversation_id=db.conversation_id),
+            current_user={"id": str(db.user_id)},
+            db=db,
+        )
+
     assert exc.value.status_code == 409
     assert db.execute_calls == []
 

@@ -167,10 +167,26 @@ async def _reuse_or_recover_active_call(
     """Return a verified active call, repairing legacy initialization if needed."""
     if not active:
         return None
-    if active["conversation_id"] != body.conversation_id:
-        raise HTTPException(status_code=409, detail="Another career call is already active")
 
     existing_version = active.get("consent_version")
+    if active["conversation_id"] != body.conversation_id:
+        if active["conversation_id"] is not None or existing_version is not None:
+            raise HTTPException(status_code=409, detail="Another career call is already active")
+        await db.execute(
+            """
+            UPDATE public.voice_sessions
+            SET conversation_id = $3::uuid, consent_version = $4, updated_at = NOW()
+            WHERE id = $1::uuid AND candidate_id = $2::uuid AND status = 'active'
+            """,
+            active["id"],
+            candidate_id,
+            body.conversation_id,
+            body.consent_version,
+        )
+        active["conversation_id"] = body.conversation_id
+        active["consent_version"] = body.consent_version
+        existing_version = body.consent_version
+
     if existing_version is not None and existing_version != body.consent_version:
         raise HTTPException(
             status_code=409,
