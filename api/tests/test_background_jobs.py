@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,10 +17,13 @@ from hireloop_api.services.background_jobs import (
     _INTERACTIVE_JOB_KINDS,
     AARYA_AUTO_INGEST,
     APPLICATION_KIT,
+    HandlerResult,
     claim_next_job,
     enqueue_job,
+    ensure_operation_active,
     mark_job_failed,
     process_job,
+    publish_operation_progress,
 )
 from tests.pool_shim import ConnectionPoolShim
 
@@ -105,6 +110,10 @@ class _JobDB:
         elif "status = 'pending'" in query and "last_error" in query:
             self.jobs[job_id]["status"] = "pending"
         return "UPDATE 1"
+
+    @asynccontextmanager
+    async def transaction(self):  # type: ignore[no-untyped-def]
+        yield
 
 
 @pytest.mark.asyncio
@@ -322,3 +331,306 @@ async def test_application_kit_handler_runs_candidate_job_generator(
         "job_id": "22222222-2222-2222-2222-222222222222",
     }
     assert bj.APPLICATION_KIT == "application_kit"
+
+
+@pytest.mark.asyncio
+async def test_linked_operation_runs_before_handler_and_completes_with_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+    result_id = uuid.uuid4()
+    events: list[str] = []
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        events.append("operation-running")
+        return True
+
+    async def _complete(*_args: object, **kwargs: object) -> bool:
+        result = kwargs["result"]
+        assert result == HandlerResult(result_type="career_path", result_id=result_id)
+        events.append("operation-and-job-succeeded")
+        return True
+
+    async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
+        events.append("handler")
+        return HandlerResult(result_type="career_path", result_id=result_id)
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_complete_linked_operation", _complete)
+    monkeypatch.setitem(bj._HANDLERS, "linked-test", _handler)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "linked-test",
+            "payload": {"operation_id": str(operation_id)},
+            "attempts": 1,
+            "max_attempts": 3,
+        },
+    )
+
+    assert events == ["operation-running", "handler", "operation-and-job-succeeded"]
+
+
+@pytest.mark.asyncio
+async def test_linked_operation_requires_valid_result_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failures: list[BaseException] = []
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _fail(*_args: object, **kwargs: object) -> None:
+        failures.append(kwargs["error"])
+
+    async def _legacy_result(_settings: Settings, _payload: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_fail_linked_operation", _fail)
+    monkeypatch.setitem(bj._HANDLERS, "linked-invalid-result", _legacy_result)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "linked-invalid-result",
+            "payload": {"operation_id": str(uuid.uuid4())},
+            "attempts": 3,
+            "max_attempts": 3,
+        },
+    )
+
+    assert len(failures) == 1
+    assert "result reference" in str(failures[0]).lower()
+
+
+@pytest.mark.asyncio
+async def test_linked_retry_keeps_operation_nonterminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failures: list[tuple[int, int]] = []
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _fail(*_args: object, **kwargs: object) -> None:
+        failures.append((int(kwargs["attempts"]), int(kwargs["max_attempts"])))
+
+    async def _boom(_settings: Settings, _payload: dict[str, Any]) -> None:
+        raise TimeoutError("private provider detail")
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_fail_linked_operation", _fail)
+    monkeypatch.setitem(bj._HANDLERS, "linked-retry", _boom)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "linked-retry",
+            "payload": {"operation_id": str(uuid.uuid4())},
+            "attempts": 1,
+            "max_attempts": 3,
+        },
+    )
+
+    assert failures == [(1, 3)]
+
+
+@pytest.mark.asyncio
+async def test_cancel_while_handler_blocked_discards_late_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    state = {"operation": "running", "queue": "running"}
+    success_calls = 0
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
+        started.set()
+        await release.wait()
+        return HandlerResult(result_type="application_kit", result_id=uuid.uuid4())
+
+    async def _complete(*_args: object, **_kwargs: object) -> bool:
+        nonlocal success_calls
+        if state["operation"] != "running" or state["queue"] != "running":
+            return False
+        success_calls += 1
+        state.update(operation="succeeded", queue="completed")
+        return True
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_complete_linked_operation", _complete)
+    monkeypatch.setitem(bj._HANDLERS, "cancel-race", _handler)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    task = asyncio.create_task(
+        process_job(
+            ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+            settings,
+            {
+                "id": str(uuid.uuid4()),
+                "kind": "cancel-race",
+                "payload": {"operation_id": str(operation_id)},
+                "attempts": 1,
+                "max_attempts": 3,
+            },
+        )
+    )
+    await started.wait()
+    state.update(operation="cancelled", queue="cancelled")
+    release.set()
+    await task
+
+    assert success_calls == 0
+    assert state == {"operation": "cancelled", "queue": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_progress_and_handler_guard_ignore_legacy_payloads() -> None:
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await publish_operation_progress(
+        settings,
+        {"candidate_id": "legacy"},
+        progress_percent=25,
+        stage="generating",
+        message="Generating.",
+    )
+    await ensure_operation_active(settings, {"candidate_id": "legacy"})
+
+
+@pytest.mark.asyncio
+async def test_progress_helper_publishes_linked_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+    db = _JobDB()
+    calls: list[tuple[uuid.UUID, int, str, str]] = []
+
+    async def _pool(_settings: Settings) -> ConnectionPoolShim:
+        return ConnectionPoolShim(db)  # type: ignore[arg-type]
+
+    async def _progress(
+        _db: object,
+        op_id: uuid.UUID,
+        percent: int,
+        stage: str,
+        message: str,
+    ) -> None:
+        calls.append((op_id, percent, stage, message))
+
+    monkeypatch.setattr("hireloop_api.deps.get_db_pool", _pool)
+    monkeypatch.setattr("hireloop_api.services.ai_operations.update_operation_progress", _progress)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await publish_operation_progress(
+        settings,
+        {"operation_id": str(operation_id)},
+        progress_percent=45,
+        stage="generating",
+        message="Generating your result.",
+    )
+    assert calls == [(operation_id, 45, "generating", "Generating your result.")]
+
+
+@pytest.mark.asyncio
+async def test_handler_guard_raises_when_linked_operation_is_not_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+
+    class _GuardDB(_JobDB):
+        async def fetchval(self, query: str, *args: object) -> object | None:
+            if "SELECT EXISTS" in query and "ai_operations" in query:
+                return False
+            return await super().fetchval(query, *args)
+
+    async def _pool(_settings: Settings) -> ConnectionPoolShim:
+        return ConnectionPoolShim(_GuardDB())  # type: ignore[arg-type]
+
+    monkeypatch.setattr("hireloop_api.deps.get_db_pool", _pool)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    with pytest.raises(bj.InactiveAiOperationError):
+        await ensure_operation_active(settings, {"operation_id": str(operation_id)})
+
+
+@pytest.mark.asyncio
+async def test_cancelled_operation_is_released_before_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler_called = False
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
+        nonlocal handler_called
+        handler_called = True
+        return HandlerResult(result_type="test", result_id=uuid.uuid4())
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setitem(bj._HANDLERS, "cancelled-before-start", _handler)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "cancelled-before-start",
+            "payload": {"operation_id": str(uuid.uuid4())},
+            "attempts": 1,
+            "max_attempts": 3,
+        },
+    )
+    assert handler_called is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("attempts", "max_attempts"), [(1, 3), (3, 3)])
+async def test_unknown_linked_handler_uses_operation_failure_path(
+    monkeypatch: pytest.MonkeyPatch,
+    attempts: int,
+    max_attempts: int,
+) -> None:
+    failures: list[tuple[str, int, int]] = []
+
+    async def _prepare(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _fail(*_args: object, **kwargs: object) -> None:
+        failures.append(
+            (
+                str(kwargs["error"]),
+                int(kwargs["attempts"]),
+                int(kwargs["max_attempts"]),
+            )
+        )
+
+    monkeypatch.setattr(bj, "_prepare_linked_operation", _prepare)
+    monkeypatch.setattr(bj, "_fail_linked_operation", _fail)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": f"unknown-linked-{uuid.uuid4()}",
+            "payload": {"operation_id": str(uuid.uuid4())},
+            "attempts": attempts,
+            "max_attempts": max_attempts,
+        },
+    )
+    assert len(failures) == 1
+    assert failures[0][1:] == (attempts, max_attempts)
+    assert "unknown job kind" in failures[0][0]
