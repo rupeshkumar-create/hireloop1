@@ -21,6 +21,13 @@ async def _create_candidate(db_conn: asyncpg.Connection, label: str) -> uuid.UUI
         INSERT INTO public.users
           (id, email, full_name, role, phone_verified, market, phone_country)
         VALUES ($1, $2, $3, 'candidate', TRUE, 'IN', 'IN')
+        ON CONFLICT (id) DO UPDATE SET
+          email = EXCLUDED.email,
+          full_name = EXCLUDED.full_name,
+          role = 'candidate',
+          phone_verified = TRUE,
+          market = 'IN',
+          phone_country = 'IN'
         """,
         user_id,
         email,
