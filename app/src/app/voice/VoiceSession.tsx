@@ -115,6 +115,7 @@ export function VoiceSession({
     completionReason: CompletionReason;
   } | null>(null);
   const timeLimitTriggeredRef = useRef(false);
+  const endCallRef = useRef<((reason: CompletionReason) => Promise<void>) | null>(null);
   // Lets listenForUser call the latest doTurn without a useCallback dep cycle.
   const doTurnRef       = useRef<((c: string, t: string) => Promise<void>) | null>(null);
 
@@ -154,7 +155,7 @@ export function VoiceSession({
       userText: string,
       conversationId: string,
       onSentence?: (sentence: string) => void
-    ): Promise<string> => {
+    ): Promise<{ text: string; coverageComplete: boolean }> => {
       const voiceSessionId = voiceSessionIdRef.current;
       if (!voiceSessionId) throw new Error("The career call has not started yet.");
       const ctrl = new AbortController();
@@ -210,7 +211,7 @@ export function VoiceSession({
       emitCompleteSentences(accumulated, true);
       if (abortRef.current === ctrl) abortRef.current = null;
       setStreamRecovery(null);
-      return accumulated;
+      return { text: accumulated, coverageComplete: result.coverageComplete };
     },
     [speakFiller]
   );
@@ -369,6 +370,7 @@ export function VoiceSession({
       // generation instead of after the whole reply (was the main dead air).
       let speechChain: Promise<void> = Promise.resolve();
       let startedSpeaking = false;
+      let coverageComplete = false;
       const queueSentence = (sentence: string) => {
         if (!canSpeak || isEndingRef.current) return;
         if (!startedSpeaking) {
@@ -381,7 +383,8 @@ export function VoiceSession({
       };
 
       try {
-        await streamAaryaReply(triggerText, conversationId, queueSentence);
+        const result = await streamAaryaReply(triggerText, conversationId, queueSentence);
+        coverageComplete = result.coverageComplete;
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         setStreamRecovery("Connection dropped — tap the mic when you're ready to continue.");
@@ -399,6 +402,13 @@ export function VoiceSession({
       await speechChain;
 
       if (isEndingRef.current) return;
+
+      // The backend sends this only after the private wrap reply is durable.
+      // Complete this exact call after speech, without reopening the mic.
+      if (coverageComplete) {
+        await endCallRef.current?.("coverage_complete");
+        return;
+      }
 
       // ── User's turn ───────────────────────────────────────────────────────
       await listenForUser(conversationId);
@@ -534,6 +544,10 @@ export function VoiceSession({
     },
     [clearCallTimer, elapsedSecs, persistCompletion, stopLocalMedia]
   );
+
+  useEffect(() => {
+    endCallRef.current = endCall;
+  }, [endCall]);
 
   const startCall = useCallback(async () => {
     if (startInFlightRef.current || turnState !== "idle") return;

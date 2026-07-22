@@ -56,6 +56,7 @@ from hireloop_api.services.career_path_selection import (
 )
 from hireloop_api.services.chat_sessions import get_or_create_primary_conversation
 from hireloop_api.services.chat_stream import (
+    career_interview_completion_event,
     sse_done,
     sse_error,
     sse_jobs,
@@ -1176,6 +1177,7 @@ async def send_message(
 
     async def event_stream() -> AsyncIterator[str]:
         full_response = ""
+        assistant_reply_persisted = False
         last_msg_id: str | None = None
         stream_jobs = list(prefetched_jobs)
         deterministic_job_reply: str | None = None
@@ -1454,6 +1456,7 @@ async def send_message(
                         assistant_message_id=assistant_message_id,
                         voice_session_id=message_voice_session_id,
                     )
+                    assistant_reply_persisted = True
                 except Exception as save_exc:
                     logger.error(
                         "assistant_message_save_failed",
@@ -1461,6 +1464,13 @@ async def send_message(
                         conversation_id=conversation_id,
                     )
 
+            completion_event = career_interview_completion_event(
+                career_interview_mode=career_interview_mode,
+                should_wrap=(career_interview_turn.should_wrap if career_interview_turn else False),
+                reply_persisted=assistant_reply_persisted,
+            )
+            if completion_event:
+                yield completion_event
             yield sse_done()
 
         except Exception as exc:
