@@ -194,6 +194,11 @@ export function useVoice() {
   const recognitionRef    = useRef<SpeechRecognitionLike | null>(null);
   // Deepgram Aura TTS playback (server-side voice) — one reused <audio> element.
   const ttsAudioRef       = useRef<HTMLAudioElement | null>(null);
+  // Settles the active Deepgram playback promise when playback is cancelled.
+  // Without this, clearing an audio element's handlers leaves callers awaiting
+  // a Promise that can never resolve.
+  const cancelTtsPlaybackRef = useRef<(() => void) | null>(null);
+  const voiceMountedRef = useRef(true);
   // Live mic level meter (Web Audio) — gives a real-time waveform on both the
   // Deepgram and browser STT paths.
   const audioCtxRef       = useRef<AudioContext | null>(null);
@@ -762,21 +767,7 @@ export function useVoice() {
     } catch {
       /* ignore */
     }
-    const audio = ttsAudioRef.current;
-    if (audio) {
-      try {
-        audio.pause();
-        audio.onended = null;
-        audio.onerror = null;
-        const src = audio.src;
-        audio.removeAttribute("src");
-        audio.load();
-        if (src.startsWith("blob:")) URL.revokeObjectURL(src);
-      } catch {
-        /* ignore */
-      }
-      ttsAudioRef.current = null;
-    }
+    cancelTtsPlaybackRef.current?.();
   }, []);
 
   /**
@@ -804,25 +795,44 @@ export function useVoice() {
       const audio = new Audio(url);
       audio.playbackRate = playbackRate;
       ttsAudioRef.current = audio;
-      const cleanup = () => {
+      let settled = false;
+      const settle = (options?: { error?: Error; stopAudio?: boolean }) => {
+        if (settled) return;
+        settled = true;
+        audio.onplay = null;
+        audio.onended = null;
+        audio.onerror = null;
+        if (cancelTtsPlaybackRef.current === cancelPlayback) {
+          cancelTtsPlaybackRef.current = null;
+        }
         if (ttsAudioRef.current === audio) ttsAudioRef.current = null;
+        if (options?.stopAudio) {
+          try {
+            audio.pause();
+            audio.removeAttribute("src");
+            audio.load();
+          } catch {
+            /* The promise still settles even if media teardown fails. */
+          }
+        }
         URL.revokeObjectURL(url);
+        if (voiceMountedRef.current) setIsPlaying(false);
+        if (options?.error) reject(options.error);
+        else resolve();
       };
-      audio.onplay = () => setIsPlaying(true);
-      audio.onended = () => {
-        setIsPlaying(false);
-        cleanup();
-        resolve();
+      const cancelPlayback = () => settle({ stopAudio: true });
+      cancelTtsPlaybackRef.current?.();
+      cancelTtsPlaybackRef.current = cancelPlayback;
+      audio.onplay = () => {
+        if (voiceMountedRef.current) setIsPlaying(true);
       };
-      audio.onerror = () => {
-        setIsPlaying(false);
-        cleanup();
-        reject(new Error("TTS playback failed"));
-      };
+      audio.onended = () => settle();
+      audio.onerror = () => settle({ error: new Error("TTS playback failed") });
       audio.play().catch((err) => {
-        setIsPlaying(false);
-        cleanup();
-        reject(err instanceof Error ? err : new Error("TTS play() rejected"));
+        settle({
+          error: err instanceof Error ? err : new Error("TTS play() rejected"),
+          stopAudio: true,
+        });
       });
     });
     },
@@ -945,7 +955,9 @@ export function useVoice() {
   // audio context if the component unmounts mid-recording (e.g. the user
   // navigates away during a turn).
   useEffect(() => {
+    voiceMountedRef.current = true;
     return () => {
+      voiceMountedRef.current = false;
       stopLevelMeter();
       meterStreamRef.current?.getTracks().forEach((t) => t.stop());
       meterStreamRef.current = null;
@@ -967,18 +979,7 @@ export function useVoice() {
       }
       liveWsRef.current = null;
       // Stop any server-TTS audio playing on unmount.
-      const audio = ttsAudioRef.current;
-      if (audio) {
-        try {
-          audio.pause();
-          const src = audio.src;
-          audio.removeAttribute("src");
-          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
-        } catch {
-          /* ignore */
-        }
-        ttsAudioRef.current = null;
-      }
+      cancelTtsPlaybackRef.current?.();
     };
   }, [stopLevelMeter]);
 
