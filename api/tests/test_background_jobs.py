@@ -364,6 +364,7 @@ async def test_linked_operation_runs_before_handler_and_completes_with_result(
         return True
 
     async def _handler(_settings: Settings, _payload: dict[str, Any]) -> HandlerResult:
+        assert _payload["_job_lease_token"] == "test-worker"
         events.append("handler")
         return HandlerResult(
             result_type="career_path", result_id=result_id, persist=_persist_nothing
@@ -531,27 +532,18 @@ async def test_progress_helper_ignores_legacy_payloads() -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_helper_publishes_linked_operation(
+async def test_progress_helper_rejects_linked_payload_without_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     operation_id = uuid.uuid4()
-    db = _JobDB()
-    calls: list[tuple[uuid.UUID, int, str, str]] = []
+    pool_called = False
 
     async def _pool(_settings: Settings) -> ConnectionPoolShim:
-        return ConnectionPoolShim(db)  # type: ignore[arg-type]
-
-    async def _progress(
-        _db: object,
-        op_id: uuid.UUID,
-        percent: int,
-        stage: str,
-        message: str,
-    ) -> None:
-        calls.append((op_id, percent, stage, message))
+        nonlocal pool_called
+        pool_called = True
+        return ConnectionPoolShim(_JobDB())  # type: ignore[arg-type]
 
     monkeypatch.setattr("hireloop_api.deps.get_db_pool", _pool)
-    monkeypatch.setattr("hireloop_api.services.ai_operations.update_operation_progress", _progress)
     settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
     await publish_operation_progress(
         settings,
@@ -560,7 +552,7 @@ async def test_progress_helper_publishes_linked_operation(
         stage="generating",
         message="Generating your result.",
     )
-    assert calls == [(operation_id, 45, "generating", "Generating your result.")]
+    assert pool_called is False
 
 
 @pytest.mark.asyncio
@@ -996,6 +988,180 @@ async def test_heartbeat_renews_lease_periodically_and_stops(
         ("00000000-0000-0000-0000-000000000001", "lease-owner"),
         ("00000000-0000-0000-0000-000000000001", "lease-owner"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_claims_from_same_lane_receive_unique_lease_tokens() -> None:
+    db = _JobDB()
+    await enqueue_job(db, kind=AARYA_AUTO_INGEST, payload={"candidate_id": "one"})  # type: ignore[arg-type]
+    await enqueue_job(db, kind=AARYA_AUTO_INGEST, payload={"candidate_id": "two"})  # type: ignore[arg-type]
+    first = await claim_next_job(db, worker_id="same-lane")  # type: ignore[arg-type]
+    second = await claim_next_job(db, worker_id="same-lane")  # type: ignore[arg-type]
+    assert first is not None and second is not None
+    assert first["worker_id"] != second["worker_id"]
+    assert str(first["worker_id"]).startswith("same-lane:")
+    assert str(second["worker_id"]).startswith("same-lane:")
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_recovers_after_transient_renew_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = asyncio.Event()
+    calls = 0
+
+    async def _renew(*_args: object, **_kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("temporary pool failure")
+        stop.set()
+        return True
+
+    monkeypatch.setattr(bj, "_renew_job_lease", _renew)
+    await bj._heartbeat_job_lease(
+        ConnectionPoolShim(_JobDB()),  # type: ignore[arg-type]
+        job_id=str(uuid.uuid4()),
+        worker_id="unique-lease",
+        stop_event=stop,
+        interval_seconds=0.001,
+    )
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_cleanup_failure_does_not_override_handler_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _JobDB()
+    job_id = uuid.uuid4()
+    db.jobs[job_id] = {
+        "id": job_id,
+        "kind": "heartbeat-cleanup",
+        "status": "running",
+        "worker_id": "unique-lease",
+        "attempts": 1,
+        "max_attempts": 3,
+        "run_after": datetime.now(UTC),
+    }
+
+    async def _broken_heartbeat(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("heartbeat cleanup failed")
+
+    async def _success(_settings: Settings, _payload: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr(bj, "_heartbeat_job_lease", _broken_heartbeat)
+    monkeypatch.setitem(bj._HANDLERS, "heartbeat-cleanup", _success)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(db),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(job_id),
+            "kind": "heartbeat-cleanup",
+            "payload": {},
+            "attempts": 1,
+            "max_attempts": 3,
+            "worker_id": "unique-lease",
+        },
+    )
+    assert db.jobs[job_id]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_old_lease_cannot_decline_nitya_intro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intro_updates = 0
+
+    class _NityaDB(_JobDB):
+        async def execute(self, query: str, *args: object) -> str:
+            nonlocal intro_updates
+            if "UPDATE public.intro_requests" in query:
+                intro_updates += 1
+                return "UPDATE 1"
+            return await super().execute(query, *args)
+
+    async def _lost_lease(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    async def _fail(_settings: Settings, _payload: dict[str, Any]) -> None:
+        raise RuntimeError("terminal failure")
+
+    monkeypatch.setattr(bj, "mark_job_failed", _lost_lease)
+    monkeypatch.setitem(bj._HANDLERS, bj.NITYA_INTRO_DRAFT, _fail)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await process_job(
+        ConnectionPoolShim(_NityaDB()),  # type: ignore[arg-type]
+        settings,
+        {
+            "id": str(uuid.uuid4()),
+            "kind": bj.NITYA_INTRO_DRAFT,
+            "payload": {"id": str(uuid.uuid4())},
+            "attempts": 3,
+            "max_attempts": 3,
+            "worker_id": "old-lease",
+        },
+    )
+    assert intro_updates == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_requires_current_queue_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id = uuid.uuid4()
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class _ProgressDB(_JobDB):
+        async def fetchrow(self, query: str, *args: object) -> dict[str, Any] | None:
+            calls.append((query, args))
+            return None
+
+    async def _pool(_settings: Settings) -> ConnectionPoolShim:
+        return ConnectionPoolShim(_ProgressDB())  # type: ignore[arg-type]
+
+    monkeypatch.setattr("hireloop_api.deps.get_db_pool", _pool)
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    await publish_operation_progress(
+        settings,
+        {"operation_id": str(operation_id), "_job_lease_token": "current-lease"},
+        progress_percent=30,
+        stage="generating",
+        message="Generating.",
+    )
+    assert len(calls) == 1
+    query, args = calls[0]
+    assert "FROM public.background_jobs" in query
+    assert "j.worker_id = $2" in query
+    assert args[:2] == (operation_id, "current-lease")
+
+
+@pytest.mark.asyncio
+async def test_linked_state_locks_operation_before_queue() -> None:
+    operation_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    queries: list[str] = []
+
+    class _LockDB(_JobDB):
+        async def fetchrow(self, query: str, *args: object) -> dict[str, Any] | None:
+            queries.append(query)
+            if "FROM public.ai_operations" in query:
+                return {
+                    "operation_status": "running",
+                    "progress_percent": 10,
+                    "background_job_id": job_id,
+                }
+            return {"job_status": "running", "worker_id": "lease"}
+
+    state = await bj._linked_state(_LockDB(), operation_id, str(job_id))  # type: ignore[arg-type]
+    assert state is not None
+    assert len(queries) == 2
+    assert "FROM public.ai_operations" in queries[0]
+    assert "FOR UPDATE" in queries[0]
+    assert "FROM public.background_jobs" in queries[1]
+    assert "FOR UPDATE" in queries[1]
 
 
 @pytest.mark.asyncio
