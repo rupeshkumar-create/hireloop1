@@ -412,10 +412,16 @@ export function useVoice() {
         const form = new FormData();
         form.append("file", blob, "voice.webm");
 
-        const res = await apiAuthFetch("/api/v1/voice/stt", {
-          method: "POST",
-          body: form,
-        });
+        // Deepgram batch STT — purpose-specific budget above the ordinary 25s
+        // API timeout so short clips are not mislabeled as API-unreachable.
+        const res = await apiAuthFetch(
+          "/api/v1/voice/stt",
+          {
+            method: "POST",
+            body: form,
+          },
+          { timeoutMs: 60_000 },
+        );
 
         if (!res.ok) {
           let detail = "Voice transcription failed. Please try again.";
@@ -777,11 +783,17 @@ export function useVoice() {
    */
   const speakDeepgram = useCallback(
     async (spoken: string, playbackRate = 1.0, isCurrent?: () => boolean): Promise<void> => {
-    const res = await apiAuthFetch("/api/v1/voice/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: spoken }),
-    });
+    // Deepgram Aura TTS — keep a purpose-specific deadline (server also guards
+    // audio synthesis); do not use the generic AI-job timeout narrative.
+    const res = await apiAuthFetch(
+      "/api/v1/voice/tts",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: spoken }),
+      },
+      { timeoutMs: 30_000 },
+    );
     if (!res.ok) throw new Error(`TTS ${res.status}`);
     const blob = await res.blob();
     if (!blob.size) throw new Error("Empty TTS audio");

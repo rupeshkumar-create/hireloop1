@@ -11,34 +11,73 @@
  *     network blip, expired refresh token), we LOG the underlying cause
  *     and proceed with no token. We never let a Supabase failure masquerade
  *     as "API down" — that confuses the user.
- *   - If the actual fetch to the API fails (network), we throw a tagged
- *     `ApiUnreachableError` so the form layer can show "API down" with
- *     confidence (vs the generic browser "Failed to fetch").
+ *   - If the actual fetch to the API fails (network / client timeout), we
+ *     throw a tagged `ApiUnreachableError` with the request `path` and
+ *     boundary `reason`. Browser copy uses the same-origin proxy base
+ *     (`/hireloop-api`), never the raw Railway hostname.
+ *   - Caller-supplied `AbortSignal` cancellation is rethrown as-is and is
+ *     never rewritten as a server timeout.
  */
 
 import { createClient } from "@/lib/supabase/client";
-import { DIRECT_API_URL, getApiBaseUrl } from "@/lib/api/base-url";
+import { getApiBaseUrl } from "@/lib/api/base-url";
+
+export type ApiUnreachableReason = "timeout" | "network";
+
+type ApiUnreachableErrorInit = {
+  path: string;
+  reason: ApiUnreachableReason;
+  timeoutMs?: number | null;
+  cause?: unknown;
+  /** Override request base (e.g. server-side direct API host). */
+  baseUrl?: string;
+};
 
 /**
  * Tagged error class so callers can distinguish a true API connectivity
- * failure from anything else (auth refresh failures, CORS, etc.).
+ * failure from anything else (auth refresh failures, CORS, operation
+ * `error_code`s, caller aborts, etc.).
  */
 export class ApiUnreachableError extends Error {
+  readonly path: string;
+  readonly reason: ApiUnreachableReason;
+  readonly timeoutMs: number | null;
+  /** Full request URL actually contacted (proxy path in the browser). */
   readonly url: string;
   readonly cause: unknown;
-  constructor(url: string, cause: unknown) {
-    const causeMsg = cause instanceof Error ? cause.message : String(cause);
-    super(`Can't reach API at ${url}: ${causeMsg}`);
+
+  constructor(init: ApiUnreachableErrorInit) {
+    const path = init.path.startsWith("/") ? init.path : `/${init.path}`;
+    const baseUrl = (init.baseUrl ?? getApiBaseUrl()).replace(/\/$/, "");
+    const url = `${baseUrl}${path}`;
+    const causeMsg =
+      init.cause instanceof Error
+        ? init.cause.message
+        : init.cause != null
+          ? String(init.cause)
+          : "";
+    const detail =
+      causeMsg.trim() ||
+      (init.reason === "timeout"
+        ? "Request timed out — our servers may be busy. Try again."
+        : "Network request failed.");
+    super(`Can't reach API at ${url}: ${detail}`);
     this.name = "ApiUnreachableError";
+    this.path = path;
+    this.reason = init.reason;
+    this.timeoutMs = init.timeoutMs ?? null;
     this.url = url;
-    this.cause = cause;
+    this.cause = init.cause;
   }
 }
 
 const DEFAULT_API_FETCH_TIMEOUT_MS = 25_000;
 
 function isAbortError(err: unknown): boolean {
-  return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+  // Duck-type: jsdom/Node may throw DOMException that is not `instanceof Error`.
+  if (typeof err !== "object" || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === "AbortError" || name === "TimeoutError";
 }
 
 export async function getAccessToken(): Promise<string | null> {
@@ -53,7 +92,7 @@ export async function getAccessToken(): Promise<string | null> {
       // eslint-disable-next-line no-console
       console.warn(
         "[auth-fetch] Supabase getSession() failed; continuing without token.",
-        err
+        err,
       );
     }
     return null;
@@ -79,18 +118,26 @@ export async function apiAuthFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  const url = `${getApiBaseUrl()}${path}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const url = `${getApiBaseUrl()}${normalizedPath}`;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_API_FETCH_TIMEOUT_MS;
   const hasCallerSignal = init.signal !== undefined;
   const timeoutSignal =
-    !hasCallerSignal && typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+    !hasCallerSignal &&
+    typeof AbortSignal !== "undefined" &&
+    "timeout" in AbortSignal
       ? AbortSignal.timeout(timeoutMs)
       : null;
-  const controller = hasCallerSignal || timeoutSignal ? null : new AbortController();
+  const controller =
+    hasCallerSignal || timeoutSignal ? null : new AbortController();
+  let timedOutByClient = false;
   const timeoutId =
     controller === null
       ? undefined
-      : globalThis.setTimeout(() => controller.abort(), timeoutMs);
+      : globalThis.setTimeout(() => {
+          timedOutByClient = true;
+          controller.abort();
+        }, timeoutMs);
 
   try {
     return await fetch(url, {
@@ -99,22 +146,31 @@ export async function apiAuthFetch(
       credentials: "same-origin",
       signal: hasCallerSignal
         ? init.signal
-        : timeoutSignal ?? controller!.signal,
+        : (timeoutSignal ?? controller!.signal),
     });
   } catch (err) {
-    if (isAbortError(err)) {
-      const displayUrl =
-        typeof window !== "undefined" ? DIRECT_API_URL : getApiBaseUrl();
-      throw new ApiUnreachableError(
-        displayUrl,
-        new Error("Request timed out — our servers may be busy. Try again."),
-      );
+    // Caller-owned cancellation must not look like "API unreachable / timed out".
+    if (hasCallerSignal && isAbortError(err)) {
+      throw err;
+    }
+    if (timedOutByClient || (!hasCallerSignal && isAbortError(err))) {
+      throw new ApiUnreachableError({
+        path: normalizedPath,
+        reason: "timeout",
+        timeoutMs,
+        cause: new Error(
+          "Request timed out — our servers may be busy. Try again.",
+        ),
+      });
     }
     // Browser fetch only throws on genuine network failures (CORS, DNS,
-    // connection refused, abort). NOT on 4xx/5xx — those return a Response.
-    const displayUrl =
-      typeof window !== "undefined" ? DIRECT_API_URL : getApiBaseUrl();
-    throw new ApiUnreachableError(displayUrl, err);
+    // connection refused). NOT on 4xx/5xx — those return a Response.
+    throw new ApiUnreachableError({
+      path: normalizedPath,
+      reason: "network",
+      timeoutMs,
+      cause: err,
+    });
   } finally {
     if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
   }

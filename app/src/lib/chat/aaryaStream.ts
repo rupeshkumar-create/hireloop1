@@ -335,9 +335,19 @@ export async function streamAaryaMessage(
   signal?: AbortSignal,
   context?: { jobId?: string; voiceSessionId?: string }
 ): Promise<AaryaStreamResult> {
-  const res = await apiAuthFetch(
-    `/api/v1/chat/sessions/${conversationId}/messages`,
-    {
+  // Always supply a signal so apiAuthFetch does not apply the default 25s
+  // request timeout (that would abort mid-SSE after headers arrive). Idle
+  // stalls are handled by STREAM_IDLE_TIMEOUT_MS on each read instead.
+  const localAbort = new AbortController();
+  const onCallerAbort = () => localAbort.abort();
+  if (signal) {
+    if (signal.aborted) localAbort.abort();
+    else signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+
+  let res: Response;
+  try {
+    res = await apiAuthFetch(`/api/v1/chat/sessions/${conversationId}/messages`, {
       method: "POST",
       headers: {
         "X-Hireschema-Channel": contentType,
@@ -348,9 +358,11 @@ export async function streamAaryaMessage(
         job_id: context?.jobId,
         voice_session_id: context?.voiceSessionId,
       }),
-      signal,
-    }
-  );
+      signal: localAbort.signal,
+    });
+  } finally {
+    signal?.removeEventListener("abort", onCallerAbort);
+  }
 
   if (!res.ok || !res.body) {
     const errBody = await res.json().catch(() => ({}));
