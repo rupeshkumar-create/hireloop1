@@ -121,7 +121,7 @@ async def _insert_linked_running_job(
         """,
         job_id,
         kind,
-        operation_id,
+        str(operation_id),
         f"worker-operation:{operation_id}",
         attempts,
         max_attempts,

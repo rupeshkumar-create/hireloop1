@@ -128,12 +128,24 @@ async def _create_user(
 ) -> uuid.UUID:
     user_id = uuid.uuid4()
     email = f"ai-operation-schema-{user_id.hex[:10]}@hireloop.test"
-    await db_conn.execute("INSERT INTO auth.users (id, email) VALUES ($1, $2)", user_id, email)
+    await db_conn.execute(
+        "INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        user_id,
+        email,
+    )
+    # auth.users trigger may already create public.users — upsert role/market.
     await db_conn.execute(
         """
         INSERT INTO public.users
           (id, email, full_name, role, phone_verified, market, phone_country)
         VALUES ($1, $2, 'AI Operation Schema', $3, TRUE, 'IN', 'IN')
+        ON CONFLICT (id) DO UPDATE SET
+          email = EXCLUDED.email,
+          full_name = EXCLUDED.full_name,
+          role = EXCLUDED.role,
+          phone_verified = TRUE,
+          market = 'IN',
+          phone_country = 'IN'
         """,
         user_id,
         email,

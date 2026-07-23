@@ -191,7 +191,7 @@ async def test_candidate_cannot_access_another_users_ai_operations(
            $2, 'failed', 3, NOW())
         RETURNING id
         """,
-        retryable_b,
+        str(retryable_b),
         f"idor-b-retry-job:{uuid.uuid4()}",
     )
     await db_conn.execute(
