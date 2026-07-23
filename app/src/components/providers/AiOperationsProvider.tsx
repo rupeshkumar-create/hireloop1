@@ -38,6 +38,12 @@ type AiOperationsContextValue = {
   retryOperation: (operationId: string) => Promise<void>;
 };
 
+type ToastApi = {
+  success: (msg: string) => void;
+  error: (msg: string) => void;
+  info: (msg: string) => void;
+};
+
 const AiOperationsContext = createContext<AiOperationsContextValue | null>(null);
 
 function upsertOperation(
@@ -74,6 +80,21 @@ function toastMessageFor(operation: AiOperationResponse): string {
   return operation.message.trim() || "Update.";
 }
 
+function notifyTerminal(
+  operation: AiOperationResponse,
+  toasted: Set<string>,
+  toast: ToastApi,
+): void {
+  if (!isTerminalAiOperationStatus(operation.status)) return;
+  if (toasted.has(operation.id)) return;
+  toasted.add(operation.id);
+
+  const message = toastMessageFor(operation);
+  if (operation.status === "succeeded") toast.success(message);
+  else if (operation.status === "failed") toast.error(message);
+  else toast.info(message);
+}
+
 export function AiOperationsProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -84,6 +105,8 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
       typeof document === "undefined" ? "visible" : document.visibilityState,
     );
   const toastedRef = useRef<Set<string>>(new Set());
+  /** Bumped on SIGNED_OUT so late restore results are ignored. */
+  const authGenerationRef = useRef(0);
 
   const mergeOperations = useCallback((rows: AiOperationResponse[]) => {
     setOperations((prev) => {
@@ -105,36 +128,39 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const supabase = createClient();
-    let cancelled = false;
 
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!cancelled) setIsAuthenticated(Boolean(data.session));
-    });
-
+    // Drive auth only from onAuthStateChange (INITIAL_SESSION / SIGNED_IN /
+    // TOKEN_REFRESHED / SIGNED_OUT). No getSession() — avoids stale resolves
+    // flipping auth back on after logout.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthenticated(Boolean(session));
-      if (!session) {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session || event === "SIGNED_OUT") {
+        authGenerationRef.current += 1;
+        setIsAuthenticated(false);
         setOperations({});
         toastedRef.current.clear();
+        return;
       }
+
+      setIsAuthenticated(true);
     });
 
     return () => {
-      cancelled = true;
       subscription.unsubscribe();
     };
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    const generation = authGenerationRef.current;
     let cancelled = false;
 
     void (async () => {
       try {
         const active = await listActiveAiOperations();
-        if (cancelled) return;
+        if (cancelled || generation !== authGenerationRef.current) return;
         mergeOperations(active);
       } catch {
         /* non-fatal — polling will retry once track/restore has IDs */
@@ -195,15 +221,7 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     for (const operation of polledOperations) {
       setOperations((prev) => upsertOperation(prev, operation));
-
-      if (!isTerminalAiOperationStatus(operation.status)) continue;
-      if (toastedRef.current.has(operation.id)) continue;
-      toastedRef.current.add(operation.id);
-
-      const message = toastMessageFor(operation);
-      if (operation.status === "succeeded") toast.success(message);
-      else if (operation.status === "failed") toast.error(message);
-      else toast.info(message);
+      notifyTerminal(operation, toastedRef.current, toast);
     }
   }, [polledOperations, toast]);
 
@@ -237,12 +255,10 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
     async (operationId: string) => {
       const updated = await cancelAiOperation(operationId);
       setOperations((prev) => upsertOperation(prev, updated));
-      await queryClient.setQueryData(
-        [AI_OPERATION_QUERY_KEY, operationId],
-        updated,
-      );
+      notifyTerminal(updated, toastedRef.current, toast);
+      queryClient.setQueryData([AI_OPERATION_QUERY_KEY, operationId], updated);
     },
-    [queryClient],
+    [queryClient, toast],
   );
 
   const retryOperation = useCallback(
@@ -255,12 +271,13 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
         return next;
       });
       toastedRef.current.delete(replacement.id);
-      await queryClient.setQueryData(
+      notifyTerminal(replacement, toastedRef.current, toast);
+      queryClient.setQueryData(
         [AI_OPERATION_QUERY_KEY, replacement.id],
         replacement,
       );
     },
-    [queryClient],
+    [queryClient, toast],
   );
 
   const value = useMemo<AiOperationsContextValue>(
