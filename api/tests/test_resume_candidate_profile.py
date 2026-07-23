@@ -302,16 +302,17 @@ async def test_resume_upload_returns_ai_operation_contract(
 
 
 @pytest.mark.asyncio
-async def test_resume_upload_duplicate_reuses_active_operation(
+async def test_resume_upload_maps_reuse_outcome_to_ai_operation_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Each upload uses a unique resume_id key; this asserts accepted-shape on reuse outcomes."""
     from fastapi import Response
 
     from hireloop_api.routes import resumes
 
     db = _UploadDb()
-    queued = _parse_operation(status="running")
-    enqueue = AsyncMock(return_value=SimpleNamespace(operation=queued, created=False))
+    reused = _parse_operation(status="running")
+    enqueue = AsyncMock(return_value=SimpleNamespace(operation=reused, created=False))
     storage = SimpleNamespace(from_=lambda _bucket: SimpleNamespace(upload=lambda **_k: None))
     supabase = SimpleNamespace(storage=storage)
 
@@ -331,28 +332,23 @@ async def test_resume_upload_duplicate_reuses_active_operation(
     monkeypatch.setattr(resumes, "_sync_user_display_name_from_resume", AsyncMock())
     monkeypatch.setattr("hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", enqueue)
 
-    settings = Settings(
-        _env_file=None,
-        environment="test",
-        supabase_url="https://example.supabase.co",
-        supabase_service_key="service-key",
-    )  # type: ignore[call-arg]
-    user = {"id": str(uuid.uuid4())}
-    first = await resumes.upload_resume(
+    response = Response()
+    out = await resumes.upload_resume(
         file=_FakeUploadFile(),  # type: ignore[arg-type]
-        response=Response(),
-        current_user=user,
-        settings=settings,
-        db=db,  # type: ignore[arg-type]
-    )
-    second = await resumes.upload_resume(
-        file=_FakeUploadFile(),  # type: ignore[arg-type]
-        response=Response(),
-        current_user=user,
-        settings=settings,
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=Settings(
+            _env_file=None,
+            environment="test",
+            supabase_url="https://example.supabase.co",
+            supabase_service_key="service-key",
+        ),  # type: ignore[call-arg]
         db=db,  # type: ignore[arg-type]
     )
 
-    assert first.operation_id == second.operation_id == queued.id
-    assert first.status_url == second.status_url
-    assert first.retry_after_ms == second.retry_after_ms == 1500
+    assert response.status_code == 202
+    assert out.operation_id == reused.id
+    assert out.status == "running"
+    assert out.status_url == f"/api/v1/ai-operations/{reused.id}"
+    assert out.retry_after_ms == 1500
+    enqueue.assert_awaited_once()

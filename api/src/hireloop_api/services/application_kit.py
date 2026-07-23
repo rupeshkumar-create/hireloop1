@@ -713,26 +713,6 @@ async def _prepare_application_kit_for_candidate_row(
     }
 
 
-async def run_application_kit_job(settings: Settings, candidate_id: str, job_id: str) -> None:
-    """Background worker entrypoint for one candidate/job application kit."""
-    from hireloop_api.deps import get_db_pool
-
-    pool = await get_db_pool(settings)
-    async with pool.acquire() as db:
-        result = await prepare_application_kit_for_candidate(
-            db,
-            uuid.UUID(candidate_id),
-            job_id,
-            settings,
-        )
-    if result.get("error"):
-        raise RuntimeError(str(result["error"]))
-    resume = result.get("resume") if isinstance(result.get("resume"), dict) else {}
-    if not resume.get("resume_id"):
-        status = str(resume.get("status") or "unavailable")
-        raise RuntimeError(f"Application kit finished without a tailored resume ({status}).")
-
-
 async def prepare_application_kit_operation(
     pool: asyncpg.Pool,
     *,

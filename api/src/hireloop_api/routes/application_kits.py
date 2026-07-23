@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import asyncpg
 import structlog
@@ -13,6 +13,9 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services import background_jobs
+
+if TYPE_CHECKING:
+    from hireloop_api.services.ai_operations import EnqueueAiOperationOutcome
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/application-kits", tags=["application-kits"])
@@ -58,7 +61,7 @@ async def enqueue_application_kit_generation(
     user_id: uuid.UUID,
     candidate_id: uuid.UUID,
     job_id: uuid.UUID,
-) -> object:
+) -> EnqueueAiOperationOutcome:
     """Queue (or reuse) durable kit generation for one candidate+job pair."""
     from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
 

@@ -521,7 +521,7 @@ async def _sync_user_display_name_from_resume(
     )
 
 
-@router.post("/upload", response_model=ResumeUploadResponse | AiOperationAccepted, status_code=201)
+@router.post("/upload", response_model=ResumeUploadResponse | AiOperationAccepted, status_code=202)
 async def upload_resume(
     file: Annotated[UploadFile, File(description="PDF or DOCX resume, max 10MB")],
     response: Response,

@@ -9,28 +9,15 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 
 import asyncpg
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services.rate_limit import check_rate_limit
-from hireloop_api.services.resume_tailor import (
-    generate_tailored_html,
-    resume_summary_line,
-    save_tailored_resume,
-)
-from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
-from hireloop_api.services.tailored_resume_settings import (
-    fetch_tailored_resume_enabled,
-    tailored_resume_enabled,
-)
+from hireloop_api.services.tailored_resume_settings import tailored_resume_enabled
 
-logger = structlog.get_logger()
 router = APIRouter(prefix="/tailored-resumes", tags=["resumes-tailor"])
 
 
@@ -39,95 +26,12 @@ class TailorRequest(BaseModel):
     template: str = Field(default="modern", pattern="^(modern|classic|minimal)$")
 
 
-async def _run_tailor_task(
-    candidate_id: uuid.UUID,
-    job_id: uuid.UUID,
-    template: str,
-    settings: Settings,
-) -> None:
-    from hireloop_api.deps import get_db_pool
-
-    pool = await get_db_pool(settings)
-    async with pool.acquire() as db:
-        if not await fetch_tailored_resume_enabled(db, candidate_id):
-            await db.execute(
-                """
-                UPDATE public.tailored_resumes
-                SET status = 'failed',
-                    error_message = 'Tailored resumes are disabled in candidate settings.'
-                WHERE candidate_id = $1 AND job_id = $2
-                """,
-                candidate_id,
-                job_id,
-            )
-            return
-
-        profile = await load_tailored_resume_profile(db, candidate_id)
-        job = await db.fetchrow(
-            """
-            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
-                   co.name AS company_name
-            FROM public.jobs j
-            LEFT JOIN public.companies co ON co.id = j.company_id
-            WHERE j.id = $1
-            """,
-            job_id,
-        )
-        if not profile or not job:
-            return
-
-        llm = ChatOpenAI(
-            model=settings.openrouter_primary_model,
-            openai_api_key=settings.openrouter_api_key,
-            openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0.3,
-            max_tokens=4096,  # resumes can be long
-            default_headers={
-                "HTTP-Referer": "https://hireschema.com",
-                "X-Title": "Hireschema - Resume Tailor",
-            },
-        )
-        job_d = dict(job)
-        try:
-            html = await generate_tailored_html(
-                llm=llm,
-                candidate_profile=profile,
-                job=job_d,
-                template=template,
-            )
-            summary = resume_summary_line(html)
-            await save_tailored_resume(
-                db,
-                candidate_id=candidate_id,
-                job_id=job_id,
-                template=template,
-                html_content=html,
-                summary_line=summary,
-            )
-        except Exception as exc:
-            logger.error("tailor_failed", error=str(exc))
-            await db.execute(
-                """
-                INSERT INTO public.tailored_resumes
-                  (candidate_id, job_id, template, file_path, status, error_message)
-                VALUES ($1, $2, $3, 'failed', 'failed', $4)
-                ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-                  status = 'failed', error_message = $4
-                """,
-                candidate_id,
-                job_id,
-                template,
-                str(exc)[:500],
-            )
-
-
 @router.post("/tailor")
 async def request_tailored_resume(
     body: TailorRequest,
     response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
-    settings: Settings = Depends(get_settings),
 ) -> dict | AiOperationAccepted:
 
     candidate = await db.fetchrow(
@@ -202,11 +106,12 @@ async def request_tailored_resume(
                 "status": "ready",
                 "download_path": f"/api/v1/tailored-resumes/tailored/{resume_id}",
             }
+        # Expired ready / failed / processing rows must flip to processing while regenerating.
         await db.execute(
             """
             UPDATE public.tailored_resumes
             SET status = 'processing', template = $3, error_message = NULL
-            WHERE candidate_id = $1 AND job_id = $2 AND status <> 'ready'
+            WHERE candidate_id = $1 AND job_id = $2
             """,
             candidate_id,
             body.job_id,

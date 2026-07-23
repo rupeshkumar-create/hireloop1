@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import Response
 
-from hireloop_api.config import Settings
 from hireloop_api.models.ai_operation import AiOperationResponse
 from hireloop_api.routes import tailored_resumes
 from hireloop_api.services.tailored_resume_settings import tailored_resume_enabled
@@ -92,7 +91,6 @@ async def test_tailored_resume_submission_returns_ai_operation_contract(
         response=response,
         current_user={"id": str(uuid.uuid4())},
         db=db,  # type: ignore[arg-type]
-        settings=Settings(_env_file=None, environment="test"),  # type: ignore[call-arg]
     )
 
     assert response.status_code == 202
@@ -119,20 +117,17 @@ async def test_tailored_resume_duplicate_reuses_active_operation(
     monkeypatch.setattr(tailored_resumes, "check_rate_limit", rate_limit)
 
     user = {"id": str(uuid.uuid4())}
-    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
     first = await tailored_resumes.request_tailored_resume(
         body=tailored_resumes.TailorRequest(job_id=db.job_id),
         response=Response(),
         current_user=user,
         db=db,  # type: ignore[arg-type]
-        settings=settings,
     )
     second = await tailored_resumes.request_tailored_resume(
         body=tailored_resumes.TailorRequest(job_id=db.job_id),
         response=Response(),
         current_user=user,
         db=db,  # type: ignore[arg-type]
-        settings=settings,
     )
 
     assert first.operation_id == second.operation_id == queued.id
@@ -140,3 +135,56 @@ async def test_tailored_resume_duplicate_reuses_active_operation(
     assert first.retry_after_ms == second.retry_after_ms == 1500
     assert enqueue.await_count == 2
     rate_limit.assert_not_awaited()
+
+
+class _ExpiredReadyTailorDb(_TailorDb):
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates: list[tuple[str, tuple[object, ...]]] = []
+        self.expired_at = datetime(2020, 1, 1, tzinfo=UTC)
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        if "FROM public.candidates" in query:
+            return {"id": self.candidate_id, "tailored_resume_enabled": True}
+        if "FROM public.tailored_resumes" in query and "expires_at > NOW()" in query:
+            return None
+        if "INSERT INTO public.tailored_resumes" in query:
+            return None
+        if "SELECT id, status, expires_at FROM public.tailored_resumes" in query:
+            return {
+                "id": self.resume_id,
+                "status": "ready",
+                "expires_at": self.expired_at,
+            }
+        return None
+
+    async def execute(self, query: str, *args: object) -> str:
+        self.updates.append((query, args))
+        return "UPDATE 1"
+
+
+@pytest.mark.asyncio
+async def test_expired_ready_tailored_resume_flips_to_processing_on_regenerate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _ExpiredReadyTailorDb()
+    queued = _operation()
+    enqueue = AsyncMock(return_value=SimpleNamespace(operation=queued, created=True))
+    monkeypatch.setattr("hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", enqueue)
+    monkeypatch.setattr(tailored_resumes, "check_rate_limit", AsyncMock(return_value=None))
+
+    response = Response()
+    out = await tailored_resumes.request_tailored_resume(
+        body=tailored_resumes.TailorRequest(job_id=db.job_id, template="classic"),
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert response.status_code == 202
+    assert out.operation_id == queued.id
+    assert len(db.updates) == 1
+    update_query, update_args = db.updates[0]
+    assert "SET status = 'processing'" in update_query
+    assert "status <> 'ready'" not in update_query
+    assert update_args == (db.candidate_id, db.job_id, "classic")
