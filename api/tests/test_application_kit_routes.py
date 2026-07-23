@@ -51,6 +51,9 @@ class _ExistingMissingResumeDb:
         self.kit_id = uuid.uuid4()
         self.enqueued = False
         self.active_job_id: uuid.UUID | None = None
+        self.operation_id: uuid.UUID | None = None
+        self.operation_status: str | None = None
+        self.linked_job_status: str = "running"
 
     def transaction(self) -> _Transaction:
         return _Transaction()
@@ -73,23 +76,39 @@ class _ExistingMissingResumeDb:
             "updated_at": now,
         }
 
+    def _job_row(self, *, status: str, job_id: uuid.UUID) -> dict[str, object]:
+        now = datetime.now(UTC)
+        completed = now if status in {"completed", "failed"} else None
+        return {
+            "id": job_id,
+            "status": status,
+            "last_error": "boom" if status == "failed" else None,
+            "attempts": 3 if status == "failed" else 1,
+            "max_attempts": 3,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": completed,
+        }
+
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         if "FROM public.candidates" in query:
             return {"id": self.candidate_id}
-        if "FROM public.background_jobs" in query:
-            if not self.active_job_id:
+        if "FROM public.ai_operations" in query:
+            if self.operation_id is None or self.operation_status is None:
                 return None
             now = datetime.now(UTC)
             return {
-                "id": self.active_job_id,
-                "status": "running",
-                "last_error": None,
-                "attempts": 1,
-                "max_attempts": 3,
+                "id": self.operation_id,
+                "status": self.operation_status,
+                "background_job_id": self.active_job_id,
                 "created_at": now,
                 "updated_at": now,
-                "completed_at": None,
+                "completed_at": None if self.operation_status in {"queued", "running"} else now,
             }
+        if "FROM public.background_jobs" in query:
+            if not self.active_job_id:
+                return None
+            return self._job_row(status=self.linked_job_status, job_id=self.active_job_id)
         if "FROM public.jobs" in query:
             return {"id": self.job_id}
         if "FROM public.job_application_kits" in query:
@@ -263,6 +282,23 @@ async def test_get_existing_kit_without_resume_stays_not_ready_while_job_active(
     assert exc_info.value.detail == "Application kit is still preparing"
 
 
+async def test_get_existing_kit_stays_not_ready_while_ai_operation_active() -> None:
+    db = _ExistingMissingResumeDb()
+    db.operation_id = uuid.uuid4()
+    db.operation_status = "running"
+    db.active_job_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await application_kits.get_application_kit_for_job(
+            str(db.job_id),
+            current_user={"id": str(uuid.uuid4())},
+            db=db,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Application kit is still preparing"
+
+
 async def test_status_reports_processing_for_active_background_job() -> None:
     db = _ExistingMissingResumeDb()
     db.active_job_id = uuid.uuid4()
@@ -276,6 +312,43 @@ async def test_status_reports_processing_for_active_background_job() -> None:
     assert out["status"] == "processing"
     assert out["saved"] is True
     assert out["background_job"]["id"] == str(db.active_job_id)
+
+
+async def test_status_reports_processing_for_queued_ai_operation() -> None:
+    db = _ExistingMissingResumeDb()
+    db.operation_id = uuid.uuid4()
+    db.operation_status = "queued"
+    db.active_job_id = uuid.uuid4()
+    db.linked_job_status = "pending"
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "processing"
+    assert out["saved"] is True
+    assert out["background_job"]["id"] == str(db.active_job_id)
+    assert out["background_job"]["status"] == "pending"
+
+
+async def test_status_reports_processing_for_running_ai_operation_without_legacy_key() -> None:
+    """Prepare enqueues with ai_operation:{id}; status must not require the old key."""
+    db = _ExistingMissingResumeDb()
+    db.operation_id = uuid.uuid4()
+    db.operation_status = "running"
+    db.active_job_id = uuid.uuid4()
+    db.linked_job_status = "running"
+
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert out["status"] == "processing"
+    assert out["message"] == "Preparing your resume, cover letter, and interview prep."
 
 
 async def test_status_incomplete_kit_without_resume_is_missing_not_ready() -> None:
@@ -314,31 +387,26 @@ async def test_status_returns_ready_only_when_tailored_resume_exists() -> None:
 
 
 async def test_status_reports_failed_when_job_completed_without_resume() -> None:
-    class _CompletedIncompleteDb(_ExistingMissingResumeDb):
-        def __init__(self) -> None:
-            super().__init__()
-            self.completed_job_id = uuid.uuid4()
+    db = _ExistingMissingResumeDb()
+    db.active_job_id = uuid.uuid4()
+    db.linked_job_status = "completed"
 
-        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
-            if "FROM public.candidates" in query:
-                return {"id": self.candidate_id}
-            if "FROM public.background_jobs" in query:
-                now = datetime.now(UTC)
-                return {
-                    "id": self.completed_job_id,
-                    "status": "completed",
-                    "last_error": None,
-                    "attempts": 1,
-                    "max_attempts": 3,
-                    "created_at": now,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            if "FROM public.job_application_kits" in query:
-                return self._kit_row()
-            return None
+    out = await application_kits.get_application_kit_status_for_job(
+        str(db.job_id),
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
 
-    db = _CompletedIncompleteDb()
+    assert out["status"] == "failed"
+    assert "resume" in out["message"].lower()
+
+
+async def test_status_reports_failed_when_ai_operation_succeeded_without_resume() -> None:
+    db = _ExistingMissingResumeDb()
+    db.operation_id = uuid.uuid4()
+    db.operation_status = "succeeded"
+    db.active_job_id = uuid.uuid4()
+    db.linked_job_status = "completed"
 
     out = await application_kits.get_application_kit_status_for_job(
         str(db.job_id),
@@ -352,30 +420,14 @@ async def test_status_reports_failed_when_job_completed_without_resume() -> None
 
 async def test_status_reports_failed_background_job_without_assets() -> None:
     class _FailedDb(_ExistingMissingResumeDb):
-        def __init__(self) -> None:
-            super().__init__()
-            self.failed_job_id = uuid.uuid4()
-
         async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
-            if "FROM public.candidates" in query:
-                return {"id": self.candidate_id}
-            if "FROM public.background_jobs" in query:
-                now = datetime.now(UTC)
-                return {
-                    "id": self.failed_job_id,
-                    "status": "failed",
-                    "last_error": "boom",
-                    "attempts": 3,
-                    "max_attempts": 3,
-                    "created_at": now,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
             if "FROM public.job_application_kits" in query:
                 return None
-            return None
+            return await super().fetchrow(query, *args)
 
     db = _FailedDb()
+    db.active_job_id = uuid.uuid4()
+    db.linked_job_status = "failed"
 
     out = await application_kits.get_application_kit_status_for_job(
         str(db.job_id),
@@ -387,3 +439,55 @@ async def test_status_reports_failed_background_job_without_assets() -> None:
     assert out["saved"] is False
     assert out["background_job"]["status"] == "failed"
     assert "Please retry" in out["message"]
+
+
+async def test_chat_application_kit_path_enqueues_ai_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hireloop_api.routes import chat
+
+    candidate_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    enqueued: dict[str, object] = {}
+
+    class _ChatDb:
+        def transaction(self) -> _Transaction:
+            return _Transaction()
+
+    async def _fake_enqueue(db_arg: object, **kwargs: object) -> object:
+        enqueued.update(kwargs)
+        now = datetime.now(UTC)
+        operation = AiOperationResponse.model_validate(
+            {
+                "id": uuid.uuid4(),
+                "kind": "application_kit",
+                "status": "queued",
+                "progress_percent": 0,
+                "stage": "queued",
+                "message": "Your application kit is queued.",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return type("Outcome", (), {"operation": operation, "created": True})()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", _fake_enqueue
+    )
+
+    await chat._enqueue_chat_application_kits(
+        _ChatDb(),  # type: ignore[arg-type]
+        user_id=str(user_id),
+        candidate_id=str(candidate_id),
+        job_ids=[str(job_id)],
+    )
+
+    assert enqueued["kind"] == "application_kit"
+    assert enqueued["idempotency_key"] == f"application_kit:{candidate_id}:{job_id}"
+    assert enqueued["resource_type"] == "job"
+    assert enqueued["resource_id"] == job_id
+    assert enqueued["payload"] == {
+        "candidate_id": str(candidate_id),
+        "job_id": str(job_id),
+    }

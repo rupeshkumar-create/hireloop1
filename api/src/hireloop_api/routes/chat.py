@@ -177,6 +177,28 @@ def _extract_application_kit_job_ids(text: str) -> list[str]:
     return list(dict.fromkeys(match.group(0).lower() for match in _JOB_UUID_RE.finditer(text)))[:3]
 
 
+async def _enqueue_chat_application_kits(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    candidate_id: str,
+    job_ids: list[str],
+) -> None:
+    """Queue durable application-kit operations for chat-triggered apply requests."""
+    from hireloop_api.routes.application_kits import enqueue_application_kit_generation
+
+    user_uuid = uuid.UUID(str(user_id))
+    candidate_uuid = uuid.UUID(str(candidate_id))
+    for job_id in job_ids:
+        async with db.transaction():
+            await enqueue_application_kit_generation(
+                db,
+                user_id=user_uuid,
+                candidate_id=candidate_uuid,
+                job_id=uuid.UUID(str(job_id)),
+            )
+
+
 def _build_application_kit_reply(result: dict) -> str:
     """Compact deterministic reply after preparing application-kit assets."""
     kits = result.get("kits") if isinstance(result, dict) else None
@@ -1325,20 +1347,13 @@ async def send_message(
                     eta_sec=tool_status_eta("prepare_application_kit"),
                     hinglish_hint=hinglish,
                 )
-                from hireloop_api.services.background_jobs import APPLICATION_KIT, enqueue_job
-
                 async with pool.acquire() as db:
-                    for job_id in application_kit_job_ids:
-                        await enqueue_job(
-                            db,
-                            kind=APPLICATION_KIT,
-                            payload={
-                                "candidate_id": candidate_id,
-                                "job_id": job_id,
-                            },
-                            idempotency_key=f"application_kit:{candidate_id}:{job_id}",
-                            max_attempts=3,
-                        )
+                    await _enqueue_chat_application_kits(
+                        db,
+                        user_id=str(current_user["id"]),
+                        candidate_id=str(candidate_id),
+                        job_ids=application_kit_job_ids,
+                    )
                 full_response = (
                     "I'm building your application kit in the background — "
                     "I'll add the cards here as soon as they're ready. "

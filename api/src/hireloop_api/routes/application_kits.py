@@ -52,12 +52,66 @@ def _application_kit_job_key(candidate_id: uuid.UUID, job_id: uuid.UUID) -> str:
     return f"application_kit:{candidate_id}:{job_id}"
 
 
-async def _latest_application_kit_job(
+async def enqueue_application_kit_generation(
+    db: asyncpg.Connection,
+    *,
+    user_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> object:
+    """Queue (or reuse) durable kit generation for one candidate+job pair."""
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+
+    return await enqueue_ai_operation_outcome(
+        db,
+        user_id=user_id,
+        candidate_id=candidate_id,
+        kind=background_jobs.APPLICATION_KIT,
+        payload={"candidate_id": str(candidate_id), "job_id": str(job_id)},
+        idempotency_key=_application_kit_job_key(candidate_id, job_id),
+        resource_type="job",
+        resource_id=job_id,
+        stage="queued",
+        message="Your application kit is queued.",
+        max_attempts=3,
+    )
+
+
+async def _latest_application_kit_operation(
     db: asyncpg.Connection,
     *,
     candidate_id: uuid.UUID,
     job_id: uuid.UUID,
 ) -> asyncpg.Record | None:
+    """Latest user-safe kit generation projection for candidate+job."""
+    return await db.fetchrow(
+        """
+        SELECT id, status, background_job_id, created_at, updated_at, completed_at
+        FROM public.ai_operations
+        WHERE candidate_id = $1
+          AND kind = $2
+          AND deleted_at IS NULL
+          AND (
+            (resource_type = 'job' AND resource_id = $3)
+            OR idempotency_key = $4
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        candidate_id,
+        background_jobs.APPLICATION_KIT,
+        job_id,
+        _application_kit_job_key(candidate_id, job_id),
+    )
+
+
+async def _legacy_application_kit_job(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> asyncpg.Record | None:
+    """Pre-ai_operations queue rows keyed by application_kit:{candidate}:{job}."""
     return await db.fetchrow(
         """
         SELECT id, status, last_error, attempts, max_attempts,
@@ -73,13 +127,80 @@ async def _latest_application_kit_job(
     )
 
 
+async def _linked_background_job(
+    db: asyncpg.Connection,
+    background_job_id: uuid.UUID | None,
+) -> asyncpg.Record | None:
+    if background_job_id is None:
+        return None
+    return await db.fetchrow(
+        """
+        SELECT id, status, last_error, attempts, max_attempts,
+               created_at, updated_at, completed_at
+        FROM public.background_jobs
+        WHERE id = $1
+        """,
+        background_job_id,
+    )
+
+
+async def _latest_application_kit_job(
+    db: asyncpg.Connection,
+    *,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> asyncpg.Record | None:
+    """Linked private queue row for status clients; prefers ai_operations linkage."""
+    operation = await _latest_application_kit_operation(
+        db, candidate_id=candidate_id, job_id=job_id
+    )
+    if operation is not None:
+        linked = await _linked_background_job(
+            db,
+            uuid.UUID(str(operation["background_job_id"]))
+            if operation["background_job_id"] is not None
+            else None,
+        )
+        if linked is not None:
+            return linked
+    return await _legacy_application_kit_job(db, candidate_id=candidate_id, job_id=job_id)
+
+
+def _generation_lifecycle_status(
+    *,
+    operation_status: str | None,
+    job_status: str | None,
+) -> str | None:
+    """Map operation/legacy queue state onto the kit status endpoint vocabulary."""
+    if operation_status in {"queued", "running"}:
+        return "processing"
+    if operation_status == "failed":
+        return "failed"
+    if operation_status == "succeeded":
+        return "completed"
+    if operation_status == "cancelled":
+        return None
+    if job_status in {"pending", "running"}:
+        return "processing"
+    if job_status == "failed":
+        return "failed"
+    if job_status == "completed":
+        return "completed"
+    return None
+
+
 async def _active_application_kit_job_id(
     db: asyncpg.Connection,
     *,
     candidate_id: uuid.UUID,
     job_id: uuid.UUID,
 ) -> uuid.UUID | None:
-    job = await _latest_application_kit_job(db, candidate_id=candidate_id, job_id=job_id)
+    operation = await _latest_application_kit_operation(
+        db, candidate_id=candidate_id, job_id=job_id
+    )
+    if operation is not None and operation["status"] in {"queued", "running"}:
+        return uuid.UUID(str(operation["id"]))
+    job = await _legacy_application_kit_job(db, candidate_id=candidate_id, job_id=job_id)
     if not job or job["status"] not in {"pending", "running"}:
         return None
     return uuid.UUID(str(job["id"]))
@@ -188,9 +309,13 @@ async def get_application_kit_status_for_job(
         raise HTTPException(status_code=400, detail="Invalid job ID") from exc
 
     row = await _application_kit_row_for_job(db, candidate_id=cid, job_id=job_uuid)
+    operation = await _latest_application_kit_operation(db, candidate_id=cid, job_id=job_uuid)
     job = await _latest_application_kit_job(db, candidate_id=cid, job_id=job_uuid)
     background_job = _serialize_background_job(job)
-    job_status = job["status"] if job else None
+    lifecycle = _generation_lifecycle_status(
+        operation_status=str(operation["status"]) if operation else None,
+        job_status=str(job["status"]) if job else None,
+    )
 
     # Ready only when a tailored resume exists — cover/interview-only rows are incomplete.
     if row and row["tailored_resume_id"]:
@@ -202,7 +327,7 @@ async def get_application_kit_status_for_job(
             "background_job": background_job,
         }
 
-    if job_status in {"pending", "running"}:
+    if lifecycle == "processing":
         return {
             "status": "processing",
             "saved": bool(row),
@@ -211,7 +336,7 @@ async def get_application_kit_status_for_job(
             "message": "Preparing your resume, cover letter, and interview prep.",
         }
 
-    if job_status == "failed":
+    if lifecycle == "failed":
         return {
             "status": "failed",
             "saved": bool(row),
@@ -220,7 +345,7 @@ async def get_application_kit_status_for_job(
             "message": "Application kit generation failed. Please retry from the job card.",
         }
 
-    if job_status == "completed" and (not row or not row["tailored_resume_id"]):
+    if lifecycle == "completed" and (not row or not row["tailored_resume_id"]):
         return {
             "status": "failed",
             "saved": bool(row),
@@ -270,8 +395,6 @@ async def prepare_application_kit_for_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     try:
-        from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
-
         async with db.transaction():
             await db.execute(
                 """
@@ -282,18 +405,11 @@ async def prepare_application_kit_for_job(
                 cid,
                 job_uuid,
             )
-            outcome = await enqueue_ai_operation_outcome(
+            outcome = await enqueue_application_kit_generation(
                 db,
                 user_id=uuid.UUID(str(current_user["id"])),
                 candidate_id=cid,
-                kind=background_jobs.APPLICATION_KIT,
-                payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
-                idempotency_key=_application_kit_job_key(cid, job_uuid),
-                resource_type="job",
-                resource_id=job_uuid,
-                stage="queued",
-                message="Your application kit is queued.",
-                max_attempts=3,
+                job_id=job_uuid,
             )
     except Exception as exc:
         logger.exception(
