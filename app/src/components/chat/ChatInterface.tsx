@@ -70,9 +70,15 @@ import {
   type ChatWarmupSnapshot,
 } from "@/lib/chat/warmup";
 import { prepareApplicationKit, fetchReadyApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
-import { uploadResume, applyResumeToProfile } from "@/lib/api/onboardingProfile";
+import {
+  uploadResume,
+  applyResumeToProfile,
+  fetchResumeParseStatus,
+  waitForResumeParse,
+} from "@/lib/api/onboardingProfile";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
 import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
@@ -1510,8 +1516,11 @@ export function ChatInterface({
 
     void prepareApplicationKit(jobId)
       .then((outcome) =>
-        resolveReadyOrAccepted(outcome, trackAndWait, () =>
-          fetchReadyApplicationKit(jobId),
+        resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          () => fetchReadyApplicationKit(jobId),
+          { kind: AI_OPERATION_KINDS.applicationKit },
         ),
       )
       .then((kit) => {
@@ -1598,8 +1607,18 @@ export function ChatInterface({
         let resumeId: string;
         if (outcome.status === "ready") {
           resumeId = outcome.data.resume_id;
+          if (outcome.data.parse_status === "failed") {
+            throw new Error(
+              outcome.data.message ?? "Couldn't parse that CV.",
+            );
+          }
+          if (outcome.data.parse_status !== "ready") {
+            await waitForResumeParse(resumeId);
+          }
         } else {
-          const terminal = await trackAndWait(outcome.operation);
+          const terminal = await trackAndWait(outcome.operation, {
+            kind: AI_OPERATION_KINDS.resumeParse,
+          });
           if (terminal.status !== "succeeded" || !terminal.result_id) {
             throw new Error(
               terminal.error_message?.trim() ||
@@ -1608,6 +1627,13 @@ export function ChatInterface({
             );
           }
           resumeId = terminal.result_id;
+          const status = await fetchResumeParseStatus(resumeId);
+          if (status.parse_status === "failed") {
+            throw new Error(status.message ?? "Couldn't parse that CV.");
+          }
+          if (status.parse_status !== "ready") {
+            await waitForResumeParse(resumeId);
+          }
         }
 
         // ── Auto-apply to profile (non-fatal) ──────────────────────────────

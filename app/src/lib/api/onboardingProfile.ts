@@ -7,9 +7,19 @@
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import {
   parseReadyOrAccepted,
+  type AiOperationAccepted,
+  type AiOperationResponse,
   type ReadyOrAccepted,
 } from "@/lib/api/aiOperations";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
+
+const RESUME_PARSE_POLL_MS = 2000;
+const RESUME_PARSE_TIMEOUT_MS = 120_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 /** LinkedIn vanity slug from a profile URL, e.g. `rupesh-kumar`. */
 export function linkedInProfileId(url: string | null | undefined): string | null {
@@ -97,6 +107,27 @@ export async function fetchResumeParseStatus(
   return res.json() as Promise<ResumeStatusPayload>;
 }
 
+/** Poll parse status until ready/failed. Used when upload returns ready-shaped
+ * data without a completed parse (legacy / partial responses). */
+export async function waitForResumeParse(
+  resumeId: string,
+): Promise<ParsedResumeSummary> {
+  const deadline = Date.now() + RESUME_PARSE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const data = await fetchResumeParseStatus(resumeId);
+    if (data.parse_status === "ready") {
+      return data.parsed ?? {};
+    }
+    if (data.parse_status === "failed") {
+      throw new Error(data.message ?? "Couldn't read that file. Try another CV.");
+    }
+    await sleep(RESUME_PARSE_POLL_MS);
+  }
+  throw new Error(
+    "CV parsing is taking longer than expected. Please try uploading again.",
+  );
+}
+
 export async function applyResumeToProfile(resumeId: string): Promise<void> {
   const applyRes = await apiAuthFetch(
     `/api/v1/resumes/${resumeId}/apply-to-profile?mode=replace`,
@@ -149,15 +180,18 @@ export async function uploadResume(
   });
 }
 
+export type WaitForAiOperation = (
+  accepted: AiOperationAccepted,
+  options?: { kind?: string },
+) => Promise<AiOperationResponse>;
+
 /**
  * Upload a CV, wait for parse via the shared operation manager when needed,
  * apply parsed fields to the profile, and return the parse summary.
  */
 export async function uploadResumeAndApply(
   file: File,
-  waitForOperation: (
-    accepted: import("@/lib/api/aiOperations").AiOperationAccepted,
-  ) => Promise<import("@/lib/api/aiOperations").AiOperationResponse>,
+  waitForOperation: WaitForAiOperation,
 ): Promise<ParsedResumeSummary> {
   const outcome = await uploadResume(file);
 
@@ -166,17 +200,21 @@ export async function uploadResumeAndApply(
 
   if (outcome.status === "ready") {
     resumeId = outcome.data.resume_id;
-    if (outcome.data.parse_status === "ready" || outcome.data.parsed) {
+    if (outcome.data.parse_status === "failed") {
+      throw new Error(
+        outcome.data.message ?? "Couldn't read that file. Try another CV.",
+      );
+    }
+    if (outcome.data.parse_status === "ready") {
       parsed = outcome.data.parsed ?? {};
     } else {
-      const status = await fetchResumeParseStatus(resumeId);
-      if (status.parse_status === "failed") {
-        throw new Error(status.message ?? "Couldn't read that file. Try another CV.");
-      }
-      parsed = status.parsed ?? {};
+      // pending / missing parse_status — do not treat empty parse as success
+      parsed = await waitForResumeParse(resumeId);
     }
   } else {
-    const terminal = await waitForOperation(outcome.operation);
+    const terminal = await waitForOperation(outcome.operation, {
+      kind: AI_OPERATION_KINDS.resumeParse,
+    });
     if (terminal.status !== "succeeded" || !terminal.result_id) {
       throw new Error(
         terminal.error_message?.trim() ||
@@ -189,7 +227,11 @@ export async function uploadResumeAndApply(
     if (status.parse_status === "failed") {
       throw new Error(status.message ?? "Couldn't read that file. Try another CV.");
     }
-    parsed = status.parsed ?? {};
+    if (status.parse_status !== "ready") {
+      parsed = await waitForResumeParse(resumeId);
+    } else {
+      parsed = status.parsed ?? {};
+    }
   }
 
   await applyResumeToProfile(resumeId);

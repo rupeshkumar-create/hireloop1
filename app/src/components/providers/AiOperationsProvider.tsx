@@ -25,6 +25,7 @@ import {
   getAiOperationPollingIntervalMs,
   isTerminalAiOperationStatus,
 } from "@/lib/operations/polling";
+import type { TrackOperationOptions } from "@/lib/operations/kinds";
 import { createClient } from "@/lib/supabase/client";
 
 const AI_OPERATION_QUERY_KEY = "ai-operation" as const;
@@ -36,13 +37,26 @@ type OperationWaiter = {
   reject: (error: Error) => void;
 };
 
+export type AiOperationsRestoreState = "idle" | "loading" | "ready";
+
 type AiOperationsContextValue = {
   operations: OperationsMap;
-  trackOperation: (accepted: AiOperationAccepted) => void;
+  /** Whether active-op restore after auth has finished (or is idle when logged out). */
+  restoreState: AiOperationsRestoreState;
+  trackOperation: (
+    accepted: AiOperationAccepted,
+    options?: TrackOperationOptions,
+  ) => void;
   /** Track and resolve when the operation reaches a terminal status. */
-  trackAndWait: (accepted: AiOperationAccepted) => Promise<AiOperationResponse>;
+  trackAndWait: (
+    accepted: AiOperationAccepted,
+    options?: TrackOperationOptions,
+  ) => Promise<AiOperationResponse>;
+  /** Wait for an already-tracked operation id to reach a terminal status. */
+  waitForOperation: (operationId: string) => Promise<AiOperationResponse>;
   cancelOperation: (operationId: string) => Promise<void>;
-  retryOperation: (operationId: string) => Promise<void>;
+  /** Retry a failed op; returns the replacement attempt (does not re-submit features). */
+  retryOperation: (operationId: string) => Promise<AiOperationResponse>;
 };
 
 type ToastApi = {
@@ -132,12 +146,16 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [operations, setOperations] = useState<OperationsMap>({});
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [restoreState, setRestoreState] =
+    useState<AiOperationsRestoreState>("idle");
   const [visibilityState, setVisibilityState] =
     useState<DocumentVisibilityState>(() =>
       typeof document === "undefined" ? "visible" : document.visibilityState,
     );
   const toastedRef = useRef<Set<string>>(new Set());
   const waitersRef = useRef<Map<string, OperationWaiter[]>>(new Map());
+  /** Latest known operations for immediate waiter settlement. */
+  const operationsRef = useRef<OperationsMap>({});
   /** Bumped on SIGNED_OUT so late restore results are ignored. */
   const authGenerationRef = useRef(0);
 
@@ -148,9 +166,14 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
         next = upsertOperation(next, row);
         settleWaiters(row, waitersRef.current);
       }
+      operationsRef.current = next;
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    operationsRef.current = operations;
+  }, [operations]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -172,7 +195,9 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
       if (!session || event === "SIGNED_OUT") {
         authGenerationRef.current += 1;
         setIsAuthenticated(false);
+        setRestoreState("idle");
         setOperations({});
+        operationsRef.current = {};
         toastedRef.current.clear();
         for (const pending of waitersRef.current.values()) {
           for (const waiter of pending) {
@@ -184,6 +209,7 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
       }
 
       setIsAuthenticated(true);
+      setRestoreState("loading");
     });
 
     return () => {
@@ -196,6 +222,7 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
 
     const generation = authGenerationRef.current;
     let cancelled = false;
+    setRestoreState("loading");
 
     void (async () => {
       try {
@@ -204,6 +231,10 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
         mergeOperations(active);
       } catch {
         /* non-fatal — polling will retry once track/restore has IDs */
+      } finally {
+        if (!cancelled && generation === authGenerationRef.current) {
+          setRestoreState("ready");
+        }
       }
     })();
 
@@ -260,32 +291,38 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     for (const operation of polledOperations) {
-      setOperations((prev) => upsertOperation(prev, operation));
+      setOperations((prev) => {
+        const next = upsertOperation(prev, operation);
+        operationsRef.current = next;
+        return next;
+      });
       notifyTerminal(operation, toastedRef.current, toast);
       settleWaiters(operation, waitersRef.current);
     }
   }, [polledOperations, toast]);
 
   const trackOperation = useCallback(
-    (accepted: AiOperationAccepted) => {
+    (accepted: AiOperationAccepted, options?: TrackOperationOptions) => {
+      const existing = operationsRef.current[accepted.operation_id];
       const placeholder: AiOperationResponse = {
         id: accepted.operation_id,
-        kind: "pending",
+        kind: options?.kind?.trim() || existing?.kind || "pending",
         status: accepted.status,
-        progress_percent: 0,
-        stage: "queued",
-        message: "Your request is queued.",
-        result_type: null,
-        result_id: null,
-        error_code: null,
-        error_message: null,
-        retryable: false,
-        created_at: new Date().toISOString(),
+        progress_percent: existing?.progress_percent ?? 0,
+        stage: existing?.stage ?? "queued",
+        message: existing?.message ?? "Your request is queued.",
+        result_type: existing?.result_type ?? null,
+        result_id: existing?.result_id ?? null,
+        error_code: existing?.error_code ?? null,
+        error_message: existing?.error_message ?? null,
+        retryable: existing?.retryable ?? false,
+        created_at: existing?.created_at ?? new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        completed_at: null,
+        completed_at: existing?.completed_at ?? null,
       };
       setOperations((prev) => {
         const next = upsertOperation(prev, placeholder);
+        operationsRef.current = next;
         settleWaiters(placeholder, waitersRef.current);
         return next;
       });
@@ -296,13 +333,38 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const waitForOperation = useCallback((operationId: string) => {
+    return new Promise<AiOperationResponse>((resolve, reject) => {
+      const current = operationsRef.current[operationId];
+      if (current && isTerminalAiOperationStatus(current.status)) {
+        if (current.status === "succeeded") {
+          resolve(current);
+          return;
+        }
+        reject(
+          new Error(
+            current.error_message?.trim() ||
+              current.message.trim() ||
+              (current.status === "cancelled"
+                ? "Cancelled."
+                : "Something went wrong. Try again."),
+          ),
+        );
+        return;
+      }
+      const existing = waitersRef.current.get(operationId) ?? [];
+      existing.push({ resolve, reject });
+      waitersRef.current.set(operationId, existing);
+    });
+  }, []);
+
   const trackAndWait = useCallback(
-    (accepted: AiOperationAccepted) => {
+    (accepted: AiOperationAccepted, options?: TrackOperationOptions) => {
       return new Promise<AiOperationResponse>((resolve, reject) => {
         const existing = waitersRef.current.get(accepted.operation_id) ?? [];
         existing.push({ resolve, reject });
         waitersRef.current.set(accepted.operation_id, existing);
-        trackOperation(accepted);
+        trackOperation(accepted, options);
       });
     },
     [trackOperation],
@@ -311,7 +373,11 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
   const cancelOperation = useCallback(
     async (operationId: string) => {
       const updated = await cancelAiOperation(operationId);
-      setOperations((prev) => upsertOperation(prev, updated));
+      setOperations((prev) => {
+        const next = upsertOperation(prev, updated);
+        operationsRef.current = next;
+        return next;
+      });
       notifyTerminal(updated, toastedRef.current, toast);
       settleWaiters(updated, waitersRef.current);
       queryClient.setQueryData([AI_OPERATION_QUERY_KEY, operationId], updated);
@@ -326,6 +392,7 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
         const next = { ...prev };
         // Keep the failed attempt visible until UI decides; always track the new one.
         next[replacement.id] = replacement;
+        operationsRef.current = next;
         return next;
       });
       toastedRef.current.delete(replacement.id);
@@ -335,6 +402,7 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
         [AI_OPERATION_QUERY_KEY, replacement.id],
         replacement,
       );
+      return replacement;
     },
     [queryClient, toast],
   );
@@ -342,12 +410,22 @@ export function AiOperationsProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AiOperationsContextValue>(
     () => ({
       operations,
+      restoreState,
       trackOperation,
       trackAndWait,
+      waitForOperation,
       cancelOperation,
       retryOperation,
     }),
-    [operations, trackOperation, trackAndWait, cancelOperation, retryOperation],
+    [
+      operations,
+      restoreState,
+      trackOperation,
+      trackAndWait,
+      waitForOperation,
+      cancelOperation,
+      retryOperation,
+    ],
   );
 
   return (

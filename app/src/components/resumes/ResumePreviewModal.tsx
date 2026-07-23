@@ -26,7 +26,12 @@ import {
   type JobApplicationKit,
 } from "@/lib/api/applicationKit";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
-import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import {
+  resolveReadyOrAccepted,
+  terminalOperationError,
+  waitForTrackedOperation,
+} from "@/lib/operations/resolve";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
 import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
 
 type Tab = "resume" | "cover_letter" | "interview_prep";
@@ -54,8 +59,13 @@ export function ResumePreviewModal({
   interviewPrep?: string | null;
 }) {
   const { toast } = useToast();
-  const { trackAndWait, operations, cancelOperation, retryOperation } =
-    useAiOperations();
+  const {
+    trackAndWait,
+    waitForOperation,
+    operations,
+    cancelOperation,
+    retryOperation,
+  } = useAiOperations();
   const [tab, setTab] = useState<Tab>("resume");
   const [html, setHtml] = useState<string | null>(null);
   const [kit, setKit] = useState<JobApplicationKit | null>(null);
@@ -82,6 +92,7 @@ export function ResumePreviewModal({
           outcome,
           trackAndWait,
           () => fetchReadyApplicationKit(jobId),
+          { kind: AI_OPERATION_KINDS.applicationKit },
         );
         kitData = {
           id: prepared.kit_id ?? kitData?.id ?? "",
@@ -127,6 +138,46 @@ export function ResumePreviewModal({
       setLoading(false);
     }
   }, [resumeId, jobId, initialTab, coverLetterProp, interviewPrepProp, trackAndWait]);
+
+  const handleRetryActive = useCallback(async () => {
+    if (!activeOpId || !jobId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const replacement = await retryOperation(activeOpId);
+      setActiveOpId(replacement.id);
+      const terminal = await waitForTrackedOperation(
+        replacement,
+        waitForOperation,
+      );
+      if (terminal.status !== "succeeded") {
+        throw terminalOperationError(terminal);
+      }
+      const prepared = await fetchReadyApplicationKit(jobId);
+      const resolvedResumeId = prepared.resume?.resume_id ?? null;
+      setKit({
+        id: prepared.kit_id ?? "",
+        job_id: jobId,
+        job_title: prepared.job?.title ?? null,
+        company_name: prepared.job?.company_name ?? null,
+        cover_letter: prepared.cover_letter,
+        interview_prep: prepared.interview_prep,
+        tailored_resume_id: resolvedResumeId,
+        mock_interview_id: prepared.mock_interview?.mock_interview_id ?? null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      setEffectiveResumeId(resolvedResumeId);
+      if (resolvedResumeId) {
+        setHtml(await fetchTailoredResumeHtml(resolvedResumeId));
+      }
+      setActiveOpId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't load preview");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeOpId, jobId, retryOperation, waitForOperation]);
 
   useEffect(() => {
     if (open) void load();
@@ -217,9 +268,7 @@ export function ResumePreviewModal({
                   void cancelOperation(activeOpId).catch(() => undefined);
                 }}
                 onRetry={() => {
-                  void retryOperation(activeOpId)
-                    .then(() => load())
-                    .catch(() => undefined);
+                  void handleRetryActive();
                 }}
               />
             </div>

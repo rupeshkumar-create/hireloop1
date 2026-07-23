@@ -44,7 +44,15 @@ import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
-import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import {
+  resolveReadyOrAccepted,
+  terminalOperationError,
+  waitForTrackedOperation,
+} from "@/lib/operations/resolve";
+import {
+  AI_OPERATION_KINDS,
+  findActiveOperationByKind,
+} from "@/lib/operations/kinds";
 import { JobCard } from "./JobCard";
 
 interface CareerPathPanelProps {
@@ -91,8 +99,14 @@ export function CareerPathPanel({
   const [searched, setSearched] = useState(false);
   const [sourceAvailable, setSourceAvailable] = useState(true);
   const [activeOpId, setActiveOpId] = useState<string | null>(null);
-  const { trackAndWait, operations, cancelOperation, retryOperation } =
-    useAiOperations();
+  const {
+    trackAndWait,
+    waitForOperation,
+    operations,
+    restoreState,
+    cancelOperation,
+    retryOperation,
+  } = useAiOperations();
 
   const {
     kitByJob,
@@ -125,59 +139,69 @@ export function CareerPathPanel({
     };
   }, []);
 
-  // Restore / pick up an in-flight career path generation after reload.
+  // Restore / terminal handling for career_path_generate only (never "pending").
   useEffect(() => {
     if (path) return;
-    const active = Object.values(operations).find(
-      (op) =>
-        (op.kind === "career_path_generate" || op.kind === "pending") &&
-        (op.status === "queued" || op.status === "running"),
+
+    const active = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerPathGenerate,
     );
     if (active) {
       setActiveOpId(active.id);
       setAutoBuilding(true);
-    }
-    const succeeded = Object.values(operations).find(
-      (op) => op.kind === "career_path_generate" && op.status === "succeeded",
-    );
-    if (!succeeded) return;
-    let cancelled = false;
-    void fetchCareerPath().then((next) => {
-      if (cancelled || !next) return;
-      setPath(next);
-      setAutoBuilding(false);
-      setActiveOpId(null);
-      setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [operations, path]);
-
-  // ── Auto-build when no path exists ─────────────────────────────────────────
-  useEffect(() => {
-    if (loadingPath || path) return;
-
-    let cancelled = false;
-    let started = false;
-
-    void (async () => {
-      // Prefer an already-tracked operation (reload recovery) over a new submit.
-      const existing = Object.values(operations).find(
-        (op) =>
-          (op.kind === "career_path_generate" || op.kind === "pending") &&
-          (op.status === "queued" || op.status === "running"),
-      );
-      if (existing) {
-        setActiveOpId(existing.id);
-        setAutoBuilding(true);
-        return;
-      }
-
-      if (started) return;
-      started = true;
-      setAutoBuilding(true);
       setPathError(null);
+      return;
+    }
+
+    if (!activeOpId) return;
+    const tracked = operations[activeOpId];
+    if (!tracked || tracked.kind !== AI_OPERATION_KINDS.careerPathGenerate) {
+      return;
+    }
+
+    if (tracked.status === "succeeded") {
+      let cancelled = false;
+      void fetchCareerPath().then((next) => {
+        if (cancelled || !next) return;
+        setPath(next);
+        setAutoBuilding(false);
+        setActiveOpId(null);
+        setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (tracked.status === "failed" || tracked.status === "cancelled") {
+      setAutoBuilding(false);
+      setPathError(
+        tracked.error_message?.trim() ||
+          tracked.message.trim() ||
+          "Couldn't build your path",
+      );
+    }
+  }, [operations, path, activeOpId]);
+
+  // ── Auto-build when no path exists (after restore settles) ─────────────────
+  useEffect(() => {
+    if (loadingPath || path || restoreState !== "ready") return;
+
+    const existing = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerPathGenerate,
+    );
+    if (existing) {
+      setActiveOpId(existing.id);
+      setAutoBuilding(true);
+      return;
+    }
+
+    let cancelled = false;
+    setAutoBuilding(true);
+    setPathError(null);
+    void (async () => {
       try {
         const outcome = await generateCareerPath();
         if (cancelled) return;
@@ -192,12 +216,14 @@ export function CareerPathPanel({
             if (!next) throw new Error("No career path returned");
             return next;
           },
+          { kind: AI_OPERATION_KINDS.careerPathGenerate },
         );
         if (!cancelled) {
           setPath(built);
           setPreferredTitle(
             built.prioritized_title ?? built.target_titles?.[0] ?? "",
           );
+          setActiveOpId(null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -210,7 +236,6 @@ export function CareerPathPanel({
       } finally {
         if (!cancelled) {
           setAutoBuilding(false);
-          setActiveOpId(null);
         }
       }
     })();
@@ -218,9 +243,9 @@ export function CareerPathPanel({
     return () => {
       cancelled = true;
     };
-    // Intentionally omit `operations` — restore is handled by the effect above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/path gate only
-  }, [loadingPath, path, trackAndWait]);
+    // operations omitted: restore effect + restoreState gate cover active ops
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/path/restore gate
+  }, [loadingPath, path, restoreState, trackAndWait]);
 
   // ── Real-time refresh when profile updates in the background ───────────────
   useEffect(() => {
@@ -244,6 +269,17 @@ export function CareerPathPanel({
     return () => window.clearInterval(id);
   }, [path, preferredTitle]);
 
+  const applyPathResult = useCallback((next: CareerPath) => {
+    setPath(next);
+    setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
+    setJobs([]);
+    setSearched(false);
+    setPathError(null);
+    setActiveOpId(null);
+    setAutoBuilding(false);
+    setGenerating(false);
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     setGenerating(true);
     setPathError(null);
@@ -260,19 +296,39 @@ export function CareerPathPanel({
           if (!fetched) throw new Error("No career path returned");
           return fetched;
         },
+        { kind: AI_OPERATION_KINDS.careerPathGenerate },
       );
-      setPath(next);
-      setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
-      // A regenerated path may target different roles — clear stale results.
-      setJobs([]);
-      setSearched(false);
+      applyPathResult(next);
     } catch (err) {
       setPathError((err as Error).message ?? "Couldn't generate your path");
-    } finally {
       setGenerating(false);
-      setActiveOpId(null);
     }
-  }, [trackAndWait]);
+  }, [applyPathResult, trackAndWait]);
+
+  const handleRetryActive = useCallback(async () => {
+    if (!activeOpId) return;
+    setPathError(null);
+    setAutoBuilding(true);
+    try {
+      const replacement = await retryOperation(activeOpId);
+      setActiveOpId(replacement.id);
+      const terminal = await waitForTrackedOperation(
+        replacement,
+        waitForOperation,
+      );
+      if (terminal.status !== "succeeded") {
+        throw terminalOperationError(terminal);
+      }
+      const next = await fetchCareerPath();
+      if (!next) throw new Error("No career path returned");
+      applyPathResult(next);
+    } catch (err) {
+      setPathError(
+        err instanceof Error ? err.message : "Couldn't generate your path",
+      );
+      setAutoBuilding(false);
+    }
+  }, [activeOpId, applyPathResult, retryOperation, waitForOperation]);
 
   const handleFindJobs = useCallback(async () => {
     setFindingJobs(true);
@@ -403,9 +459,7 @@ export function CareerPathPanel({
                       void cancelOperation(activeOpId).catch(() => undefined);
                     }}
                     onRetry={() => {
-                      void retryOperation(activeOpId).then(() => {
-                        void handleGenerate();
-                      }).catch(() => undefined);
+                      void handleRetryActive();
                     }}
                   />
                 </div>

@@ -38,7 +38,15 @@ import {
 } from "@/lib/api/career";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
-import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import {
+  resolveReadyOrAccepted,
+  terminalOperationError,
+  waitForTrackedOperation,
+} from "@/lib/operations/resolve";
+import {
+  AI_OPERATION_KINDS,
+  findActiveOperationByKind,
+} from "@/lib/operations/kinds";
 
 // ── Small presentational helpers ────────────────────────────────────────────
 
@@ -372,8 +380,14 @@ export function CareerIntelligencePanel({
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [activeOpId, setActiveOpId] = useState<string | null>(null);
-  const { trackAndWait, operations, cancelOperation, retryOperation } =
-    useAiOperations();
+  const {
+    trackAndWait,
+    waitForOperation,
+    operations,
+    restoreState,
+    cancelOperation,
+    retryOperation,
+  } = useAiOperations();
 
   useEffect(() => {
     const m = getCachedProfile()?.user?.market;
@@ -402,56 +416,80 @@ export function CareerIntelligencePanel({
     };
   }, []);
 
-  // Restore active intelligence generation after reload.
+  // Restore / terminal handling for career_intelligence_generate only.
   useEffect(() => {
     if (intel && !isPlaceholderIntelligence(intel)) return;
-    const active = Object.values(operations).find(
-      (op) =>
-        (op.kind === "career_intelligence_generate" || op.kind === "pending") &&
-        (op.status === "queued" || op.status === "running"),
+
+    const active = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerIntelligenceGenerate,
     );
     if (active) {
       setActiveOpId(active.id);
       setAutoBuilding(true);
-    }
-    const succeeded = Object.values(operations).find(
-      (op) =>
-        op.kind === "career_intelligence_generate" && op.status === "succeeded",
-    );
-    if (!succeeded) return;
-    let cancelled = false;
-    void fetchCareerIntelligence().then((next) => {
-      if (cancelled || !next || isPlaceholderIntelligence(next)) return;
-      setIntel(next);
-      setAutoBuilding(false);
-      setActiveOpId(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [operations, intel]);
-
-  // Auto-build when nothing stored yet (or only a completeness stub).
-  useEffect(() => {
-    if (loading || (intel && !isPlaceholderIntelligence(intel))) return;
-
-    let cancelled = false;
-
-    void (async () => {
-      const existing = Object.values(operations).find(
-        (op) =>
-          (op.kind === "career_intelligence_generate" || op.kind === "pending") &&
-          (op.status === "queued" || op.status === "running"),
-      );
-      if (existing) {
-        setActiveOpId(existing.id);
-        setAutoBuilding(true);
-        return;
-      }
-
-      setAutoBuilding(true);
       setError("");
-      setGenerating(true);
+      return;
+    }
+
+    if (!activeOpId) return;
+    const tracked = operations[activeOpId];
+    if (
+      !tracked ||
+      tracked.kind !== AI_OPERATION_KINDS.careerIntelligenceGenerate
+    ) {
+      return;
+    }
+
+    if (tracked.status === "succeeded") {
+      let cancelled = false;
+      void fetchCareerIntelligence().then((next) => {
+        if (cancelled || !next || isPlaceholderIntelligence(next)) return;
+        setIntel(next);
+        setAutoBuilding(false);
+        setGenerating(false);
+        setActiveOpId(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (tracked.status === "failed" || tracked.status === "cancelled") {
+      setAutoBuilding(false);
+      setGenerating(false);
+      setError(
+        tracked.error_message?.trim() ||
+          tracked.message.trim() ||
+          "Couldn't generate intelligence. Try again shortly.",
+      );
+    }
+  }, [operations, intel, activeOpId]);
+
+  // Auto-build after restore settles.
+  useEffect(() => {
+    if (
+      loading ||
+      restoreState !== "ready" ||
+      (intel && !isPlaceholderIntelligence(intel))
+    ) {
+      return;
+    }
+
+    const existing = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerIntelligenceGenerate,
+    );
+    if (existing) {
+      setActiveOpId(existing.id);
+      setAutoBuilding(true);
+      return;
+    }
+
+    let cancelled = false;
+    setAutoBuilding(true);
+    setError("");
+    setGenerating(true);
+    void (async () => {
       try {
         const outcome = await generateCareerIntelligence();
         if (cancelled) return;
@@ -468,8 +506,12 @@ export function CareerIntelligencePanel({
             }
             return next;
           },
+          { kind: AI_OPERATION_KINDS.careerIntelligenceGenerate },
         );
-        if (!cancelled) setIntel(built);
+        if (!cancelled) {
+          setIntel(built);
+          setActiveOpId(null);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -482,7 +524,6 @@ export function CareerIntelligencePanel({
         if (!cancelled) {
           setGenerating(false);
           setAutoBuilding(false);
-          setActiveOpId(null);
         }
       }
     })();
@@ -490,8 +531,8 @@ export function CareerIntelligencePanel({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/intel gate only
-  }, [loading, intel, trackAndWait]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/intel/restore gate
+  }, [loading, intel, restoreState, trackAndWait]);
 
   // Pick up background recomputes (resume upload, chat, etc.)
   useEffect(() => {
@@ -529,8 +570,10 @@ export function CareerIntelligencePanel({
           if (!next) throw new Error("No career intelligence returned");
           return next;
         },
+        { kind: AI_OPERATION_KINDS.careerIntelligenceGenerate },
       );
       setIntel(data);
+      setActiveOpId(null);
     } catch (err) {
       setError(
         err instanceof Error
@@ -539,7 +582,38 @@ export function CareerIntelligencePanel({
       );
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handleRetryActive() {
+    if (!activeOpId) return;
+    setError("");
+    setAutoBuilding(true);
+    setGenerating(true);
+    try {
+      const replacement = await retryOperation(activeOpId);
+      setActiveOpId(replacement.id);
+      const terminal = await waitForTrackedOperation(
+        replacement,
+        waitForOperation,
+      );
+      if (terminal.status !== "succeeded") {
+        throw terminalOperationError(terminal);
+      }
+      const next = await fetchCareerIntelligence();
+      if (!next) throw new Error("No career intelligence returned");
+      setIntel(next);
       setActiveOpId(null);
+      setAutoBuilding(false);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't generate intelligence. Try again shortly.",
+      );
+      setAutoBuilding(false);
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -595,9 +669,7 @@ export function CareerIntelligencePanel({
                     void cancelOperation(activeOpId).catch(() => undefined);
                   }}
                   onRetry={() => {
-                    void retryOperation(activeOpId)
-                      .then(() => regenerate())
-                      .catch(() => undefined);
+                    void handleRetryActive();
                   }}
                 />
               </div>

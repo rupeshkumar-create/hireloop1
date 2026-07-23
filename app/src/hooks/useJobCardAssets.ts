@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/learningRoadmap";
 import { useToast } from "@/components/ui";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
 
 export type AssetStatus = "idle" | "loading" | "ready" | "error";
 
@@ -134,7 +135,9 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
         if (outcome.status === "ready") {
           roadmapId = outcome.data.roadmap_id;
         } else {
-          const terminal = await trackAndWait(outcome.operation);
+          const terminal = await trackAndWait(outcome.operation, {
+            kind: AI_OPERATION_KINDS.learningRoadmap,
+          });
           if (terminal.status !== "succeeded" || !terminal.result_id) {
             throw new Error(
               terminal.error_message?.trim() ||

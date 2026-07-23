@@ -20,6 +20,7 @@ import { PathResumePreviewModal } from "@/components/resumes/PathResumePreviewMo
 import { cn } from "@/lib/utils";
 import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
 
 const CURRENCY_OPTIONS: { id: DisplayCurrency; label: string }[] = [
   { id: "auto", label: "Auto (from country / resume)" },
@@ -134,6 +135,7 @@ export function CandidateSharingSettings() {
         outcome,
         trackAndWait,
         fetchCareerPathResumes,
+        { kind: AI_OPERATION_KINDS.careerPathResumes },
       );
       setPathResumes(resumes);
       toast.success("Career-path resumes generated");
