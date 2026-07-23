@@ -32,6 +32,26 @@ NOT STARTED ──────────────────────�
 DEFERRED ───────────────────────────────────────── S23 (payments)
 ```
 
+### Durable AI operations (2026-07-22) — code complete, prod rollout gated
+
+Non-interactive external-AI generation (career path/intelligence, Application Kits,
+tailored resumes, learning roadmaps, resume parse/enrichment) now returns `202` with
+an owned `ai_operations` lifecycle record; workers publish progress; the SPA polls and
+recovers after reload. Chat + voice remain real-time (CI allowlist).
+
+**Verification (Task 10 local gate — 2026-07-23):**
+- Backend: ruff check/format + pytest — 984 passed, 27 skipped (integration DB not required)
+- Frontend: app vitest (33) + typecheck + lint + `build:web` + `build:app` — pass
+- Audits: `pnpm audit --prod --audit-level high` reports 3 high on `next@15.5.20` (pre-existing; not introduced by this branch); `pip-audit` — no known vulns; gitleaks findings are pre-existing test fixtures (`re_test_key_…`)
+- Migration dry-run (`supabase db push --linked --dry-run`): pending **only** `20260722173000_ai_operations.sql` (not applied)
+
+**Pending human production approval (do not execute without explicit go):**
+1. Backend-first deploy order — apply migration → Railway API/worker → then Vercel
+2. Authenticated prod smoke checklist — submit/202/reload/complete/retry/cancel/IDOR 404
+3. Railway latency audit — 7-day HTTP logs; converted submissions must stay under ordinary budget
+
+Plan: `docs/superpowers/plans/2026-07-22-durable-ai-operations.md`
+
 ---
 
 # CANDIDATE JOURNEY
@@ -238,6 +258,7 @@ and the linked `career_interview_states` row contains the final coverage state.
 - `ResumeUpload.tsx` component (drag-drop + file picker)
 - `POST /api/v1/resumes/upload` → Affinda parse → updates `candidates` row
 - `resumes` table row → triggers `/matches` gate unlock
+- Durable AI ops: parse/profile-expansion enqueue via `ai_operations` (`202` + shared progress UI)
 
 **How to test:**
 ```
@@ -450,7 +471,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 
 **What's built:**
 - "Tailor Resume" action on job cards
-- `POST /api/v1/tailored-resumes/tailor` → background LLM task (~30s)
+- `POST /api/v1/tailored-resumes/tailor` → durable `ai_operations` enqueue (`202`, progress/retry/cancel)
 - `GET /api/v1/tailored-resumes/tailored/{id}/download` → HTML
 
 **How to test:**
