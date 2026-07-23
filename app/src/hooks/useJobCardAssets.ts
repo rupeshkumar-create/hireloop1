@@ -7,10 +7,10 @@ import type { MatchedJob } from "@/lib/api/matches";
 import { saveJob } from "@/lib/api/saved-jobs";
 import {
   openLearningRoadmap,
-  pollLearningRoadmap,
   requestLearningRoadmap,
 } from "@/lib/api/learningRoadmap";
 import { useToast } from "@/components/ui";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 
 export type AssetStatus = "idle" | "loading" | "ready" | "error";
 
@@ -38,6 +38,7 @@ function kitReadyFromJob(job: MatchedJob, kitByJob: Record<string, AssetStatus>)
 export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
   const router = useRouter();
   const { toast } = useToast();
+  const { trackAndWait } = useAiOperations();
   const [kitByJob, setKitByJob] = useState<Record<string, AssetStatus>>({});
   const [roadmapByJob, setRoadmapByJob] = useState<Record<string, AssetStatus>>({});
   const [resumeIdByJob, setResumeIdByJob] = useState<Record<string, string>>({});
@@ -128,30 +129,30 @@ export function useJobCardAssets(options: UseJobCardAssetsOptions = {}) {
 
       setRoadmapByJob((s) => ({ ...s, [job.job_id]: "loading" }));
       try {
-        const started = await requestLearningRoadmap(job.job_id);
-        if (started.status === "ready" && started.download_path) {
-          const id = started.download_path.split("/").pop();
-          if (id) {
-            setRoadmapIdByJob((s) => ({ ...s, [job.job_id]: id }));
-            await openLearningRoadmap(id);
+        const outcome = await requestLearningRoadmap(job.job_id);
+        let roadmapId: string;
+        if (outcome.status === "ready") {
+          roadmapId = outcome.data.roadmap_id;
+        } else {
+          const terminal = await trackAndWait(outcome.operation);
+          if (terminal.status !== "succeeded" || !terminal.result_id) {
+            throw new Error(
+              terminal.error_message?.trim() ||
+                terminal.message.trim() ||
+                "Couldn't build roadmap",
+            );
           }
-          setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
-          return;
+          roadmapId = terminal.result_id;
         }
-        const roadmapId = started.roadmap_id;
-        if (!roadmapId) {
-          throw new Error(started.message ?? "No roadmap id returned");
-        }
-        const ready = await pollLearningRoadmap(roadmapId);
-        setRoadmapIdByJob((s) => ({ ...s, [job.job_id]: ready.id }));
-        await openLearningRoadmap(ready.id);
+        setRoadmapIdByJob((s) => ({ ...s, [job.job_id]: roadmapId }));
+        await openLearningRoadmap(roadmapId);
         setRoadmapByJob((s) => ({ ...s, [job.job_id]: "ready" }));
       } catch (err) {
         setRoadmapByJob((s) => ({ ...s, [job.job_id]: "error" }));
         toast.error((err as Error).message ?? "Couldn't build roadmap");
       }
     },
-    [roadmapByJob, roadmapIdByJob, toast]
+    [roadmapByJob, roadmapIdByJob, toast, trackAndWait]
   );
 
   return {

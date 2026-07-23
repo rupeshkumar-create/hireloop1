@@ -16,6 +16,9 @@ import {
 } from "@/lib/api/career";
 import { cn } from "@/lib/utils";
 import { Button, Card, CardBody } from "@/components/ui";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 
 export type CareerPathOption = {
   id: string;
@@ -71,6 +74,9 @@ export function CareerPathOptionCards({
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
+  const { trackAndWait, operations, cancelOperation, retryOperation } =
+    useAiOperations();
 
   const load = useCallback(async () => {
     setError(null);
@@ -79,12 +85,24 @@ export function CareerPathOptionCards({
       if (!path) {
         setGenerating(true);
         try {
-          path = await generateCareerPath();
+          const outcome = await generateCareerPath();
+          if (outcome.status === "accepted") {
+            setActiveOpId(outcome.operation.operation_id);
+          }
+          path = await resolveReadyOrAccepted(outcome, trackAndWait, async () => {
+            const next = await fetchCareerPath();
+            if (!next) throw new Error("No career path returned");
+            return next;
+          });
         } finally {
           setGenerating(false);
+          setActiveOpId(null);
         }
       }
-      const opts = path ? stepsToOptions(path) : [];
+      if (!path) {
+        throw new Error("No career path returned");
+      }
+      const opts = stepsToOptions(path);
       setOptions(opts);
       if (path?.prioritized_title) {
         setPrioritizedTitle(path.prioritized_title);
@@ -101,7 +119,7 @@ export function CareerPathOptionCards({
     } finally {
       setLoading(false);
     }
-  }, [onPathsReady]);
+  }, [onPathsReady, trackAndWait]);
 
   useEffect(() => {
     void load();
@@ -125,15 +143,31 @@ export function CareerPathOptionCards({
   }
 
   if (loading || generating) {
+    const activeOp = activeOpId ? operations[activeOpId] : null;
     return (
       <div
         className={cn(
-          "flex items-center gap-2 text-small text-ink-500 py-3",
+          "flex flex-col gap-2 text-small text-ink-500 py-3",
           className
         )}
       >
-        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
-        {generating ? "Aarya is mapping your career paths…" : "Loading paths…"}
+        {activeOp ? (
+          <AiOperationProgress
+            compact
+            operation={activeOp}
+            onCancel={() => {
+              void cancelOperation(activeOp.id).catch(() => undefined);
+            }}
+            onRetry={() => {
+              void retryOperation(activeOp.id).catch(() => undefined);
+            }}
+          />
+        ) : (
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+            {generating ? "Aarya is mapping your career paths…" : "Loading paths…"}
+          </div>
+        )}
       </div>
     );
   }

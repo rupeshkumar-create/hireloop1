@@ -18,6 +18,8 @@ import {
 import { Button, Card, CardBody, CardFooter, CardHeader, useToast } from "@/components/ui";
 import { PathResumePreviewModal } from "@/components/resumes/PathResumePreviewModal";
 import { cn } from "@/lib/utils";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 
 const CURRENCY_OPTIONS: { id: DisplayCurrency; label: string }[] = [
   { id: "auto", label: "Auto (from country / resume)" },
@@ -29,6 +31,7 @@ const CURRENCY_OPTIONS: { id: DisplayCurrency; label: string }[] = [
 
 export function CandidateSharingSettings() {
   const { toast } = useToast();
+  const { trackAndWait } = useAiOperations();
   const [profile, setProfile] = useState<MyProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [currency, setCurrency] = useState<DisplayCurrency>("auto");
@@ -126,7 +129,12 @@ export function CandidateSharingSettings() {
     }
     setGeneratingResumes(true);
     try {
-      const resumes = await generateCareerPathResumes();
+      const outcome = await generateCareerPathResumes();
+      const resumes = await resolveReadyOrAccepted(
+        outcome,
+        trackAndWait,
+        fetchCareerPathResumes,
+      );
       setPathResumes(resumes);
       toast.success("Career-path resumes generated");
     } catch (err) {

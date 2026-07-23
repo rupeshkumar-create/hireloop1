@@ -1,5 +1,9 @@
 import type { MatchedJob } from "@/lib/api/matches";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  parseReadyOrAccepted,
+  type ReadyOrAccepted,
+} from "@/lib/api/aiOperations";
 
 /** Shape returned by GET /application-kits/jobs/{job_id}. */
 export type JobApplicationKit = {
@@ -30,34 +34,6 @@ type PrepareApplicationKitResponse =
       kit: JobApplicationKit;
     };
 
-type ApplicationKitStatusResponse =
-  | {
-      status: "ready";
-      saved: boolean;
-      job_id: string;
-      kit: JobApplicationKit;
-      background_job?: ApplicationKitBackgroundJob | null;
-    }
-  | {
-      status: "processing" | "failed" | "missing";
-      saved: boolean;
-      job_id: string;
-      message?: string;
-      background_job?: ApplicationKitBackgroundJob | null;
-    };
-
-type ApplicationKitBackgroundJob = {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | string;
-  attempts: number;
-  max_attempts: number;
-  updated_at: string | null;
-  completed_at: string | null;
-};
-
-const APPLICATION_KIT_POLL_ATTEMPTS = 90;
-const APPLICATION_KIT_POLL_INTERVAL_MS = 2_000;
-
 /**
  * Fetch the saved application kit (cover letter + interview prep) for a job.
  * Returns null when none exists yet (404), so callers can render gracefully.
@@ -70,24 +46,6 @@ export async function getApplicationKitForJob(
   if (!res.ok) throw new Error(`Kit fetch failed: ${res.status}`);
   const data = (await res.json()) as { kit: JobApplicationKit };
   return data.kit;
-}
-
-async function getApplicationKitStatusForJob(
-  jobId: string
-): Promise<ApplicationKitStatusResponse> {
-  const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/status`);
-  if (!res.ok) {
-    const body = await res.json().catch(async () => ({
-      detail: (await res.text().catch(() => "")) || res.statusText,
-    }));
-    const detail = (body as { detail?: string }).detail;
-    throw new Error(detail?.trim() || `Kit status failed: ${res.status}`);
-  }
-  return res.json() as Promise<ApplicationKitStatusResponse>;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function isApplicationKit(value: PrepareApplicationKitResponse): value is ApplicationKit {
@@ -141,67 +99,36 @@ function kitRowToApplicationKit(kit: JobApplicationKit): ApplicationKit {
   };
 }
 
-async function pollApplicationKit(jobId: string): Promise<ApplicationKit> {
-  let requeuedIncomplete = false;
-  for (let attempt = 0; attempt < APPLICATION_KIT_POLL_ATTEMPTS; attempt += 1) {
-    if (attempt > 0) {
-      await sleep(APPLICATION_KIT_POLL_INTERVAL_MS);
-    }
-    const status = await getApplicationKitStatusForJob(jobId);
-    if (status.status === "ready") {
-      const kit = kitRowToApplicationKit(status.kit);
-      if (kit.resume.resume_id) {
-        return kit;
-      }
-      // Status should not return ready without resume; keep waiting if it does.
-      continue;
-    }
-    if (status.status === "failed") {
-      throw new Error(
-        status.message ||
-          "Application kit generation failed. Please retry from the job card."
-      );
-    }
-    if (status.status === "missing" && !requeuedIncomplete) {
-      // Incomplete prior kit (cover/prep only) — ask backend to generate again once.
-      requeuedIncomplete = true;
-      const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as PrepareApplicationKitResponse;
-        if (isApplicationKit(data)) return data;
-        if (data.status === "ready") {
-          const kit = kitRowToApplicationKit(data.kit);
-          if (kit.resume.resume_id) return kit;
-        }
-      }
-    }
+function parsePrepareReady(body: unknown): ApplicationKit {
+  const data = body as PrepareApplicationKitResponse;
+  if (isApplicationKit(data)) return data;
+  if (data && typeof data === "object" && "status" in data && data.status === "ready") {
+    return kitRowToApplicationKit(data.kit);
   }
-
-  throw new Error("Your application kit is still preparing. Please try again in a moment.");
+  throw new Error("Application kit was not ready.");
 }
 
-/** Generate full application kit (resume + cover letter + interview prep) for a job. */
-export async function prepareApplicationKit(jobId: string): Promise<ApplicationKit> {
+/**
+ * Start application kit generation. Returns the kit immediately when already
+ * ready, otherwise an AiOperationAccepted for shared progress tracking.
+ * Callers must track 202s via AiOperationsProvider and re-fetch the kit.
+ */
+export async function prepareApplicationKit(
+  jobId: string,
+): Promise<ReadyOrAccepted<ApplicationKit>> {
   const res = await apiAuthFetch(`/api/v1/application-kits/jobs/${jobId}/prepare`, {
     method: "POST",
   });
-  if (!res.ok) {
-    const body = await res.json().catch(async () => ({
-      detail: (await res.text().catch(() => "")) || res.statusText,
-    }));
-    const detail = (body as { detail?: string }).detail;
-    throw new Error(detail?.trim() || `Kit prepare failed: ${res.status}`);
+  return parseReadyOrAccepted(res, parsePrepareReady);
+}
+
+/** Load a ready kit after a durable prepare operation succeeds. */
+export async function fetchReadyApplicationKit(jobId: string): Promise<ApplicationKit> {
+  const kit = await getApplicationKitForJob(jobId);
+  if (!kit) {
+    throw new Error("Application kit is not ready yet.");
   }
-  const data = (await res.json()) as PrepareApplicationKitResponse;
-  if (isApplicationKit(data)) {
-    return data;
-  }
-  if (data.status === "ready") {
-    return kitRowToApplicationKit(data.kit);
-  }
-  return pollApplicationKit(jobId);
+  return kitRowToApplicationKit(kit);
 }
 
 export type ApplicationKitResume = {

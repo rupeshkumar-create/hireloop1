@@ -25,6 +25,56 @@ export const AiOperationAcceptedSchema = z
 
 export type AiOperationAccepted = z.infer<typeof AiOperationAcceptedSchema>;
 
+/** Discriminated union for endpoints that return ready data or a 202 accept. */
+export type ReadyOrAccepted<T> =
+  | { status: "ready"; data: T }
+  | { status: "accepted"; operation: AiOperationAccepted };
+
+export function isAiOperationAccepted(value: unknown): value is AiOperationAccepted {
+  return AiOperationAcceptedSchema.safeParse(value).success;
+}
+
+/**
+ * Parse a feature submission response that may be an immediate result (2xx)
+ * or an AiOperationAccepted (202 / body with operation_id).
+ */
+export async function parseReadyOrAccepted<T>(
+  response: Response,
+  parseReady: (body: unknown) => T,
+): Promise<ReadyOrAccepted<T>> {
+  const body: unknown = await response.json().catch(() => null);
+
+  if (response.status === 202) {
+    const parsed = AiOperationAcceptedSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new Error(
+        safeErrorDetail(body) ??
+          "The server returned an invalid AI operation acceptance.",
+      );
+    }
+    return { status: "accepted", operation: parsed.data };
+  }
+
+  if (!response.ok) {
+    throw new Error(safeErrorDetail(body) ?? `Request failed (${response.status})`);
+  }
+
+  const asAccepted = AiOperationAcceptedSchema.safeParse(body);
+  if (asAccepted.success) {
+    return { status: "accepted", operation: asAccepted.data };
+  }
+
+  try {
+    return { status: "ready", data: parseReady(body) };
+  } catch (err) {
+    throw new Error(
+      err instanceof Error
+        ? err.message
+        : "The server returned an invalid feature response.",
+    );
+  }
+}
+
 export const AiOperationResponseSchema = z
   .object({
     id: z.string().uuid(),

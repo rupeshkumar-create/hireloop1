@@ -48,6 +48,7 @@ import { createClient } from "@/lib/supabase/client";
 import { AaryaFace } from "@/components/aarya/AaryaFace";
 import { FadeUp } from "@/components/ui/motion";
 import { Button } from "@/components/ui";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
 import { cn } from "@/lib/utils";
 import type { SignupMethod } from "@/lib/auth/signup-method";
 import { firstNameFromDisplayName } from "@/lib/auth/display-name";
@@ -177,6 +178,7 @@ function ActivationStep({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { trackAndWait } = useAiOperations();
 
   const hasResume = resumeFile !== null;
 
@@ -197,7 +199,7 @@ function ActivationStep({
     setSaving(true);
     setError(null);
     try {
-      const summary = await uploadResumeAndApply(resumeFile);
+      const summary = await uploadResumeAndApply(resumeFile, trackAndWait);
 
       const consentRes = await apiAuthFetch("/api/v1/me/onboarding-consent", {
         method: "POST",

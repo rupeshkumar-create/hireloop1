@@ -5,14 +5,11 @@
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  parseReadyOrAccepted,
+  type ReadyOrAccepted,
+} from "@/lib/api/aiOperations";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
-
-const RESUME_PARSE_POLL_MS = 2000;
-const RESUME_PARSE_TIMEOUT_MS = 120_000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
 
 /** LinkedIn vanity slug from a profile URL, e.g. `rupesh-kumar`. */
 export function linkedInProfileId(url: string | null | undefined): string | null {
@@ -74,9 +71,9 @@ export type ParsedResumeSummary = {
   skills?: string[];
 };
 
-type ResumeUploadPayload = {
+export type ResumeUploadReady = {
   resume_id: string;
-  parsed?: ParsedResumeSummary;
+  parsed: ParsedResumeSummary;
   parse_status?: "pending" | "ready" | "failed";
   message?: string;
 };
@@ -87,39 +84,44 @@ type ResumeStatusPayload = {
   message?: string | null;
 };
 
-async function waitForResumeParse(resumeId: string): Promise<ParsedResumeSummary> {
-  const deadline = Date.now() + RESUME_PARSE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const res = await apiAuthFetch(`/api/v1/resumes/${resumeId}`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(
-        (err as { detail?: string }).detail ?? "Couldn't check CV parsing status",
-      );
-    }
-    const data = (await res.json()) as ResumeStatusPayload;
-    if (data.parse_status === "ready") {
-      return data.parsed ?? {};
-    }
-    if (data.parse_status === "failed") {
-      throw new Error(data.message ?? "Couldn't read that file. Try another CV.");
-    }
-    await sleep(RESUME_PARSE_POLL_MS);
+export async function fetchResumeParseStatus(
+  resumeId: string,
+): Promise<ResumeStatusPayload> {
+  const res = await apiAuthFetch(`/api/v1/resumes/${resumeId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail ?? "Couldn't check CV parsing status",
+    );
   }
-  throw new Error(
-    "CV parsing is taking longer than expected. Please try uploading again.",
-  );
+  return res.json() as Promise<ResumeStatusPayload>;
 }
 
-/** Upload a CV, apply the parsed fields to the profile, and return the parse summary. */
-export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSummary> {
+export async function applyResumeToProfile(resumeId: string): Promise<void> {
+  const applyRes = await apiAuthFetch(
+    `/api/v1/resumes/${resumeId}/apply-to-profile?mode=replace`,
+    { method: "POST" },
+  );
+  if (!applyRes.ok && applyRes.status !== 409) {
+    // Resume is stored — profile apply can be retried from dashboard.
+  }
+  invalidateMatchFeedCache();
+}
+
+/**
+ * Upload a CV. Returns parsed fields immediately when available, otherwise an
+ * AiOperationAccepted for durable parse tracking.
+ */
+export async function uploadResume(
+  file: File,
+): Promise<ReadyOrAccepted<ResumeUploadReady>> {
   const fd = new FormData();
   fd.append("file", file);
   const res = await apiAuthFetch("/api/v1/resumes/upload", {
     method: "POST",
     body: fd,
   });
-  if (!res.ok) {
+  if (!res.ok && res.status !== 202) {
     const err = await res.json().catch(() => ({}));
     const detail = (err as { detail?: string }).detail;
     if (res.status === 401) {
@@ -131,24 +133,65 @@ export async function uploadResumeAndApply(file: File): Promise<ParsedResumeSumm
           "API is temporarily unavailable. Check NEXT_PUBLIC_API_URL on Vercel and redeploy.",
       );
     }
-    throw new Error(detail ?? "Resume upload failed");
+    // Fall through to parseReadyOrAccepted for structured errors / 202.
   }
-  const data = (await res.json()) as ResumeUploadPayload;
-  const parsed =
-    data.parse_status === "pending"
-      ? await waitForResumeParse(data.resume_id)
-      : (data.parsed ?? {});
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as ResumeUploadReady;
+    if (!data?.resume_id) {
+      throw new Error("Resume upload did not return a resume id.");
+    }
+    return {
+      resume_id: data.resume_id,
+      parsed: data.parsed ?? {},
+      parse_status: data.parse_status,
+      message: data.message,
+    };
+  });
+}
 
-  // Apply parsed fields to the profile (best-effort — don't fail activation).
-  // replace: the fresh CV wins over any earlier LinkedIn enrichment; the
-  // candidate reviews and corrects everything on the next screen anyway.
-  const applyRes = await apiAuthFetch(
-    `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
-    { method: "POST" },
-  );
-  if (!applyRes.ok && applyRes.status !== 409) {
-    // Resume is stored — profile apply can be retried from dashboard.
+/**
+ * Upload a CV, wait for parse via the shared operation manager when needed,
+ * apply parsed fields to the profile, and return the parse summary.
+ */
+export async function uploadResumeAndApply(
+  file: File,
+  waitForOperation: (
+    accepted: import("@/lib/api/aiOperations").AiOperationAccepted,
+  ) => Promise<import("@/lib/api/aiOperations").AiOperationResponse>,
+): Promise<ParsedResumeSummary> {
+  const outcome = await uploadResume(file);
+
+  let resumeId: string;
+  let parsed: ParsedResumeSummary;
+
+  if (outcome.status === "ready") {
+    resumeId = outcome.data.resume_id;
+    if (outcome.data.parse_status === "ready" || outcome.data.parsed) {
+      parsed = outcome.data.parsed ?? {};
+    } else {
+      const status = await fetchResumeParseStatus(resumeId);
+      if (status.parse_status === "failed") {
+        throw new Error(status.message ?? "Couldn't read that file. Try another CV.");
+      }
+      parsed = status.parsed ?? {};
+    }
+  } else {
+    const terminal = await waitForOperation(outcome.operation);
+    if (terminal.status !== "succeeded" || !terminal.result_id) {
+      throw new Error(
+        terminal.error_message?.trim() ||
+          terminal.message.trim() ||
+          "Couldn't read that file. Try another CV.",
+      );
+    }
+    resumeId = terminal.result_id;
+    const status = await fetchResumeParseStatus(resumeId);
+    if (status.parse_status === "failed") {
+      throw new Error(status.message ?? "Couldn't read that file. Try another CV.");
+    }
+    parsed = status.parsed ?? {};
   }
-  invalidateMatchFeedCache();
+
+  await applyResumeToProfile(resumeId);
   return parsed;
 }

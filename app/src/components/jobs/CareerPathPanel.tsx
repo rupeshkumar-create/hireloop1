@@ -42,6 +42,9 @@ import type { MatchedJob } from "@/lib/api/matches";
 import { useJobCardAssets } from "@/hooks/useJobCardAssets";
 import { ResumePreviewModal } from "@/components/resumes/ResumePreviewModal";
 import { Badge, Button, Card, CardBody, EmptyState } from "@/components/ui";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 import { JobCard } from "./JobCard";
 
 interface CareerPathPanelProps {
@@ -87,6 +90,9 @@ export function CareerPathPanel({
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [sourceAvailable, setSourceAvailable] = useState(true);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
+  const { trackAndWait, operations, cancelOperation, retryOperation } =
+    useAiOperations();
 
   const {
     kitByJob,
@@ -119,67 +125,102 @@ export function CareerPathPanel({
     };
   }, []);
 
-  // ── Auto-build: kick off generation + poll until ready ─────────────────────
+  // Restore / pick up an in-flight career path generation after reload.
+  useEffect(() => {
+    if (path) return;
+    const active = Object.values(operations).find(
+      (op) =>
+        (op.kind === "career_path_generate" || op.kind === "pending") &&
+        (op.status === "queued" || op.status === "running"),
+    );
+    if (active) {
+      setActiveOpId(active.id);
+      setAutoBuilding(true);
+    }
+    const succeeded = Object.values(operations).find(
+      (op) => op.kind === "career_path_generate" && op.status === "succeeded",
+    );
+    if (!succeeded) return;
+    let cancelled = false;
+    void fetchCareerPath().then((next) => {
+      if (cancelled || !next) return;
+      setPath(next);
+      setAutoBuilding(false);
+      setActiveOpId(null);
+      setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [operations, path]);
+
+  // ── Auto-build when no path exists ─────────────────────────────────────────
   useEffect(() => {
     if (loadingPath || path) return;
 
-    setAutoBuilding(true);
-    setPathError(null);
-    let attempts = 0;
     let cancelled = false;
-    let generateStarted = false;
+    let started = false;
 
-    const kickOffBuild = async () => {
-      if (generateStarted) return;
-      generateStarted = true;
-      try {
-        const built = await generateCareerPath();
-        if (!cancelled) setPath(built);
-      } catch {
-        // Backend hooks may still build in the background — keep polling.
+    void (async () => {
+      // Prefer an already-tracked operation (reload recovery) over a new submit.
+      const existing = Object.values(operations).find(
+        (op) =>
+          (op.kind === "career_path_generate" || op.kind === "pending") &&
+          (op.status === "queued" || op.status === "running"),
+      );
+      if (existing) {
+        setActiveOpId(existing.id);
+        setAutoBuilding(true);
+        return;
       }
-    };
 
-    const poll = async () => {
+      if (started) return;
+      started = true;
+      setAutoBuilding(true);
+      setPathError(null);
       try {
-        const next = await fetchCareerPath();
-        if (cancelled) return true;
-        if (next) {
-          setPath(next);
-          setAutoBuilding(false);
-          return true;
+        const outcome = await generateCareerPath();
+        if (cancelled) return;
+        if (outcome.status === "accepted") {
+          setActiveOpId(outcome.operation.operation_id);
+        }
+        const built = await resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          async () => {
+            const next = await fetchCareerPath();
+            if (!next) throw new Error("No career path returned");
+            return next;
+          },
+        );
+        if (!cancelled) {
+          setPath(built);
+          setPreferredTitle(
+            built.prioritized_title ?? built.target_titles?.[0] ?? "",
+          );
         }
       } catch (err) {
         if (!cancelled) {
-          setPathError((err as Error).message ?? "Couldn't load your path");
+          setPathError(
+            err instanceof Error
+              ? err.message
+              : "Couldn't build your path",
+          );
         }
-      }
-      return false;
-    };
-
-    void kickOffBuild();
-    void poll();
-    const id = window.setInterval(async () => {
-      attempts += 1;
-      const ready = await poll();
-      if (ready || attempts >= 30) {
-        window.clearInterval(id);
+      } finally {
         if (!cancelled) {
           setAutoBuilding(false);
-          if (!ready && attempts >= 30) {
-            setPathError(
-              "Aarya is still building your path. Check back in a moment or regenerate."
-            );
-          }
+          setActiveOpId(null);
         }
       }
-    }, 4000);
+    })();
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
     };
-  }, [loadingPath, path]);
+    // Intentionally omit `operations` — restore is handled by the effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/path gate only
+  }, [loadingPath, path, trackAndWait]);
 
   // ── Real-time refresh when profile updates in the background ───────────────
   useEffect(() => {
@@ -207,7 +248,19 @@ export function CareerPathPanel({
     setGenerating(true);
     setPathError(null);
     try {
-      const next = await generateCareerPath();
+      const outcome = await generateCareerPath();
+      if (outcome.status === "accepted") {
+        setActiveOpId(outcome.operation.operation_id);
+      }
+      const next = await resolveReadyOrAccepted(
+        outcome,
+        trackAndWait,
+        async () => {
+          const fetched = await fetchCareerPath();
+          if (!fetched) throw new Error("No career path returned");
+          return fetched;
+        },
+      );
       setPath(next);
       setPreferredTitle(next.prioritized_title ?? next.target_titles?.[0] ?? "");
       // A regenerated path may target different roles — clear stale results.
@@ -217,8 +270,9 @@ export function CareerPathPanel({
       setPathError((err as Error).message ?? "Couldn't generate your path");
     } finally {
       setGenerating(false);
+      setActiveOpId(null);
     }
-  }, []);
+  }, [trackAndWait]);
 
   const handleFindJobs = useCallback(async () => {
     setFindingJobs(true);
@@ -340,6 +394,22 @@ export function CareerPathPanel({
               {pathError && (
                 <p className="text-micro text-destructive">{pathError}</p>
               )}
+              {activeOpId && operations[activeOpId] ? (
+                <div className="w-full max-w-sm text-left">
+                  <AiOperationProgress
+                    compact
+                    operation={operations[activeOpId]}
+                    onCancel={() => {
+                      void cancelOperation(activeOpId).catch(() => undefined);
+                    }}
+                    onRetry={() => {
+                      void retryOperation(activeOpId).then(() => {
+                        void handleGenerate();
+                      }).catch(() => undefined);
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           </CardBody>
         </Card>

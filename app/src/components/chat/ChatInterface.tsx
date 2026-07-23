@@ -69,7 +69,10 @@ import {
   warmupChatContext,
   type ChatWarmupSnapshot,
 } from "@/lib/chat/warmup";
-import { prepareApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
+import { prepareApplicationKit, fetchReadyApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
+import { uploadResume, applyResumeToProfile } from "@/lib/api/onboardingProfile";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
@@ -190,19 +193,6 @@ type StreamRecovery = {
   continuePrompt: string;
 };
 
-/** Subset of the /resumes/upload response we actually use client-side. */
-type ResumeUploadResponse = {
-  resume_id: string;
-  parsed: {
-    full_name?: string | null;
-    current_title?: string | null;
-    current_company?: string | null;
-    years_experience?: number | null;
-    skills?: string[];
-    headline?: string | null;
-  };
-};
-
 /** Parsed message: text + optional option list extracted from ---OPTIONS--- blocks */
 type ParsedMessage = {
   text: string;
@@ -316,6 +306,7 @@ export function ChatInterface({
   onJobsFound,
   returnWelcomeMessage,
 }: ChatInterfaceProps) {
+  const { trackAndWait } = useAiOperations();
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
   const [kickoffActive, setKickoffActive] = useState(
     () => initialKickoff && !hasCareerKickoffDone(),
@@ -1518,6 +1509,11 @@ export function ChatInterface({
     });
 
     void prepareApplicationKit(jobId)
+      .then((outcome) =>
+        resolveReadyOrAccepted(outcome, trackAndWait, () =>
+          fetchReadyApplicationKit(jobId),
+        ),
+      )
       .then((kit) => {
         if (kitRequestRef.current?.nonce !== nonce) return;
         if (kit.saved && kit.job?.job_id) {
@@ -1555,7 +1551,7 @@ export function ChatInterface({
         setIsStreaming(false);
         setThinkingStatus(null);
       });
-  }, [applicationKitRequest]);
+  }, [applicationKitRequest, trackAndWait]);
 
   // ── Resume upload ────────────────────────────────────────────────────────
 
@@ -1597,29 +1593,27 @@ export function ChatInterface({
       ]);
 
       try {
-        // ── Upload ─────────────────────────────────────────────────────────
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const uploadRes = await apiAuthFetch("/api/v1/resumes/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const errBody = await uploadRes.json().catch(() => ({ detail: uploadRes.statusText }));
-          throw new Error((errBody as { detail?: string }).detail ?? "Upload failed");
+        // ── Upload (may return 202 + durable parse operation) ──────────────
+        const outcome = await uploadResume(file);
+        let resumeId: string;
+        if (outcome.status === "ready") {
+          resumeId = outcome.data.resume_id;
+        } else {
+          const terminal = await trackAndWait(outcome.operation);
+          if (terminal.status !== "succeeded" || !terminal.result_id) {
+            throw new Error(
+              terminal.error_message?.trim() ||
+                terminal.message.trim() ||
+                "Couldn't parse that CV.",
+            );
+          }
+          resumeId = terminal.result_id;
         }
-
-        const data: ResumeUploadResponse = await uploadRes.json();
 
         // ── Auto-apply to profile (non-fatal) ──────────────────────────────
         // replace: a CV uploaded in chat is deliberate — the profile follows it.
         try {
-          await apiAuthFetch(
-            `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
-            { method: "POST" },
-          );
+          await applyResumeToProfile(resumeId);
           invalidateProfileCache();
           invalidateMatchFeedCache();
         } catch {
@@ -1671,7 +1665,7 @@ export function ChatInterface({
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [isUploading, isStreaming]
+    [isUploading, isStreaming, trackAndWait]
   );
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────

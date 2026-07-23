@@ -36,6 +36,9 @@ import {
   type MobilityOption,
   type Prediction,
 } from "@/lib/api/career";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 
 // ── Small presentational helpers ────────────────────────────────────────────
 
@@ -368,6 +371,9 @@ export function CareerIntelligencePanel({
   const [generating, setGenerating] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
+  const { trackAndWait, operations, cancelOperation, retryOperation } =
+    useAiOperations();
 
   useEffect(() => {
     const m = getCachedProfile()?.user?.market;
@@ -396,72 +402,96 @@ export function CareerIntelligencePanel({
     };
   }, []);
 
-  // Auto-build when nothing stored yet (or only a completeness stub) — kick off generation + poll.
+  // Restore active intelligence generation after reload.
+  useEffect(() => {
+    if (intel && !isPlaceholderIntelligence(intel)) return;
+    const active = Object.values(operations).find(
+      (op) =>
+        (op.kind === "career_intelligence_generate" || op.kind === "pending") &&
+        (op.status === "queued" || op.status === "running"),
+    );
+    if (active) {
+      setActiveOpId(active.id);
+      setAutoBuilding(true);
+    }
+    const succeeded = Object.values(operations).find(
+      (op) =>
+        op.kind === "career_intelligence_generate" && op.status === "succeeded",
+    );
+    if (!succeeded) return;
+    let cancelled = false;
+    void fetchCareerIntelligence().then((next) => {
+      if (cancelled || !next || isPlaceholderIntelligence(next)) return;
+      setIntel(next);
+      setAutoBuilding(false);
+      setActiveOpId(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [operations, intel]);
+
+  // Auto-build when nothing stored yet (or only a completeness stub).
   useEffect(() => {
     if (loading || (intel && !isPlaceholderIntelligence(intel))) return;
 
-    setAutoBuilding(true);
-    setError("");
-    let attempts = 0;
     let cancelled = false;
-    let generateStarted = false;
 
-    const kickOffBuild = async () => {
-      if (generateStarted) return;
-      generateStarted = true;
+    void (async () => {
+      const existing = Object.values(operations).find(
+        (op) =>
+          (op.kind === "career_intelligence_generate" || op.kind === "pending") &&
+          (op.status === "queued" || op.status === "running"),
+      );
+      if (existing) {
+        setActiveOpId(existing.id);
+        setAutoBuilding(true);
+        return;
+      }
+
+      setAutoBuilding(true);
+      setError("");
       setGenerating(true);
       try {
-        const built = await generateCareerIntelligence();
-        if (!cancelled) setIntel(built);
-      } catch {
-        // Backend may still be building from profile hooks — keep polling.
-      } finally {
-        if (!cancelled) setGenerating(false);
-      }
-    };
-
-    const poll = async () => {
-      try {
-        const next = await fetchCareerIntelligence();
-        if (cancelled) return true;
-        if (next) {
-          setIntel(next);
-          setAutoBuilding(false);
-          return true;
+        const outcome = await generateCareerIntelligence();
+        if (cancelled) return;
+        if (outcome.status === "accepted") {
+          setActiveOpId(outcome.operation.operation_id);
         }
+        const built = await resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          async () => {
+            const next = await fetchCareerIntelligence();
+            if (!next || isPlaceholderIntelligence(next)) {
+              throw new Error("No career intelligence returned");
+            }
+            return next;
+          },
+        );
+        if (!cancelled) setIntel(built);
       } catch (err) {
         if (!cancelled) {
           setError(
-            err instanceof Error ? err.message : "Couldn't load intelligence.",
+            err instanceof Error
+              ? err.message
+              : "Couldn't generate intelligence. Try again shortly.",
           );
         }
-      }
-      return false;
-    };
-
-    void kickOffBuild();
-    void poll();
-    const id = window.setInterval(async () => {
-      attempts += 1;
-      const ready = await poll();
-      if (ready || attempts >= 30) {
-        window.clearInterval(id);
+      } finally {
         if (!cancelled) {
+          setGenerating(false);
           setAutoBuilding(false);
-          if (!ready && attempts >= 30) {
-            setError(
-              "Aarya is still building your intelligence profile. Try Refresh in a moment.",
-            );
-          }
+          setActiveOpId(null);
         }
       }
-    }, 4000);
+    })();
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
     };
-  }, [loading, intel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/intel gate only
+  }, [loading, intel, trackAndWait]);
 
   // Pick up background recomputes (resume upload, chat, etc.)
   useEffect(() => {
@@ -487,7 +517,19 @@ export function CareerIntelligencePanel({
     setGenerating(true);
     setError("");
     try {
-      const data = await generateCareerIntelligence();
+      const outcome = await generateCareerIntelligence();
+      if (outcome.status === "accepted") {
+        setActiveOpId(outcome.operation.operation_id);
+      }
+      const data = await resolveReadyOrAccepted(
+        outcome,
+        trackAndWait,
+        async () => {
+          const next = await fetchCareerIntelligence();
+          if (!next) throw new Error("No career intelligence returned");
+          return next;
+        },
+      );
       setIntel(data);
     } catch (err) {
       setError(
@@ -497,6 +539,7 @@ export function CareerIntelligencePanel({
       );
     } finally {
       setGenerating(false);
+      setActiveOpId(null);
     }
   }
 
@@ -543,6 +586,22 @@ export function CareerIntelligencePanel({
             {error && (
               <p className="text-small text-destructive text-center">{error}</p>
             )}
+            {activeOpId && operations[activeOpId] ? (
+              <div className="w-full max-w-sm text-left">
+                <AiOperationProgress
+                  compact
+                  operation={operations[activeOpId]}
+                  onCancel={() => {
+                    void cancelOperation(activeOpId).catch(() => undefined);
+                  }}
+                  onRetry={() => {
+                    void retryOperation(activeOpId)
+                      .then(() => regenerate())
+                      .catch(() => undefined);
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </CardBody>
       </Card>

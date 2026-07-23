@@ -3,10 +3,13 @@
  *
  * Per-job AI upskilling plan, generated from the candidate's resume + the job
  * description and rendered as a self-contained interactive HTML app.
- * Mirrors the tailored-resume request → poll → open flow.
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  parseReadyOrAccepted,
+  type ReadyOrAccepted,
+} from "@/lib/api/aiOperations";
 
 export type LearningRoadmapRow = {
   id: string;
@@ -19,33 +22,66 @@ export type LearningRoadmapRow = {
   download_url?: string;
 };
 
+export type LearningRoadmapReady = {
+  status: "ready";
+  roadmap_id: string;
+  download_path?: string;
+  message?: string;
+};
+
 export async function requestLearningRoadmap(
-  jobId: string
-): Promise<{ status: string; roadmap_id?: string; download_path?: string; message?: string }> {
+  jobId: string,
+): Promise<ReadyOrAccepted<LearningRoadmapReady>> {
   const res = await apiAuthFetch("/api/v1/learning-roadmaps/roadmap", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(async () => ({
-      detail: (await res.text().catch(() => "")) || res.statusText,
-    }));
-    const detail = (body as { detail?: string }).detail;
-    throw new Error(detail?.trim() || `Roadmap failed: ${res.status}`);
-  }
-  return res.json();
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as {
+      status?: string;
+      roadmap_id?: string;
+      download_path?: string;
+      message?: string;
+    };
+    if (data.status === "ready" && data.roadmap_id) {
+      return {
+        status: "ready",
+        roadmap_id: data.roadmap_id,
+        download_path: data.download_path,
+        message: data.message,
+      };
+    }
+    // Some ready payloads only include download_path.
+    if (data.status === "ready" && data.download_path) {
+      const id = data.download_path.split("/").filter(Boolean).pop();
+      if (id) {
+        return {
+          status: "ready",
+          roadmap_id: id,
+          download_path: data.download_path,
+          message: data.message,
+        };
+      }
+    }
+    throw new Error(data.message?.trim() || "Learning roadmap was not ready.");
+  });
 }
 
+export async function getLearningRoadmap(roadmapId: string): Promise<LearningRoadmapRow> {
+  const res = await apiAuthFetch(`/api/v1/learning-roadmaps/${roadmapId}`);
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  return res.json() as Promise<LearningRoadmapRow>;
+}
+
+/** @deprecated Prefer AiOperationsProvider tracking after requestLearningRoadmap. */
 export async function pollLearningRoadmap(
   roadmapId: string,
   maxAttempts = 20,
-  intervalMs = 2000
+  intervalMs = 2000,
 ): Promise<LearningRoadmapRow> {
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await apiAuthFetch(`/api/v1/learning-roadmaps/${roadmapId}`);
-    if (!res.ok) throw new Error(`Poll failed: ${res.status}`);
-    const data = (await res.json()) as LearningRoadmapRow;
+    const data = await getLearningRoadmap(roadmapId);
     if (data.status === "ready") return data;
     if (data.status === "failed") throw new Error("Roadmap generation failed");
     await new Promise((r) => setTimeout(r, intervalMs));

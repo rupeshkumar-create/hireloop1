@@ -32,6 +32,8 @@ import {
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { BTN_CHIP, BTN_CHIP_ACTIVE, BTN_GHOST } from "@/lib/button-classes";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
 
 const MAX_OPTIONS = 3;
 const TOTAL_STEPS = 3;
@@ -216,6 +218,7 @@ export function CareerKickoffFlow({
   const [customTitle, setCustomTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const archivedStepsRef = useRef<Set<1 | 2 | 3>>(new Set());
+  const { trackAndWait } = useAiOperations();
 
   const persistProgress = useCallback(
     (
@@ -377,7 +380,12 @@ export function CareerKickoffFlow({
 
     setStep("paths_loading");
     try {
-      const path = await generateCareerPath();
+      const outcome = await generateCareerPath();
+      const path = await resolveReadyOrAccepted(outcome, trackAndWait, async () => {
+        const next = await fetchCareerPath();
+        if (!next) throw new Error("No career path returned");
+        return next;
+      });
       const intelligence = await fetchCareerIntelligence().catch(() => null);
       const opts = resolveKickoffOptions(
         intelligence,

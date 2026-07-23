@@ -9,6 +9,10 @@
  */
 
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  parseReadyOrAccepted,
+  type ReadyOrAccepted,
+} from "@/lib/api/aiOperations";
 import type { MatchedJob } from "@/lib/api/matches";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -77,23 +81,19 @@ export async function fetchCareerPath(): Promise<CareerPath | null> {
 }
 
 /** (Re)generate the candidate's career path from their profile. */
-export async function generateCareerPath(): Promise<CareerPath> {
-  const res = await apiAuthFetch(
-    "/api/v1/career/path/generate",
-    {
-      method: "POST",
-    },
-    { timeoutMs: 120_000 },
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Career path generation failed: ${res.status}`);
-  }
-  const data: CareerPathResponse = await res.json();
-  if (!data.path) {
-    throw new Error("No career path returned");
-  }
-  return data.path;
+export async function generateCareerPath(): Promise<
+  ReadyOrAccepted<CareerPath>
+> {
+  const res = await apiAuthFetch("/api/v1/career/path/generate", {
+    method: "POST",
+  });
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as CareerPathResponse;
+    if (!data?.path) {
+      throw new Error("No career path returned");
+    }
+    return data.path;
+  });
 }
 
 /** Prioritize one career path title — unlocks job search along that direction.
@@ -134,16 +134,16 @@ export async function fetchCareerPathResumes(): Promise<CareerPathResume[]> {
   return data.resumes ?? [];
 }
 
-export async function generateCareerPathResumes(): Promise<CareerPathResume[]> {
+export async function generateCareerPathResumes(): Promise<
+  ReadyOrAccepted<CareerPathResume[]>
+> {
   const res = await apiAuthFetch("/api/v1/career/path-resumes/generate", {
     method: "POST",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Generate path resumes failed: ${res.status}`);
-  }
-  const data: { resumes: CareerPathResume[] } = await res.json();
-  return data.resumes ?? [];
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as { resumes?: CareerPathResume[] };
+    return data.resumes ?? [];
+  });
 }
 
 export async function fetchCareerPathResumePreview(resumeId: string): Promise<string> {
@@ -385,22 +385,20 @@ export async function fetchCareerIntelligence(): Promise<CareerIntelligence | nu
 
 /**
  * (Re)compute the full 24-layer Career Intelligence from the candidate's
- * resume, LinkedIn, and chat data. Synchronous on the backend (uses the
- * primary LLM), so expect this to take ~10–20s.
+ * resume, LinkedIn, and chat data. May return immediately or accept a durable
+ * background operation (202).
  */
-export async function generateCareerIntelligence(): Promise<CareerIntelligence> {
+export async function generateCareerIntelligence(): Promise<
+  ReadyOrAccepted<CareerIntelligence>
+> {
   const res = await apiAuthFetch("/api/v1/career/intelligence/generate", {
     method: "POST",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(
-      err.detail ?? `Career intelligence generation failed: ${res.status}`,
-    );
-  }
-  const data: CareerIntelligenceResponse = await res.json();
-  if (!data.intelligence) {
-    throw new Error("No career intelligence returned");
-  }
-  return data.intelligence;
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as CareerIntelligenceResponse;
+    if (!data?.intelligence) {
+      throw new Error("No career intelligence returned");
+    }
+    return data.intelligence;
+  });
 }

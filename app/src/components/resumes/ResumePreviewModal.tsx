@@ -19,7 +19,15 @@ import {
   downloadTailoredResumeDocx,
   fetchTailoredResumeHtml,
 } from "@/lib/api/tailored";
-import { getApplicationKitForJob, prepareApplicationKit, type JobApplicationKit } from "@/lib/api/applicationKit";
+import {
+  fetchReadyApplicationKit,
+  getApplicationKitForJob,
+  prepareApplicationKit,
+  type JobApplicationKit,
+} from "@/lib/api/applicationKit";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
 
 type Tab = "resume" | "cover_letter" | "interview_prep";
 
@@ -46,6 +54,8 @@ export function ResumePreviewModal({
   interviewPrep?: string | null;
 }) {
   const { toast } = useToast();
+  const { trackAndWait, operations, cancelOperation, retryOperation } =
+    useAiOperations();
   const [tab, setTab] = useState<Tab>("resume");
   const [html, setHtml] = useState<string | null>(null);
   const [kit, setKit] = useState<JobApplicationKit | null>(null);
@@ -53,6 +63,7 @@ export function ResumePreviewModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<"pdf" | "docx" | null>(null);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,7 +74,15 @@ export function ResumePreviewModal({
 
       // Older kits may lack a resume (generated before always-on tailoring). Re-prepare once.
       if (!resolvedResumeId && jobId) {
-        const prepared = await prepareApplicationKit(jobId);
+        const outcome = await prepareApplicationKit(jobId);
+        if (outcome.status === "accepted") {
+          setActiveOpId(outcome.operation.operation_id);
+        }
+        const prepared = await resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          () => fetchReadyApplicationKit(jobId),
+        );
         kitData = {
           id: prepared.kit_id ?? kitData?.id ?? "",
           job_id: jobId,
@@ -77,6 +96,7 @@ export function ResumePreviewModal({
           updated_at: new Date().toISOString(),
         };
         resolvedResumeId = prepared.resume?.resume_id ?? null;
+        setActiveOpId(null);
       }
 
       const resumeHtml = resolvedResumeId
@@ -106,7 +126,7 @@ export function ResumePreviewModal({
     } finally {
       setLoading(false);
     }
-  }, [resumeId, jobId, initialTab, coverLetterProp, interviewPrepProp]);
+  }, [resumeId, jobId, initialTab, coverLetterProp, interviewPrepProp, trackAndWait]);
 
   useEffect(() => {
     if (open) void load();
@@ -187,8 +207,27 @@ export function ResumePreviewModal({
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-ink-500">
-          <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading preview…
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-ink-500">
+          {activeOpId && operations[activeOpId] ? (
+            <div className="w-full max-w-sm">
+              <AiOperationProgress
+                compact
+                operation={operations[activeOpId]}
+                onCancel={() => {
+                  void cancelOperation(activeOpId).catch(() => undefined);
+                }}
+                onRetry={() => {
+                  void retryOperation(activeOpId)
+                    .then(() => load())
+                    .catch(() => undefined);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading preview…
+            </div>
+          )}
         </div>
       ) : error ? (
         <div className="py-12 text-center text-small text-ink-500">
