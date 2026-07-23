@@ -60,7 +60,7 @@ jobs:
         run: pnpm typecheck
       - name: Lint (web + app)
         run: pnpm lint
-      - name: Frontend regression tests
+      - name: Frontend regression + Vitest unit tests
         run: pnpm --filter app test
       - name: Production build (web + app)
         run: pnpm build:web && pnpm build:app
