@@ -345,6 +345,11 @@ async def test_ai_operations_rls_enforces_read_visibility_and_denies_mutations(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON public.ai_operations TO authenticated"
         )
         await db_conn.execute("GRANT SELECT ON public.users TO authenticated")
+        # Admin policy EXISTS(...) reads public.users under RLS; some users policies
+        # call auth.user_role(), which must be executable by authenticated.
+        await db_conn.execute(
+            "GRANT EXECUTE ON FUNCTION auth.user_role() TO authenticated"
+        )
 
         await _set_authenticated_identity(db_conn, owner_id)
         owner_visible_ids = {
