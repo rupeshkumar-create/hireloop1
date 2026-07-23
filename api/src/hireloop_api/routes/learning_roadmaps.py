@@ -8,6 +8,8 @@ interactive HTML app. Mirrors the tailored-resume request/poll/download flow.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from typing import Literal, cast
 
 import asyncpg
 import structlog
@@ -18,6 +20,7 @@ from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services.learning_roadmap import (
     generate_roadmap,
     render_roadmap_html,
@@ -114,12 +117,11 @@ async def _run_roadmap_task(
 @router.post("/roadmap")
 async def request_learning_roadmap(
     body: RoadmapRequest,
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    # Each roadmap is an LLM job — cap per user per hour.
-    await check_rate_limit(str(current_user["id"]), "learning_roadmap", max_per_hour=10, db=db)
+) -> dict | AiOperationAccepted:
 
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
@@ -144,34 +146,79 @@ async def request_learning_roadmap(
             "download_path": f"/api/v1/learning-roadmaps/{existing['id']}",
         }
 
-    row = await db.fetchrow(
-        """
-        INSERT INTO public.learning_roadmaps (candidate_id, job_id, file_path, status)
-        VALUES ($1, $2, 'pending', 'processing')
-        ON CONFLICT (candidate_id, job_id) DO UPDATE SET status = 'processing'
-        RETURNING id
-        """,
-        candidate["id"],
-        body.job_id,
-    )
-    roadmap_id = str(row["id"]) if row else None
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import LEARNING_ROADMAP
 
-    from hireloop_api.services.background_jobs import LEARNING_ROADMAP, enqueue_job
+    user_id = uuid.UUID(str(current_user["id"]))
+    candidate_id = uuid.UUID(str(candidate["id"]))
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            INSERT INTO public.learning_roadmaps (candidate_id, job_id, file_path, status)
+            VALUES ($1, $2, 'pending', 'processing')
+            ON CONFLICT (candidate_id, job_id) DO NOTHING
+            RETURNING id, status
+            """,
+            candidate_id,
+            body.job_id,
+        )
+        if row is None:
+            row = await db.fetchrow(
+                """
+                SELECT id, status, expires_at FROM public.learning_roadmaps
+                WHERE candidate_id = $1 AND job_id = $2
+                """,
+                candidate_id,
+                body.job_id,
+            )
+        if row is None:
+            raise RuntimeError("Learning roadmap row could not be created")
+        roadmap_id = uuid.UUID(str(row["id"]))
+        if (
+            row["status"] == "ready"
+            and row.get("expires_at")
+            and row["expires_at"] > datetime.now(UTC)
+        ):
+            return {
+                "roadmap_id": str(roadmap_id),
+                "status": "ready",
+                "download_path": f"/api/v1/learning-roadmaps/{roadmap_id}",
+            }
+        await db.execute(
+            """
+            UPDATE public.learning_roadmaps
+            SET status = 'processing', error_message = NULL
+            WHERE candidate_id = $1 AND job_id = $2 AND status <> 'ready'
+            """,
+            candidate_id,
+            body.job_id,
+        )
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_id,
+            kind=LEARNING_ROADMAP,
+            payload={
+                "candidate_id": str(candidate_id),
+                "job_id": str(body.job_id),
+                "roadmap_id": str(roadmap_id),
+            },
+            idempotency_key=f"learning_roadmap:{candidate_id}:{body.job_id}",
+            resource_type="learning_roadmap",
+            resource_id=roadmap_id,
+            stage="queued",
+            message="Your learning roadmap is queued.",
+        )
+        if outcome.created:
+            await check_rate_limit(str(user_id), "learning_roadmap", max_per_hour=10, db=db)
 
-    await enqueue_job(
-        db,
-        kind=LEARNING_ROADMAP,
-        payload={
-            "candidate_id": str(candidate["id"]),
-            "job_id": str(body.job_id),
-        },
-        idempotency_key=f"learning_roadmap:{candidate['id']}:{body.job_id}",
+    response.status_code = 202
+    operation = outcome.operation
+    return AiOperationAccepted(
+        operation_id=operation.id,
+        status=cast(Literal["queued", "running"], operation.status),
+        status_url=f"/api/v1/ai-operations/{operation.id}",
     )
-    return {
-        "status": "processing",
-        "roadmap_id": roadmap_id,
-        "message": "Building your roadmap — poll in ~30s",
-    }
 
 
 @router.get("/roadmaps")

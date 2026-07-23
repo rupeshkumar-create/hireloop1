@@ -92,6 +92,31 @@ class _CareerGenerationPayload(BaseModel):
     lease_token: str = Field(alias="_job_lease_token")
 
 
+class _CandidateOperationPayload(_CareerGenerationPayload):
+    """Strict payload for candidate-scoped operation jobs."""
+
+
+class _CandidateJobOperationPayload(_CareerGenerationPayload):
+    job_id: uuid.UUID
+
+
+class _TailoredResumeOperationPayload(_CandidateJobOperationPayload):
+    resume_id: uuid.UUID
+    template: str = Field(pattern="^(modern|classic|minimal)$")
+
+
+class _LearningRoadmapOperationPayload(_CandidateJobOperationPayload):
+    roadmap_id: uuid.UUID
+
+
+class _ResumeParseOperationPayload(_CareerGenerationPayload):
+    user_id: uuid.UUID
+    resume_id: uuid.UUID
+    storage_path: str = Field(min_length=1, max_length=1000)
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=1, max_length=200)
+
+
 _BACKOFF_BASE_SECONDS = 30
 _BACKOFF_MAX_SECONDS = 900
 
@@ -448,28 +473,78 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
             logger.warning("job_match_alert_failed", error=str(exc)[:200])
 
 
-async def _handle_resume_parse(settings: Settings, payload: dict[str, Any]) -> None:
+async def _handle_resume_parse(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
     """Download an uploaded resume and durably run the full parser enrichment."""
     from supabase import create_client
 
-    from hireloop_api.routes.resumes import _schedule_resume_parse
+    from hireloop_api.routes.resumes import _sync_user_display_name_from_resume
+    from hireloop_api.services.resume_parser import ResumeParserService
 
-    storage_path = str(payload["storage_path"])
+    job = _ResumeParseOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="download", message="Loading your resume."
+    )
     client = create_client(settings.supabase_url, settings.supabase_service_key)
     file_bytes = await asyncio.to_thread(
         client.storage.from_("resumes").download,
-        storage_path,
+        job.storage_path,
     )
-    task = _schedule_resume_parse(
-        user_id=str(payload["user_id"]),
-        candidate_id=str(payload["candidate_id"]),
-        resume_id=str(payload["resume_id"]),
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="parsing",
+        message="Reading your resume details.",
+    )
+    parsed = await ResumeParserService.parse_best(
         file_bytes=file_bytes,
-        filename=str(payload.get("filename") or "resume.pdf"),
-        mime_type=str(payload.get("mime_type") or "application/pdf"),
+        filename=job.filename,
+        mime_type=job.mime_type,
         settings=settings,
     )
-    await task
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="profile_enrichment",
+        message="Preparing your profile enrichment.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.resumes SET parsed_data = $2::jsonb, raw_text = $3
+            WHERE id = $1::uuid AND candidate_id = $4::uuid
+            """,
+            job.resume_id,
+            parsed.model_dump_json(),
+            parsed.raw_text,
+            job.candidate_id,
+        )
+        await _sync_user_display_name_from_resume(
+            db,
+            user_id=str(job.user_id),
+            candidate_id=str(job.candidate_id),
+            resume_full_name=parsed.full_name,
+        )
+        if parsed.location_city or parsed.location_state:
+            from hireloop_api.market_db import sync_candidate_market_from_location
+
+            await sync_candidate_market_from_location(
+                db,
+                candidate_id=job.candidate_id,
+                location_city=parsed.location_city,
+                location_state=parsed.location_state,
+            )
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'resume_upload', TRUE)
+            """,
+            job.user_id,
+        )
+
+    return HandlerResult(result_type="resume", result_id=job.resume_id, persist=_persist)
 
 
 async def _handle_career_intelligence_update(settings: Settings, payload: dict[str, Any]) -> None:
@@ -578,46 +653,228 @@ async def _handle_profile_completeness(settings: Settings, payload: dict[str, An
     await recompute_completeness_only(settings, str(payload["candidate_id"]))
 
 
-async def _handle_career_path_resumes(settings: Settings, payload: dict[str, Any]) -> None:
+async def _handle_career_path_resumes(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
     # LLM-heavy (up to 3 resume builds) — runs here so no request connection is
     # held for minutes; the worker uses one short-lived pooled connection.
     from hireloop_api.deps import get_db_pool
-    from hireloop_api.services.career_path_resume import generate_path_resumes
+    from hireloop_api.services.career_path_resume import (
+        persist_prepared_path_resumes,
+        prepare_path_resumes,
+    )
 
+    job = _CandidateOperationPayload.model_validate(payload)
     pool = await get_db_pool(settings)
-    async with pool.acquire() as conn:
-        await generate_path_resumes(conn, str(payload["candidate_id"]), settings)
 
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        await publish_operation_progress(
+            settings,
+            payload,
+            progress_percent=percent,
+            stage=stage,
+            message=message,
+        )
 
-async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.routes.tailored_resumes import _run_tailor_task
+    prepared = await prepare_path_resumes(
+        pool, str(job.candidate_id), settings, on_progress=_progress
+    )
 
-    await _run_tailor_task(
-        uuid.UUID(str(payload["candidate_id"])),
-        uuid.UUID(str(payload["job_id"])),
-        str(payload.get("template") or "modern"),
-        settings,
+    async def _persist(db: asyncpg.Connection) -> None:
+        await persist_prepared_path_resumes(db, prepared)
+
+    return HandlerResult(
+        result_type="career_path_resume_batch", result_id=job.candidate_id, persist=_persist
     )
 
 
-async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.routes.learning_roadmaps import _run_roadmap_task
+async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from langchain_openai import ChatOpenAI
 
-    await _run_roadmap_task(
-        uuid.UUID(str(payload["candidate_id"])),
-        uuid.UUID(str(payload["job_id"])),
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.resume_tailor import generate_tailored_html, resume_summary_line
+    from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
+    from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
+
+    job = _TailoredResumeOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="profile", message="Loading your profile."
+    )
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        if not await fetch_tailored_resume_enabled(db, job.candidate_id):
+            raise PermissionError("Tailored resumes are disabled")
+        profile = await load_tailored_resume_profile(db, job.candidate_id)
+        role = await db.fetchrow(
+            """
+            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
+                   co.name AS company_name
+            FROM public.jobs j LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1 AND j.deleted_at IS NULL
+            """,
+            job.job_id,
+        )
+    if not profile or not role:
+        raise ValueError("Candidate profile or job is unavailable")
+    await publish_operation_progress(
+        settings, payload, progress_percent=35, stage="resume", message="Tailoring your resume."
+    )
+    llm = ChatOpenAI(
+        model=settings.openrouter_primary_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.3,
+        max_tokens=4096,
+        default_headers={
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Resume Tailor",
+        },
+    )
+    html = await generate_tailored_html(
+        llm=llm, candidate_profile=profile, job=dict(role), template=job.template
+    )
+    summary = resume_summary_line(html)
+    await publish_operation_progress(
         settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your tailored resume.",
     )
 
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.tailored_resumes
+            SET template = $2, file_path = $3, summary_line = $4,
+                html_content = $5, status = 'ready', error_message = NULL,
+                expires_at = NOW() + INTERVAL '30 days'
+            WHERE id = $1 AND candidate_id = $6 AND job_id = $7
+            """,
+            job.resume_id,
+            job.template,
+            f"{job.candidate_id}/{job.job_id}/{job.resume_id}.html",
+            summary[:500] if summary else None,
+            html[:500_000],
+            job.candidate_id,
+            job.job_id,
+        )
 
-async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.services.application_kit import run_application_kit_job
+    return HandlerResult(result_type="tailored_resume", result_id=job.resume_id, persist=_persist)
 
-    await run_application_kit_job(
-        settings,
-        str(payload["candidate_id"]),
-        str(payload["job_id"]),
+
+async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from langchain_openai import ChatOpenAI
+
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.learning_roadmap import generate_roadmap, render_roadmap_html
+
+    job = _LearningRoadmapOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="profile", message="Loading your profile."
     )
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        candidate = await db.fetchrow(
+            """
+            SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
+                   c.skills, c.years_experience, u.full_name, u.email
+            FROM public.candidates c JOIN public.users u ON u.id = c.user_id
+            WHERE c.id = $1 AND c.deleted_at IS NULL
+            """,
+            job.candidate_id,
+        )
+        role = await db.fetchrow(
+            """
+            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
+                   co.name AS company_name
+            FROM public.jobs j LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1 AND j.deleted_at IS NULL
+            """,
+            job.job_id,
+        )
+    if not candidate or not role:
+        raise ValueError("Candidate profile or job is unavailable")
+    await publish_operation_progress(
+        settings, payload, progress_percent=35, stage="roadmap", message="Building your roadmap."
+    )
+    llm = ChatOpenAI(
+        model=settings.openrouter_primary_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.4,
+        max_tokens=4096,
+        default_headers={
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Learning Roadmap",
+        },
+    )
+    roadmap = await generate_roadmap(llm=llm, candidate_profile=dict(candidate), job=dict(role))
+    html = render_roadmap_html(
+        roadmap,
+        job_title=str(role.get("title") or "this role"),
+        company_name=str(role.get("company_name") or ""),
+        candidate_name=str(candidate.get("full_name") or "You"),
+        storage_key=str(job.job_id),
+    )
+    summary = str(roadmap.get("summary") or "")[:200]
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your learning roadmap.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.learning_roadmaps
+            SET file_path = $2, summary_line = $3, html_content = $4,
+                status = 'ready', error_message = NULL,
+                expires_at = NOW() + INTERVAL '90 days'
+            WHERE id = $1 AND candidate_id = $5 AND job_id = $6
+            """,
+            job.roadmap_id,
+            f"{job.candidate_id}/{job.job_id}/{job.roadmap_id}.html",
+            summary,
+            html[:500_000],
+            job.candidate_id,
+            job.job_id,
+        )
+
+    return HandlerResult(result_type="learning_roadmap", result_id=job.roadmap_id, persist=_persist)
+
+
+async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.application_kit import (
+        persist_prepared_application_kit,
+        prepare_application_kit_operation,
+    )
+
+    job = _CandidateJobOperationPayload.model_validate(payload)
+    pool = await get_db_pool(settings)
+
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        await publish_operation_progress(
+            settings,
+            payload,
+            progress_percent=percent,
+            stage=stage,
+            message=message,
+        )
+
+    prepared = await prepare_application_kit_operation(
+        pool,
+        settings=settings,
+        candidate_id=job.candidate_id,
+        job_id=job.job_id,
+        on_progress=_progress,
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await persist_prepared_application_kit(db, prepared)
+
+    return HandlerResult(result_type="application_kit", result_id=prepared.id, persist=_persist)
 
 
 async def _handle_match_embed_all(settings: Settings, payload: dict[str, Any]) -> None:

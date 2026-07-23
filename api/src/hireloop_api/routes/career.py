@@ -909,10 +909,11 @@ async def list_career_path_resumes(
 
 @router.post("/path-resumes/generate")
 async def generate_career_path_resumes(
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
-) -> dict:
+) -> dict | AiOperationAccepted:
     """Queue per-path resume generation and return the current list.
 
     Generation is several LLM calls (one per career path, minutes total) — it
@@ -920,7 +921,8 @@ async def generate_career_path_resumes(
     holding one here starved the pool and 503'd unrelated routes. The resumes
     page polls /path-resumes and shows per-row status.
     """
-    from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES, enqueue_job
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES
     from hireloop_api.services.career_path_resume import list_path_resumes
     from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
 
@@ -930,15 +932,33 @@ async def generate_career_path_resumes(
             status_code=403,
             detail="Enable tailored resumes in Settings before generating path-specific resumes.",
         )
-    await check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5, db=db)
-    await enqueue_job(
-        db,
-        kind=CAREER_PATH_RESUMES,
-        payload={"candidate_id": candidate_id},
-        idempotency_key=f"career_path_resumes:{candidate_id}",
-    )
     resumes = await list_path_resumes(db, candidate_id)
-    return {"resumes": resumes, "generating": True}
+    if resumes and all(resume.get("status") == "ready" for resume in resumes):
+        return {"resumes": resumes, "generating": False}
+
+    user_id = uuid.UUID(str(current_user["id"]))
+    candidate_uuid = uuid.UUID(candidate_id)
+    async with db.transaction():
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_PATH_RESUMES,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"career_path_resumes:{candidate_id}",
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career-path resumes are queued.",
+        )
+        if outcome.created:
+            await check_rate_limit(str(user_id), "career_path_resumes", max_per_hour=5, db=db)
+    response.status_code = 202
+    operation = outcome.operation
+    return _accepted_operation(
+        operation.id,
+        cast(Literal["queued", "running"], operation.status),
+    )
 
 
 @router.get("/path-resumes/{resume_id}/download")

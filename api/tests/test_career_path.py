@@ -746,3 +746,86 @@ def test_path_from_career_intelligence_orders_by_feasibility() -> None:
     next_steps = [s for s in path["steps"] if s["level"] == "next"]
     assert next_steps[0]["title"] == "Customer Success Manager"
     assert "85% fit" in (next_steps[0]["rationale"] or "")
+
+
+@pytest.mark.asyncio
+async def test_career_path_resume_submission_returns_ai_operation_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    queued = _operation("career_path_resumes")
+    enqueue = AsyncMock(return_value=_enqueue_outcome(queued))
+    db = _Db()
+
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(
+        "hireloop_api.services.tailored_resume_settings.fetch_tailored_resume_enabled",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "hireloop_api.services.career_path_resume.list_path_resumes",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
+    monkeypatch.setattr(career, "check_rate_limit", AsyncMock(return_value=None))
+
+    response = Response()
+    result = await career.generate_career_path_resumes(
+        response=response,
+        current_user={"id": str(user_id)},
+        settings=SimpleNamespace(),
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert response.status_code == 202
+    assert result.operation_id == queued.id
+    assert result.status == "queued"
+    assert result.status_url == f"/api/v1/ai-operations/{queued.id}"
+    assert result.retry_after_ms == 1500
+    assert enqueue.await_args.kwargs["kind"] == "career_path_resumes"
+    assert enqueue.await_args.kwargs["idempotency_key"] == f"career_path_resumes:{candidate_id}"
+
+
+@pytest.mark.asyncio
+async def test_career_path_resume_duplicate_reuses_active_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    queued = _operation("career_path_resumes", operation_id=uuid.uuid4()).model_copy(
+        update={"status": "running"}
+    )
+    enqueue = AsyncMock(return_value=_enqueue_outcome(queued, created=False))
+    rate_limit = AsyncMock(return_value=None)
+    db = _Db()
+
+    monkeypatch.setattr(career, "_resolve_candidate_id", AsyncMock(return_value=str(candidate_id)))
+    monkeypatch.setattr(
+        "hireloop_api.services.tailored_resume_settings.fetch_tailored_resume_enabled",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "hireloop_api.services.career_path_resume.list_path_resumes",
+        AsyncMock(return_value=[{"status": "processing"}]),
+    )
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation_outcome", enqueue)
+    monkeypatch.setattr(career, "check_rate_limit", rate_limit)
+
+    first = await career.generate_career_path_resumes(
+        response=Response(),
+        current_user={"id": str(user_id)},
+        settings=SimpleNamespace(),
+        db=db,  # type: ignore[arg-type]
+    )
+    second = await career.generate_career_path_resumes(
+        response=Response(),
+        current_user={"id": str(user_id)},
+        settings=SimpleNamespace(),
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert first.operation_id == second.operation_id == queued.id
+    assert first.status_url == second.status_url
+    assert first.retry_after_ms == second.retry_after_ms == 1500
+    rate_limit.assert_not_awaited()

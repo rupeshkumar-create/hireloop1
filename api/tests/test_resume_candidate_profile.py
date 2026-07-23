@@ -1,8 +1,13 @@
 import uuid
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from hireloop_api.config import Settings
+from hireloop_api.models.ai_operation import AiOperationResponse
 from hireloop_api.routes.resumes import (
     _build_profile_updates_from_resume,
     _ensure_candidate_for_resume_upload,
@@ -195,3 +200,159 @@ async def test_apply_resume_enqueues_candidate_specific_job_ingest(
         {"candidate_id": str(db.candidate_id), "force_refresh": True},
         f"aarya_auto_ingest:{db.candidate_id}",
     ) in enqueued
+
+
+class _UploadTransaction(AbstractAsyncContextManager[None]):
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _UploadDb:
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+
+    def transaction(self) -> _UploadTransaction:
+        return _UploadTransaction()
+
+    async def execute(self, query: str, *args: object) -> str:
+        return "INSERT 0 1"
+
+
+class _FakeUploadFile:
+    def __init__(self) -> None:
+        self.filename = "resume.pdf"
+        self.content_type = "application/pdf"
+        self._bytes = b"%PDF-1.7\n"
+
+    async def read(self, _size: int = -1) -> bytes:
+        return self._bytes
+
+
+def _parse_operation(
+    *, operation_id: uuid.UUID | None = None, status: str = "queued"
+) -> AiOperationResponse:
+    now = datetime.now(UTC)
+    return AiOperationResponse.model_validate(
+        {
+            "id": operation_id or uuid.uuid4(),
+            "kind": "resume_parse",
+            "status": status,
+            "progress_percent": 0,
+            "stage": "queued",
+            "message": "Your resume is queued for profile enrichment.",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_upload_returns_ai_operation_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import Response
+
+    from hireloop_api.routes import resumes
+
+    db = _UploadDb()
+    queued = _parse_operation()
+    enqueue = AsyncMock(return_value=SimpleNamespace(operation=queued, created=True))
+    storage = SimpleNamespace(from_=lambda _bucket: SimpleNamespace(upload=lambda **_k: None))
+    supabase = SimpleNamespace(storage=storage)
+
+    monkeypatch.setattr(resumes, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        resumes,
+        "_ensure_candidate_for_resume_upload",
+        AsyncMock(return_value={"id": db.candidate_id}),
+    )
+    monkeypatch.setattr(
+        resumes,
+        "_quick_parse_resume",
+        lambda *_a, **_k: ParsedResume(full_name="Candidate", current_title="Engineer"),
+    )
+    monkeypatch.setattr(resumes, "create_client", lambda *_a, **_k: supabase)
+    monkeypatch.setattr(resumes, "_prepare_candidate_resume_storage", AsyncMock())
+    monkeypatch.setattr(resumes, "_sync_user_display_name_from_resume", AsyncMock())
+    monkeypatch.setattr("hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", enqueue)
+
+    response = Response()
+    out = await resumes.upload_resume(
+        file=_FakeUploadFile(),  # type: ignore[arg-type]
+        response=response,
+        current_user={"id": str(uuid.uuid4())},
+        settings=Settings(
+            _env_file=None,
+            environment="test",
+            supabase_url="https://example.supabase.co",
+            supabase_service_key="service-key",
+        ),  # type: ignore[call-arg]
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert response.status_code == 202
+    assert out.operation_id == queued.id
+    assert out.status_url == f"/api/v1/ai-operations/{queued.id}"
+    assert out.retry_after_ms == 1500
+    assert enqueue.await_args.kwargs["kind"] == "resume_parse"
+    assert "resume_parse:" in enqueue.await_args.kwargs["idempotency_key"]
+
+
+@pytest.mark.asyncio
+async def test_resume_upload_duplicate_reuses_active_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import Response
+
+    from hireloop_api.routes import resumes
+
+    db = _UploadDb()
+    queued = _parse_operation(status="running")
+    enqueue = AsyncMock(return_value=SimpleNamespace(operation=queued, created=False))
+    storage = SimpleNamespace(from_=lambda _bucket: SimpleNamespace(upload=lambda **_k: None))
+    supabase = SimpleNamespace(storage=storage)
+
+    monkeypatch.setattr(resumes, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        resumes,
+        "_ensure_candidate_for_resume_upload",
+        AsyncMock(return_value={"id": db.candidate_id}),
+    )
+    monkeypatch.setattr(
+        resumes,
+        "_quick_parse_resume",
+        lambda *_a, **_k: ParsedResume(full_name="Candidate", current_title="Engineer"),
+    )
+    monkeypatch.setattr(resumes, "create_client", lambda *_a, **_k: supabase)
+    monkeypatch.setattr(resumes, "_prepare_candidate_resume_storage", AsyncMock())
+    monkeypatch.setattr(resumes, "_sync_user_display_name_from_resume", AsyncMock())
+    monkeypatch.setattr("hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", enqueue)
+
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        supabase_url="https://example.supabase.co",
+        supabase_service_key="service-key",
+    )  # type: ignore[call-arg]
+    user = {"id": str(uuid.uuid4())}
+    first = await resumes.upload_resume(
+        file=_FakeUploadFile(),  # type: ignore[arg-type]
+        response=Response(),
+        current_user=user,
+        settings=settings,
+        db=db,  # type: ignore[arg-type]
+    )
+    second = await resumes.upload_resume(
+        file=_FakeUploadFile(),  # type: ignore[arg-type]
+        response=Response(),
+        current_user=user,
+        settings=settings,
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert first.operation_id == second.operation_id == queued.id
+    assert first.status_url == second.status_url
+    assert first.retry_after_ms == second.retry_after_ms == 1500

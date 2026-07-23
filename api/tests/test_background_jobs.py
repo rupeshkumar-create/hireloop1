@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
@@ -317,22 +318,62 @@ async def test_application_kit_handler_runs_candidate_job_generator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called: dict[str, object] = {}
+    stages: list[tuple[int, str]] = []
 
-    async def _fake_run(settings: Settings, candidate_id: str, job_id: str) -> None:
-        called["candidate_id"] = candidate_id
-        called["job_id"] = job_id
+    prepared = SimpleNamespace(id=uuid.uuid4())
+
+    async def _fake_prepare(
+        pool: object,
+        *,
+        settings: Settings,
+        candidate_id: uuid.UUID,
+        job_id: uuid.UUID,
+        on_progress: object | None = None,
+    ) -> object:
+        called["candidate_id"] = str(candidate_id)
+        called["job_id"] = str(job_id)
+        if on_progress is not None:
+            await on_progress(10, "profile", "Loading your profile.")  # type: ignore[operator]
+            await on_progress(35, "resume", "Preparing your tailored resume.")  # type: ignore[operator]
+            await on_progress(60, "cover_letter", "Preparing your cover letter.")  # type: ignore[operator]
+            await on_progress(80, "interview_prep", "Preparing your interview guidance.")  # type: ignore[operator]
+            await on_progress(95, "save", "Saving your application kit.")  # type: ignore[operator]
+        return prepared
+
+    async def _fake_persist(db: object, value: object) -> None:
+        called["persisted"] = value
+
+    async def _fake_progress(
+        _settings: object,
+        _payload: object,
+        *,
+        progress_percent: int,
+        stage: str,
+        message: str,
+    ) -> None:
+        stages.append((progress_percent, stage))
+        assert "Asha" not in message
+        assert "resume text" not in message.lower()
 
     monkeypatch.setattr(
-        "hireloop_api.services.application_kit.run_application_kit_job",
-        _fake_run,
+        "hireloop_api.services.application_kit.prepare_application_kit_operation",
+        _fake_prepare,
     )
+    monkeypatch.setattr(
+        "hireloop_api.services.application_kit.persist_prepared_application_kit",
+        _fake_persist,
+    )
+    monkeypatch.setattr("hireloop_api.deps.get_db_pool", AsyncMock(return_value=object()))
+    monkeypatch.setattr(bj, "publish_operation_progress", _fake_progress)
 
     settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
-    await bj._handle_application_kit(
+    result = await bj._handle_application_kit(
         settings,
         {
             "candidate_id": "11111111-1111-1111-1111-111111111111",
             "job_id": "22222222-2222-2222-2222-222222222222",
+            "operation_id": str(uuid.uuid4()),
+            "_job_lease_token": "worker-1",
         },
     )
 
@@ -340,6 +381,17 @@ async def test_application_kit_handler_runs_candidate_job_generator(
         "candidate_id": "11111111-1111-1111-1111-111111111111",
         "job_id": "22222222-2222-2222-2222-222222222222",
     }
+    assert stages == [
+        (10, "profile"),
+        (35, "resume"),
+        (60, "cover_letter"),
+        (80, "interview_prep"),
+        (95, "save"),
+    ]
+    assert result.result_type == "application_kit"
+    assert result.result_id == prepared.id
+    await result.persist(object())  # type: ignore[arg-type]
+    assert called["persisted"] is prepared
     assert bj.APPLICATION_KIT == "application_kit"
 
 

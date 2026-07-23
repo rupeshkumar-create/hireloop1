@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -37,6 +39,27 @@ from hireloop_api.services.resume_trimmer import trim_resume_html_for_job
 from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
 
 logger = structlog.get_logger()
+
+ProgressCallback = Callable[[int, str, str], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedApplicationKit:
+    id: uuid.UUID
+    candidate_id: uuid.UUID
+    job_id: uuid.UUID
+    cover_letter: str
+    interview_prep: str
+    resume_id: uuid.UUID
+    resume_html: str | None
+    resume_summary: str | None
+    mock_interview_id: uuid.UUID
+    conversation_id: uuid.UUID | None
+    job_title: str
+    ats_report: dict[str, Any] | None
+    dossier: dict[str, Any]
+    reviewer_notes: str | None
+
 
 KIT_SYSTEM_BASE = """You prepare job application assets for one candidate and one role.
 Return ONLY valid JSON (no markdown fences):
@@ -708,6 +731,244 @@ async def run_application_kit_job(settings: Settings, candidate_id: str, job_id:
     if not resume.get("resume_id"):
         status = str(resume.get("status") or "unavailable")
         raise RuntimeError(f"Application kit finished without a tailored resume ({status}).")
+
+
+async def prepare_application_kit_operation(
+    pool: asyncpg.Pool,
+    *,
+    settings: Settings,
+    candidate_id: uuid.UUID,
+    job_id: uuid.UUID,
+    on_progress: ProgressCallback | None = None,
+) -> PreparedApplicationKit:
+    """Generate an application kit while holding DB connections only for reads."""
+
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        if on_progress is not None:
+            await on_progress(percent, stage, message)
+
+    await _progress(10, "profile", "Loading your profile.")
+    async with pool.acquire() as db:
+        candidate = await db.fetchrow(
+            """
+            SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
+                   c.skills, c.years_experience, c.tailored_resume_enabled,
+                   c.profile_enrichment, u.full_name, u.email
+            FROM public.candidates c JOIN public.users u ON u.id = c.user_id
+            WHERE c.id = $1 AND c.deleted_at IS NULL
+            """,
+            candidate_id,
+        )
+        job_row = await db.fetchrow(
+            """
+            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
+                   j.apply_url, j.location_city, j.ctc_min, j.ctc_max,
+                   co.name AS company_name, co.logo_url
+            FROM public.jobs j LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1 AND j.deleted_at IS NULL
+            """,
+            job_id,
+        )
+        profile = await load_tailored_resume_profile(db, candidate_id)
+        existing_resume = await _fetch_existing_tailored_resume(
+            db, candidate_id=candidate_id, job_id=str(job_id)
+        )
+        existing_kit_id = await db.fetchval(
+            """SELECT id FROM public.job_application_kits
+               WHERE candidate_id = $1 AND job_id = $2""",
+            candidate_id,
+            job_id,
+        )
+        existing_mock = await db.fetchrow(
+            """
+            SELECT id, conversation_id FROM public.mock_interviews
+            WHERE candidate_id = $1 AND job_id = $2 AND status = 'in_progress'
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            candidate_id,
+            job_id,
+        )
+        intro_status = await db.fetchval(
+            """
+            SELECT status FROM public.intro_requests
+            WHERE candidate_id = $1 AND job_id = $2
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            candidate_id,
+            job_id,
+        )
+    if not candidate or not job_row:
+        raise ValueError("Candidate profile or job is unavailable")
+    if not profile:
+        profile = dict(candidate)
+    profile["profile_enrichment"] = _normalize_profile_enrichment(
+        candidate.get("profile_enrichment")
+    )
+    job = dict(job_row)
+    job["id"] = str(job_id)
+    job["skills_required"] = job.get("skills_required") or []
+
+    await _progress(35, "resume", "Preparing your tailored resume.")
+    text_task = asyncio.create_task(
+        _generate_text_assets(settings=settings, profile=profile, job=job)
+    )
+    resume_task: asyncio.Task[str] | None = None
+    if existing_resume is None:
+        if not settings.openrouter_api_key:
+            raise ValueError("Resume generation is temporarily unavailable")
+        resume_task = asyncio.create_task(
+            _generate_tailored_html_only(settings=settings, profile=profile, job=job)
+        )
+    cover_letter, interview_prep = await text_task
+    await _progress(60, "cover_letter", "Preparing your cover letter.")
+    cover_letter, interview_prep, reviewer_notes = await review_and_revise_kit_text(
+        settings=settings,
+        profile=profile,
+        job=job,
+        cover_letter=cover_letter,
+        interview_prep=interview_prep,
+    )
+
+    resume_html: str | None = None
+    ats_report: dict[str, Any] | None = None
+    trim_meta: dict[str, Any] | None = None
+    if existing_resume is not None:
+        resume_id = uuid.UUID(str(existing_resume["resume_id"]))
+        resume_summary: str | None = None
+    else:
+        if resume_task is None:
+            raise RuntimeError("Tailored resume generation was not started")
+        resume_html = await resume_task
+        resume_html, trim_meta = trim_resume_html_for_job(resume_html, job=job)
+        ats_report = run_ats_check(resume_html, profile=profile, job=job)
+        resume_id = uuid.uuid4()
+        resume_summary = resume_summary_line(resume_html)
+
+    await _progress(80, "interview_prep", "Preparing your interview guidance.")
+    interview_prep = build_kit_aware_interview_prep(
+        base_prep=interview_prep,
+        dossier=None,
+        job=job,
+        profile=profile,
+        intro_status=str(intro_status) if intro_status else None,
+    )
+    dossier = build_dossier_snapshot(
+        job=job,
+        cover_letter=cover_letter,
+        interview_prep=interview_prep,
+        resume_id=str(resume_id),
+        ats_report=ats_report,
+        reviewer_notes=reviewer_notes or None,
+    )
+    if trim_meta:
+        dossier["resume_trim"] = trim_meta
+    mock_id = uuid.UUID(str(existing_mock["id"])) if existing_mock else uuid.uuid4()
+    conversation_id = None if existing_mock else uuid.uuid4()
+    await _progress(95, "save", "Saving your application kit.")
+    return PreparedApplicationKit(
+        id=uuid.UUID(str(existing_kit_id)) if existing_kit_id else uuid.uuid4(),
+        candidate_id=candidate_id,
+        job_id=job_id,
+        cover_letter=cover_letter,
+        interview_prep=interview_prep,
+        resume_id=resume_id,
+        resume_html=resume_html,
+        resume_summary=resume_summary,
+        mock_interview_id=mock_id,
+        conversation_id=conversation_id,
+        job_title=str(job.get("title") or "Role"),
+        ats_report=ats_report,
+        dossier=dossier,
+        reviewer_notes=reviewer_notes or None,
+    )
+
+
+async def persist_prepared_application_kit(
+    db: asyncpg.Connection, prepared: PreparedApplicationKit
+) -> None:
+    """Persist every kit artifact in the worker's terminal transaction."""
+    await db.execute(
+        """INSERT INTO public.saved_jobs (candidate_id, job_id) VALUES ($1, $2)
+           ON CONFLICT (candidate_id, job_id) DO NOTHING""",
+        prepared.candidate_id,
+        prepared.job_id,
+    )
+    if prepared.resume_html is not None:
+        await db.execute(
+            """
+            INSERT INTO public.tailored_resumes
+              (id, candidate_id, job_id, template, file_path, summary_line,
+               html_content, status, expires_at)
+            VALUES ($1, $2, $3, 'modern', $4, $5, $6, 'ready', NOW() + INTERVAL '30 days')
+            ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+              file_path = EXCLUDED.file_path, summary_line = EXCLUDED.summary_line,
+              html_content = EXCLUDED.html_content, status = 'ready',
+              error_message = NULL, expires_at = EXCLUDED.expires_at
+            """,
+            prepared.resume_id,
+            prepared.candidate_id,
+            prepared.job_id,
+            f"{prepared.candidate_id}/{prepared.job_id}/{prepared.resume_id}.html",
+            prepared.resume_summary,
+            prepared.resume_html[:500_000],
+        )
+    if prepared.conversation_id is not None:
+        await db.execute(
+            """INSERT INTO public.conversations (id, candidate_id, agent, title)
+               VALUES ($1, $2, 'aarya', $3) ON CONFLICT (id) DO NOTHING""",
+            prepared.conversation_id,
+            prepared.candidate_id,
+            f"Mock: {prepared.job_title[:60]}",
+        )
+        await db.execute(
+            """
+            INSERT INTO public.mock_interviews
+              (id, candidate_id, conversation_id, role_target, interview_type, mode, status, job_id)
+            VALUES ($1, $2, $3, $4, 'recruiter_screen', 'chat', 'in_progress', $5)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            prepared.mock_interview_id,
+            prepared.candidate_id,
+            prepared.conversation_id,
+            prepared.job_title,
+            prepared.job_id,
+        )
+        await db.execute(
+            """INSERT INTO public.messages (conversation_id, role, content, content_type)
+               VALUES ($1, 'assistant', $2, 'text')""",
+            prepared.conversation_id,
+            (
+                f"Welcome to your mock interview for {prepared.job_title}. "
+                "Tell me about yourself and why you're interested in this role."
+            ),
+        )
+    await db.execute(
+        """
+        INSERT INTO public.job_application_kits
+          (id, candidate_id, job_id, cover_letter, interview_prep,
+           tailored_resume_id, mock_interview_id, ats_report, dossier, reviewer_notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+        ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+          cover_letter = EXCLUDED.cover_letter,
+          interview_prep = EXCLUDED.interview_prep,
+          tailored_resume_id = EXCLUDED.tailored_resume_id,
+          mock_interview_id = EXCLUDED.mock_interview_id,
+          ats_report = EXCLUDED.ats_report,
+          dossier = EXCLUDED.dossier,
+          reviewer_notes = EXCLUDED.reviewer_notes,
+          updated_at = NOW()
+        """,
+        prepared.id,
+        prepared.candidate_id,
+        prepared.job_id,
+        prepared.cover_letter,
+        prepared.interview_prep,
+        prepared.resume_id,
+        prepared.mock_interview_id,
+        json.dumps(prepared.ats_report) if prepared.ats_report else None,
+        json.dumps(prepared.dossier),
+        prepared.reviewer_notes,
+    )
 
 
 async def prepare_application_kits(

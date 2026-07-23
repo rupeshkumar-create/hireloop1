@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from hireloop_api.config import Settings
+from hireloop_api.models.ai_operation import AiOperationResponse
 from hireloop_api.routes import application_kits
+
+
+class _Transaction(AbstractAsyncContextManager[None]):
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
 
 
 class _PrepareDb:
@@ -15,6 +25,9 @@ class _PrepareDb:
         self.candidate_id = uuid.uuid4()
         self.job_id = uuid.uuid4()
         self.saved = False
+
+    def transaction(self) -> _Transaction:
+        return _Transaction()
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         if "FROM public.candidates" in query:
@@ -38,6 +51,12 @@ class _ExistingMissingResumeDb:
         self.kit_id = uuid.uuid4()
         self.enqueued = False
         self.active_job_id: uuid.UUID | None = None
+
+    def transaction(self) -> _Transaction:
+        return _Transaction()
+
+    async def execute(self, query: str, *args: object) -> str:
+        return "INSERT 0 1"
 
     def _kit_row(self) -> dict[str, object]:
         now = datetime.now(UTC)
@@ -71,6 +90,8 @@ class _ExistingMissingResumeDb:
                 "updated_at": now,
                 "completed_at": None,
             }
+        if "FROM public.jobs" in query:
+            return {"id": self.job_id}
         if "FROM public.job_application_kits" in query:
             return self._kit_row()
         return None
@@ -85,21 +106,42 @@ async def test_prepare_application_kit_route_enqueues_background_job(
     db = _PrepareDb()
     enqueued: dict[str, object] = {}
 
-    async def _fake_enqueue(db_arg: object, **kwargs: object) -> uuid.UUID:
+    operation_id = uuid.uuid4()
+
+    async def _fake_enqueue(db_arg: object, **kwargs: object) -> object:
         enqueued.update(kwargs)
-        return uuid.uuid4()
+        now = datetime.now(UTC)
+        operation = AiOperationResponse.model_validate(
+            {
+                "id": operation_id,
+                "kind": "application_kit",
+                "status": "queued",
+                "progress_percent": 0,
+                "stage": "queued",
+                "message": "Your application kit is queued.",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return type("Outcome", (), {"operation": operation, "created": True})()
 
-    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", _fake_enqueue)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", _fake_enqueue
+    )
 
+    response = Response()
     out = await application_kits.prepare_application_kit_for_job(
         str(db.job_id),
+        response=response,
         current_user={"id": str(uuid.uuid4())},
         db=db,  # type: ignore[arg-type]
         settings=Settings(_env_file=None, environment="test"),  # type: ignore[call-arg]
     )
 
-    assert out["status"] == "processing"
-    assert out["saved"] is True
+    assert response.status_code == 202
+    assert out.operation_id == operation_id
+    assert out.status_url == f"/api/v1/ai-operations/{operation_id}"
+    assert out.retry_after_ms == 1500
     assert db.saved is True
     assert enqueued["kind"] == "application_kit"
     assert enqueued["payload"] == {
@@ -113,30 +155,97 @@ async def test_prepare_existing_kit_without_resume_requeues_generation(
 ) -> None:
     db = _ExistingMissingResumeDb()
     enqueued: dict[str, object] = {}
-    background_job_id = uuid.uuid4()
+    operation_id = uuid.uuid4()
 
-    async def _fake_enqueue(db_arg: object, **kwargs: object) -> uuid.UUID:
+    async def _fake_enqueue(db_arg: object, **kwargs: object) -> object:
         enqueued.update(kwargs)
-        return background_job_id
+        now = datetime.now(UTC)
+        operation = AiOperationResponse.model_validate(
+            {
+                "id": operation_id,
+                "kind": "application_kit",
+                "status": "running",
+                "progress_percent": 10,
+                "stage": "profile",
+                "message": "Loading your profile.",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return type("Outcome", (), {"operation": operation, "created": False})()
 
-    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", _fake_enqueue)
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", _fake_enqueue
+    )
 
+    response = Response()
     out = await application_kits.prepare_application_kit_for_job(
         str(db.job_id),
+        response=response,
         current_user={"id": str(uuid.uuid4())},
         db=db,  # type: ignore[arg-type]
         settings=Settings(_env_file=None, environment="test"),  # type: ignore[call-arg]
     )
 
-    assert out == {
-        "status": "processing",
-        "saved": True,
-        "job_id": str(db.job_id),
-        "background_job_id": str(background_job_id),
-        "message": "Preparing your tailored resume.",
-    }
+    assert response.status_code == 202
+    assert out.operation_id == operation_id
+    assert out.status == "running"
+    assert out.status_url == f"/api/v1/ai-operations/{operation_id}"
+    assert out.retry_after_ms == 1500
     assert enqueued["kind"] == "application_kit"
     assert enqueued["idempotency_key"] == f"application_kit:{db.candidate_id}:{db.job_id}"
+
+
+async def test_prepare_application_kit_duplicate_reuses_active_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _PrepareDb()
+    operation_id = uuid.uuid4()
+    calls = 0
+
+    async def _fake_enqueue(db_arg: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        now = datetime.now(UTC)
+        operation = AiOperationResponse.model_validate(
+            {
+                "id": operation_id,
+                "kind": "application_kit",
+                "status": "queued" if calls == 1 else "running",
+                "progress_percent": 0 if calls == 1 else 10,
+                "stage": "queued" if calls == 1 else "profile",
+                "message": "Your application kit is queued.",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return type("Outcome", (), {"operation": operation, "created": calls == 1})()
+
+    monkeypatch.setattr(
+        "hireloop_api.services.ai_operations.enqueue_ai_operation_outcome", _fake_enqueue
+    )
+
+    user = {"id": str(uuid.uuid4())}
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    first = await application_kits.prepare_application_kit_for_job(
+        str(db.job_id),
+        response=Response(),
+        current_user=user,
+        db=db,  # type: ignore[arg-type]
+        settings=settings,
+    )
+    second = await application_kits.prepare_application_kit_for_job(
+        str(db.job_id),
+        response=Response(),
+        current_user=user,
+        db=db,  # type: ignore[arg-type]
+        settings=settings,
+    )
+
+    assert first.operation_id == second.operation_id == operation_id
+    assert first.status_url == second.status_url == f"/api/v1/ai-operations/{operation_id}"
+    assert first.retry_after_ms == second.retry_after_ms == 1500
+    assert calls == 2
 
 
 async def test_get_existing_kit_without_resume_stays_not_ready_while_job_active() -> None:

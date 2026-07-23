@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal, cast
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services import background_jobs
 
 logger = structlog.get_logger()
@@ -241,10 +243,11 @@ async def get_application_kit_status_for_job(
 @router.post("/jobs/{job_id}/prepare")
 async def prepare_application_kit_for_job(
     job_id: str,
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict | AiOperationAccepted:
     """Queue resume, cover letter, and interview prep generation for one job."""
     try:
         job_uuid = uuid.UUID(job_id)
@@ -253,26 +256,8 @@ async def prepare_application_kit_for_job(
 
     cid = await _candidate_id(db, current_user["id"])
     existing = await _application_kit_row_for_job(db, candidate_id=cid, job_id=job_uuid)
-    if existing:
-        if existing["tailored_resume_id"]:
-            return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}
-        # Older kits, or kits created while resume generation was unavailable,
-        # can have cover assets but no tailored resume. Queue the same durable
-        # generator instead of reporting the incomplete kit as ready.
-        background_job_id = await background_jobs.enqueue_job(
-            db,
-            kind=background_jobs.APPLICATION_KIT,
-            payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
-            idempotency_key=_application_kit_job_key(cid, job_uuid),
-            max_attempts=3,
-        )
-        return {
-            "status": "processing",
-            "saved": True,
-            "job_id": str(job_uuid),
-            "background_job_id": str(background_job_id),
-            "message": "Preparing your tailored resume.",
-        }
+    if existing and existing["tailored_resume_id"]:
+        return {"status": "ready", "saved": True, "kit": _serialize_kit(existing)}
 
     job = await db.fetchrow(
         """
@@ -284,24 +269,32 @@ async def prepare_application_kit_for_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    await db.execute(
-        """
-        INSERT INTO public.saved_jobs (candidate_id, job_id)
-        VALUES ($1::uuid, $2::uuid)
-        ON CONFLICT (candidate_id, job_id) DO NOTHING
-        """,
-        cid,
-        job_uuid,
-    )
-
     try:
-        background_job_id = await background_jobs.enqueue_job(
-            db,
-            kind=background_jobs.APPLICATION_KIT,
-            payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
-            idempotency_key=_application_kit_job_key(cid, job_uuid),
-            max_attempts=3,
-        )
+        from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+
+        async with db.transaction():
+            await db.execute(
+                """
+                INSERT INTO public.saved_jobs (candidate_id, job_id)
+                VALUES ($1::uuid, $2::uuid)
+                ON CONFLICT (candidate_id, job_id) DO NOTHING
+                """,
+                cid,
+                job_uuid,
+            )
+            outcome = await enqueue_ai_operation_outcome(
+                db,
+                user_id=uuid.UUID(str(current_user["id"])),
+                candidate_id=cid,
+                kind=background_jobs.APPLICATION_KIT,
+                payload={"candidate_id": str(cid), "job_id": str(job_uuid)},
+                idempotency_key=_application_kit_job_key(cid, job_uuid),
+                resource_type="job",
+                resource_id=job_uuid,
+                stage="queued",
+                message="Your application kit is queued.",
+                max_attempts=3,
+            )
     except Exception as exc:
         logger.exception(
             "application_kit_enqueue_failed",
@@ -314,10 +307,12 @@ async def prepare_application_kit_for_job(
             detail="Couldn't start the application kit. Please try again in a moment.",
         ) from exc
 
-    return {
-        "status": "processing",
-        "saved": True,
-        "job_id": str(job_uuid),
-        "background_job_id": str(background_job_id),
-        "message": "Preparing your resume, cover letter, and interview prep.",
-    }
+    response.status_code = 202
+    operation = outcome.operation
+    if operation.status not in {"queued", "running"}:
+        raise RuntimeError("Enqueued application kit operation is not active")
+    return AiOperationAccepted(
+        operation_id=operation.id,
+        status=cast(Literal["queued", "running"], operation.status),
+        status_url=f"/api/v1/ai-operations/{operation.id}",
+    )

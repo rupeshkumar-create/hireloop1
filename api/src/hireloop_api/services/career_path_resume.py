@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -17,6 +19,22 @@ from hireloop_api.services.tailored_resume_profile import load_tailored_resume_p
 from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
 
 logger = structlog.get_logger()
+
+ProgressCallback = Callable[[int, str, str], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedPathResume:
+    id: uuid.UUID
+    title: str
+    html: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedPathResumeBatch:
+    candidate_id: uuid.UUID
+    career_path_id: uuid.UUID | None
+    resumes: tuple[PreparedPathResume, ...]
 
 
 async def list_path_resumes(db: asyncpg.Connection, candidate_id: str) -> list[dict[str, Any]]:
@@ -154,6 +172,88 @@ async def generate_path_resumes(
             )
 
     return results or await list_path_resumes(db, candidate_id)
+
+
+async def prepare_path_resumes(
+    pool: asyncpg.Pool,
+    candidate_id: str,
+    settings: Settings,
+    on_progress: ProgressCallback | None = None,
+) -> PreparedPathResumeBatch:
+    """Load inputs briefly, then generate resumes without holding a DB lease."""
+
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        if on_progress is not None:
+            await on_progress(percent, stage, message)
+
+    candidate_uuid = uuid.UUID(candidate_id)
+    await _progress(10, "profile", "Loading your profile.")
+    async with pool.acquire() as db:
+        if not await fetch_tailored_resume_enabled(db, candidate_uuid):
+            raise ValueError(
+                "Enable tailored resumes in Settings before generating path-specific resumes."
+            )
+        path = await CareerPathService.get_latest(db, candidate_id)
+        profile = await load_tailored_resume_profile(db, candidate_uuid)
+    if not settings.openrouter_api_key:
+        raise ValueError("Resume generation is temporarily unavailable.")
+    if not path:
+        raise ValueError("Generate your career path first.")
+    titles = career_path_options(path)
+    if not titles:
+        raise ValueError("No career path directions to generate resumes for.")
+    if not profile:
+        raise ValueError("Candidate profile not found.")
+
+    llm = ChatOpenAI(
+        model=settings.openrouter_primary_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.25,
+    )
+    prepared: list[PreparedPathResume] = []
+    total = len(titles)
+    for index, title in enumerate(titles):
+        # Bound progress between 35 and 75 across path titles (monotonic).
+        percent = 35 + int((index / max(total, 1)) * 40)
+        await _progress(percent, "resume", "Preparing your career-path resumes.")
+        html = await generate_path_resume_html(
+            llm=llm,
+            candidate_profile=profile,
+            path_title=title,
+            path_summary=str(path.get("summary")) if path.get("summary") else None,
+        )
+        prepared.append(PreparedPathResume(id=uuid.uuid4(), title=title, html=html))
+    await _progress(80, "finalizing", "Finalizing your career-path resumes.")
+    path_id = path.get("id")
+    return PreparedPathResumeBatch(
+        candidate_id=candidate_uuid,
+        career_path_id=uuid.UUID(str(path_id)) if path_id else None,
+        resumes=tuple(prepared),
+    )
+
+
+async def persist_prepared_path_resumes(
+    db: asyncpg.Connection, prepared: PreparedPathResumeBatch
+) -> None:
+    for resume in prepared.resumes:
+        await db.execute(
+            """
+            INSERT INTO public.career_path_resumes
+              (id, candidate_id, career_path_id, path_title, html_content, status)
+            VALUES ($1, $2, $3, $4, $5, 'ready')
+            ON CONFLICT (candidate_id, path_title) DO UPDATE SET
+              career_path_id = EXCLUDED.career_path_id,
+              html_content = EXCLUDED.html_content,
+              status = 'ready',
+              updated_at = NOW()
+            """,
+            resume.id,
+            prepared.candidate_id,
+            prepared.career_path_id,
+            resume.title,
+            resume.html[:500_000],
+        )
 
 
 async def fetch_path_resume_html(

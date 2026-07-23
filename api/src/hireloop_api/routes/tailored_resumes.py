@@ -5,6 +5,8 @@ Tailored resume routes (P20).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from typing import Literal, cast
 
 import asyncpg
 import structlog
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services.rate_limit import check_rate_limit
 from hireloop_api.services.resume_tailor import (
     generate_tailored_html,
@@ -121,12 +124,11 @@ async def _run_tailor_task(
 @router.post("/tailor")
 async def request_tailored_resume(
     body: TailorRequest,
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    # #48: each tailor run is a multi-call LLM job — cap per user per hour.
-    await check_rate_limit(str(current_user["id"]), "tailor_resume", max_per_hour=10, db=db)
+) -> dict | AiOperationAccepted:
 
     candidate = await db.fetchrow(
         """
@@ -161,37 +163,82 @@ async def request_tailored_resume(
             "download_path": f"/api/v1/tailored-resumes/tailored/{existing['id']}",
         }
 
-    row = await db.fetchrow(
-        """
-        INSERT INTO public.tailored_resumes (candidate_id, job_id, template, file_path, status)
-        VALUES ($1, $2, $3, 'pending', 'processing')
-        ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-          status = 'processing', template = EXCLUDED.template
-        RETURNING id
-        """,
-        candidate["id"],
-        body.job_id,
-        body.template,
-    )
-    resume_id = str(row["id"]) if row else None
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import TAILORED_RESUME
 
-    from hireloop_api.services.background_jobs import TAILORED_RESUME, enqueue_job
+    user_id = uuid.UUID(str(current_user["id"]))
+    candidate_id = uuid.UUID(str(candidate["id"]))
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            INSERT INTO public.tailored_resumes (candidate_id, job_id, template, file_path, status)
+            VALUES ($1, $2, $3, 'pending', 'processing')
+            ON CONFLICT (candidate_id, job_id) DO NOTHING
+            RETURNING id, status
+            """,
+            candidate_id,
+            body.job_id,
+            body.template,
+        )
+        if row is None:
+            row = await db.fetchrow(
+                """
+                SELECT id, status, expires_at FROM public.tailored_resumes
+                WHERE candidate_id = $1 AND job_id = $2
+                """,
+                candidate_id,
+                body.job_id,
+            )
+        if row is None:
+            raise RuntimeError("Tailored resume row could not be created")
+        resume_id = uuid.UUID(str(row["id"]))
+        if (
+            row["status"] == "ready"
+            and row.get("expires_at")
+            and row["expires_at"] > datetime.now(UTC)
+        ):
+            return {
+                "resume_id": str(resume_id),
+                "status": "ready",
+                "download_path": f"/api/v1/tailored-resumes/tailored/{resume_id}",
+            }
+        await db.execute(
+            """
+            UPDATE public.tailored_resumes
+            SET status = 'processing', template = $3, error_message = NULL
+            WHERE candidate_id = $1 AND job_id = $2 AND status <> 'ready'
+            """,
+            candidate_id,
+            body.job_id,
+            body.template,
+        )
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_id,
+            kind=TAILORED_RESUME,
+            payload={
+                "candidate_id": str(candidate_id),
+                "job_id": str(body.job_id),
+                "template": body.template,
+                "resume_id": str(resume_id),
+            },
+            idempotency_key=f"tailored_resume:{candidate_id}:{body.job_id}",
+            resource_type="tailored_resume",
+            resource_id=resume_id,
+            stage="queued",
+            message="Your tailored resume is queued.",
+        )
+        if outcome.created:
+            await check_rate_limit(str(user_id), "tailor_resume", max_per_hour=10, db=db)
 
-    await enqueue_job(
-        db,
-        kind=TAILORED_RESUME,
-        payload={
-            "candidate_id": str(candidate["id"]),
-            "job_id": str(body.job_id),
-            "template": body.template,
-        },
-        idempotency_key=f"tailored_resume:{candidate['id']}:{body.job_id}",
+    response.status_code = 202
+    operation = outcome.operation
+    return AiOperationAccepted(
+        operation_id=operation.id,
+        status=cast(Literal["queued", "running"], operation.status),
+        status_url=f"/api/v1/ai-operations/{operation.id}",
     )
-    return {
-        "status": "processing",
-        "resume_id": resume_id,
-        "message": "Tailoring started — poll in ~30s",
-    }
 
 
 @router.get("/tailored")

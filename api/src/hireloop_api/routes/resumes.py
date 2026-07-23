@@ -18,16 +18,17 @@ import asyncio
 import json
 import re
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 from supabase import Client, create_client
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.services.candidate_display_name import sync_preferred_name_from_resume
 from hireloop_api.services.file_security import (
     ALLOWED_RESUME_MIME_TYPES,
@@ -520,13 +521,14 @@ async def _sync_user_display_name_from_resume(
     )
 
 
-@router.post("/upload", response_model=ResumeUploadResponse, status_code=201)
+@router.post("/upload", response_model=ResumeUploadResponse | AiOperationAccepted, status_code=201)
 async def upload_resume(
     file: Annotated[UploadFile, File(description="PDF or DOCX resume, max 10MB")],
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
-) -> ResumeUploadResponse:
+) -> ResumeUploadResponse | AiOperationAccepted:
     """
     Upload a resume, queue durable parsing, and store the result.
     The candidate can then choose to apply parsed data to their profile.
@@ -596,68 +598,66 @@ async def upload_resume(
 
     logger.info("resume_uploaded", candidate_id=candidate_id, path=storage_path)
 
-    await _prepare_candidate_resume_storage(
-        db,
-        candidate_id=candidate_id,
-        storage_path=storage_path,
-    )
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import RESUME_PARSE
 
-    await db.execute(
-        """
-        INSERT INTO public.resumes
-          (id, candidate_id, file_path, file_name, file_size_bytes, mime_type,
-           parsed_data, raw_text, version, is_primary)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 1, TRUE)
-        ON CONFLICT DO NOTHING
-        """,
-        uuid.UUID(resume_id),
-        uuid.UUID(candidate_id),
-        storage_path,
-        filename,
-        len(file_bytes),
-        normalized_mime,
-        quick_parsed.model_dump_json(),
-        quick_parsed.raw_text,
-    )
-
-    await _sync_user_display_name_from_resume(
-        db,
-        user_id=user_id,
-        candidate_id=candidate_id,
-        resume_full_name=quick_parsed.full_name,
-    )
-
-    from hireloop_api.services.background_jobs import RESUME_PARSE, enqueue_job
-
-    await enqueue_job(
-        db,
-        kind=RESUME_PARSE,
-        payload={
-            "user_id": str(user_id),
-            "candidate_id": candidate_id,
-            "resume_id": resume_id,
-            "storage_path": storage_path,
-            "filename": filename,
-            "mime_type": normalized_mime,
-        },
-        idempotency_key=f"resume_parse:{resume_id}",
-        max_attempts=4,
-    )
-
-    was_parsed = bool(quick_parsed.skills or quick_parsed.current_title or quick_parsed.full_name)
-    return ResumeUploadResponse(
-        resume_id=resume_id,
-        file_path=storage_path,
-        parsed=quick_parsed,
-        parse_status="ready",
-        message=(
-            "Resume uploaded and parsed. Review the data and apply to your profile."
-            if was_parsed
-            else (
-                "Resume uploaded. Aarya is enriching your profile in the background — "
-                "you can continue and refine details from the dashboard."
-            )
-        ),
+    resume_uuid = uuid.UUID(resume_id)
+    candidate_uuid = uuid.UUID(candidate_id)
+    async with db.transaction():
+        await _prepare_candidate_resume_storage(
+            db,
+            candidate_id=candidate_id,
+            storage_path=storage_path,
+        )
+        await db.execute(
+            """
+            INSERT INTO public.resumes
+              (id, candidate_id, file_path, file_name, file_size_bytes, mime_type,
+               parsed_data, raw_text, version, is_primary)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 1, TRUE)
+            ON CONFLICT DO NOTHING
+            """,
+            resume_uuid,
+            candidate_uuid,
+            storage_path,
+            filename,
+            len(file_bytes),
+            normalized_mime,
+            quick_parsed.model_dump_json(),
+            quick_parsed.raw_text,
+        )
+        await _sync_user_display_name_from_resume(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_id,
+            resume_full_name=quick_parsed.full_name,
+        )
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=uuid.UUID(str(user_id)),
+            candidate_id=candidate_uuid,
+            kind=RESUME_PARSE,
+            payload={
+                "user_id": str(user_id),
+                "candidate_id": candidate_id,
+                "resume_id": resume_id,
+                "storage_path": storage_path,
+                "filename": filename,
+                "mime_type": normalized_mime,
+            },
+            idempotency_key=f"resume_parse:{candidate_id}:{resume_id}",
+            resource_type="resume",
+            resource_id=resume_uuid,
+            stage="queued",
+            message="Your resume is queued for profile enrichment.",
+            max_attempts=4,
+        )
+    response.status_code = status.HTTP_202_ACCEPTED
+    operation = outcome.operation
+    return AiOperationAccepted(
+        operation_id=operation.id,
+        status=cast(Literal["queued", "running"], operation.status),
+        status_url=f"/api/v1/ai-operations/{operation.id}",
     )
 
 
