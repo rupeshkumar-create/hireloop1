@@ -33,7 +33,6 @@ import { GoogleConnectedBanner } from "@/components/profile/GoogleConnectedBanne
 import { GoogleConnectResultBanner } from "@/components/profile/GoogleConnectResultBanner";
 import { fetchGoogleStatus, GOOGLE_CONNECTED_EVENT } from "@/lib/api/gmail";
 import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
-import { VoiceDeepDiveModal } from "@/components/chat/VoiceDeepDiveModal";
 
 const ChatInterface = dynamic(
   () =>
@@ -115,22 +114,8 @@ export function DashboardClient({
     undefined,
   );
   const [handledGmailParam] = useState(() => ({ handled: false }));
-  const [voiceDeepDiveOpen, setVoiceDeepDiveOpen] = useState(initialVoiceDeepDive);
   const scheduledVoiceSessionId =
     searchParams?.get("scheduled_session_id")?.trim() || undefined;
-
-  useEffect(() => {
-    if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
-  }, [initialVoiceDeepDive]);
-
-  const closeVoiceDeepDive = useCallback(() => {
-    setVoiceDeepDiveOpen(false);
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
-    params.delete("voice");
-    params.delete("scheduled_session_id");
-    const query = params.toString();
-    router.replace(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
-  }, [router, searchParams]);
 
   // Retention: return summary before visit bump; visit after feed so "since last visit" works.
   useEffect(() => {
@@ -583,7 +568,8 @@ export function DashboardClient({
               conversationId={activeConvoId}
               initialInput={initialInput}
               candidateName={candidateName}
-              initialVoiceDeepDive={false}
+              initialVoiceDeepDive={initialVoiceDeepDive}
+              scheduledVoiceSessionId={scheduledVoiceSessionId}
               initialKickoff={initialKickoff}
               injectedMessage={injected}
               applicationKitRequest={kitRequest}
@@ -607,12 +593,6 @@ export function DashboardClient({
         activePanel={activePanel}
         onTogglePanel={togglePanel}
         onOpenChat={openChat}
-      />
-      <VoiceDeepDiveModal
-        open={voiceDeepDiveOpen}
-        onClose={closeVoiceDeepDive}
-        candidateName={candidateName}
-        scheduledSessionId={scheduledVoiceSessionId}
       />
     </div>
   );

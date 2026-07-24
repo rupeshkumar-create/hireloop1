@@ -48,15 +48,9 @@ import {
   Briefcase,
   Check,
   ChevronRight,
-  Loader2,
   Mic,
-  Paperclip,
-  Phone,
   Search,
-  Settings,
   Sparkles,
-  Send,
-  Square,
   Volume2,
 } from "@/components/brand/icons";
 import { Button, useToast } from "@/components/ui";
@@ -94,7 +88,6 @@ import {
   StaleSessionError,
   sanitizeChatError,
   storeAaryaSession,
-  storeVoiceSendOnPause,
   streamAaryaMessage,
   type AaryaStreamCallbacks,
 } from "@/lib/chat/aaryaStream";
@@ -106,7 +99,6 @@ import {
 import {
   readChatCoachSeen,
   readChatReplyMode,
-  storeChatCoachSeen,
   storeChatReplyMode,
   type ChatReplyMode,
 } from "@/lib/chat/voicePreferences";
@@ -114,7 +106,6 @@ import {
   extractNewCompleteSentences,
   remainingSpeechTail,
 } from "@/lib/chat/sentenceTts";
-import { preconnectVoicePipeline } from "@/lib/voice/preconnect";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageIntent";
 import {
@@ -128,7 +119,7 @@ import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
 import { emailDraftDisplayText } from "@/lib/security/email-content";
-import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
+import { BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
@@ -151,9 +142,10 @@ import {
   type ResumeAnalysis,
 } from "./ChatAnalysisCards";
 import { ChatShell } from "@/components/chat/shell/ChatShell";
-import { ComposerWaveform } from "./ComposerWaveform";
-import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
-import { VoiceDeepDiveModal } from "./VoiceDeepDiveModal";
+import { ChatComposer } from "./ChatComposer";
+import { CareerCallConsent } from "./CareerCallConsent";
+import { InThreadCallBanner } from "./InThreadCallBanner";
+import { VoiceSession } from "@/app/voice/VoiceSession";
 import {
   CareerPathOptionCards,
   type CareerPathOption,
@@ -229,8 +221,10 @@ interface ChatInterfaceProps {
   /** Called once when a new session is created lazily, so parents can cache the ID. */
   onSessionCreated?: (id: string) => void;
   candidateName?: string;
-  /** Open the 15-min voice deep-dive modal on mount (e.g. ?voice=deep). */
+  /** Open the in-thread 15-min career call consent on mount (e.g. ?voice=deep). */
   initialVoiceDeepDive?: boolean;
+  /** Optional booked session to resume when opening an in-thread career call. */
+  scheduledVoiceSessionId?: string;
   /** Start the guided career kickoff flow (post-onboarding, ?kickoff=career). */
   initialKickoff?: boolean;
   /**
@@ -310,6 +304,7 @@ export function ChatInterface({
   onSessionCreated,
   candidateName,
   initialVoiceDeepDive = false,
+  scheduledVoiceSessionId,
   initialKickoff = false,
   injectedMessage,
   applicationKitRequest = null,
@@ -353,7 +348,9 @@ export function ChatInterface({
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [replyMode, setReplyMode] = useState<ChatReplyMode>("voice");
   const [sendImmediately, setSendImmediately] = useState(true);
-  const [voiceDeepDiveOpen, setVoiceDeepDiveOpen] = useState(initialVoiceDeepDive);
+  const [careerCallPhase, setCareerCallPhase] = useState<
+    "off" | "consent" | "active"
+  >(initialVoiceDeepDive ? "consent" : "off");
   const [showCoachMark, setShowCoachMark] = useState(false);
   const [hinglishHint, setHinglishHint] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -363,7 +360,6 @@ export function ChatInterface({
   const recordingStartedAtRef = useRef<number | null>(null);
   const streamingContentRef = useRef("");
   const streamGenerationRef = useRef(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
@@ -591,7 +587,7 @@ export function ChatInterface({
   }, [authUserId, sessionId]);
 
   useEffect(() => {
-    if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
+    if (initialVoiceDeepDive) setCareerCallPhase("consent");
   }, [initialVoiceDeepDive]);
 
   // Explicit ?kickoff=career only — career direction lives in Profile → Intelligence.
@@ -2082,391 +2078,88 @@ export function ChatInterface({
   );
 
   const composerSlot = (
-    <div className="bg-paper-0 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-      <div className={cn(CHAT_COLUMN_CLASS, "space-y-2")}>
-        {showCoachMark && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
-            <p className="text-micro text-ink-700 leading-relaxed">
-              Type or tap the mic to talk with Aarya. Your job matches are
-              always in <span className="font-medium">Matches</span> on the
-              left; chat never blocks them.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                storeChatCoachSeen();
-                setShowCoachMark(false);
-              }}
-              className="shrink-0 text-micro font-medium text-ink-600 hover:text-ink-900"
-            >
-              Got it
-            </button>
-          </div>
-        )}
-
-        {(isStreaming || isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
-            <div className="min-w-0 flex-1 flex items-center gap-2">
-              <ComposerWaveform
-                level={audioLevel}
-                active={isRecording || isPlaying}
-                mode={isRecording ? "listening" : "speaking"}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-micro font-medium text-ink-800">
-                  {isRecording
-                    ? "Listening — tap mic again to send"
-                    : voiceProcessing
-                      ? "Processing voice…"
-                      : isStreaming
-                        ? "Aarya is replying…"
-                        : isPlaying
-                          ? "Speaking…"
-                          : "Review your message"}
-                </p>
-                {isRecording && interimTranscript && (
-                  <p
-                    className="text-micro text-ink-600 truncate mt-0.5"
-                    aria-live="polite"
-                  >
-                    {interimTranscript}
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {isStreaming && (
-                <button
-                  type="button"
-                  onClick={stopGeneration}
-                  className="text-micro text-ink-700 underline underline-offset-2"
-                >
-                  Stop
-                </button>
-              )}
-              {isPlaying && !isStreaming && (
-                <button
-                  type="button"
-                  onClick={interruptSpeech}
-                  className="text-micro text-ink-600 underline underline-offset-2"
-                >
-                  Stop
-                </button>
-              )}
-              {isRecording && (
-                <button
-                  type="button"
-                  onClick={() => void cancelMic()}
-                  className="text-micro text-ink-700 underline underline-offset-2"
-                >
-                  Cancel
-                </button>
-              )}
-              {replyMode === "voice" && (isPlaying || isRecording) && (
-                <button
-                  type="button"
-                  onClick={() => setReplyModeAndPersist("text")}
-                  className="text-micro text-ink-600 underline underline-offset-2"
-                >
-                  Text replies
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {pendingVoiceTranscript && (
-          <VoiceTranscriptReview
-            transcript={pendingVoiceTranscript}
-            onChange={setPendingVoiceTranscript}
-            onSend={sendVoiceTranscript}
-            onDiscard={() => setPendingVoiceTranscript(null)}
+    <div className="space-y-2">
+      {careerCallPhase === "consent" && (
+        <div className="max-w-2xl mx-auto px-4">
+          <CareerCallConsent
+            onConfirm={() => setCareerCallPhase("active")}
+            onCancel={() => setCareerCallPhase("off")}
           />
-        )}
-
-        <div
-          className={cn(
-            "bg-paper-1 rounded-lg border border-ink-200 shadow-1",
-            "transition-shadow duration-fast",
-            "focus-within:shadow-2 focus-within:border-ink-300",
-          )}
-        >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => {
-              if (isPlaying) interruptSpeech();
-              if (isRecording) void cancelRecording();
-              setInput(e.target.value);
-            }}
-            onFocus={handleComposerFocus}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              isRecording
-                ? "Tap here to type instead…"
-                : pendingVoiceTranscript
-                  ? "Edit your voice message above, then send."
-                  : isAwaitingDraft
-                    ? "Aarya is thinking… send to barge in"
-                    : isStreaming
-                      ? "Send to interrupt Aarya…"
-                      : "Ask Aarya anything…"
-            }
-            rows={1}
-            disabled={composerInputDisabled && !isStreaming}
-            className={cn(
-              "w-full bg-transparent resize-none text-body text-ink-900",
-              "placeholder:text-ink-400 focus:outline-none leading-relaxed",
-              "px-4 pt-2 pb-1 max-h-[80px] disabled:opacity-60",
-            )}
-          />
-
-          <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
-            <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
-                disabled={isUploading}
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  BTN_COMPOSER_ICON,
-                  isUploading && "opacity-40 cursor-not-allowed",
-                )}
-              >
-                {isUploading ? (
-                  <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
-                ) : (
-                  <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
-                )}
-              </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  aria-label="Voice settings"
-                  aria-expanded={settingsOpen}
-                  title="Voice settings"
-                  onClick={() => setSettingsOpen((o) => !o)}
-                  className={BTN_COMPOSER_ICON}
-                >
-                  <Settings className="h-[17px] w-[17px]" strokeWidth={1.5} />
-                </button>
-                {settingsOpen && (
-                  <div
-                    className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-ink-200 bg-paper-0 p-3 shadow-2 z-20 space-y-3"
-                    role="dialog"
-                    aria-label="Voice settings"
-                  >
-                    <div>
-                      <p className="text-micro font-medium text-ink-800 mb-1.5">
-                        After recording
-                      </p>
-                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
-                        <input
-                          type="radio"
-                          name="voice-send-mode"
-                          checked={sendImmediately}
-                          onChange={() => {
-                            storeVoiceSendOnPause(true);
-                            setSendImmediately(true);
-                          }}
-                        />
-                        Send immediately
-                      </label>
-                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
-                        <input
-                          type="radio"
-                          name="voice-send-mode"
-                          checked={!sendImmediately}
-                          onChange={() => {
-                            storeVoiceSendOnPause(false);
-                            setSendImmediately(false);
-                          }}
-                        />
-                        Review before send
-                      </label>
-                    </div>
-                    <div>
-                      <p className="text-micro font-medium text-ink-800 mb-1.5">
-                        Aarya replies
-                      </p>
-                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
-                        <input
-                          type="radio"
-                          name="reply-mode"
-                          checked={replyMode === "voice"}
-                          onChange={() => setReplyModeAndPersist("voice")}
-                        />
-                        Voice
-                      </label>
-                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
-                        <input
-                          type="radio"
-                          name="reply-mode"
-                          checked={replyMode === "text"}
-                          onChange={() => setReplyModeAndPersist("text")}
-                        />
-                        Text
-                      </label>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-micro text-ink-500 underline"
-                      onClick={() => setSettingsOpen(false)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void handleResumeUpload(file);
-              }}
+        </div>
+      )}
+      {careerCallPhase === "active" && (
+        <div className="max-w-2xl mx-auto px-4 space-y-2">
+          <InThreadCallBanner secondsLeft={15 * 60} />
+          <div className="rounded-lg border border-accent/25 bg-accent/5">
+            <VoiceSession
+              candidateName={candidateName}
+              embedded
+              consent
+              scheduledSessionId={scheduledVoiceSessionId}
+              onComplete={() => setCareerCallPhase("off")}
             />
-
-            <div className="flex items-center gap-1">
-              {VOICE_FEATURE_ENABLED && (
-                <button
-                  type="button"
-                  title="Start 15-min career call"
-                  aria-label="Start career call"
-                  onClick={() => setVoiceDeepDiveOpen(true)}
-                  disabled={isRecording || voiceProcessing}
-                  className={cn(
-                    BTN_COMPOSER_ICON,
-                    (isRecording || voiceProcessing) &&
-                      "opacity-40 cursor-not-allowed",
-                  )}
-                >
-                  <Phone className="h-[17px] w-[17px]" strokeWidth={1.5} />
-                </button>
-              )}
-
-              {(input.trim() || isStreaming) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isStreaming && !input.trim()) {
-                      stopGeneration();
-                      return;
-                    }
-                    void sendMessage(input);
-                  }}
-                  disabled={composerInputDisabled && !isStreaming}
-                  aria-label={
-                    isStreaming && !input.trim()
-                      ? "Stop generation"
-                      : "Send message"
-                  }
-                  title={
-                    isStreaming && !input.trim()
-                      ? "Stop generation"
-                      : undefined
-                  }
-                  className={cn(
-                    BTN_COMPOSER_SEND,
-                    composerInputDisabled &&
-                      !isStreaming &&
-                      "opacity-40 cursor-not-allowed pointer-events-none",
-                  )}
-                >
-                  {isStreaming && !input.trim() ? (
-                    <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
-                  ) : (
-                    <Send className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </button>
-              )}
-
-              {VOICE_FEATURE_ENABLED ? (
-                <button
-                  type="button"
-                  onPointerEnter={() => void preconnectVoicePipeline()}
-                  onFocus={() => void preconnectVoicePipeline()}
-                  onClick={() => void handleMicClick()}
-                  disabled={voiceProcessing || Boolean(pendingVoiceTranscript)}
-                  aria-pressed={isRecording}
-                  aria-label={isRecording ? "Stop recording" : "Start voice message"}
-                  title={isRecording ? "Tap to stop" : "Tap to talk"}
-                  className={cn(
-                    BTN_COMPOSER_ICON,
-                    "h-10 w-10",
-                    isRecording && "text-destructive animate-pulse",
-                    voiceProcessing &&
-                      "opacity-40 cursor-not-allowed pointer-events-none",
-                  )}
-                >
-                  {isRecording ? (
-                    <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
-                  ) : (
-                    <Mic className="h-[17px] w-[17px]" strokeWidth={2} />
-                  )}
-                </button>
-              ) : (
-                !input.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => void sendMessage(input)}
-                    disabled={!input.trim()}
-                    aria-label="Send"
-                    className={cn(BTN_COMPOSER_ICON, "opacity-50 cursor-not-allowed")}
-                  >
-                    <Send className="h-4 w-4" strokeWidth={1.5} />
-                  </button>
-                )
-              )}
-            </div>
           </div>
         </div>
-
-        {hinglishHint && (
-          <p className="text-micro text-ink-500 text-center px-2">
-            Hindi/English mix detected —{" "}
-            <button
-              type="button"
-              className="underline underline-offset-2 hover:text-ink-800"
-              onClick={() => setReplyModeAndPersist("text")}
-            >
-              use text replies
-            </button>{" "}
-            if voice is unclear.
-          </p>
-        )}
-
-        {voiceError && (
-          <div className="text-center space-y-1">
-            <p className="text-small text-ink-700">{voiceError}</p>
-            <p className="text-micro text-ink-500">
-              You can keep typing. Allow microphone access and reload to use voice.
-            </p>
-          </div>
-        )}
-      </div>
+      )}
+      {careerCallPhase !== "active" && (
+        <ChatComposer
+          input={input}
+          onInputChange={(value) => {
+            if (isPlaying) interruptSpeech();
+            if (isRecording) void cancelRecording();
+            setInput(value);
+          }}
+          onSend={() => {
+            if (isStreaming && !input.trim()) {
+              stopGeneration();
+              return;
+            }
+            void sendMessage(input);
+          }}
+          onMicClick={handleMicClick}
+          onCancelMic={cancelMic}
+          onStopGeneration={stopGeneration}
+          onStartCareerCall={() => setCareerCallPhase("consent")}
+          onResumeFile={(file) => void handleResumeUpload(file)}
+          textareaRef={textareaRef}
+          fileInputRef={fileInputRef}
+          isStreaming={isStreaming}
+          isRecording={isRecording}
+          isPlaying={isPlaying}
+          voiceProcessing={voiceProcessing}
+          audioLevel={audioLevel}
+          interimTranscript={interimTranscript}
+          pendingVoiceTranscript={pendingVoiceTranscript}
+          onPendingTranscriptChange={setPendingVoiceTranscript}
+          onSendVoiceTranscript={sendVoiceTranscript}
+          sendImmediately={sendImmediately}
+          onSendImmediatelyChange={setSendImmediately}
+          replyMode={replyMode}
+          onReplyModeChange={setReplyModeAndPersist}
+          hinglishHint={hinglishHint}
+          voiceError={voiceError}
+          showCoachMark={showCoachMark}
+          onDismissCoach={() => setShowCoachMark(false)}
+          isUploading={isUploading}
+          composerInputDisabled={composerInputDisabled}
+          isAwaitingDraft={isAwaitingDraft}
+          voiceEnabled={VOICE_FEATURE_ENABLED}
+          onComposerFocus={handleComposerFocus}
+          onKeyDown={handleKeyDown}
+          interruptSpeech={interruptSpeech}
+        />
+      )}
     </div>
   );
 
   return (
-    <>
-      <ChatShell
-        className={className}
-        messagesSlot={messagesSlot}
-        composerSlot={composerSlot}
-        messagesEndRef={messagesEndRef}
-        scrollDeps={scrollDeps}
-      />
-
-      <VoiceDeepDiveModal
-        open={voiceDeepDiveOpen}
-        onClose={() => setVoiceDeepDiveOpen(false)}
-        candidateName={candidateName}
-      />
-    </>
+    <ChatShell
+      className={className}
+      messagesSlot={messagesSlot}
+      composerSlot={composerSlot}
+      messagesEndRef={messagesEndRef}
+      scrollDeps={scrollDeps}
+    />
   );
 }
 
