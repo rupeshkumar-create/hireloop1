@@ -36,6 +36,17 @@ import {
   type MobilityOption,
   type Prediction,
 } from "@/lib/api/career";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { AiOperationProgress } from "@/components/operations/AiOperationProgress";
+import {
+  resolveReadyOrAccepted,
+  terminalOperationError,
+  waitForTrackedOperation,
+} from "@/lib/operations/resolve";
+import {
+  AI_OPERATION_KINDS,
+  findActiveOperationByKind,
+} from "@/lib/operations/kinds";
 
 // ── Small presentational helpers ────────────────────────────────────────────
 
@@ -314,25 +325,6 @@ function CollapsibleGroup({
   );
 }
 
-/** One headline stat tile for the hero. */
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | null | undefined;
-}) {
-  if (!value) return null;
-  return (
-    <div className="rounded-lg border border-ink-100 bg-ink-50 px-3.5 py-2.5 transition-colors hover:border-ink-200">
-      <p className="text-micro uppercase tracking-wide text-ink-400">{label}</p>
-      <p className="text-body font-semibold text-ink-900 mt-1 leading-snug">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 // ── Loading skeleton (DESIGN.md: skeletons, not spinners) ─────────────────────
 
 function IntelSkeleton() {
@@ -387,6 +379,15 @@ export function CareerIntelligencePanel({
   const [generating, setGenerating] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
+  const {
+    trackAndWait,
+    waitForOperation,
+    operations,
+    restoreState,
+    cancelOperation,
+    retryOperation,
+  } = useAiOperations();
 
   useEffect(() => {
     const m = getCachedProfile()?.user?.market;
@@ -415,72 +416,123 @@ export function CareerIntelligencePanel({
     };
   }, []);
 
-  // Auto-build when nothing stored yet (or only a completeness stub) — kick off generation + poll.
+  // Restore / terminal handling for career_intelligence_generate only.
   useEffect(() => {
-    if (loading || (intel && !isPlaceholderIntelligence(intel))) return;
+    if (intel && !isPlaceholderIntelligence(intel)) return;
 
+    const active = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerIntelligenceGenerate,
+    );
+    if (active) {
+      setActiveOpId(active.id);
+      setAutoBuilding(true);
+      setError("");
+      return;
+    }
+
+    if (!activeOpId) return;
+    const tracked = operations[activeOpId];
+    if (
+      !tracked ||
+      tracked.kind !== AI_OPERATION_KINDS.careerIntelligenceGenerate
+    ) {
+      return;
+    }
+
+    if (tracked.status === "succeeded") {
+      let cancelled = false;
+      void fetchCareerIntelligence().then((next) => {
+        if (cancelled || !next || isPlaceholderIntelligence(next)) return;
+        setIntel(next);
+        setAutoBuilding(false);
+        setGenerating(false);
+        setActiveOpId(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (tracked.status === "failed" || tracked.status === "cancelled") {
+      setAutoBuilding(false);
+      setGenerating(false);
+      setError(
+        tracked.error_message?.trim() ||
+          tracked.message.trim() ||
+          "Couldn't generate intelligence. Try again shortly.",
+      );
+    }
+  }, [operations, intel, activeOpId]);
+
+  // Auto-build after restore settles.
+  useEffect(() => {
+    if (
+      loading ||
+      restoreState !== "ready" ||
+      (intel && !isPlaceholderIntelligence(intel))
+    ) {
+      return;
+    }
+
+    const existing = findActiveOperationByKind(
+      operations,
+      AI_OPERATION_KINDS.careerIntelligenceGenerate,
+    );
+    if (existing) {
+      setActiveOpId(existing.id);
+      setAutoBuilding(true);
+      return;
+    }
+
+    let cancelled = false;
     setAutoBuilding(true);
     setError("");
-    let attempts = 0;
-    let cancelled = false;
-    let generateStarted = false;
-
-    const kickOffBuild = async () => {
-      if (generateStarted) return;
-      generateStarted = true;
-      setGenerating(true);
+    setGenerating(true);
+    void (async () => {
       try {
-        const built = await generateCareerIntelligence();
-        if (!cancelled) setIntel(built);
-      } catch {
-        // Backend may still be building from profile hooks — keep polling.
-      } finally {
-        if (!cancelled) setGenerating(false);
-      }
-    };
-
-    const poll = async () => {
-      try {
-        const next = await fetchCareerIntelligence();
-        if (cancelled) return true;
-        if (next) {
-          setIntel(next);
-          setAutoBuilding(false);
-          return true;
+        const outcome = await generateCareerIntelligence();
+        if (cancelled) return;
+        if (outcome.status === "accepted") {
+          setActiveOpId(outcome.operation.operation_id);
+        }
+        const built = await resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          async () => {
+            const next = await fetchCareerIntelligence();
+            if (!next || isPlaceholderIntelligence(next)) {
+              throw new Error("No career intelligence returned");
+            }
+            return next;
+          },
+          { kind: AI_OPERATION_KINDS.careerIntelligenceGenerate },
+        );
+        if (!cancelled) {
+          setIntel(built);
+          setActiveOpId(null);
         }
       } catch (err) {
         if (!cancelled) {
           setError(
-            err instanceof Error ? err.message : "Couldn't load intelligence.",
+            err instanceof Error
+              ? err.message
+              : "Couldn't generate intelligence. Try again shortly.",
           );
         }
-      }
-      return false;
-    };
-
-    void kickOffBuild();
-    void poll();
-    const id = window.setInterval(async () => {
-      attempts += 1;
-      const ready = await poll();
-      if (ready || attempts >= 30) {
-        window.clearInterval(id);
+      } finally {
         if (!cancelled) {
+          setGenerating(false);
           setAutoBuilding(false);
-          if (!ready && attempts >= 30) {
-            setError(
-              "Aarya is still building your intelligence profile. Try Refresh in a moment.",
-            );
-          }
         }
       }
-    }, 4000);
+    })();
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
     };
-  }, [loading, intel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/intel/restore gate
+  }, [loading, intel, restoreState, trackAndWait]);
 
   // Pick up background recomputes (resume upload, chat, etc.)
   useEffect(() => {
@@ -506,14 +558,60 @@ export function CareerIntelligencePanel({
     setGenerating(true);
     setError("");
     try {
-      const data = await generateCareerIntelligence();
+      const outcome = await generateCareerIntelligence();
+      if (outcome.status === "accepted") {
+        setActiveOpId(outcome.operation.operation_id);
+      }
+      const data = await resolveReadyOrAccepted(
+        outcome,
+        trackAndWait,
+        async () => {
+          const next = await fetchCareerIntelligence();
+          if (!next) throw new Error("No career intelligence returned");
+          return next;
+        },
+        { kind: AI_OPERATION_KINDS.careerIntelligenceGenerate },
+      );
       setIntel(data);
+      setActiveOpId(null);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Couldn't generate intelligence. Try again shortly.",
       );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleRetryActive() {
+    if (!activeOpId) return;
+    setError("");
+    setAutoBuilding(true);
+    setGenerating(true);
+    try {
+      const replacement = await retryOperation(activeOpId);
+      setActiveOpId(replacement.id);
+      const terminal = await waitForTrackedOperation(
+        replacement,
+        waitForOperation,
+      );
+      if (terminal.status !== "succeeded") {
+        throw terminalOperationError(terminal);
+      }
+      const next = await fetchCareerIntelligence();
+      if (!next) throw new Error("No career intelligence returned");
+      setIntel(next);
+      setActiveOpId(null);
+      setAutoBuilding(false);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't generate intelligence. Try again shortly.",
+      );
+      setAutoBuilding(false);
     } finally {
       setGenerating(false);
     }
@@ -562,6 +660,20 @@ export function CareerIntelligencePanel({
             {error && (
               <p className="text-small text-destructive text-center">{error}</p>
             )}
+            {activeOpId && operations[activeOpId] ? (
+              <div className="w-full max-w-sm text-left">
+                <AiOperationProgress
+                  compact
+                  operation={operations[activeOpId]}
+                  onCancel={() => {
+                    void cancelOperation(activeOpId).catch(() => undefined);
+                  }}
+                  onRetry={() => {
+                    void handleRetryActive();
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </CardBody>
       </Card>

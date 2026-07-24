@@ -21,6 +21,8 @@ The /matches gate checks:
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import re
 import uuid
@@ -42,8 +44,10 @@ from pydantic import BaseModel
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import _fetch_supabase_user, get_db, get_phone_verified_user
-from hireloop_api.routes.resumes import _build_profile_updates_from_resume
-from hireloop_api.services.resume_parser import ParsedResume, ResumeParserService
+from hireloop_api.routes.voice_sessions import (
+    CompleteCareerCallRequest,
+    _complete_owned_career_call,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -116,6 +120,7 @@ class VoiceSessionCreate(BaseModel):
     # Maps to voice_sessions.status CHECK: 'completed' | 'cancelled'
     status: str = "completed"
     conversation_id: str | None = None
+    session_id: uuid.UUID | None = None
 
 
 class VoiceSessionResponse(BaseModel):
@@ -278,12 +283,34 @@ async def create_voice_session(
     """
     status = body.status if body.status in ("completed", "cancelled") else "completed"
 
+    if body.session_id and body.status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail="Use the voice-session cancellation endpoint for an existing session",
+        )
+
     candidate = await db.fetchrow(
         "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
         uuid.UUID(current_user["id"]),
     )
     if not candidate:
         raise HTTPException(status_code=404, detail="Complete your profile first")
+
+    if body.session_id and status == "completed":
+        completed = await _complete_owned_career_call(
+            session_id=body.session_id,
+            candidate_id=candidate["id"],
+            body=CompleteCareerCallRequest(
+                completion_reason="candidate_ended",
+                duration_seconds=min(max(0, body.duration_seconds), 16 * 60),
+            ),
+            db=db,
+        )
+        return {
+            "id": completed.id,
+            "status": completed.status,
+            "duration_seconds": body.duration_seconds,
+        }
 
     session_id = uuid.uuid4()
     await db.execute(
@@ -299,13 +326,6 @@ async def create_voice_session(
         status,
         max(0, body.duration_seconds),
     )
-    if status == "completed" and body.conversation_id:
-        await _apply_voice_conversation_to_profile(
-            db=db,
-            user_id=current_user["id"],
-            candidate_id=str(candidate["id"]),
-            conversation_id=body.conversation_id,
-        )
     logger.info(
         "voice_session_recorded",
         candidate_id=str(candidate["id"]),
@@ -319,137 +339,52 @@ async def create_voice_session(
     }
 
 
-async def _apply_voice_conversation_to_profile(
-    *,
-    db: asyncpg.Connection,
-    user_id: str,
-    candidate_id: str,
-    conversation_id: str,
-) -> None:
-    """Best-effort profile fill from the completed Aarya voice conversation."""
-    try:
-        conv_id = uuid.UUID(conversation_id)
-    except ValueError:
-        logger.warning("voice_profile_invalid_conversation_id", conversation_id=conversation_id)
-        return
-
-    rows = await db.fetch(
-        """
-        SELECT m.content
-        FROM public.messages m
-        JOIN public.conversations c ON c.id = m.conversation_id
-        JOIN public.candidates ca ON ca.id = c.candidate_id
-        WHERE m.conversation_id = $1::uuid
-          AND ca.user_id = $2::uuid
-          AND ca.id = $3::uuid
-          AND m.role = 'user'
-        ORDER BY m.created_at ASC
-        LIMIT 100
-        """,
-        conv_id,
-        uuid.UUID(user_id),
-        uuid.UUID(candidate_id),
-    )
-    transcript = "\n".join(str(row["content"]) for row in rows if row["content"])
-    if not transcript.strip():
-        return
-
-    parsed = ResumeParserService.parse_from_text(transcript)
-    await _apply_parsed_profile_fields(
-        db=db,
-        user_id=user_id,
-        candidate_id=candidate_id,
-        parsed=parsed,
-        consent_purpose="voice_profile_enrichment",
-    )
-
-
-async def _apply_parsed_profile_fields(
-    *,
-    db: asyncpg.Connection,
-    user_id: str,
-    candidate_id: str,
-    parsed: ParsedResume,
-    consent_purpose: str,
-) -> None:
-    candidate = await db.fetchrow(
-        """
-        SELECT headline, summary, current_title, current_company,
-               years_experience, skills, linkedin_url, github_url,
-               location_city, location_state, career_profile, career_analysis
-        FROM public.candidates
-        WHERE id = $1::uuid AND deleted_at IS NULL
-        """,
-        uuid.UUID(candidate_id),
-    )
-    if not candidate:
-        return
-
-    updates, fields_updated = _build_profile_updates_from_resume(dict(candidate), parsed)
-
-    if updates:
-        set_clauses: list[str] = []
-        values: list[object] = []
-        for idx, (key, value) in enumerate(updates.items(), start=2):
-            if key in {"career_profile", "career_analysis"}:
-                set_clauses.append(f"{key} = ${idx}::jsonb")
-                values.append(json.dumps(value))
-            else:
-                set_clauses.append(f"{key} = ${idx}")
-                values.append(value)
-        # Field names come only from the fixed resume-profile update builder.
-        update_query = (
-            "UPDATE public.candidates SET "
-            f"{', '.join(set_clauses)}, updated_at = NOW() WHERE id = $1"
-        )
-        await db.execute(
-            update_query,
-            uuid.UUID(candidate_id),
-            *values,
-        )
-        logger.info(
-            "profile_updated_from_voice",
-            candidate_id=candidate_id,
-            fields=fields_updated,
-        )
-        from hireloop_api.services.background_jobs import (
-            MATCH_EMBED_CANDIDATE,
-            RESUME_EMBED_SCORE,
-            enqueue_job,
-        )
-
-        await enqueue_job(
-            db,
-            kind=RESUME_EMBED_SCORE,
-            payload={"candidate_id": candidate_id},
-            idempotency_key=f"resume_embed_score:{candidate_id}",
-        )
-        await enqueue_job(
-            db,
-            kind=MATCH_EMBED_CANDIDATE,
-            payload={"candidate_id": candidate_id},
-            idempotency_key=f"match_embed_candidate:{candidate_id}",
-        )
-
-    try:
-        await db.execute(
-            """
-            INSERT INTO public.consent_log (user_id, purpose, granted)
-            VALUES ($1, $2, TRUE)
-            """,
-            uuid.UUID(user_id),
-            consent_purpose,
-        )
-    except Exception as exc:
-        logger.error("consent_log_insert_failed", user_id=user_id, error=str(exc))
-
-
 # ── Live streaming STT (WebSocket proxy → Deepgram live) ───────────────────────
 
 # Clamp client-reported sample rates to a sane range. Browser AudioContext is
 # almost always 44100 or 48000; we pass it straight through to Deepgram.
 _MIN_SAMPLE_RATE = 8000
 _MAX_SAMPLE_RATE = 48000
+VOICE_WEBSOCKET_PROTOCOL = "hireschema.voice.v1"
+_VOICE_AUTH_PROTOCOL_PREFIX = "auth."
+_MAX_VOICE_ACCESS_TOKEN_BYTES = 4096
+_UNPADDED_BASE64URL_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _extract_voice_auth_token(protocol_header: str | None) -> str | None:
+    """Decode a private auth subprotocol without selecting it in the response."""
+    if not protocol_header:
+        return None
+    raw_protocols = protocol_header.split(",")
+    if any(not part.strip() for part in raw_protocols):
+        return None
+    protocols = [part.strip() for part in raw_protocols]
+    if VOICE_WEBSOCKET_PROTOCOL not in protocols:
+        return None
+    auth_protocols = [
+        protocol for protocol in protocols if protocol.startswith(_VOICE_AUTH_PROTOCOL_PREFIX)
+    ]
+    if len(auth_protocols) != 1 or len(protocols) != 2:
+        return None
+    encoded = auth_protocols[0][len(_VOICE_AUTH_PROTOCOL_PREFIX) :]
+    max_encoded_length = (_MAX_VOICE_ACCESS_TOKEN_BYTES * 4 + 2) // 3
+    if (
+        not encoded
+        or len(encoded) > max_encoded_length
+        or _UNPADDED_BASE64URL_RE.fullmatch(encoded) is None
+    ):
+        return None
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        raw = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
+        token = raw.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    if not token or len(raw) > _MAX_VOICE_ACCESS_TOKEN_BYTES:
+        return None
+    if any(char.isspace() for char in token):
+        return None
+    return token
 
 
 @router.websocket("/stream")
@@ -462,8 +397,9 @@ async def voice_stream(
     to Deepgram's live endpoint and relay interim + final transcripts back so
     the voice UI can show word-by-word captions.
 
-    Auth: browsers can't set headers on the WS handshake, so the Supabase access
-    token is passed as `?token=...` and validated here. The client also sends
+    Auth: browsers can't set Authorization on the WS handshake, so they offer a
+    fixed application subprotocol plus a private base64url auth subprotocol.
+    Only the fixed protocol is selected in the response. The client sends
     `?sr=<sample_rate>` (its AudioContext rate) so we avoid resampling.
 
     Protocol (client → server):
@@ -474,7 +410,7 @@ async def voice_stream(
       - {"utterance_end": true}
       - {"error": str}  (then the socket closes)
     """
-    token = websocket.query_params.get("token")
+    token = _extract_voice_auth_token(websocket.headers.get("sec-websocket-protocol"))
     try:
         sample_rate = int(websocket.query_params.get("sr", "48000"))
     except (TypeError, ValueError):
@@ -482,19 +418,19 @@ async def voice_stream(
     sample_rate = max(_MIN_SAMPLE_RATE, min(_MAX_SAMPLE_RATE, sample_rate))
 
     # Reject before accepting the socket where we can — keeps the handshake clean.
-    if not settings.deepgram_api_key:
-        await websocket.close(code=1011, reason="STT not configured")
-        return
     if not token:
-        await websocket.close(code=1008, reason="Missing auth token")
+        await websocket.close(code=1008, reason="Authentication required")
         return
     try:
         await _fetch_supabase_user(token, settings)
     except HTTPException:
-        await websocket.close(code=1008, reason="Invalid auth token")
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    if not settings.deepgram_api_key:
+        await websocket.close(code=1011, reason="Service unavailable")
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=VOICE_WEBSOCKET_PROTOCOL)
 
     from websockets.exceptions import ConnectionClosed
 

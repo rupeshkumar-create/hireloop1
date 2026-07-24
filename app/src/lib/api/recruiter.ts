@@ -542,6 +542,22 @@ export async function addExternalApplicant(
   });
 }
 
+/** Analyse an uploaded resume against a live role (Nitya chat). */
+export async function analyzeResumeForRole(
+  roleId: string,
+  resume: File,
+  opts?: { full_name?: string; add_to_pipeline?: boolean },
+): Promise<{ analysis: Record<string, unknown>; pipeline: Record<string, unknown> | null }> {
+  const form = new FormData();
+  form.set("resume", resume);
+  if (opts?.full_name) form.set("full_name", opts.full_name);
+  form.set("add_to_pipeline", opts?.add_to_pipeline ? "true" : "false");
+  return apiFetch(`/api/v1/recruiter/roles/${roleId}/analyze-resume`, {
+    method: "POST",
+    body: form,
+  });
+}
+
 export async function fetchRecruiterProfile(): Promise<RecruiterProfile> {
   return apiFetch<RecruiterProfile>("/api/v1/recruiter/me");
 }

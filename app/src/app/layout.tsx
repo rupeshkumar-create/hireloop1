@@ -4,6 +4,8 @@ import { ToastProvider } from "@/components/ui";
 import { CandidateGate } from "@/components/auth/CandidateGate";
 import { OAuthReturnHandler } from "@/components/auth/OAuthReturnHandler";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { AiOperationsProvider } from "@/components/providers/AiOperationsProvider";
+import { AiOperationIndicator } from "@/components/operations/AiOperationIndicator";
 import { AppWarmup } from "@/components/providers/AppWarmup";
 import "./globals.css";
 
@@ -41,11 +43,14 @@ export default function RootLayout({
         </a>
         <ToastProvider>
           <QueryProvider>
-            <AppWarmup />
-            <Suspense fallback={null}>
-              <OAuthReturnHandler />
-              <CandidateGate>{children}</CandidateGate>
-            </Suspense>
+            <AiOperationsProvider>
+              <AppWarmup />
+              <AiOperationIndicator />
+              <Suspense fallback={null}>
+                <OAuthReturnHandler />
+                <CandidateGate>{children}</CandidateGate>
+              </Suspense>
+            </AiOperationsProvider>
           </QueryProvider>
         </ToastProvider>
       </body>

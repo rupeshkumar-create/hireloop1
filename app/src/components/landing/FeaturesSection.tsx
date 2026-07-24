@@ -23,7 +23,7 @@ const CANDIDATE_FEATURES: Feature[] = [
   {
     Icon: MessageSquare,
     title: "One chat with Aarya",
-    body: "No forms, no tabs. Aarya already read your CV and knows your market.",
+    body: "Ask for roles, compare matches, and prepare applications without learning a complicated workflow.",
   },
   {
     Icon: Briefcase,
@@ -33,12 +33,12 @@ const CANDIDATE_FEATURES: Feature[] = [
   {
     Icon: Send,
     title: "Warm intros",
-    body: "Aarya hands you to the hiring manager with context. Not another ATS black hole.",
+    body: "Review the draft, connect Gmail, and approve the message before Aarya sends it.",
   },
   {
     Icon: FileText,
     title: "Tailored CVs",
-    body: "Aarya builds a role-ready résumé in one click — highlights the right experience.",
+    body: "Prepare a role-specific résumé that stays grounded in your real experience.",
   },
   {
     Icon: GraduationCap,
@@ -56,12 +56,12 @@ const RECRUITER_FEATURES: Feature[] = [
   {
     Icon: MessageSquare,
     title: "One chat with Nitya",
-    body: "Describe roles in plain words. Nitya builds the brief — no intake forms.",
+    body: "Describe the role in plain words. Nitya turns it into a brief you can review and edit.",
   },
   {
     Icon: Search,
     title: "Smart shortlists",
-    body: "Nitya searches the candidate graph and ranks matches by genuine fit.",
+    body: "Nitya ranks candidates against the active role and shows the evidence behind the score.",
   },
   {
     Icon: Users,
@@ -71,12 +71,12 @@ const RECRUITER_FEATURES: Feature[] = [
   {
     Icon: Send,
     title: "Warm intros",
-    body: "Nitya coordinates handoffs so you start warm conversations, not cold DMs.",
+    body: "Request a two-sided introduction and let the candidate accept or decline.",
   },
   {
     Icon: ShieldCheck,
     title: "Consent-first",
-    body: "Profiles are shared only with candidate permission. No spam, ever.",
+    body: "Recruiter search includes only candidates who turned discovery on.",
   },
   {
     Icon: Brain,
@@ -92,12 +92,14 @@ const SECTION_COPY: Record<
   candidate: {
     label: "What Aarya does",
     title: "Your recruiter, coach, and strategist.",
-    description: "Everything a great recruiter does for candidates — automated by Aarya.",
+    description:
+      "Search, matching, application preparation, and career guidance — with you in control.",
   },
   recruiter: {
     label: "What Nitya does",
     title: "Your sourcer, screener, and intro partner.",
-    description: "Everything a great sourcer does for hiring teams — automated by Nitya.",
+    description:
+      "Role intake, matching, evidence, and introductions — scoped to the role you are hiring for.",
   },
 };
 
@@ -106,11 +108,15 @@ type FeaturesSectionProps = {
 };
 
 export function FeaturesSection({ audience }: FeaturesSectionProps) {
-  const features = audience === "candidate" ? CANDIDATE_FEATURES : RECRUITER_FEATURES;
+  const features =
+    audience === "candidate" ? CANDIDATE_FEATURES : RECRUITER_FEATURES;
   const header = SECTION_COPY[audience];
 
   return (
-    <section id="features" className="scroll-mt-20 border-t border-ink-100 bg-paper-1">
+    <section
+      id="features"
+      className="scroll-mt-20 border-t border-ink-100 bg-paper-1"
+    >
       <div className="mx-auto max-w-page px-6 py-16 md:py-24">
         <SectionHeader
           label={header.label}
@@ -118,7 +124,10 @@ export function FeaturesSection({ audience }: FeaturesSectionProps) {
           description={header.description}
         />
 
-        <RevealStagger key={audience} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <RevealStagger
+          key={audience}
+          className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+        >
           {features.map(({ Icon, title, body }) => (
             <StaggerItem key={title}>
               <motion.div
@@ -134,7 +143,9 @@ export function FeaturesSection({ audience }: FeaturesSectionProps) {
                   <Icon className="h-5 w-5" strokeWidth={1.5} />
                 </motion.span>
                 <h3 className="text-h3 text-ink-900">{title}</h3>
-                <p className="text-small leading-relaxed text-ink-600">{body}</p>
+                <p className="text-small leading-relaxed text-ink-600">
+                  {body}
+                </p>
               </motion.div>
             </StaggerItem>
           ))}

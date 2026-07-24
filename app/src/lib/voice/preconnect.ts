@@ -4,6 +4,7 @@
 
 import { getAccessToken } from "@/lib/api/auth-fetch";
 import { getApiWsBaseUrl } from "@/lib/api/base-url";
+import { voiceWebSocketProtocols } from "@/lib/voice/websocket-auth";
 
 let configInflight: Promise<void> | null = null;
 let wsWarm: WebSocket | null = null;
@@ -25,10 +26,8 @@ export async function preconnectVoicePipeline(): Promise<void> {
 
       if (wsWarm && wsWarm.readyState <= WebSocket.OPEN) return;
 
-      const url =
-        `${getApiWsBaseUrl()}/api/v1/voice/stream` +
-        `?token=${encodeURIComponent(token)}&sr=48000`;
-      wsWarm = new WebSocket(url);
+      const url = `${getApiWsBaseUrl()}/api/v1/voice/stream?sr=48000`;
+      wsWarm = new WebSocket(url, voiceWebSocketProtocols(token));
       wsWarm.onopen = () => {
         // Close immediately — TCP/TLS + auth handshake is what we wanted warm.
         setTimeout(() => {

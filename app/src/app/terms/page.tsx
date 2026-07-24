@@ -20,7 +20,7 @@ These Terms constitute a binding agreement between you and Hireschema, a company
     id: "eligibility",
     title: "2. Eligibility",
     content: `Hireschema is available to:
-• Residents of supported markets (India, United States, United Kingdom) with a verified phone number for their market
+• Residents of India (optional +91 phone; SMS OTP verification when enabled)
 • Persons aged 18 or older
 • Individuals legally permitted to use recruiting services in their jurisdiction
 
@@ -64,27 +64,37 @@ Violation of these rules may result in account termination and legal action unde
   {
     id: "gmail-oauth",
     title: "6. Google OAuth usage",
-    content: `When you connect your Google account, you grant Hireschema the gmail.send and calendar.events scopes. This allows Aarya to send intro emails from your Gmail address and to create calendar events for voice sessions you book.
+    content: `Connecting your Google account is optional. If you connect it, you grant Hireschema the gmail.send and calendar.events scopes. Gmail access allows Aarya to send an intro email only after your explicit approval. Calendar access adds an optional reminder event for an Aarya call you schedule; the call still happens privately inside Hireschema, and we do not create or promise a Google Meet link.
 
 We commit to:
 • Never reading your inbox or any received messages
 • Never reading your existing calendar contents
 • Never sending emails without your explicit approval
+• Never requiring Google Calendar to start or schedule an Aarya call
 • Revoking access immediately if you disconnect Google in settings
 • Not storing email content beyond 30 days
 
 You can revoke Google access at any time from Google Account settings → Third-party apps.`,
   },
   {
+    id: "career-discovery",
+    title: "7. Aarya career-discovery calls",
+    content: `An Aarya career-discovery call is a private 15-minute conversation designed to understand your experience, skills, languages, location, and job preferences.
+
+By default, Hireschema stores the transcript needed to continue the conversation and provide the service, but does not retain an audio recording. Your transcript remains private to your candidate experience. Sharing any call-derived information with a recruiter requires a separate, explicit consent step.
+
+During this phase, Aarya does not automatically change your profile or job preferences from the call. Any proposed facts or preference updates must be reviewed and confirmed by you before they are applied.`,
+  },
+  {
     id: "intellectual-property",
-    title: "7. Intellectual property",
+    title: "8. Intellectual property",
     content: `All platform content, design, code, trademarks, and brand assets are owned by Hireschema. You may not copy, modify, or distribute our content without written permission.
 
 Your profile data, resume, and chat history remain your property. You grant Hireschema a limited licence to process this data solely to provide the service.`,
   },
   {
     id: "limitation",
-    title: "8. Limitation of liability",
+    title: "9. Limitation of liability",
     content: `Hireschema is a platform that facilitates connections between candidates and recruiters. We do not guarantee employment outcomes, interview results, or hiring decisions.
 
 To the maximum extent permitted by Indian law, Hireschema's liability for any claim is limited to ₹10,000 or the amount you paid us in the prior 12 months, whichever is lower.
@@ -93,21 +103,21 @@ We are not liable for third-party actions, hiring manager responses, or outcomes
   },
   {
     id: "termination",
-    title: "9. Termination",
+    title: "10. Termination",
     content: `We may suspend or terminate your account if you violate these Terms, engage in fraud or abuse, or for any reason with 7 days notice.
 
 You may delete your account at any time. Upon deletion, your data is soft-deleted and permanently purged after 30 days per our Privacy Policy.`,
   },
   {
     id: "governing-law",
-    title: "10. Governing law",
+    title: "11. Governing law",
     content: `These Terms are governed by the laws of India. Any disputes will be subject to the exclusive jurisdiction of courts in India.
 
 For consumer complaints under the Consumer Protection Act 2019, you may also approach the National Consumer Disputes Redressal Commission.`,
   },
   {
     id: "contact",
-    title: "11. Contact",
+    title: "12. Contact",
     content: `For questions about these Terms: hello@hireschema.com
 For data/privacy matters: privacy@hireschema.com
 

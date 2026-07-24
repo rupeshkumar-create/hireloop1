@@ -25,21 +25,21 @@ const CONTENT: Record<
   }
 > = {
   candidate: {
-    eyebrow: "Meet Aarya — your AI recruiter",
-    lead: "Stop spraying résumés.",
-    accent: "Start getting introduced.",
-    sub: "Aarya is built for job seekers. Tell it what you want in text or voice — it reads your CV, finds live roles in your region, scores your fit, and requests warm intros on your behalf.",
-    checks: ["Aarya for candidates", "15+ markets", "Free to start"],
-    ctaLabel: "Talk to Aarya",
-    ctaHref: "/signup",
+    eyebrow: "Hireschema Beta · For candidates in India",
+    lead: "Find roles that fit.",
+    accent: "Know why. Ask for an intro.",
+    sub: "Aarya reads your CV, finds India-eligible roles, and explains each match. When you want an introduction, you review the message before anything is sent from your Gmail.",
+    checks: ["Free during beta", "India-only", "You approve every intro"],
+    ctaLabel: "Join beta as a candidate",
+    ctaHref: "/signup?role=candidate",
   },
   recruiter: {
-    eyebrow: "Meet Nitya — your AI sourcer",
-    lead: "Stop cold outreach.",
-    accent: "Start warm conversations.",
-    sub: "Nitya is built for hiring teams. Describe the role in plain language — it surfaces pre-scored candidates who opted in, then warms up the intro so you skip the résumé pile.",
-    checks: ["Nitya for recruiters", "Consent-first", "Pre-scored fit"],
-    ctaLabel: "Talk to Nitya",
+    eyebrow: "Hireschema Beta · For recruiters in India",
+    lead: "Turn a role brief into",
+    accent: "a consent-first shortlist.",
+    sub: "Tell Nitya what you are hiring for. She structures the brief, ranks candidates who opted into recruiter discovery, and shows the evidence behind each match before you request an introduction.",
+    checks: ["India-only", "Opted-in candidates", "Role-scoped matching"],
+    ctaLabel: "Join beta as a recruiter",
     ctaHref: "/signup?role=recruiter",
   },
 };
@@ -68,7 +68,8 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
           backgroundImage:
             "linear-gradient(to right, rgba(185,248,76,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(185,248,76,0.04) 1px, transparent 1px)",
           backgroundSize: "48px 48px",
-          maskImage: "radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent)",
+          maskImage:
+            "radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent)",
         }}
       />
 
@@ -85,20 +86,26 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
                     aria-pressed={audience === a}
                     className={cn(
                       "relative rounded-full px-4 py-1.5 font-medium transition-colors duration-fast",
-                      audience === a ? "text-on-accent" : "text-ink-500 hover:text-ink-900",
+                      audience === a
+                        ? "text-on-accent"
+                        : "text-ink-500 hover:text-ink-900",
                     )}
                   >
                     {audience === a ? (
                       <motion.span
                         layoutId="audience-pill"
                         className="absolute inset-0 rounded-full bg-accent"
-                        transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 420,
+                          damping: 32,
+                        }}
                       />
                     ) : null}
                     <span className="relative z-10">
                       {a === "candidate"
-                        ? "I'm a candidate · Aarya"
-                        : "I'm a recruiter · Nitya"}
+                        ? "I’m looking for a job"
+                        : "I’m hiring"}
                     </span>
                   </button>
                 ))}
@@ -113,28 +120,38 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
                   initial="enter"
                   animate="center"
                   exit="exit"
-                  transition={{ duration: 0.28, ease: [0.21, 0.47, 0.32, 0.98] }}
+                  transition={{
+                    duration: 0.28,
+                    ease: [0.21, 0.47, 0.32, 0.98],
+                  }}
                   className="space-y-5"
                 >
                   <span className="inline-flex items-center gap-2 text-micro font-medium text-ink-500">
                     <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-paper-0">
                       {agent.initial}
                     </span>
-                    <Sparkles className="h-3 w-3 text-accent" strokeWidth={1.5} />
+                    <Sparkles
+                      className="h-3 w-3 text-accent"
+                      strokeWidth={1.5}
+                    />
                     {c.eyebrow}
                   </span>
 
                   <h1 className="text-[36px] font-semibold leading-[1.08] tracking-tight text-ink-900 md:text-display">
-                    {c.lead}{" "}
-                    <span className="text-accent">{c.accent}</span>
+                    {c.lead} <span className="text-accent">{c.accent}</span>
                   </h1>
 
-                  <p className="max-w-md text-body leading-relaxed text-ink-600">{c.sub}</p>
+                  <p className="max-w-md text-body leading-relaxed text-ink-600">
+                    {c.sub}
+                  </p>
 
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <Link
                       href={c.ctaHref}
-                      className={cn(BTN_PRIMARY, "group gap-2 px-6 py-3.5 text-body")}
+                      className={cn(
+                        BTN_PRIMARY,
+                        "group gap-2 px-6 py-3.5 text-body",
+                      )}
                     >
                       {c.ctaLabel}
                       <ArrowRight
@@ -156,7 +173,10 @@ export function HeroSection({ audience, onAudienceChange }: HeroSectionProps) {
                         key={item}
                         className="inline-flex items-center gap-1.5 text-micro text-ink-500"
                       >
-                        <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} />
+                        <Check
+                          className="h-3.5 w-3.5 text-accent"
+                          strokeWidth={2}
+                        />
                         {item}
                       </li>
                     ))}

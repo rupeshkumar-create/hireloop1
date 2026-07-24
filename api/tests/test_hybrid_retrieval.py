@@ -110,8 +110,8 @@ def test_apify_query_variants_title_oriented() -> None:
 
 
 def test_bucket_key_format() -> None:
-    key = bucket_key(role_id="product_management", market="GB", location="London")
-    assert key == "product_management|GB|london|en"
+    key = bucket_key(role_id="product_management", market="IN", location="Bengaluru")
+    assert key == "product_management|IN|bengaluru|en"
 
 
 def test_canonical_fingerprint_stable() -> None:

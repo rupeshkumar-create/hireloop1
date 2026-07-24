@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from hireloop_api.routes.matches import _serialize_history_rows
@@ -53,10 +53,10 @@ def test_serialize_history_keeps_rows_that_fail_live_title_fit() -> None:
         "explanation": "Previously matched",
         "llm_rationale": None,
         "llm_rationale_at": None,
-        "computed_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
-        "scraped_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
-        "first_seen_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
-        "last_seen_at": datetime(2026, 7, 2, tzinfo=timezone.utc),
+        "computed_at": datetime(2026, 7, 1, tzinfo=UTC),
+        "scraped_at": datetime(2026, 7, 1, tzinfo=UTC),
+        "first_seen_at": datetime(2026, 7, 1, tzinfo=UTC),
+        "last_seen_at": datetime(2026, 7, 2, tzinfo=UTC),
         "has_kit": False,
         "application_status": None,
         "intro_status": None,

@@ -78,3 +78,15 @@ infra/*.tfvars
 # Railway importer scratch dirs (use api/railway.ts instead)
 api/.railway-config-pull-*/
 .railway/migration-*.json
+
+# Brainstorm companion sessions
+.superpowers/
+
+# Isolated Codex feature worktrees
+.worktrees/
+
+# Local env files (keep committed templates)
+.env
+.env.*
+!.env.example
+!**/.env.example

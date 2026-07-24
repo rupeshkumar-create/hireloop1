@@ -46,17 +46,38 @@ export async function markNotificationRead(notificationId: string): Promise<void
 }
 
 /** Map notification payload to an in-app route. */
+function validatedInAppPath(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const value = raw.trim();
+  if (value.startsWith("//")) return null;
+
+  try {
+    if (value.startsWith("/")) {
+      const relative = new URL(value, "https://www.hireschema.com");
+      return `${relative.pathname}${relative.search}`;
+    }
+
+    const absolute = new URL(value);
+    const isHireschema =
+      absolute.protocol === "https:" &&
+      (absolute.hostname === "hireschema.com" ||
+        absolute.hostname.endsWith(".hireschema.com"));
+    const isLocalDevelopment =
+      absolute.protocol === "http:" &&
+      (absolute.hostname === "localhost" || absolute.hostname === "127.0.0.1");
+    if (!isHireschema && !isLocalDevelopment) return null;
+    return `${absolute.pathname}${absolute.search}`;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveNotificationHref(n: AppNotification): string | null {
   const data = n.data ?? {};
-  const raw = data.deep_link ?? data.cta_url;
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const url = raw.startsWith("/") ? new URL(raw, "https://www.hireschema.com") : new URL(raw);
-      return `${url.pathname}${url.search}`;
-    } catch {
-      return raw.startsWith("/") ? raw : null;
-    }
-  }
+  const deepLink = validatedInAppPath(data.deep_link);
+  if (deepLink) return deepLink;
+  const ctaUrl = validatedInAppPath(data.cta_url);
+  if (ctaUrl) return ctaUrl;
   if (typeof data.job_id === "string") {
     return `/dashboard?job=${encodeURIComponent(data.job_id)}`;
   }

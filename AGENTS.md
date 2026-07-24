@@ -5,7 +5,7 @@ Follow these instructions in addition to `.cursorrules`.
 
 ## Project identity
 
-**Hireschema** — AI recruiting platform for India, the US, and the UK.
+**Hireschema** — AI recruiting platform for India (candidates + recruiters).
 - **Aarya** = candidate-facing AI agent
 - **Nitya** = recruiter/HM-facing AI agent
 - Shared Postgres candidate graph via Supabase

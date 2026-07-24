@@ -45,5 +45,9 @@ def decrypt_token(stored: str | None) -> str | None:
     try:
         return _fernet().decrypt(stored.encode("ascii")).decode("utf-8")
     except (InvalidToken, ValueError):
-        # Pre-encryption row (or key rotation) — treat as plaintext.
+        # Fernet tokens have a stable prefix. If one cannot be decrypted, the
+        # key changed or the ciphertext is corrupt; never pass ciphertext to a
+        # vendor as though it were a legacy plaintext credential.
+        if stored.startswith("gAAAA"):
+            return None
         return stored

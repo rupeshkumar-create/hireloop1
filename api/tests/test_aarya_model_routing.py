@@ -105,6 +105,14 @@ def test_profile_post_tool_uses_primary_model() -> None:
     )
 
 
+def test_specific_job_fit_question_is_not_routed_to_job_search() -> None:
+    prompt = (
+        "Why is Associate Manager - Revenue Growth Management at PepsiCo, Inc. "
+        "a fit for me? Use job id 524c5c60-498c-4dec-bb59-2b3ee98525ed."
+    )
+    assert _detect_likely_intent(prompt) == "match_explanation"
+
+
 def test_default_models_are_valid_openrouter_ids() -> None:
     # Regression guard: `claude-haiku-latest` was NOT a valid OpenRouter model ID
     # and 400'd on every fast-routed turn. Defaults are Sonnet + Gemini Flash —

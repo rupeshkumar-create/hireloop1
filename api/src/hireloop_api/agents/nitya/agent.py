@@ -158,17 +158,17 @@ class NityaIntroHandler:
             hm_verified = context.get("email_verified", False)
 
         if not hm_email or not hm_verified:
-            msg = "Could not obtain verified HM email — intro cancelled"
+            msg = "Could not obtain verified HM email — intro failed (retryable)"
             await nitya_tools.update_intro_status(
                 db=self._db,
                 user_id=user_id,
                 session_id=session_id,
                 intro_id=intro_id,
-                new_status="declined",
+                new_status="failed",
                 error_message=msg,
             )
             logger.warning("nitya_no_verified_email", intro_id=intro_id, hm_id=hm_id)
-            return {"error": msg, "intro_id": intro_id}
+            return {"error": msg, "intro_id": intro_id, "retryable": True}
 
         # ── Step 3: Draft the intro email (candidate approves + sends via Gmail) ─
         draft = await nitya_tools.draft_intro_email(
@@ -186,10 +186,10 @@ class NityaIntroHandler:
                 user_id=user_id,
                 session_id=session_id,
                 intro_id=intro_id,
-                new_status="declined",
+                new_status="failed",
                 error_message=draft["error"],
             )
-            return draft
+            return {**draft, "retryable": True}
 
         from hireloop_api.services.email.gmail_oauth import GmailOAuthService
 
@@ -301,6 +301,14 @@ class NityaWorker:
         try:
             conn = await asyncpg.connect(self._db_dsn, statement_cache_size=0)
             try:
+                intro_id = str(payload.get("id") or "")
+                claimed = await conn.fetchval(
+                    "SELECT pg_try_advisory_lock(hashtext($1))",
+                    intro_id,
+                )
+                if not claimed:
+                    logger.info("nitya_intro_already_claimed", intro_id=intro_id)
+                    return
                 handler = NityaIntroHandler(settings=self._settings, db=conn)
                 result = await handler.handle(payload)
                 logger.info("nitya_intro_handled", **result)

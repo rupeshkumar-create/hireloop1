@@ -20,7 +20,7 @@ const FOOTER_LINKS = {
 
 export function Footer() {
   return (
-    <footer className="bg-ink-900 text-ink-500">
+    <footer className="bg-paper-0 border-t border-ink-100 text-ink-500">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-8 lg:gap-12">
           {/* Brand column */}
@@ -36,16 +36,16 @@ export function Footer() {
                   <rect x="10.5" y="20.5" width="27" height="7" fill="#141414" />
                 </g>
               </svg>
-              <span className="font-bold text-xl text-paper-0">
+              <span className="font-bold text-xl text-ink-900">
                 Hire<span className="text-accent">schema</span>
               </span>
             </div>
             <p className="text-sm text-ink-500 leading-relaxed max-w-xs">
-              AI recruiting for candidates and recruiters worldwide. Aarya finds you the
-              right job. Nitya finds companies the right talent.
+              AI recruiting for candidates and recruiters in India. Aarya finds the
+              right role. Nitya helps hiring teams find opted-in talent.
             </p>
             <div className="mt-6 space-y-1">
-              <p className="text-xs text-ink-700">12 markets · remote roles worldwide</p>
+              <p className="text-xs text-ink-700">India-only marketplace · salaries in INR</p>
               <p className="text-xs text-ink-700">DPDP Act 2023 compliant</p>
               <p className="text-xs text-ink-700">AWS ap-south-1 (Mumbai)</p>
             </div>
@@ -54,7 +54,7 @@ export function Footer() {
           {/* Link columns */}
           {Object.entries(FOOTER_LINKS).map(([section, links]) => (
             <div key={section}>
-              <h3 className="text-paper-0 font-semibold text-sm mb-4">{section}</h3>
+              <h3 className="text-ink-900 font-semibold text-sm mb-4">{section}</h3>
               <ul className="space-y-3">
                 {links.map((link) => (
                   <li key={link.href}>
@@ -71,11 +71,11 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="mt-12 pt-8 border-t border-ink-700 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-ink-700">
+        <div className="mt-12 pt-8 border-t border-ink-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-xs text-ink-400">
             &copy; {new Date().getFullYear()} Hireschema All rights reserved.
           </p>
-          <div className="flex items-center gap-4 text-xs text-ink-700">
+          <div className="flex items-center gap-4 text-xs text-ink-400">
             <a
               href="mailto:privacy@hireschema.com"
               className="hover:text-ink-500 transition-colors"

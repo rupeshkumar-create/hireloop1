@@ -21,7 +21,7 @@ from __future__ import annotations
 import base64
 import email.mime.multipart
 import email.mime.text
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import httpx
@@ -102,8 +102,7 @@ class GmailOAuthService:
 
             new_token = data["access_token"]
             expires_in = data.get("expires_in", 3600)
-            new_expiry = datetime.now(UTC).replace(microsecond=0)
-            new_expiry = new_expiry.replace(second=new_expiry.second + expires_in)
+            new_expiry = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=expires_in)
 
             await self._db.execute(
                 """
@@ -222,31 +221,48 @@ class GmailOAuthService:
         """
         Persist Gmail OAuth tokens after the consent flow completes.
         Idempotent — upserts on candidate_id.
+
+        When Google omits ``refresh_token`` on reconnect, keep the stored
+        refresh token. Empty ``scopes`` fall back to the requested send scope
+        so status UI does not look disconnected after a successful grant.
         """
         from datetime import timedelta
 
         expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
+        clean_scopes = [s for s in scopes if s]
+        if not clean_scopes:
+            clean_scopes = ["https://www.googleapis.com/auth/gmail.send"]
+
+        encrypted_refresh = encrypt_token(refresh_token) if refresh_token else None
 
         try:
             await self._db.execute(
                 """
                 INSERT INTO public.gmail_tokens
                     (candidate_id, access_token, refresh_token, token_expiry, email, scopes)
-                VALUES ($1::uuid, $2, $3, $4, $5, $6)
+                VALUES (
+                    $1::uuid, $2,
+                    COALESCE($3, ''),
+                    $4, $5, $6
+                )
                 ON CONFLICT (candidate_id) DO UPDATE SET
                     access_token  = EXCLUDED.access_token,
-                    refresh_token = EXCLUDED.refresh_token,
+                    refresh_token = COALESCE(NULLIF(EXCLUDED.refresh_token, ''),
+                                            public.gmail_tokens.refresh_token),
                     token_expiry  = EXCLUDED.token_expiry,
                     email         = EXCLUDED.email,
-                    scopes        = EXCLUDED.scopes,
+                    scopes        = CASE
+                        WHEN cardinality(EXCLUDED.scopes) > 0 THEN EXCLUDED.scopes
+                        ELSE public.gmail_tokens.scopes
+                    END,
                     updated_at    = NOW()
                 """,
                 candidate_id,
                 encrypt_token(access_token),
-                encrypt_token(refresh_token),
+                encrypted_refresh,
                 expiry,
                 gmail_email,
-                scopes,
+                clean_scopes,
             )
             logger.info("gmail_tokens_saved", candidate_id=candidate_id, email=gmail_email)
             return True

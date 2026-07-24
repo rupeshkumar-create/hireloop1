@@ -1,22 +1,37 @@
 /** @type {import('next').NextConfig} */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const isProduction = process.env.NODE_ENV === "production";
 const apiUrl =
   process.env.NEXT_PUBLIC_API_URL?.trim() || "http://127.0.0.1:8000";
 let apiConnectOrigin = "";
+let apiWebSocketOrigin = "";
 try {
-  apiConnectOrigin = new URL(apiUrl).origin;
+  const parsedApiUrl = new URL(apiUrl);
+  const isLocalApi = ["localhost", "127.0.0.1", "[::1]"].includes(parsedApiUrl.hostname);
+  const isSecureApi = parsedApiUrl.protocol === "https:";
+  if (!isProduction || (!isLocalApi && isSecureApi)) {
+    apiConnectOrigin = parsedApiUrl.origin;
+    apiWebSocketOrigin = apiConnectOrigin.replace(/^http/, "ws");
+  }
 } catch {
-  apiConnectOrigin = "http://127.0.0.1:8000";
+  if (!isProduction) {
+    apiConnectOrigin = "http://127.0.0.1:8000";
+    apiWebSocketOrigin = "ws://127.0.0.1:8000";
+  }
 }
+
+const developmentWebSocketOrigins = isProduction
+  ? ""
+  : " ws://127.0.0.1:8000 ws://localhost:8000";
 
 const backendUrl = apiUrl.replace(/\/$/, "");
 
 const nextConfig = {
   reactStrictMode: true,
-
-  // Don't fail the production build on ESLint style errors (e.g. unused vars in
-  // work-in-progress). TypeScript type-checking still runs and still blocks the
-  // build, so type safety is preserved. Run `pnpm lint` separately in CI.
-  eslint: { ignoreDuringBuilds: true },
+  outputFileTracingRoot: workspaceRoot,
 
   async rewrites() {
     return [
@@ -61,6 +76,7 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
           {
             key: "Permissions-Policy",
             // Microphone allowed: used for Aarya voice chat
@@ -70,13 +86,17 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+              `script-src 'self' 'unsafe-inline'${isProduction ? "" : " 'unsafe-eval'"}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https://*.supabase.co https://media.licdn.com",
               "font-src 'self' data:",
-              // Voice is browser-native (Web Speech API) — no external voice API calls needed
-              `connect-src 'self' ${apiConnectOrigin} wss://127.0.0.1:8000 wss://localhost:8000 https://*.supabase.co wss://*.supabase.co https://openrouter.ai`,
+              // Live voice upgrades directly to the configured FastAPI origin.
+              `connect-src 'self' ${apiConnectOrigin} ${apiWebSocketOrigin}${developmentWebSocketOrigins} https://*.supabase.co wss://*.supabase.co`,
               "media-src 'self' blob:",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "frame-ancestors 'none'",
+              "form-action 'self'",
             ].join("; "),
           },
         ],

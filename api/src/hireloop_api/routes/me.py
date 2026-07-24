@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_optional, get_phone_verified_user
-from hireloop_api.market_db import fetch_candidate_market, infer_market_from_geo_country
+from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import (
     MARKET_LABELS,
     SUPPORTED_MARKETS,
@@ -206,12 +206,12 @@ async def _ensure_candidate_row(
           hide_contact_public, share_with_recruiters, public_profile_enabled,
           tailored_resume_enabled
         )
-        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, TRUE, TRUE, FALSE)
+        VALUES ($1::uuid, 'IN', $2, FALSE, TRUE, FALSE, FALSE, FALSE)
         ON CONFLICT (user_id) DO UPDATE
         SET headline = COALESCE(NULLIF(TRIM(public.candidates.headline), ''), EXCLUDED.headline),
             hide_contact_public = COALESCE(public.candidates.hide_contact_public, TRUE),
-            share_with_recruiters = COALESCE(public.candidates.share_with_recruiters, TRUE),
-            public_profile_enabled = COALESCE(public.candidates.public_profile_enabled, TRUE),
+            share_with_recruiters = COALESCE(public.candidates.share_with_recruiters, FALSE),
+            public_profile_enabled = COALESCE(public.candidates.public_profile_enabled, FALSE),
             tailored_resume_enabled = COALESCE(public.candidates.tailored_resume_enabled, FALSE),
             updated_at = NOW()
         WHERE public.candidates.deleted_at IS NULL
@@ -378,10 +378,13 @@ async def update_my_market(
 
     This controls job visibility/scoping. We also mirror the value onto the candidate row.
     """
-    raw = (body.market or "").strip()
-    market = normalize_market(raw)
-    if market not in SUPPORTED_MARKETS:
-        raise HTTPException(status_code=400, detail="Unsupported market")
+    raw = (body.market or "").strip().upper()
+    if raw and raw not in SUPPORTED_MARKETS:
+        raise HTTPException(
+            status_code=400,
+            detail="Hireschema is India-only. Home market must be IN.",
+        )
+    market = normalize_market(raw or "IN")
 
     user_id = uuid.UUID(str(current_user["id"]))
 
@@ -456,46 +459,40 @@ async def infer_market_from_geo(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """
-    Infer home market from CDN geo headers (Cloudflare / Vercel).
-    Only updates when the user is still on the default IN market.
+    India-only MVP: ensure user + candidate rows stay on market=IN.
+    Geo headers are ignored for market selection (product is India-locked).
     """
-    geo = (
+    _ = (
         request.headers.get("cf-ipcountry")
         or request.headers.get("x-vercel-ip-country")
         or request.headers.get("x-country-code")
     )
-    inferred = infer_market_from_geo_country(geo)
-    if not inferred:
-        return {"ok": False, "market": None, "reason": "unsupported_geo"}
-
     user_id = uuid.UUID(str(current_user["id"]))
     row = await db.fetchrow(
         "SELECT market FROM public.users WHERE id = $1::uuid AND deleted_at IS NULL",
         user_id,
     )
     current = normalize_market(row["market"] if row else None)
-    if current not in {None, "", "IN"} and current != inferred:
-        return {"ok": True, "market": current, "updated": False}
+    if current == "IN":
+        return {"ok": True, "market": "IN", "updated": False}
 
     await db.execute(
         """
         UPDATE public.users
-        SET market = $2, phone_country = $2, updated_at = NOW()
+        SET market = 'IN', phone_country = 'IN', updated_at = NOW()
         WHERE id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
-        inferred,
     )
     await db.execute(
         """
         UPDATE public.candidates
-        SET market = $2, updated_at = NOW()
+        SET market = 'IN', updated_at = NOW()
         WHERE user_id = $1::uuid AND deleted_at IS NULL
         """,
         user_id,
-        inferred,
     )
-    return {"ok": True, "market": inferred, "updated": True}
+    return {"ok": True, "market": "IN", "updated": True}
 
 
 @router.post("/public-profile/publish")
@@ -823,7 +820,7 @@ async def set_linkedin_url(
     from hireloop_api.services.linkdapi_profile import extract_linkedin_username
 
     # Each save kicks off an Apify/LinkDAPI scrape (external cost) — cap it.
-    check_rate_limit(str(current_user["id"]), "linkedin_enrich", max_per_hour=5)
+    await check_rate_limit(str(current_user["id"]), "linkedin_enrich", max_per_hour=5, db=db)
 
     url = (body.linkedin_url or "").strip()
     if not extract_linkedin_username(url):
@@ -893,6 +890,11 @@ async def update_my_profile(
                 "current_ctc",
                 "notice_period_days",
                 "visibility",
+                "display_currency",
+                "public_profile_enabled",
+                "hide_contact_public",
+                "share_with_recruiters",
+                "tailored_resume_enabled",
             )
             if k in updates
         }
@@ -927,6 +929,17 @@ async def update_my_profile(
             await rest_users.log_consent_rest(
                 settings, user_id=user_id, purpose="profile_update_manual", granted=True
             )
+            for field, purpose in (
+                ("share_with_recruiters", "candidate_recruiter_sharing"),
+                ("public_profile_enabled", "public_profile_publish"),
+            ):
+                if field in updates:
+                    await rest_users.log_consent_rest(
+                        settings,
+                        user_id=user_id,
+                        purpose=purpose,
+                        granted=bool(updates[field]),
+                    )
         except Exception as exc:
             logger.error("consent_log_rest_failed", user_id=str(user_id), error=str(exc))
         return {"ok": True}
@@ -1083,6 +1096,22 @@ async def update_my_profile(
             """,
             user_id,
         )
+
+        privacy_updates = body.model_dump(exclude_unset=True)
+        for field, purpose in (
+            ("share_with_recruiters", "candidate_recruiter_sharing"),
+            ("public_profile_enabled", "public_profile_publish"),
+        ):
+            if field in privacy_updates:
+                await db.execute(
+                    """
+                    INSERT INTO public.consent_log (user_id, purpose, granted)
+                    VALUES ($1::uuid, $2, $3)
+                    """,
+                    user_id,
+                    purpose,
+                    bool(privacy_updates[field]),
+                )
 
         candidate_row = await db.fetchrow(
             "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
@@ -1805,9 +1834,14 @@ async def complete_onboarding(
             detail="Accept terms and privacy policy before finishing onboarding.",
         )
 
-    market = normalize_market(body.market or current_user.get("market"))
-    if body.market and market not in SUPPORTED_MARKETS:
-        raise HTTPException(status_code=400, detail="Unsupported market")
+    # India-only MVP — always complete onboarding as IN.
+    requested = (body.market or "").strip().upper()
+    if requested and requested not in SUPPORTED_MARKETS:
+        raise HTTPException(
+            status_code=400,
+            detail="Hireschema is India-only. Home market must be IN.",
+        )
+    market = "IN"
 
     await _ensure_candidate_row(db, user_id)
 
@@ -2116,19 +2150,38 @@ async def update_notification(
 
 
 async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[str, Any]:
+    uid = uuid.UUID(user_id)
     user = await db.fetchrow(
-        "SELECT * FROM public.users WHERE id = $1",
-        uuid.UUID(user_id),
+        """
+        SELECT id, email, phone, full_name, role, market, phone_country,
+               phone_verified, avatar_url, created_at, updated_at, deleted_at
+        FROM public.users
+        WHERE id = $1 AND deleted_at IS NULL
+        """,
+        uid,
     )
     candidate = await db.fetchrow(
-        "SELECT * FROM public.candidates WHERE user_id = $1",
-        uuid.UUID(user_id),
+        """
+        SELECT id, user_id, headline, summary, current_title, current_company,
+               location_city, location_state, years_experience, skills,
+               linkedin_url, github_url, portfolio_url, market,
+               profile_complete, is_active, created_at, updated_at
+        FROM public.candidates
+        WHERE user_id = $1 AND deleted_at IS NULL
+        """,
+        uid,
     )
     consents = await db.fetch(
-        "SELECT * FROM public.consent_log WHERE user_id = $1 ORDER BY created_at",
-        uuid.UUID(user_id),
+        """
+        SELECT purpose, granted, created_at
+        FROM public.consent_log
+        WHERE user_id = $1
+        ORDER BY created_at
+        """,
+        uid,
     )
     messages = []
+    intros = []
     if candidate:
         messages = await db.fetch(
             """
@@ -2141,10 +2194,13 @@ async def _build_export_payload(db: asyncpg.Connection, user_id: str) -> dict[st
             """,
             candidate["id"],
         )
-    intros = []
-    if candidate:
         intros = await db.fetch(
-            "SELECT * FROM public.intro_requests WHERE candidate_id = $1",
+            """
+            SELECT id, status, direction, created_at, sent_at, opened_at, replied_at
+            FROM public.intro_requests
+            WHERE candidate_id = $1
+            ORDER BY created_at
+            """,
             candidate["id"],
         )
 
@@ -2164,7 +2220,7 @@ async def dpdp_export(
     current_user: dict = Depends(get_phone_verified_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> JSONResponse:
-    """Synchronous export for MVP (<60s for typical user)."""
+    """Synchronous export for MVP (<60s for typical user). Requires Bearer auth."""
     payload = await _build_export_payload(db, current_user["id"])
     await db.execute(
         """
@@ -2189,40 +2245,46 @@ async def dpdp_delete_account(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """
-    Soft-delete user + schedule 30-day purge (R14).
+    Soft-delete user + schedule 30-day purge (R14). Transactional.
     """
     purge_after = datetime.now(UTC) + timedelta(days=30)
-    await db.execute(
-        """
-        UPDATE public.users SET deleted_at = NOW(), updated_at = NOW()
-        WHERE id = $1
-        """,
-        current_user["id"],
-    )
-    candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1",
-        current_user["id"],
-    )
-    if candidate:
+    uid = uuid.UUID(str(current_user["id"]))
+    async with db.transaction():
         await db.execute(
-            "UPDATE public.candidates SET deleted_at = NOW() WHERE id = $1",
-            candidate["id"],
+            """
+            UPDATE public.users SET deleted_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            uid,
         )
-    await db.execute(
-        """
-        INSERT INTO public.dpdp_export_jobs (user_id, status, purge_after)
-        VALUES ($1::uuid, 'pending', $2)
-        """,
-        current_user["id"],
-        purge_after,
-    )
-    await db.execute(
-        """
-        INSERT INTO public.consent_log (user_id, purpose, granted)
-        VALUES ($1::uuid, 'account_deletion', TRUE)
-        """,
-        current_user["id"],
-    )
+        candidate = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1 AND deleted_at IS NULL",
+            uid,
+        )
+        if candidate:
+            await db.execute(
+                """
+                UPDATE public.candidates
+                SET deleted_at = NOW(), updated_at = NOW()
+                WHERE id = $1 AND deleted_at IS NULL
+                """,
+                candidate["id"],
+            )
+        await db.execute(
+            """
+            INSERT INTO public.dpdp_export_jobs (user_id, status, purge_after)
+            VALUES ($1::uuid, 'pending', $2)
+            """,
+            uid,
+            purge_after,
+        )
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'account_deletion', TRUE)
+            """,
+            uid,
+        )
     return {
         "ok": True,
         "message": "Account scheduled for deletion. Data purged after 30 days.",

@@ -14,11 +14,13 @@ import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
 import structlog
+from pydantic import BaseModel, ConfigDict, Field
 
 from hireloop_api.config import Settings
 
@@ -30,8 +32,12 @@ CAREER_PATH_INGEST = "career_path_ingest"
 POOL_INGEST = "pool_ingest"
 AARYA_AUTO_INGEST = "aarya_auto_ingest"
 RESUME_EMBED_SCORE = "resume_embed_score"
+RESUME_PARSE = "resume_parse"
+NITYA_INTRO_DRAFT = "nitya_intro_draft"
 CAREER_INTELLIGENCE_UPDATE = "career_intelligence_update"
 CAREER_PATH_UPDATE = "career_path_update"
+CAREER_INTELLIGENCE_GENERATE = "career_intelligence_generate"
+CAREER_PATH_GENERATE = "career_path_generate"
 PROFILE_COMPLETENESS = "profile_completeness"
 TAILORED_RESUME = "tailored_resume"
 CAREER_PATH_RESUMES = "career_path_resumes"
@@ -51,7 +57,65 @@ AARYA_DAILY_DIGEST = "aarya_daily_digest"
 FIRECRAWL_JD_BACKFILL = "firecrawl_jd_backfill"
 FIRECRAWL_COMPANY_INTEL = "firecrawl_company_intel"
 
-Handler = Callable[[Settings, dict[str, Any]], Awaitable[None]]
+
+@dataclass(frozen=True, slots=True)
+class HandlerResult:
+    """Metadata plus transaction-bound domain persistence for an operation.
+
+    ``persist`` must contain database writes only. The worker executes it after
+    locking the operation and queue lease, in the same transaction as success.
+    """
+
+    result_type: str
+    result_id: uuid.UUID
+    persist: Callable[[asyncpg.Connection], Awaitable[None]]
+
+    def __post_init__(self) -> None:
+        if not self.result_type.strip():
+            raise ValueError("Operation result_type must not be empty")
+        if not isinstance(self.result_id, uuid.UUID):
+            raise TypeError("Operation result_id must be a UUID")
+        if not callable(self.persist):
+            raise TypeError("Operation persistence callback must be callable")
+
+
+Handler = Callable[[Settings, dict[str, Any]], Awaitable[HandlerResult | None]]
+
+
+class _CareerGenerationPayload(BaseModel):
+    """Validated private payload for candidate-scoped generation jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: uuid.UUID
+    operation_id: uuid.UUID
+    lease_token: str = Field(alias="_job_lease_token")
+
+
+class _CandidateOperationPayload(_CareerGenerationPayload):
+    """Strict payload for candidate-scoped operation jobs."""
+
+
+class _CandidateJobOperationPayload(_CareerGenerationPayload):
+    job_id: uuid.UUID
+
+
+class _TailoredResumeOperationPayload(_CandidateJobOperationPayload):
+    resume_id: uuid.UUID
+    template: str = Field(pattern="^(modern|classic|minimal)$")
+
+
+class _LearningRoadmapOperationPayload(_CandidateJobOperationPayload):
+    roadmap_id: uuid.UUID
+
+
+class _ResumeParseOperationPayload(_CareerGenerationPayload):
+    user_id: uuid.UUID
+    resume_id: uuid.UUID
+    storage_path: str = Field(min_length=1, max_length=1000)
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=1, max_length=200)
+
 
 _BACKOFF_BASE_SECONDS = 30
 _BACKOFF_MAX_SECONDS = 900
@@ -61,8 +125,12 @@ _BACKOFF_MAX_SECONDS = 900
 _INTERACTIVE_JOB_KINDS = frozenset(
     {
         APPLICATION_KIT,
+        NITYA_INTRO_DRAFT,
+        RESUME_PARSE,
         TAILORED_RESUME,
         CAREER_PATH_RESUMES,
+        CAREER_PATH_GENERATE,
+        CAREER_INTELLIGENCE_GENERATE,
         LEARNING_ROADMAP,
         AARYA_DAILY_DIGEST,
     }
@@ -139,8 +207,9 @@ async def claim_next_job(
     Interactive kinds (application kits, tailored resumes) are claimed before
     heavy Apify/embed work so the UI 90s poll does not time out while scrapes run.
     """
-    # $1 = worker_id, $2 = interactive priority list (ORDER BY), then optional filters.
-    args: list[object] = [worker_id, list(_INTERACTIVE_JOB_KINDS)]
+    lease_token = f"{worker_id}:{uuid.uuid4().hex}"
+    # $1 = unique claim lease, $2 = interactive priority list, then optional filters.
+    args: list[object] = [lease_token, list(_INTERACTIVE_JOB_KINDS)]
     filters = ["status = 'pending'", "run_after <= NOW()"]
     if kinds:
         args.append(list(kinds))
@@ -186,11 +255,21 @@ async def claim_next_job(
         "payload": payload or {},
         "attempts": int(data["attempts"]),
         "max_attempts": int(data["max_attempts"]),
+        "worker_id": lease_token,
     }
 
 
-async def mark_job_completed(db: asyncpg.Connection, job_id: str) -> None:
-    await db.execute(
+def _updated(command_status: str) -> bool:
+    return command_status.rsplit(" ", 1)[-1] != "0"
+
+
+async def mark_job_completed(
+    db: asyncpg.Connection,
+    job_id: str,
+    *,
+    worker_id: str,
+) -> bool:
+    status = await db.execute(
         """
         UPDATE public.background_jobs
         SET status = 'completed',
@@ -198,9 +277,13 @@ async def mark_job_completed(db: asyncpg.Connection, job_id: str) -> None:
             last_error = NULL,
             updated_at = NOW()
         WHERE id = $1::uuid
+          AND status = 'running'
+          AND worker_id = $2
         """,
         uuid.UUID(job_id),
+        worker_id,
     )
+    return _updated(status)
 
 
 async def mark_job_failed(
@@ -210,12 +293,13 @@ async def mark_job_failed(
     error: str,
     attempts: int,
     max_attempts: int,
-) -> None:
+    worker_id: str,
+) -> bool:
     """Mark failed; re-queue with backoff when attempts remain."""
     if attempts < max_attempts:
         delay = min(_BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)), _BACKOFF_MAX_SECONDS)
         run_after = datetime.now(UTC) + timedelta(seconds=delay)
-        await db.execute(
+        status = await db.execute(
             """
             UPDATE public.background_jobs
             SET status = 'pending',
@@ -225,10 +309,13 @@ async def mark_job_failed(
                 run_after = $3,
                 updated_at = NOW()
             WHERE id = $1::uuid
+              AND status = 'running'
+              AND worker_id = $4
             """,
             uuid.UUID(job_id),
             error[:2000],
             run_after,
+            worker_id,
         )
         logger.warning(
             "background_job_retry_scheduled",
@@ -236,9 +323,9 @@ async def mark_job_failed(
             attempts=attempts,
             retry_in_seconds=delay,
         )
-        return
+        return _updated(status)
 
-    await db.execute(
+    status = await db.execute(
         """
         UPDATE public.background_jobs
         SET status = 'failed',
@@ -246,11 +333,15 @@ async def mark_job_failed(
             completed_at = NOW(),
             updated_at = NOW()
         WHERE id = $1::uuid
+          AND status = 'running'
+          AND worker_id = $3
         """,
         uuid.UUID(job_id),
         error[:2000],
+        worker_id,
     )
     logger.error("background_job_failed_permanently", job_id=job_id, error=error[:200])
+    return _updated(status)
 
 
 async def list_background_jobs(
@@ -382,6 +473,80 @@ async def _handle_resume_embed_score(settings: Settings, payload: dict[str, Any]
             logger.warning("job_match_alert_failed", error=str(exc)[:200])
 
 
+async def _handle_resume_parse(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    """Download an uploaded resume and durably run the full parser enrichment."""
+    from supabase import create_client
+
+    from hireloop_api.routes.resumes import _sync_user_display_name_from_resume
+    from hireloop_api.services.resume_parser import ResumeParserService
+
+    job = _ResumeParseOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="download", message="Loading your resume."
+    )
+    client = create_client(settings.supabase_url, settings.supabase_service_key)
+    file_bytes = await asyncio.to_thread(
+        client.storage.from_("resumes").download,
+        job.storage_path,
+    )
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="parsing",
+        message="Reading your resume details.",
+    )
+    parsed = await ResumeParserService.parse_best(
+        file_bytes=file_bytes,
+        filename=job.filename,
+        mime_type=job.mime_type,
+        settings=settings,
+    )
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="profile_enrichment",
+        message="Preparing your profile enrichment.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.resumes SET parsed_data = $2::jsonb, raw_text = $3
+            WHERE id = $1::uuid AND candidate_id = $4::uuid
+            """,
+            job.resume_id,
+            parsed.model_dump_json(),
+            parsed.raw_text,
+            job.candidate_id,
+        )
+        await _sync_user_display_name_from_resume(
+            db,
+            user_id=str(job.user_id),
+            candidate_id=str(job.candidate_id),
+            resume_full_name=parsed.full_name,
+        )
+        if parsed.location_city or parsed.location_state:
+            from hireloop_api.market_db import sync_candidate_market_from_location
+
+            await sync_candidate_market_from_location(
+                db,
+                candidate_id=job.candidate_id,
+                location_city=parsed.location_city,
+                location_state=parsed.location_state,
+            )
+        await db.execute(
+            """
+            INSERT INTO public.consent_log (user_id, purpose, granted)
+            VALUES ($1::uuid, 'resume_upload', TRUE)
+            """,
+            job.user_id,
+        )
+
+    return HandlerResult(result_type="resume", result_id=job.resume_id, persist=_persist)
+
+
 async def _handle_career_intelligence_update(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.services.career_intelligence import run_career_intelligence_update
 
@@ -398,52 +563,318 @@ async def _handle_career_path_update(settings: Settings, payload: dict[str, Any]
     await run_career_path_update(settings, str(payload["candidate_id"]))
 
 
+async def _handle_career_path_generate(
+    settings: Settings,
+    payload: dict[str, Any],
+) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.career_path import CareerPathService
+
+    job = _CareerGenerationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=10,
+        stage="loading_profile",
+        message="Loading your career profile.",
+    )
+    pool = await get_db_pool(settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="generating",
+        message="Aarya is mapping your career directions.",
+    )
+    prepared = await CareerPathService.prepare(pool, str(job.candidate_id), settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your career path.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await CareerPathService.persist(db, str(job.candidate_id), prepared)
+
+    return HandlerResult(
+        result_type="career_path",
+        result_id=prepared.id,
+        persist=_persist,
+    )
+
+
+async def _handle_career_intelligence_generate(
+    settings: Settings,
+    payload: dict[str, Any],
+) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.career_intelligence import CareerIntelligenceService
+
+    job = _CareerGenerationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=10,
+        stage="loading_profile",
+        message="Loading your career evidence.",
+    )
+    pool = await get_db_pool(settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=35,
+        stage="generating",
+        message="Aarya is building your career intelligence.",
+    )
+    prepared = await CareerIntelligenceService.prepare(pool, str(job.candidate_id), settings)
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your career intelligence.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await CareerIntelligenceService.persist(db, str(job.candidate_id), prepared)
+
+    return HandlerResult(
+        result_type="career_intelligence",
+        result_id=prepared.id,
+        persist=_persist,
+    )
+
+
 async def _handle_profile_completeness(settings: Settings, payload: dict[str, Any]) -> None:
     from hireloop_api.services.career_intelligence import recompute_completeness_only
 
     await recompute_completeness_only(settings, str(payload["candidate_id"]))
 
 
-async def _handle_career_path_resumes(settings: Settings, payload: dict[str, Any]) -> None:
+async def _handle_career_path_resumes(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
     # LLM-heavy (up to 3 resume builds) — runs here so no request connection is
     # held for minutes; the worker uses one short-lived pooled connection.
     from hireloop_api.deps import get_db_pool
-    from hireloop_api.services.career_path_resume import generate_path_resumes
+    from hireloop_api.services.career_path_resume import (
+        persist_prepared_path_resumes,
+        prepare_path_resumes,
+    )
 
+    job = _CandidateOperationPayload.model_validate(payload)
     pool = await get_db_pool(settings)
-    async with pool.acquire() as conn:
-        await generate_path_resumes(conn, str(payload["candidate_id"]), settings)
 
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        await publish_operation_progress(
+            settings,
+            payload,
+            progress_percent=percent,
+            stage=stage,
+            message=message,
+        )
 
-async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.routes.tailored_resumes import _run_tailor_task
+    prepared = await prepare_path_resumes(
+        pool, str(job.candidate_id), settings, on_progress=_progress
+    )
 
-    await _run_tailor_task(
-        uuid.UUID(str(payload["candidate_id"])),
-        uuid.UUID(str(payload["job_id"])),
-        str(payload.get("template") or "modern"),
-        settings,
+    async def _persist(db: asyncpg.Connection) -> None:
+        await persist_prepared_path_resumes(db, prepared)
+
+    return HandlerResult(
+        result_type="career_path_resume_batch", result_id=job.candidate_id, persist=_persist
     )
 
 
-async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.routes.learning_roadmaps import _run_roadmap_task
+async def _handle_tailored_resume(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from langchain_openai import ChatOpenAI
 
-    await _run_roadmap_task(
-        uuid.UUID(str(payload["candidate_id"])),
-        uuid.UUID(str(payload["job_id"])),
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.resume_tailor import generate_tailored_html, resume_summary_line
+    from hireloop_api.services.tailored_resume_profile import load_tailored_resume_profile
+    from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
+
+    job = _TailoredResumeOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="profile", message="Loading your profile."
+    )
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        if not await fetch_tailored_resume_enabled(db, job.candidate_id):
+            raise PermissionError("Tailored resumes are disabled")
+        profile = await load_tailored_resume_profile(db, job.candidate_id)
+        role = await db.fetchrow(
+            """
+            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
+                   co.name AS company_name
+            FROM public.jobs j LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1 AND j.deleted_at IS NULL
+            """,
+            job.job_id,
+        )
+    if not profile or not role:
+        raise ValueError("Candidate profile or job is unavailable")
+    await publish_operation_progress(
+        settings, payload, progress_percent=35, stage="resume", message="Tailoring your resume."
+    )
+    llm = ChatOpenAI(
+        model=settings.openrouter_primary_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.3,
+        max_tokens=4096,
+        default_headers={
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Resume Tailor",
+        },
+    )
+    html = await generate_tailored_html(
+        llm=llm, candidate_profile=profile, job=dict(role), template=job.template
+    )
+    summary = resume_summary_line(html)
+    await publish_operation_progress(
         settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your tailored resume.",
     )
 
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.tailored_resumes
+            SET template = $2, file_path = $3, summary_line = $4,
+                html_content = $5, status = 'ready', error_message = NULL,
+                expires_at = NOW() + INTERVAL '30 days'
+            WHERE id = $1 AND candidate_id = $6 AND job_id = $7
+            """,
+            job.resume_id,
+            job.template,
+            f"{job.candidate_id}/{job.job_id}/{job.resume_id}.html",
+            summary[:500] if summary else None,
+            html[:500_000],
+            job.candidate_id,
+            job.job_id,
+        )
 
-async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -> None:
-    from hireloop_api.services.application_kit import run_application_kit_job
+    return HandlerResult(result_type="tailored_resume", result_id=job.resume_id, persist=_persist)
 
-    await run_application_kit_job(
-        settings,
-        str(payload["candidate_id"]),
-        str(payload["job_id"]),
+
+async def _handle_learning_roadmap(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from langchain_openai import ChatOpenAI
+
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.learning_roadmap import generate_roadmap, render_roadmap_html
+
+    job = _LearningRoadmapOperationPayload.model_validate(payload)
+    await publish_operation_progress(
+        settings, payload, progress_percent=10, stage="profile", message="Loading your profile."
     )
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        candidate = await db.fetchrow(
+            """
+            SELECT c.id, c.headline, c.summary, c.current_title, c.current_company,
+                   c.skills, c.years_experience, u.full_name, u.email
+            FROM public.candidates c JOIN public.users u ON u.id = c.user_id
+            WHERE c.id = $1 AND c.deleted_at IS NULL
+            """,
+            job.candidate_id,
+        )
+        role = await db.fetchrow(
+            """
+            SELECT j.id, j.title, j.description, j.requirements, j.skills_required,
+                   co.name AS company_name
+            FROM public.jobs j LEFT JOIN public.companies co ON co.id = j.company_id
+            WHERE j.id = $1 AND j.deleted_at IS NULL
+            """,
+            job.job_id,
+        )
+    if not candidate or not role:
+        raise ValueError("Candidate profile or job is unavailable")
+    await publish_operation_progress(
+        settings, payload, progress_percent=35, stage="roadmap", message="Building your roadmap."
+    )
+    llm = ChatOpenAI(
+        model=settings.openrouter_primary_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.4,
+        max_tokens=4096,
+        default_headers={
+            "HTTP-Referer": "https://hireschema.com",
+            "X-Title": "Hireschema - Learning Roadmap",
+        },
+    )
+    roadmap = await generate_roadmap(llm=llm, candidate_profile=dict(candidate), job=dict(role))
+    html = render_roadmap_html(
+        roadmap,
+        job_title=str(role.get("title") or "this role"),
+        company_name=str(role.get("company_name") or ""),
+        candidate_name=str(candidate.get("full_name") or "You"),
+        storage_key=str(job.job_id),
+    )
+    summary = str(roadmap.get("summary") or "")[:200]
+    await publish_operation_progress(
+        settings,
+        payload,
+        progress_percent=80,
+        stage="finalizing",
+        message="Finalizing your learning roadmap.",
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await db.execute(
+            """
+            UPDATE public.learning_roadmaps
+            SET file_path = $2, summary_line = $3, html_content = $4,
+                status = 'ready', error_message = NULL,
+                expires_at = NOW() + INTERVAL '90 days'
+            WHERE id = $1 AND candidate_id = $5 AND job_id = $6
+            """,
+            job.roadmap_id,
+            f"{job.candidate_id}/{job.job_id}/{job.roadmap_id}.html",
+            summary,
+            html[:500_000],
+            job.candidate_id,
+            job.job_id,
+        )
+
+    return HandlerResult(result_type="learning_roadmap", result_id=job.roadmap_id, persist=_persist)
+
+
+async def _handle_application_kit(settings: Settings, payload: dict[str, Any]) -> HandlerResult:
+    from hireloop_api.deps import get_db_pool
+    from hireloop_api.services.application_kit import (
+        persist_prepared_application_kit,
+        prepare_application_kit_operation,
+    )
+
+    job = _CandidateJobOperationPayload.model_validate(payload)
+    pool = await get_db_pool(settings)
+
+    async def _progress(percent: int, stage: str, message: str) -> None:
+        await publish_operation_progress(
+            settings,
+            payload,
+            progress_percent=percent,
+            stage=stage,
+            message=message,
+        )
+
+    prepared = await prepare_application_kit_operation(
+        pool,
+        settings=settings,
+        candidate_id=job.candidate_id,
+        job_id=job.job_id,
+        on_progress=_progress,
+    )
+
+    async def _persist(db: asyncpg.Connection) -> None:
+        await persist_prepared_application_kit(db, prepared)
+
+    return HandlerResult(result_type="application_kit", result_id=prepared.id, persist=_persist)
 
 
 async def _handle_match_embed_all(settings: Settings, payload: dict[str, Any]) -> None:
@@ -639,13 +1070,59 @@ async def _handle_hm_enrich(settings: Settings, payload: dict[str, Any]) -> None
             await enricher.close()
 
 
+async def _handle_nitya_intro_draft(settings: Settings, payload: dict[str, Any]) -> None:
+    """Durably progress one candidate-to-HM intro to a reviewable draft."""
+    from hireloop_api.agents.nitya.agent import NityaIntroHandler
+    from hireloop_api.deps import get_db_pool
+
+    intro_id = str(payload["id"])
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as conn:
+        claimed = await conn.fetchval(
+            "SELECT pg_try_advisory_lock(hashtext($1))",
+            intro_id,
+        )
+        if not claimed:
+            # The LISTEN worker may be progressing this intro. Retrying is safer
+            # than acknowledging durable work that is still in flight.
+            raise RuntimeError(f"Nitya intro {intro_id} is already being processed")
+        try:
+            status = await conn.fetchval(
+                "SELECT status FROM public.intro_requests WHERE id = $1::uuid",
+                intro_id,
+            )
+            if status in {
+                "draft_ready",
+                "sent",
+                "opened",
+                "replied",
+                "declined",
+                "cancelled",
+            }:
+                return
+            result = await NityaIntroHandler(settings=settings, db=conn).handle(payload)
+            if result.get("error"):
+                final_status = await conn.fetchval(
+                    "SELECT status FROM public.intro_requests WHERE id = $1::uuid",
+                    intro_id,
+                )
+                if final_status not in {"declined", "cancelled"}:
+                    raise RuntimeError(str(result["error"]))
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(hashtext($1))", intro_id)
+
+
 _HANDLERS: dict[str, Handler] = {
     CAREER_PATH_INGEST: _handle_career_path_ingest,
     POOL_INGEST: _handle_pool_ingest,
     AARYA_AUTO_INGEST: _handle_aarya_auto_ingest,
     RESUME_EMBED_SCORE: _handle_resume_embed_score,
+    RESUME_PARSE: _handle_resume_parse,
+    NITYA_INTRO_DRAFT: _handle_nitya_intro_draft,
     CAREER_INTELLIGENCE_UPDATE: _handle_career_intelligence_update,
     CAREER_PATH_UPDATE: _handle_career_path_update,
+    CAREER_INTELLIGENCE_GENERATE: _handle_career_intelligence_generate,
+    CAREER_PATH_GENERATE: _handle_career_path_generate,
     PROFILE_COMPLETENESS: _handle_profile_completeness,
     TAILORED_RESUME: _handle_tailored_resume,
     CAREER_PATH_RESUMES: _handle_career_path_resumes,
@@ -667,6 +1144,479 @@ _HANDLERS: dict[str, Handler] = {
 }
 
 
+def _operation_id(payload: dict[str, Any]) -> uuid.UUID | None:
+    value = payload.get("operation_id")
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Invalid AI operation identifier in queue payload") from exc
+
+
+async def _linked_state(
+    db: asyncpg.Connection,
+    operation_id: uuid.UUID,
+    job_id: str,
+) -> dict[str, Any] | None:
+    operation = await db.fetchrow(
+        """
+        SELECT status AS operation_status, progress_percent, background_job_id
+        FROM public.ai_operations
+        WHERE id = $1 AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        operation_id,
+    )
+    if operation is None or operation["background_job_id"] is None:
+        return None
+    if uuid.UUID(str(operation["background_job_id"])) != uuid.UUID(job_id):
+        return None
+    queue = await db.fetchrow(
+        """
+        SELECT status AS job_status, worker_id
+        FROM public.background_jobs
+        WHERE id = $1::uuid
+        FOR UPDATE
+        """,
+        uuid.UUID(job_id),
+    )
+    if queue is None:
+        return None
+    return {**dict(operation), **dict(queue)}
+
+
+async def _sync_queue_with_terminal_operation(
+    db: asyncpg.Connection,
+    *,
+    job_id: str,
+    operation_status: str,
+    worker_id: str,
+) -> bool:
+    queue_status = {
+        "cancelled": "cancelled",
+        "succeeded": "completed",
+        "failed": "failed",
+    }.get(operation_status)
+    if queue_status is None:
+        return False
+    status = await db.execute(
+        """
+        UPDATE public.background_jobs
+        SET status = $2,
+            completed_at = COALESCE(completed_at, NOW()),
+            worker_id = NULL,
+            updated_at = NOW()
+        WHERE id = $1::uuid
+          AND status = 'running'
+          AND worker_id = $3
+        """,
+        uuid.UUID(job_id),
+        queue_status,
+        worker_id,
+    )
+    return _updated(status)
+
+
+async def _prepare_linked_operation(
+    pool: asyncpg.Pool,
+    *,
+    operation_id: uuid.UUID,
+    job_id: str,
+    attempts: int,
+    worker_id: str,
+) -> bool:
+    """Mark a linked operation running, or release a cancelled/terminal claim."""
+    from hireloop_api.services.ai_operations import mark_operation_running
+
+    async with pool.acquire() as db, db.transaction():
+        state = await _linked_state(db, operation_id, job_id)
+        if state is None:
+            raise ValueError("Queue job is not linked to its AI operation")
+        operation_status = str(state["operation_status"])
+        if operation_status in {"cancelled", "failed", "succeeded"}:
+            await _sync_queue_with_terminal_operation(
+                db,
+                job_id=job_id,
+                operation_status=operation_status,
+                worker_id=worker_id,
+            )
+            return False
+        if state["job_status"] != "running" or state["worker_id"] != worker_id:
+            return False
+        if operation_status == "queued":
+            started = await mark_operation_running(db, operation_id)
+            if started is None:
+                raise RuntimeError("AI operation changed before it could start")
+        updated = await db.execute(
+            """
+            UPDATE public.ai_operations
+            SET attempts = GREATEST(attempts, $2)
+            WHERE id = $1
+              AND status = 'running'
+              AND deleted_at IS NULL
+            """,
+            operation_id,
+            attempts,
+        )
+        if not _updated(updated):
+            raise RuntimeError("AI operation attempt count could not be updated")
+        return True
+
+
+async def _complete_linked_operation(
+    pool: asyncpg.Pool,
+    *,
+    operation_id: uuid.UUID,
+    job_id: str,
+    result: HandlerResult,
+    worker_id: str,
+) -> bool:
+    """Atomically publish success if cancellation has not won the race."""
+    from hireloop_api.services.ai_operations import mark_operation_succeeded
+
+    async with pool.acquire() as db, db.transaction():
+        state = await _linked_state(db, operation_id, job_id)
+        if state is None:
+            raise ValueError("Queue job is not linked to its AI operation")
+        operation_status = str(state["operation_status"])
+        if (
+            operation_status != "running"
+            or state["job_status"] != "running"
+            or state["worker_id"] != worker_id
+        ):
+            if state["worker_id"] == worker_id:
+                await _sync_queue_with_terminal_operation(
+                    db,
+                    job_id=job_id,
+                    operation_status=operation_status,
+                    worker_id=worker_id,
+                )
+            return False
+        await result.persist(db)
+        completed = await mark_operation_succeeded(
+            db,
+            operation_id,
+            result_type=result.result_type,
+            result_id=result.result_id,
+        )
+        if completed is None or not await mark_job_completed(
+            db,
+            job_id,
+            worker_id=worker_id,
+        ):
+            raise RuntimeError("AI operation success could not be committed atomically")
+        return True
+
+
+async def _fail_linked_operation(
+    pool: asyncpg.Pool,
+    *,
+    operation_id: uuid.UUID,
+    job_id: str,
+    error: BaseException,
+    attempts: int,
+    max_attempts: int,
+    worker_id: str,
+    on_terminal_failure: Callable[[asyncpg.Connection], Awaitable[None]] | None = None,
+) -> bool:
+    """Schedule a retry or atomically publish the final classified failure."""
+    from hireloop_api.services.ai_operations import (
+        classify_operation_error,
+        mark_operation_failed,
+        update_operation_progress,
+    )
+
+    async with pool.acquire() as db, db.transaction():
+        state = await _linked_state(db, operation_id, job_id)
+        if state is None:
+            raise ValueError("Queue job is not linked to its AI operation")
+        operation_status = str(state["operation_status"])
+        if (
+            operation_status != "running"
+            or state["job_status"] != "running"
+            or state["worker_id"] != worker_id
+        ):
+            if state["worker_id"] == worker_id:
+                await _sync_queue_with_terminal_operation(
+                    db,
+                    job_id=job_id,
+                    operation_status=operation_status,
+                    worker_id=worker_id,
+                )
+            return False
+
+        classified = classify_operation_error(error)
+        if classified.retryable and attempts < max_attempts:
+            if not await mark_job_failed(
+                db,
+                job_id,
+                error=str(error),
+                attempts=attempts,
+                max_attempts=max_attempts,
+                worker_id=worker_id,
+            ):
+                raise RuntimeError("Queue retry could not be scheduled")
+            updated = await update_operation_progress(
+                db,
+                operation_id,
+                int(state["progress_percent"]),
+                "retry_scheduled",
+                classified.message,
+            )
+            if updated is None:
+                raise RuntimeError("AI operation retry progress could not be published")
+            return False
+
+        failed = await mark_operation_failed(db, operation_id, error)
+        if failed is None:
+            raise RuntimeError("AI operation failure could not be committed atomically")
+        if failed.status == "cancelled":
+            won = await _sync_queue_with_terminal_operation(
+                db,
+                job_id=job_id,
+                operation_status="cancelled",
+                worker_id=worker_id,
+            )
+            return won
+        won = await mark_job_failed(
+            db,
+            job_id,
+            error=str(error),
+            attempts=attempts,
+            max_attempts=attempts,
+            worker_id=worker_id,
+        )
+        if not won:
+            raise RuntimeError("AI operation failure could not be committed atomically")
+        if on_terminal_failure is not None:
+            await on_terminal_failure(db)
+        return True
+
+
+async def publish_operation_progress(
+    settings: Settings,
+    payload: dict[str, Any],
+    *,
+    progress_percent: int,
+    stage: str,
+    message: str,
+) -> None:
+    """Publish safe progress for an operation-linked handler; legacy jobs no-op."""
+    operation_id = _operation_id(payload)
+    if operation_id is None:
+        return
+    lease_token = payload.get("_job_lease_token")
+    if not isinstance(lease_token, str) or not lease_token:
+        return
+    from hireloop_api.deps import get_db_pool
+
+    pool = await get_db_pool(settings)
+    async with pool.acquire() as db:
+        await db.fetchrow(
+            """
+            UPDATE public.ai_operations AS o
+            SET progress_percent = $3, stage = $4, message = $5
+            FROM public.background_jobs AS j
+            WHERE o.id = $1
+              AND j.id = o.background_job_id
+              AND j.worker_id = $2
+              AND j.status = 'running'
+              AND o.status = 'running'
+              AND o.deleted_at IS NULL
+              AND $3 BETWEEN 0 AND 99
+              AND $3 >= o.progress_percent
+            RETURNING o.id
+            """,
+            operation_id,
+            lease_token,
+            progress_percent,
+            " ".join(stage.split())[:80],
+            " ".join(message.split())[:240],
+        )
+
+
+async def _renew_job_lease(
+    pool: asyncpg.Pool,
+    *,
+    job_id: str,
+    worker_id: str,
+) -> bool:
+    async with pool.acquire() as db:
+        status = await db.execute(
+            """
+            UPDATE public.background_jobs
+            SET updated_at = NOW()
+            WHERE id = $1::uuid
+              AND status = 'running'
+              AND worker_id = $2
+            """,
+            uuid.UUID(job_id),
+            worker_id,
+        )
+    return _updated(status)
+
+
+async def _heartbeat_job_lease(
+    pool: asyncpg.Pool,
+    *,
+    job_id: str,
+    worker_id: str,
+    stop_event: asyncio.Event,
+    interval_seconds: float = 60.0,
+) -> None:
+    """Renew one running lease at a bounded cadence until finalization."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+            return
+        except TimeoutError:
+            try:
+                if not await _renew_job_lease(pool, job_id=job_id, worker_id=worker_id):
+                    return
+            except Exception as exc:
+                logger.warning(
+                    "background_job_heartbeat_error",
+                    job_id=job_id,
+                    error=str(exc)[:200],
+                )
+
+
+async def reclaim_stale_jobs(
+    db: asyncpg.Connection,
+    *,
+    stale_after: timedelta,
+) -> list[uuid.UUID]:
+    """Transactionally recover expired queue leases and linked operations."""
+    recovered: list[uuid.UUID] = []
+    async with db.transaction():
+        candidate_rows = await db.fetch(
+            """
+            SELECT id
+            FROM public.background_jobs
+            WHERE status = 'running'
+              AND updated_at < NOW() - $1::interval
+            ORDER BY updated_at ASC
+            LIMIT 100
+            """,
+            stale_after,
+        )
+        for candidate in candidate_rows:
+            job_id = uuid.UUID(str(candidate["id"]))
+            # Match cancellation/finalization lock order: operation first, queue second.
+            operation_status = await db.fetchval(
+                """
+                SELECT status FROM public.ai_operations
+                WHERE background_job_id = $1 AND deleted_at IS NULL
+                FOR UPDATE
+                """,
+                job_id,
+            )
+            row = await db.fetchrow(
+                """
+                SELECT worker_id, attempts, max_attempts
+                FROM public.background_jobs
+                WHERE id = $1
+                  AND status = 'running'
+                  AND updated_at < NOW() - $2::interval
+                FOR UPDATE
+                """,
+                job_id,
+                stale_after,
+            )
+            if row is None:
+                continue
+            worker_id = str(row["worker_id"] or "")
+            attempts = int(row["attempts"])
+            max_attempts = int(row["max_attempts"])
+            if operation_status in {"cancelled", "failed", "succeeded"}:
+                await _sync_queue_with_terminal_operation(
+                    db,
+                    job_id=str(job_id),
+                    operation_status=str(operation_status),
+                    worker_id=worker_id,
+                )
+                recovered.append(job_id)
+                continue
+            if attempts < max_attempts:
+                status = await db.execute(
+                    """
+                    UPDATE public.background_jobs
+                    SET status = 'pending', worker_id = NULL, started_at = NULL,
+                        last_error = 'reclaimed: worker lease expired',
+                        run_after = NOW() + INTERVAL '60 seconds', updated_at = NOW()
+                    WHERE id = $1 AND status = 'running' AND worker_id = $2
+                    """,
+                    job_id,
+                    worker_id,
+                )
+                if not _updated(status):
+                    continue
+                await db.execute(
+                    """
+                    UPDATE public.ai_operations
+                    SET status = 'running',
+                        progress_percent = GREATEST(progress_percent, 1),
+                        started_at = COALESCE(started_at, NOW()),
+                        stage = 'recovery_scheduled',
+                        message = 'The worker restarted. Your request will resume shortly.'
+                    WHERE background_job_id = $1
+                      AND status IN ('queued', 'running')
+                      AND deleted_at IS NULL
+                    """,
+                    job_id,
+                )
+            else:
+                status = await db.execute(
+                    """
+                    UPDATE public.background_jobs
+                    SET status = 'failed', worker_id = NULL,
+                        last_error = 'reclaimed: worker lease expired after final attempt',
+                        completed_at = NOW(), updated_at = NOW()
+                    WHERE id = $1 AND status = 'running' AND worker_id = $2
+                    """,
+                    job_id,
+                    worker_id,
+                )
+                if not _updated(status):
+                    continue
+                await db.execute(
+                    """
+                    UPDATE public.ai_operations
+                    SET status = 'failed', stage = 'failed',
+                        message = 'Something went wrong while generating your result. Please try again later.',
+                        error_code = 'internal_error',
+                        error_message = 'Something went wrong while generating your result. Please try again later.',
+                        completed_at = NOW()
+                    WHERE background_job_id = $1
+                      AND status IN ('queued', 'running')
+                      AND deleted_at IS NULL
+                    """,
+                    job_id,
+                )
+            recovered.append(job_id)
+    return recovered
+
+
+async def _terminal_fail_claimed_queue(
+    pool: asyncpg.Pool,
+    *,
+    job: dict[str, Any],
+    error: BaseException,
+) -> None:
+    """Fail a corrupt claimed row without attempting operation recursion."""
+    attempts = int(job["attempts"])
+    async with pool.acquire() as db:
+        await mark_job_failed(
+            db,
+            job["id"],
+            error=str(error),
+            attempts=attempts,
+            max_attempts=attempts,
+            worker_id=str(job["worker_id"]),
+        )
+
+
 async def process_job(
     pool: asyncpg.Pool,
     settings: Settings,
@@ -679,30 +1629,127 @@ async def process_job(
     across ``handler`` execution or the API pool starves under load.
     """
     kind = job["kind"]
-    handler = _HANDLERS.get(kind)
-    if handler is None:
-        async with pool.acquire() as conn:
-            await mark_job_failed(
-                conn,
-                job["id"],
-                error=f"unknown job kind: {kind}",
-                attempts=job["attempts"],
-                max_attempts=job["max_attempts"],
-            )
-        return
+    payload = job["payload"]
+    worker_id = str(job["worker_id"])
+    operation_id: uuid.UUID | None = None
+    heartbeat_stop = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _heartbeat_job_lease(
+            pool,
+            job_id=job["id"],
+            worker_id=worker_id,
+            stop_event=heartbeat_stop,
+        )
+    )
     try:
-        await handler(settings, job["payload"])
+        try:
+            operation_id = _operation_id(payload)
+        except ValueError as exc:
+            await _terminal_fail_claimed_queue(pool, job=job, error=exc)
+            return
+        if operation_id is not None:
+            try:
+                ready = await _prepare_linked_operation(
+                    pool,
+                    operation_id=operation_id,
+                    job_id=job["id"],
+                    attempts=int(job["attempts"]),
+                    worker_id=worker_id,
+                )
+            except (ValueError, RuntimeError) as exc:
+                await _terminal_fail_claimed_queue(pool, job=job, error=exc)
+                return
+            if not ready:
+                logger.info(
+                    "background_job_skipped_inactive_operation",
+                    job_id=job["id"],
+                    operation_id=str(operation_id),
+                )
+                return
+
+        handler = _HANDLERS.get(kind)
+        if handler is None:
+            raise RuntimeError(f"unknown job kind: {kind}")
+        handler_payload = dict(payload)
+        handler_payload["_job_lease_token"] = worker_id
+        result = await handler(settings, handler_payload)
+        if operation_id is not None:
+            if not isinstance(result, HandlerResult):
+                raise ValueError("Operation-linked handlers must return a result reference")
+            published = await _complete_linked_operation(
+                pool,
+                operation_id=operation_id,
+                job_id=job["id"],
+                result=result,
+                worker_id=worker_id,
+            )
+            if not published:
+                logger.info(
+                    "background_job_late_result_discarded",
+                    job_id=job["id"],
+                    operation_id=str(operation_id),
+                )
+            return
         async with pool.acquire() as conn:
-            await mark_job_completed(conn, job["id"])
+            await mark_job_completed(conn, job["id"], worker_id=worker_id)
         logger.info("background_job_completed", job_id=job["id"], kind=kind)
     except Exception as exc:
-        async with pool.acquire() as conn:
-            await mark_job_failed(
-                conn,
-                job["id"],
-                error=str(exc),
-                attempts=job["attempts"],
-                max_attempts=job["max_attempts"],
+        if operation_id is not None:
+
+            async def _decline_linked_nitya(db: asyncpg.Connection) -> None:
+                await db.execute(
+                    """
+                    UPDATE public.intro_requests
+                    SET status = 'declined',
+                        error_message = 'Nitya could not prepare this draft. Please retry.',
+                        updated_at = NOW()
+                    WHERE id = $1::uuid
+                      AND status IN ('pending', 'enriching', 'drafting')
+                    """,
+                    str(job["payload"].get("id")),
+                )
+
+            await _fail_linked_operation(
+                pool,
+                operation_id=operation_id,
+                job_id=job["id"],
+                error=exc,
+                attempts=int(job["attempts"]),
+                max_attempts=int(job["max_attempts"]),
+                worker_id=worker_id,
+                on_terminal_failure=(_decline_linked_nitya if kind == NITYA_INTRO_DRAFT else None),
+            )
+        else:
+            async with pool.acquire() as conn, conn.transaction():
+                transitioned = await mark_job_failed(
+                    conn,
+                    job["id"],
+                    error=str(exc),
+                    attempts=job["attempts"],
+                    max_attempts=job["max_attempts"],
+                    worker_id=worker_id,
+                )
+                terminal_won = transitioned and int(job["attempts"]) >= int(job["max_attempts"])
+                if terminal_won and kind == NITYA_INTRO_DRAFT:
+                    await conn.execute(
+                        """
+                        UPDATE public.intro_requests
+                        SET status = 'declined',
+                            error_message = 'Nitya could not prepare this draft. Please retry.',
+                            updated_at = NOW()
+                        WHERE id = $1::uuid
+                          AND status IN ('pending', 'enriching', 'drafting')
+                        """,
+                        str(job["payload"].get("id")),
+                    )
+    finally:
+        heartbeat_stop.set()
+        results = await asyncio.gather(heartbeat, return_exceptions=True)
+        if isinstance(results[0], BaseException):
+            logger.warning(
+                "background_job_heartbeat_cleanup_error",
+                job_id=job["id"],
+                error=str(results[0])[:200],
             )
 
 
@@ -755,19 +1802,9 @@ async def run_background_worker(
             if _time.monotonic() >= next_reclaim_at:
                 next_reclaim_at = _time.monotonic() + reclaim_interval_s
                 async with pool.acquire() as conn:
-                    reclaimed = await conn.fetch(
-                        """
-                        UPDATE public.background_jobs
-                        SET status = 'failed',
-                            last_error = 'reclaimed: stuck running after worker death',
-                            completed_at = NOW(),
-                            updated_at = NOW(),
-                            worker_id = NULL
-                        WHERE status = 'running'
-                          AND started_at < NOW() - $1::interval
-                        RETURNING id
-                        """,
-                        stuck_running_ttl,
+                    reclaimed = await reclaim_stale_jobs(
+                        conn,
+                        stale_after=stuck_running_ttl,
                     )
                 if reclaimed:
                     logger.warning(
@@ -832,6 +1869,10 @@ async def run_background_worker(
                     await conn.execute(
                         "DELETE FROM public.resume_parse_cache "
                         "WHERE created_at < NOW() - INTERVAL '30 days'"
+                    )
+                    await conn.execute(
+                        "DELETE FROM public.api_rate_limits "
+                        "WHERE window_start < NOW() - INTERVAL '2 days'"
                     )
                 if nudged:
                     logger.info("intro_followup_sweep_done", nudged=nudged)

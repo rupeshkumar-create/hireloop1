@@ -1,4 +1,4 @@
-"""Tests for Apify Google Jobs market configuration."""
+"""Tests for Apify Google Jobs market configuration (India-only)."""
 
 from __future__ import annotations
 
@@ -9,21 +9,22 @@ from hireloop_api.services.apify.jobs_scraper import (
 )
 
 
-def test_gb_market_uses_gb_country_code() -> None:
-    assert _MARKET_GOOGLE_CONFIG["GB"]["country"] == "gb"
-    assert _MARKET_GOOGLE_CONFIG["GB"]["google_domain"] == "google.co.uk"
+def test_only_india_market_configured() -> None:
+    assert set(_MARKET_GOOGLE_CONFIG.keys()) == {"IN"}
+    assert _MARKET_GOOGLE_CONFIG["IN"]["country"] == "in"
+    assert _MARKET_GOOGLE_CONFIG["IN"]["google_domain"] == "google.co.in"
 
 
 def test_google_jobs_input_bounded_pagination() -> None:
     payload = ApifyJobsScraper._build_google_jobs_input(
         query="Product Manager",
-        location="London",
+        location="Bengaluru",
         max_results=50,
-        market="GB",
+        market="IN",
     )
-    assert payload["country"] == "gb"
+    assert payload["country"] == "in"
     assert payload["language"] == "en"
-    assert payload["google_domain"] == "google.co.uk"
+    assert payload["google_domain"] == "google.co.in"
     assert payload["max_pagination"] == DEFAULT_MAX_PAGINATION
     assert payload["max_pagination"] > 0
     assert "None" not in str(payload.get("language"))

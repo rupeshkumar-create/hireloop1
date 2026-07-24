@@ -64,7 +64,7 @@ def _email_shell(heading: str, body_html: str, cta_url: str, cta_label: str) -> 
   <p style="margin:24px 0">
     <a href="{cta_url}" style="background:#111;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">{cta_label}</a>
   </p>
-  <p style="font-size:12px;color:#888;margin-top:24px">Hireschema — AI recruiting for India, the US &amp; the UK</p>
+  <p style="font-size:12px;color:#888;margin-top:24px">Hireschema — AI recruiting for India</p>
 </div>"""
 
 

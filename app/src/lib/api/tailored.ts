@@ -4,6 +4,10 @@
 
 import { getApiBaseUrl } from "@/lib/api/base-url";
 import { apiAuthFetch } from "@/lib/api/auth-fetch";
+import {
+  parseReadyOrAccepted,
+  type ReadyOrAccepted,
+} from "@/lib/api/aiOperations";
 
 export type TailorTemplate = "modern" | "classic" | "minimal";
 
@@ -19,31 +23,55 @@ export type TailoredResumeRow = {
   download_url?: string;
 };
 
+export type TailoredResumeReady = {
+  status: "ready";
+  resume_id: string;
+  download_path?: string;
+  message?: string;
+};
+
 export async function requestTailoredResume(
   jobId: string,
-  template: TailorTemplate = "modern"
-): Promise<{ status: string; resume_id?: string; download_path?: string; message?: string }> {
+  template: TailorTemplate = "modern",
+): Promise<ReadyOrAccepted<TailoredResumeReady>> {
   const res = await apiAuthFetch("/api/v1/tailored-resumes/tailor", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId, template }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? `Tailor failed: ${res.status}`);
-  }
-  return res.json();
+  return parseReadyOrAccepted(res, (body) => {
+    const data = body as {
+      status?: string;
+      resume_id?: string;
+      download_path?: string;
+      message?: string;
+    };
+    if (data.status === "ready" && data.resume_id) {
+      return {
+        status: "ready",
+        resume_id: data.resume_id,
+        download_path: data.download_path,
+        message: data.message,
+      };
+    }
+    throw new Error(data.message ?? "Tailored resume was not ready.");
+  });
 }
 
+export async function getTailoredResume(resumeId: string): Promise<TailoredResumeRow> {
+  const res = await apiAuthFetch(`/api/v1/tailored-resumes/tailored/${resumeId}`);
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  return res.json() as Promise<TailoredResumeRow>;
+}
+
+/** @deprecated Prefer AiOperationsProvider tracking after requestTailoredResume. */
 export async function pollTailoredResume(
   resumeId: string,
   maxAttempts = 15,
-  intervalMs = 2000
+  intervalMs = 2000,
 ): Promise<TailoredResumeRow> {
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await apiAuthFetch(`/api/v1/tailored-resumes/tailored/${resumeId}`);
-    if (!res.ok) throw new Error(`Poll failed: ${res.status}`);
-    const data = (await res.json()) as TailoredResumeRow;
+    const data = await getTailoredResume(resumeId);
     if (data.status === "ready") return data;
     if (data.status === "failed") throw new Error("Tailoring failed");
     await new Promise((r) => setTimeout(r, intervalMs));

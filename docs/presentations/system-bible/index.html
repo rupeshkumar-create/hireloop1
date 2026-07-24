@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema — System Bible</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Hireschema System Bible</span>
+  <div class="deck">
+
+    <!-- 1 -->
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">System bible · Full leadership pack</p>
+      <h1>Business + candidate + recruiter — one deck</h1>
+      <p class="lede">Merged from Business, Candidate (Aarya), and Recruiter (Nitya) decks: product, stack, ingest, match math, agents, and honest status.</p>
+      <p class="meta">July 2026 · ← → · F fullscreen · Cmd/Ctrl+P → PDF · ~28 slides</p>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide">
+      <p class="eyebrow">One line</p>
+      <h2>Not a job board with a chatbot</h2>
+      <p class="lede">Candidates get Aarya. Recruiters get Nitya. Both read/write the same Supabase graph. Intros handshake via DB rows — never agent-to-agent RPC.</p>
+      <div class="split-agents">
+        <div class="agent-card aarya"><div class="who">Candidate</div><h3>Aarya</h3><p>Profile · chat/voice · Google Jobs ingest · scored matches · Request Intro</p></div>
+        <div class="bridge"><div class="ring">DB</div>intro_requests</div>
+        <div class="agent-card nitya"><div class="who">Recruiter</div><h3>Nitya</h3><p>JD · publish · score candidates · request intro to candidates (in-app) · Gmail cold path for HM intros</p></div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide">
+      <p class="eyebrow">Value</p>
+      <h2>Why it exists</h2>
+      <div class="grid-2">
+        <div class="card accent-edge"><h3>Candidate</h3><p>Less apply-spam. Scored roles from live ingest. One-tap intro from <em>their</em> Gmail.</p></div>
+        <div class="card accent-edge"><h3>Recruiter</h3><p>JD in minutes (form or URL). Shortlist from the same matcher. Warm intros, not spray.</p></div>
+      </div>
+      <div class="tag-row">
+        <span class="tag">MVP focus: market IN</span>
+        <span class="tag muted">INR / LPA</span>
+        <span class="tag muted">Opt-in discovery default OFF</span>
+        <span class="tag muted">Code supports multi-market later</span>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide dense">
+      <p class="eyebrow">Surfaces</p>
+      <h2>What ships where</h2>
+      <div class="pack-grid">
+        <div class="pack-card"><p class="path">web/</p><p class="role">Marketing · hireschema.com</p><p class="stack">Next.js 15 · Vercel</p></div>
+        <div class="pack-card"><p class="path">app/</p><p class="role">Candidate + Recruiter SPA</p><p class="stack">/r/{slug} · Zustand · Realtime · SSE</p></div>
+        <div class="pack-card"><p class="path">api/</p><p class="role">FastAPI · LangGraph</p><p class="stack">MatchingEngine · JobIngester · Aarya · Nitya</p></div>
+        <div class="pack-card"><p class="path">supabase/</p><p class="role">Postgres · pgvector</p><p class="stack">Auth · Storage · RLS · NOTIFY</p></div>
+      </div>
+      <div class="deploy-band"><h3>One deploy story</h3><p>hireschema.com (web + app) → API (Railway → ECS target) → Supabase · CI: GitHub Actions</p></div>
+    </section>
+
+    <!-- 5 -->
+    <section class="slide dense">
+      <p class="eyebrow">Stack (live)</p>
+      <h2>Confirmed technology</h2>
+      <table class="table">
+        <thead><tr><th>Layer</th><th>Choice</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Frontend</td><td>Next.js 15 · TS · Tailwind · shadcn</td><td>web + app</td></tr>
+          <tr><td>Auth</td><td>Supabase · LinkedIn OAuth</td><td>Phone OTP not in active stack</td></tr>
+          <tr><td>API / agents</td><td>FastAPI · LangGraph · asyncpg</td><td>Single-threaded master loop</td></tr>
+          <tr><td>AI</td><td>OpenRouter · claude-sonnet-4.6 · gemini-2.5-flash</td><td>embedding-3-small · fallback required</td></tr>
+          <tr><td>Voice</td><td>Deepgram Nova-3 / Aura</td><td>Same chat surface</td></tr>
+          <tr><td>Jobs</td><td>Apify Google Jobs scraper</td><td>Actor johnvc/Google-Jobs-Scraper</td></tr>
+          <tr><td>JD import</td><td>Firecrawl + HTML/JSON-LD</td><td>Ashby/Greenhouse embeds</td></tr>
+          <tr><td>Email</td><td>Resend (txn) · Gmail OAuth (cold)</td><td>No SendGrid / MSG91 / Affinda on slides</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide dense">
+      <p class="eyebrow">Architecture</p>
+      <h2>How surfaces connect</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">Apps</div><div class="arch-nodes"><span class="node hi">Candidate SPA</span><span class="node hi">Recruiter SPA</span><span class="node">Marketing web/</span></div></div>
+        <div class="arch-row"><div class="arch-label">API</div><div class="arch-nodes"><span class="node hi">FastAPI /api/v1</span><span class="node">MatchingEngine</span><span class="node">JobIngester</span><span class="node">background_jobs</span></div></div>
+        <div class="arch-row"><div class="arch-label">Agents</div><div class="arch-nodes"><span class="node hi">Aarya · LangGraph</span><span class="node hi">Nitya · LISTEN</span><span class="node">agent_actions → Realtime</span></div></div>
+        <div class="arch-row"><div class="arch-label">Data</div><div class="arch-nodes"><span class="node hi">Supabase Postgres + pgvector</span><span class="node">Auth · Storage · Realtime</span></div></div>
+        <div class="arch-row"><div class="arch-label">Vendors</div><div class="arch-nodes"><span class="node">OpenRouter</span><span class="node">Deepgram</span><span class="node">Apify</span><span class="node">Firecrawl</span><span class="node">Resend</span><span class="node hi">Gmail OAuth</span></div></div>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide">
+      <p class="eyebrow">Agents</p>
+      <h2>Master loop (both agents)</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Think</strong><span>LLM over state</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Tool</strong><span>Structured call</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Execute</strong><span>Python services</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Write</strong><span>agent_actions + state</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">Intros: Request Intro → <code>intro_requests</code> → NOTIFY → Nitya. No Aarya↔Nitya HTTP.</p>
+    </section>
+
+    <!-- 8 SECTION divider -->
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Part 2</p>
+      <h1>Candidate · Aarya in detail</h1>
+      <p class="lede">Journey, SPA, profile signals, Google Jobs ingest, match math, Request Intro.</p>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide">
+      <p class="eyebrow">Candidate journey</p>
+      <h2>A → Z</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>LinkedIn</strong><span>Supabase OAuth</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Onboard</strong><span>CV · prefs · market</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Chat</strong><span>Aarya text/voice</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Matches</strong><span>Scored feed</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intro</strong><span>Gmail → HM</span></div>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide dense">
+      <p class="eyebrow">Candidate app</p>
+      <h2>SPA + API paths</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">UI</div><div class="arch-nodes"><span class="node">/onboarding</span><span class="node hi">/chat</span><span class="node hi">/jobs · matches</span><span class="node">/profile</span><span class="node">/r/{slug}</span></div></div>
+        <div class="arch-row"><div class="arch-label">Client</div><div class="arch-nodes"><span class="node">api.ts → FastAPI only</span><span class="node">Zustand</span><span class="node">Realtime · agent_actions</span></div></div>
+        <div class="arch-row"><div class="arch-label">API</div><div class="arch-nodes"><span class="node hi">routes/matches.py</span><span class="node">agents/aarya/</span><span class="node">JobIngester · MatchingEngine</span></div></div>
+      </div>
+      <div class="tool-cloud" style="margin-top:1rem">
+        <span class="hi">profile_read</span><span class="hi">job_search</span><span class="hi">get_match_score</span><span class="hi">request_intro</span>
+        <span>update_profile</span><span>save_job</span><span>direct_apply</span><span>prepare_application_kit</span>
+        <span>analyze_resume</span><span>analyze_pasted_jd</span><span>build_career_path</span>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide dense">
+      <p class="eyebrow">Profile graph</p>
+      <h2>Where candidate signals come from</h2>
+      <dl class="dl">
+        <dt>LinkedIn OAuth</dt><dd>Identity + profile fields → <code>users</code> / <code>candidates</code></dd>
+        <dt>Resume</dt><dd>Supabase Storage → in-app parser → skills / experience on candidate row</dd>
+        <dt>Aarya chat</dt><dd>Prefs, location, seniority, must-haves written back to state</dd>
+        <dt>Embeddings</dt><dd><code>candidate_embeddings</code>: profile · skills · resume (1536-d, OpenRouter embedding-3-small)</dd>
+      </dl>
+      <p class="src">services/embeddings.py · cosine via pgvector &lt;=&gt;</p>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide dense">
+      <p class="eyebrow">Job ingest · source</p>
+      <h2>Where jobs come from</h2>
+      <div class="card accent-edge">
+        <h3>Apify · Google Jobs only</h3>
+        <p>Actor: <code>johnvc/Google-Jobs-Scraper</code> (<code>ApifyJobsScraper</code>). LinkedIn/career-site kwargs may exist in config; ingest forces Google Jobs.</p>
+      </div>
+      <div class="tag-row" style="margin-top:1rem">
+        <span class="tag">Triggers</span>
+        <span class="tag muted">cron /jobs/ingest</span>
+        <span class="tag muted">aarya_auto_ingest</span>
+        <span class="tag muted">POST /matches/find-new</span>
+        <span class="tag muted">career_path_ingest</span>
+      </div>
+      <p class="src">services/apify/jobs_scraper.py · job_ingester.py · routes/jobs.py · background_jobs.py</p>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide dense">
+      <p class="eyebrow">Job ingest · pipeline</p>
+      <h2>Scrape → jobs → embed → score</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Scrape</strong><span>query × location</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Upsert</strong><span>public.jobs</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>Embed</strong><span>job_embeddings</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Score</strong><span>match_scores</span></div>
+      </div>
+      <dl class="dl">
+        <dt>Dedup keys</dt><dd><code>apify_job_id</code> → <code>canonical_fingerprint</code> → <code>apply_url</code></dd>
+        <dt>Query dedupe</dt><dd><code>job_ingest_runs</code> — skip same query/location within <strong>24h</strong> unless <code>force_refresh</code></dd>
+        <dt>Bucket freshness</dt><dd>Skip if bucket fresh <strong>12h</strong> and inventory ≥ 8 (unless force)</dd>
+        <dt>Find new</dt><dd><code>force_refresh=True</code>; returns only jobs not in <code>candidate_job_impressions</code></dd>
+      </dl>
+      <p class="note">Embeddings are <strong>not</strong> inside JobIngester — background workers after ingest.</p>
+    </section>
+
+    <!-- 14 -->
+    <section class="slide dense">
+      <p class="eyebrow">Match scoring · formula</p>
+      <h2>How overall_score is calculated</h2>
+      <p class="lede" style="font-size:1rem">Core math: <code>MatchingEngine._assemble_score</code> · <code>services/matching.py</code></p>
+      <div class="formula">overall = Σ (w_i × dim_i) / Σ w_included
+<span class="c"># then × gates (role · domain · title · seniority)</span>
+
+w_skills = 0.40   w_profile = 0.30   w_experience = 0.15
+w_location = 0.10   w_ctc = 0.05
+<span class="c"># missing exp/CTC dims → weights renormed</span></div>
+      <div class="score-bars">
+        <div class="score-row"><span>Skills</span><div class="bar"><i style="width:40%"></i></div><span class="w">40%</span></div>
+        <div class="score-row"><span>Profile</span><div class="bar"><i style="width:30%"></i></div><span class="w">30%</span></div>
+        <div class="score-row"><span>Experience</span><div class="bar"><i style="width:15%"></i></div><span class="w">15%</span></div>
+        <div class="score-row"><span>Location</span><div class="bar"><i style="width:10%"></i></div><span class="w">10%</span></div>
+        <div class="score-row"><span>CTC</span><div class="bar"><i style="width:5%"></i></div><span class="w">5%</span></div>
+      </div>
+    </section>
+
+    <!-- 15 -->
+    <section class="slide dense">
+      <p class="eyebrow">Match scoring · dimensions</p>
+      <h2>Where each dim comes from</h2>
+      <dl class="dl">
+        <dt>Skills (0.40)</dt>
+        <dd>Lexical: <code>0.85×coverage + 0.15×jaccard</code>. Then semantic lift from skills embeddings (α=0.40) — embeddings only raise the lexical base.</dd>
+        <dt>Profile (0.30)</dt>
+        <dd>Title affinity + cosine(<code>profile_embedding</code>, <code>jd_embedding</code>) with calibrated lift (α=0.50).</dd>
+        <dt>Experience (0.15)</dt>
+        <dd>Only if job seniority set — in-band 1.0, under/over linear decay.</dd>
+        <dt>Location (0.10)</dt>
+        <dd>Remote+open→1.0 · same city 1.0 · country/global 0.9 · state 0.7 · else 0.2</dd>
+        <dt>CTC (0.05)</dt>
+        <dd>Overlap vs job band (INR LPA); missing data → 0.5</dd>
+      </dl>
+    </section>
+
+    <!-- 16 -->
+    <section class="slide dense">
+      <p class="eyebrow">Gates · floors · ranking</p>
+      <h2>After the weighted mean</h2>
+      <div class="grid-2">
+        <div class="card"><h3>Gates (multipliers)</h3><p>Role-fit · domain_fit · generic-title penalty (×0.35) · seniority gap (1.0 → 0.4)</p></div>
+        <div class="card"><h3>Quality floors</h3><p>Persist ≥ <strong>0.35</strong> · feed ≥ <strong>0.38</strong>. Failed persist deletes old <code>match_scores</code> row.</p></div>
+      </div>
+      <div class="formula" style="margin-top:0.85rem">RRF is for ordering — not the weight formula
+<span class="c">RRF: score += weight / (k + rank + 1)   k = 60</span>
+Feed: fuse (overall, skills) → MMR λ=0.72 · company cap 2
+Aarya job_search: RRF + 0.08·overall + 0.04·skills + 0.02·exp</div>
+      <p class="src">matching.py · match_quality.py · ranking.py · job_recall_pipeline.py</p>
+    </section>
+
+    <!-- 17 -->
+    <section class="slide dense">
+      <p class="eyebrow">Connection rule · R5</p>
+      <h2>Agents never call each other</h2>
+      <div class="handshake">
+        <div class="handshake-side">
+          <p class="who">Candidate agent</p>
+          <h3>Aarya</h3>
+          <p>Request Intro writes a row — does not call Nitya.</p>
+        </div>
+        <div class="handshake-core">
+          <p class="who">Shared bridge</p>
+          <h3>Postgres · intro_requests</h3>
+          <ol class="handshake-steps">
+            <li><i>1</i><span><strong style="color:var(--text)">INSERT</strong> → NOTIFY + background_jobs</span></li>
+            <li><i>2</i><span>pending → enriching → drafting → ready</span></li>
+            <li><i>3</i><span>Candidate reviews · Gmail if needed</span></li>
+            <li><i>4</i><span><strong style="color:var(--text)">approve-send</strong> → Gmail → sent…</span></li>
+            <li><i>5</i><span>Realtime → both UIs</span></li>
+          </ol>
+        </div>
+        <div class="handshake-side">
+          <p class="who">HM / intro agent</p>
+          <h3>Nitya</h3>
+          <p>LISTEN → enrich → draft → wait for approve-send.</p>
+        </div>
+      </div>
+      <div class="forbid-banner">✕ No Aarya ↔ Nitya HTTP / RPC — cold email = candidate Gmail; txn = Resend</div>
+    </section>
+
+    <!-- 18 -->
+    <section class="slide">
+      <p class="eyebrow">Voice · R8</p>
+      <h2>Voice is the chat</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Mic</strong><span>Same input bar</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>STT</strong><span>Deepgram Nova-3</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Aarya</strong><span>Same LangGraph</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>TTS</strong><span>Deepgram Aura</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">No separate voice product. TTS timeout ~10s. Post-MVP: scheduled 15–20 min screening call (later slide).</p>
+    </section>
+
+    <!-- 19 SECTION -->
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Part 3</p>
+      <h1>Recruiter · Nitya in detail</h1>
+      <p class="lede">JD import, publish, same MatchingEngine search, pipeline, intros, screening planned.</p>
+    </section>
+
+    <!-- 20 -->
+    <section class="slide">
+      <p class="eyebrow">Recruiter journey</p>
+      <h2>A → Z</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Signup</strong><span>role=recruiter</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>JD</strong><span>Form or URL</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Publish</strong><span>/r/{slug}</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Search</strong><span>Same MatchingEngine</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intro</strong><span>In-app or Nitya+Gmail</span></div>
+      </div>
+    </section>
+
+    <!-- 21 -->
+    <section class="slide dense">
+      <p class="eyebrow">Recruiter app</p>
+      <h2>SPA + JD create / publish</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">UI</div><div class="arch-nodes"><span class="node hi">Roles / JD editor</span><span class="node hi">Pipeline / search</span><span class="node">Nitya chat</span><span class="node">Inbox</span></div></div>
+        <div class="arch-row"><div class="arch-label">API</div><div class="arch-nodes"><span class="node">routes/recruiter.py</span><span class="node hi">POST /roles/{id}/search</span><span class="node">JD URL extract</span></div></div>
+        <div class="arch-row"><div class="arch-label">Core</div><div class="arch-nodes"><span class="node hi">recruiter_search.py</span><span class="node">MatchingEngine</span><span class="node">agents/nitya/</span></div></div>
+      </div>
+      <div class="grid-2" style="margin-top:1rem">
+        <div class="card accent-edge"><div class="label">Manual</div><h3>Structured form</h3><p>Title, location, remote, must/nice skills, comp, JD — zod / Pydantic.</p></div>
+        <div class="card accent-edge"><div class="label">Import</div><h3>Career-page URL</h3><p>Firecrawl → Ashby/Greenhouse → JSON-LD / HTML.</p></div>
+      </div>
+    </section>
+
+    <!-- 22 -->
+    <section class="slide">
+      <p class="eyebrow">Publish</p>
+      <h2>Draft → public apply link</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Draft</strong><span>role row</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Publish</strong><span>slug + apply_url</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>/r/{slug}</strong><span>public page</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Apply</strong><span>→ shared jobs graph</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">Published roles enter the shared job graph under market visibility rules.</p>
+    </section>
+
+    <!-- 23 -->
+    <section class="slide dense">
+      <p class="eyebrow">Graph search · truth</p>
+      <h2>There is no separate graph ranker</h2>
+      <p class="lede">“Find candidates” reuses the <strong style="color:var(--text)">same</strong> MatchingEngine against a mirrored <code>jobs</code> row.</p>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>ensure_role_scoring_job</strong><span>source='recruiter'</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>score_job</strong><span>MatchingEngine</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>ORDER BY</strong><span>overall_score DESC</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>role_pipeline</strong><span>stage=search</span></div>
+      </div>
+      <p class="src">services/recruiter_search.py · POST /roles/{role_id}/search</p>
+    </section>
+
+    <!-- 24 -->
+    <section class="slide dense">
+      <p class="eyebrow">Graph search · details</p>
+      <h2>How the mirror job is built</h2>
+      <dl class="dl">
+        <dt>ensure_role_scoring_job</dt>
+        <dd>Find/create <code>jobs</code> by <code>role_id</code>, <code>source='recruiter'</code>. Sync title, JD, skills (must/nice), comp, location.</dd>
+        <dt>score_job(job_id, limit=500)</dt>
+        <dd>Identical <code>_assemble_score</code> vs eligible candidates.</dd>
+        <dt>Visibility</dt>
+        <dd><code>share_with_recruiters = TRUE</code> and <code>visibility &lt;&gt; 'private'</code>.</dd>
+        <dt>Pipeline write</dt>
+        <dd>Upsert <code>role_pipeline</code> with <code>match_score</code> + <code>criterion_scores</code> JSON. Log <code>recruiter_searches</code>.</dd>
+      </dl>
+      <p class="note">Per-criterion LLM scoring is reserved (P17+) — <strong>not</strong> live today.</p>
+    </section>
+
+    <!-- 25 -->
+    <section class="slide dense">
+      <p class="eyebrow">Same engine · recruiter view</p>
+      <h2>overall_score on a role</h2>
+      <div class="formula">overall = weighted dims → × gates
+
+skills 0.40 · profile 0.30 · experience 0.15 · location 0.10 · ctc 0.05
+skills_lex = 0.85×coverage + 0.15×jaccard  (+ embedding lift)</div>
+      <div class="grid-2" style="margin-top:1rem">
+        <div class="card"><h3>Candidate vectors</h3><p><code>candidate_embeddings</code>: profile · skills · resume (1536-d HNSW)</p></div>
+        <div class="card"><h3>Role / job vectors</h3><p><code>job_embeddings</code>: jd · title · skills — after sync / embed workers</p></div>
+      </div>
+      <p class="lede" style="font-size:0.95rem;margin-top:0.85rem">Cards order by <code>overall_score</code> / pipeline <code>match_score</code> — not a second formula. Missing embeddings → lexical dims still run.</p>
+    </section>
+
+    <!-- 26 -->
+    <section class="slide dense">
+      <p class="eyebrow">Nitya</p>
+      <h2>Intro path after shortlist</h2>
+      <ul class="list-clean">
+        <li><strong style="color:var(--text)">Recruiter → candidate intro:</strong> in-app <code>recruiter_to_candidate</code> — candidate accepts/declines from inbox (Nitya agent does <em>not</em> run Gmail pipeline here)</li>
+        <li><strong style="color:var(--text)">Candidate → HM cold intro:</strong> LISTEN on <code>intro_requests</code> · enrich · draft · approve-send via Gmail OAuth</li>
+        <li><strong style="color:var(--text)">Candidate → recruiter:</strong> in-app inbox on the recruiter side</li>
+        <li><strong style="color:var(--text)">Enrichment (HM path):</strong> Apify company employees → profile → email finder</li>
+      </ul>
+    </section>
+
+    <!-- 27 -->
+    <section class="slide dense">
+      <p class="eyebrow">Data</p>
+      <h2>Core tables</h2>
+      <div class="table-chips">
+        <div class="table-chip hi"><strong>users</strong><span>candidate | recruiter</span></div>
+        <div class="table-chip"><strong>candidates / recruiters</strong><span>Profile sides</span></div>
+        <div class="table-chip hi"><strong>jobs + roles</strong><span>Marketplace + recruiter JDs</span></div>
+        <div class="table-chip hi"><strong>match_scores</strong><span>+ *_embeddings</span></div>
+        <div class="table-chip hi"><strong>intro_requests</strong><span>Handshake SoR</span></div>
+        <div class="table-chip"><strong>role_pipeline</strong><span>Recruiter kanban</span></div>
+        <div class="table-chip"><strong>agent_actions</strong><span>Realtime counter</span></div>
+        <div class="table-chip"><strong>gmail_tokens</strong><span>Cold send path</span></div>
+        <div class="table-chip"><strong>consent_log · background_jobs</strong><span>DPDP · workers</span></div>
+      </div>
+    </section>
+
+    <!-- 28 -->
+    <section class="slide">
+      <p class="eyebrow">Trust</p>
+      <h2>DPDP + hard rules</h2>
+      <div class="grid-3">
+        <div class="card"><h3>consent_log</h3><p>Purpose + timestamp per collection event.</p></div>
+        <div class="card"><h3>Export / delete</h3><p><code>GET /me/export</code> · <code>DELETE /me</code> soft-delete.</p></div>
+        <div class="card"><h3>bias_audit</h3><p>On every <code>match_scores</code> row.</p></div>
+      </div>
+      <div class="tag-row" style="margin-top:1rem">
+        <span class="tag">privacy@hireschema.com</span>
+        <span class="tag muted">Gmail cold only</span>
+        <span class="tag muted">Resend txn only</span>
+        <span class="tag muted">No agent RPC</span>
+      </div>
+    </section>
+
+    <!-- 29 -->
+    <section class="slide dense">
+      <p class="eyebrow">Status &amp; risks</p>
+      <h2>Candid across product</h2>
+      <div class="grid-2">
+        <div class="card risk"><h3>Candidate</h3><p>Match feed / Find new reliability · chat “find jobs” polish · ingest without embed workers → no scores</p></div>
+        <div class="card risk"><h3>Recruiter</h3><p>Search depends on role→job sync + embeddings · Gmail OAuth must be live · empty graph → empty shortlist</p></div>
+      </div>
+      <div class="card risk" style="margin-top:1rem"><h3>Shared deps</h3><p>Apify · Gmail OAuth · Resend · embed/score workers. S01–S21 coded; E2E / S22 infra incomplete; payments deferred.</p></div>
+    </section>
+
+    <!-- 30 -->
+    <section class="slide dense">
+      <p class="eyebrow">Near-term</p>
+      <h2>Next 2 weeks (stabilize MVP)</h2>
+      <div class="grid-2">
+        <div class="card road"><h3>Match + Find new</h3><p>Ingest→embed→score chain · impression hygiene · chat↔Matches parity</p></div>
+        <div class="card road"><h3>Intro + recruiter search</h3><p>Gmail E2E · embed-after-role-sync · criterion breakdown · empty-search monitoring</p></div>
+      </div>
+    </section>
+
+    <!-- 31 -->
+    <section class="slide dense">
+      <p class="eyebrow">Post-MVP · planned</p>
+      <h2>Aarya 15–20 min screening call</h2>
+      <p class="lede" style="font-size:1rem">After jobs + candidate + recruiter basics are stable — one Deepgram call, dual purpose.</p>
+      <div class="grid-2" style="margin-top:1rem">
+        <div class="card accent-edge"><div class="label">Candidate</div><h3>Richer profile → better jobs</h3><p>Exp · path · prefs → graph + embeddings → better MatchingEngine input.</p></div>
+        <div class="card accent-edge"><div class="label">Recruiter</div><h3>Screening on apply</h3><p>Call insights + JD → screening card on pipeline (not a live interview).</p></div>
+      </div>
+      <p class="note" style="margin-top:1rem">Builds on today’s Deepgram voice (S05). Does not replace MatchingEngine shortlist.</p>
+    </section>
+
+    <!-- 32 -->
+    <section class="slide">
+      <p class="eyebrow">Remember</p>
+      <h2>Takeaways</h2>
+      <ol class="takeaways">
+        <li><span><strong>Two agents, one graph</strong> — Aarya + Nitya share Supabase; intros via <code>intro_requests</code> only.</span></li>
+        <li><span><strong>Jobs from Apify Google Jobs</strong> — scrape → upsert → embed → score.</span></li>
+        <li><span><strong>One MatchingEngine</strong> — candidate feed and recruiter search use the same overall_score math.</span></li>
+        <li><span><strong>Cold email = Gmail + approve-send</strong>; Resend stays transactional.</span></li>
+        <li><span><strong>Screening call is post-MVP</strong> — after match/ingest stabilize.</span></li>
+      </ol>
+      <p class="meta">Sources merged: 01-business · 02-candidate · 03-recruiter · system bible</p>
+    </section>
+
+  </div>
+  <nav class="nav">
+    <div class="nav-left"><span class="kbd">← → · F · Print → PDF</span></div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right"><span id="slide-counter"></span><button type="button" id="prev">Prev</button><button type="button" id="next" class="primary">Next</button></div>
+  </nav>
+  <script src="deck.js"></script>
+</body>
+</html>

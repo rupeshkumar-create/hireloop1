@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { apiAuthFetch } from "@/lib/api/auth-fetch";
 
 export type DisplayCurrency = "auto" | "INR" | "USD" | "GBP" | "EUR";
 
@@ -145,6 +146,7 @@ export type ProfilePatch = {
   notice_period_days?: number;
   looking_for?: string;
   summary?: string;
+  visibility?: CandidateVisibility;
   display_currency?: DisplayCurrency;
   public_profile_enabled?: boolean;
   hide_contact_public?: boolean;
@@ -278,4 +280,24 @@ export function applyProfileToForm(
   setters.setLocationCity?.(data.candidate?.location_city ?? "");
   setters.setLocationState?.(data.candidate?.location_state ?? "");
   setters.setLookingFor?.(data.candidate?.looking_for ?? "");
+}
+
+/** Authenticated DPDP export download (Bearer required — bare window.open 401s). */
+export async function downloadDpdpExport(): Promise<void> {
+  const res = await apiAuthFetch("/api/v1/me/dpdp/export");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail ?? `Export failed: ${res.status}`,
+    );
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `hireschema-export-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

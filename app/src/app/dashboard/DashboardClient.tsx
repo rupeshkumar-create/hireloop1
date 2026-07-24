@@ -20,7 +20,6 @@ import { recordJobApplication } from "@/lib/api/job-applications";
 import { createClient } from "@/lib/supabase/client";
 import { clearClientOnboardingComplete, isClientOnboardingCompleteRecent } from "@/lib/auth/onboarding-complete";
 import { consumeStarterJobs } from "@/lib/auth/starter-jobs";
-import { apiAuthFetch } from "@/lib/api/auth-fetch";
 import { cn } from "@/lib/utils";
 import { JobsPanel } from "@/components/dashboard/JobsPanel";
 import { ProfilePanel } from "@/components/dashboard/ProfilePanel";
@@ -30,6 +29,9 @@ import { IntrosInboxPanel } from "@/components/intros/IntrosInboxPanel";
 import { CandidateMobileNav } from "@/components/layout/CandidateMobileNav";
 import { type JobsTab, type PanelId, type ProfileTabId, PANEL_TITLE } from "@/lib/dashboard/panel-types";
 import { useToast } from "@/components/ui";
+import { GoogleConnectedBanner } from "@/components/profile/GoogleConnectedBanner";
+import { GoogleConnectResultBanner } from "@/components/profile/GoogleConnectResultBanner";
+import { fetchGoogleStatus, GOOGLE_CONNECTED_EVENT } from "@/lib/api/gmail";
 import type { KickoffResult } from "@/components/chat/CareerKickoffFlow";
 
 const ChatInterface = dynamic(
@@ -105,6 +107,15 @@ export function DashboardClient({
   // never has to click "Find jobs" to see them there.
   const [chatJobs, setChatJobs] = useState<MatchedJob[] | null>(null);
   const [returnMessage, setReturnMessage] = useState<string | null>(null);
+  const [googleConnectedBanner, setGoogleConnectedBanner] = useState<{
+    email: string | null;
+  } | null>(null);
+  const [googleErrorBanner, setGoogleErrorBanner] = useState<string | null | undefined>(
+    undefined,
+  );
+  const [handledGmailParam] = useState(() => ({ handled: false }));
+  const scheduledVoiceSessionId =
+    searchParams?.get("scheduled_session_id")?.trim() || undefined;
 
   // Retention: return summary before visit bump; visit after feed so "since last visit" works.
   useEffect(() => {
@@ -126,6 +137,63 @@ export function DashboardClient({
       null;
     if (title) setKickoffMatchTitle(title);
   }, []);
+
+  // Google OAuth return: stay on chat, show connected/error UI, refresh status.
+  useEffect(() => {
+    if (handledGmailParam.handled) return;
+    const gmail = searchParams?.get("gmail")?.trim();
+    if (!gmail) return;
+    handledGmailParam.handled = true;
+
+    const reason = searchParams?.get("gmail_reason")?.trim() || null;
+    setActivePanel(null);
+    setGoogleErrorBanner(undefined);
+    setGoogleConnectedBanner(null);
+
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("gmail");
+    params.delete("gmail_reason");
+    params.delete("panel");
+    const q = params.toString();
+    router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
+
+    if (gmail === "error") {
+      setGoogleErrorBanner(reason);
+      try {
+        toast.error("Couldn't connect Google — see details above chat.");
+      } catch {
+        /* toast provider optional during edge navigations */
+      }
+      return;
+    }
+    if (gmail !== "connected") return;
+
+    void fetchGoogleStatus()
+      .then((status) => {
+        setGoogleConnectedBanner({ email: status.gmail_email });
+        try {
+          toast.success(
+            status.gmail_email
+              ? `Google connected as ${status.gmail_email}`
+              : "Google connected",
+          );
+        } catch {
+          /* ignore */
+        }
+        window.dispatchEvent(
+          new CustomEvent(GOOGLE_CONNECTED_EVENT, { detail: status }),
+        );
+      })
+      .catch(() => {
+        setGoogleConnectedBanner({ email: null });
+        try {
+          toast.success("Google connected");
+        } catch {
+          /* ignore */
+        }
+        window.dispatchEvent(new CustomEvent(GOOGLE_CONNECTED_EVENT));
+      });
+  }, [router, searchParams, handledGmailParam, toast]);
 
   // Allow deep-linking into an intro request from places like /jobs/[id].
   // Example: /dashboard?intro_job_id=...&intro_id=...&intro_title=...&intro_company=...
@@ -474,28 +542,48 @@ export function DashboardClient({
 
         <div
           className={cn(
-            "overflow-hidden transition-[flex-basis] duration-base ease-out-soft",
+            "flex min-h-0 flex-col overflow-hidden transition-[flex-basis] duration-base ease-out-soft",
             activePanel ? "flex-1 min-w-0" : "w-full",
           )}
         >
-          <ChatInterface
-            conversationId={activeConvoId}
-            initialInput={initialInput}
-            candidateName={candidateName}
-            initialVoiceDeepDive={initialVoiceDeepDive}
-            initialKickoff={initialKickoff}
-            injectedMessage={injected}
-            applicationKitRequest={kitRequest}
-            introWatch={introWatch}
-            className="h-full"
-            onSessionCreated={(id) => setActiveConvoId(id)}
-            savedJobIds={savedJobIds}
-            onSavedChange={handleSavedChange}
-            onRequestIntro={handleRequestIntro}
-            onCareerKickoffComplete={handleCareerKickoffComplete}
-            onJobsFound={setChatJobs}
-            returnWelcomeMessage={returnMessage}
-          />
+          {googleErrorBanner !== undefined && (
+            <div className="shrink-0 border-b border-ink-100 bg-paper-0 px-3 py-3 sm:px-5">
+              <GoogleConnectResultBanner
+                variant="error"
+                reason={googleErrorBanner}
+                onDismiss={() => setGoogleErrorBanner(undefined)}
+              />
+            </div>
+          )}
+          {googleConnectedBanner && (
+            <div className="shrink-0 border-b border-ink-100 bg-paper-0 px-3 py-3 sm:px-5">
+              <GoogleConnectedBanner
+                gmailEmail={googleConnectedBanner.email}
+                onDismiss={() => setGoogleConnectedBanner(null)}
+              />
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <ChatInterface
+              conversationId={activeConvoId}
+              initialInput={initialInput}
+              candidateName={candidateName}
+              initialVoiceDeepDive={initialVoiceDeepDive}
+              scheduledVoiceSessionId={scheduledVoiceSessionId}
+              initialKickoff={initialKickoff}
+              injectedMessage={injected}
+              applicationKitRequest={kitRequest}
+              introWatch={introWatch}
+              className="h-full"
+              onSessionCreated={(id) => setActiveConvoId(id)}
+              savedJobIds={savedJobIds}
+              onSavedChange={handleSavedChange}
+              onRequestIntro={handleRequestIntro}
+              onCareerKickoffComplete={handleCareerKickoffComplete}
+              onJobsFound={setChatJobs}
+              returnWelcomeMessage={returnMessage}
+            />
+          </div>
         </div>
         </div>
       </main>

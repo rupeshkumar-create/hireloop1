@@ -31,7 +31,7 @@ export function LandingNav() {
   }, []);
 
   const primaryHref = signedIn ? "/dashboard" : "/signup";
-  const primaryLabel = signedIn ? "Dashboard" : "Sign up";
+  const primaryLabel = signedIn ? "Dashboard" : "Join beta";
 
   const links = [
     { href: "#process", label: "Process" },
@@ -45,10 +45,17 @@ export function LandingNav() {
       className="sticky top-0 z-30 border-b backdrop-blur-md"
     >
       <div className="mx-auto flex h-14 max-w-page items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2" aria-label="Hireschema home">
+        <Link
+          href="/"
+          className="flex items-center gap-2"
+          aria-label="Hireschema home"
+        >
           <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}>
             <HireschemaLogo size={30} />
           </motion.div>
+          <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent">
+            Beta
+          </span>
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex">

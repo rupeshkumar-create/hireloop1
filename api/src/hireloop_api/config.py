@@ -30,6 +30,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3001",
         "http://127.0.0.1:3000",
     ]
+    # Forwarded client IP headers are accepted only when the TCP peer belongs to
+    # one of these operator-configured proxy networks. Empty is fail-safe.
+    trusted_proxy_cidrs: list[str] = []
+    # Railway documents X-Real-IP as an edge-overwritten single client IP. This
+    # must be enabled only when the API is reachable exclusively through that edge.
+    trust_railway_proxy_headers: bool = False
 
     # Browser-reachable URL of THIS API (FastAPI). Used to build OAuth redirect
     # URIs that Google must redirect the browser to.
@@ -231,13 +237,13 @@ class Settings(BaseSettings):
     # Dev-only: when True and is_development, save-phone also sets phone_verified.
     allow_phone_save_bypass: bool = False
 
-    # ── Multi-region markets ─────────────────────────────────────────────────
-    # Comma-separated ISO codes. Defaults to all supported markets.
+    # ── India-only marketplace (MVP) ─────────────────────────────────────────
+    # Comma-separated ISO codes. Must remain IN-only unless product expands.
     enabled_markets: list[str] = list(ALL_SUPPORTED_MARKET_CODES)
     default_market: str = "IN"
 
-    # Temporary MVP/dev bypass: keep OTP enforcement configurable while LinkedIn
-    # + resume onboarding is being tested. Production should set this to true.
+    # Temporary MVP bypass: phone OTP not required while onboarding is CV-first.
+    # Set REQUIRE_PHONE_VERIFICATION=true when MSG91 OTP is ready to enforce.
     require_phone_verification: bool = False
 
     # ── Internal service secret ───────────────────────────────────────────────
@@ -249,6 +255,13 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @field_validator("trusted_proxy_cidrs", mode="before")
+    @classmethod
+    def split_trusted_proxy_cidrs(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            return [network.strip() for network in v.split(",") if network.strip()]
+        return [str(network).strip() for network in v if str(network).strip()]
 
     @field_validator("super_admin_emails", mode="before")
     @classmethod
@@ -293,7 +306,10 @@ class Settings(BaseSettings):
             parts = [s.strip().upper() for s in v.split(",") if s.strip()]
         else:
             parts = [str(s).strip().upper() for s in v if str(s).strip()]
-        return parts or ["IN"]
+        # India-only MVP: drop any non-IN codes from env so misconfigured
+        # deploys cannot accidentally ingest US/GB/etc. jobs.
+        india_only = [p for p in parts if p == "IN"]
+        return india_only or ["IN"]
 
     # Secrets that MUST be overridden in production. Their insecure defaults gate
     # privileged surfaces (service-secret webhooks, admin job ingest/cron, token
@@ -327,6 +343,21 @@ class Settings(BaseSettings):
                 + ", ".join(missing)
                 + " must be set to a strong non-default value "
                 "(currently empty or 'change-me'). Refusing to start."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_missing_sentry_in_production(self) -> "Settings":
+        """Sentry is required for operable production — warn loudly if unset."""
+        if self.environment == "production" and not str(self.sentry_dsn).strip():
+            # Import deferred: structlog may not be configured yet during Settings init.
+            import warnings
+
+            warnings.warn(
+                "SENTRY_DSN is empty in production — errors will not be reported. "
+                "Set SENTRY_DSN for operable observability.",
+                UserWarning,
+                stacklevel=2,
             )
         return self
 

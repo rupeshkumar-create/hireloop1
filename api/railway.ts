@@ -8,6 +8,9 @@ export default defineRailway(() => {
         deploy: {
           healthcheckPath: "/api/v1/health",
           healthcheckTimeout: 120,
+          multiRegionConfig: {
+            "asia-southeast1-eqsg3a": { numReplicas: 1 },
+          },
           restartPolicyType: "ON_FAILURE",
           restartPolicyMaxRetries: 5,
         },

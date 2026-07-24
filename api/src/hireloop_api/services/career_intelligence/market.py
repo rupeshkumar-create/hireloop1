@@ -42,11 +42,12 @@ _MIN_COMP_SAMPLE = 5  # postings with a salary band before we trust comp percent
 # Shared predicate for a "live" posting in the candidate's market.
 def _live_sql(market: str, *, job_alias: str = "j") -> str:
     from hireloop_api.markets import job_visible_for_market_sql
+    from hireloop_api.services.job_visibility import live_job_visible_sql
 
     vis = job_visible_for_market_sql(job_alias=job_alias, market_param=f"'{market}'")
     return (
         f"{job_alias}.is_active AND {job_alias}.deleted_at IS NULL AND {vis} "
-        f"AND ({job_alias}.expires_at IS NULL OR {job_alias}.expires_at > NOW())"
+        f"AND {live_job_visible_sql(job_alias=job_alias)}"
     )
 
 

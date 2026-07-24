@@ -103,15 +103,15 @@ export default function RecruitersPage() {
         </div>
       </section>
 
-      <section className="py-16 bg-ink-900 text-paper-0">
+      <section className="py-16 bg-paper-1 border-t border-ink-100">
         <div className="max-w-page mx-auto px-4 sm:px-6 text-center space-y-4">
-          <h2 className="text-h1">Start hiring with Nitya</h2>
-          <p className="text-body text-ink-300 max-w-xl mx-auto">
+          <h2 className="text-h1 text-ink-900">Start hiring with Nitya</h2>
+          <p className="text-body text-ink-500 max-w-xl mx-auto">
             No subscription in beta. Pay per outcome when you hire.
           </p>
           <Link
             href={`${APP_URL}/signup?role=recruiter`}
-            className="inline-flex h-12 items-center justify-center rounded-md bg-paper-0 px-6 text-body font-medium text-ink-900 hover:bg-ink-50 transition-colors"
+            className="inline-flex h-12 items-center justify-center rounded-md bg-accent px-6 text-body font-medium text-accent-fg hover:bg-accent-hover transition-colors"
           >
             Talk to Nitya — free
           </Link>

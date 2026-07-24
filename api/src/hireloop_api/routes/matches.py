@@ -12,6 +12,7 @@ POST /api/v1/matches/embed/candidate/{id} → embed + score a single candidate i
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import uuid
 from datetime import UTC, datetime
@@ -36,6 +37,7 @@ from hireloop_api.services.job_relevance_pipeline import (
     filter_and_rerank_jobs,
     rationale_overlay_items,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.match_audit import audit_match_quality
 from hireloop_api.services.match_quality import (
     DEFAULT_FEED_MIN_SCORE,
@@ -52,6 +54,7 @@ from hireloop_api.services.ranking import (
     assemble_first_screen,
     attach_tiers,
     boost_by_saved,
+    dedupe_jobs,
     passes_hard_constraints,
 )
 from hireloop_api.services.skills import canonical_skill
@@ -74,7 +77,8 @@ _MIN_MARKET_FEED_JOBS = 8
 _FEED_SCORE_LIMIT = 500
 # Floor for brand-new signups while embeddings/scores are still computing.
 _STARTER_FEED_MIN_SCORE = 0.25
-_ACTIVE_JOB_EXPIRY_SQL = "(j.expires_at IS NULL OR j.expires_at > NOW())"
+# Live surfaces only: not expired + scraped within freshness window (or recruiter).
+_LIVE_JOB_VISIBLE_SQL = LIVE_JOB_VISIBLE_SQL
 
 
 def _is_test_match_row(row: asyncpg.Record | dict) -> bool:
@@ -350,7 +354,8 @@ async def _enqueue_candidate_match_scoring(
 
 
 def _require_service_secret(x_service_secret: str | None, settings: Settings) -> None:
-    if not x_service_secret or x_service_secret != settings.service_secret:
+    expected = settings.service_secret or ""
+    if not x_service_secret or not expected or not hmac.compare_digest(x_service_secret, expected):
         raise HTTPException(status_code=403, detail="Invalid or missing service secret")
 
 
@@ -506,7 +511,7 @@ async def get_match_feed(
             WHERE j.source = 'google_jobs'
               AND j.is_active = TRUE
               AND j.deleted_at IS NULL
-              AND {_ACTIVE_JOB_EXPIRY_SQL}
+              AND {_LIVE_JOB_VISIBLE_SQL}
             """
         )
         if int(apify_jobs or 0) < 20:
@@ -652,11 +657,15 @@ async def get_match_feed(
         or (not is_test_job(job) and passes_hard_constraints(job, constraints))
     ]
     result = filter_and_rerank_jobs(dict(candidate), result, limit=limit)
+    # Always collapse near-duplicates (same apply URL / company+title). The default
+    # Matches sidebar uses limit=50, which used to skip assemble_first_screen and
+    # therefore skipped dedupe entirely.
+    result = dedupe_jobs(result)
 
     # Presentation layer: on the opening screen (first page), personalise from
-    # saved jobs, then de-duplicate and MMR-diversify so the candidate isn't
-    # greeted by eight near-identical cards. Deeper pages keep pure relevance
-    # order for pagination stability. Tiers are attached for the UI badge.
+    # saved jobs, then MMR-diversify so the candidate isn't greeted by eight
+    # near-identical cards. Deeper pages keep pure relevance order for
+    # pagination stability. Tiers are attached for the UI badge.
     if offset == 0:
         saved = await _fetch_saved_job_signals(db, candidate["id"])
         boost_by_saved(result, saved, output_key="_ranking_score")
@@ -666,7 +675,8 @@ async def get_match_feed(
             # Hybrid retrieval: fuse the composite (dense-leaning) and the lexical
             # skills signal via RRF so an exceptional direct-skill match isn't buried
             # under a marginally-higher composite. Degrades to overall_score alone
-            # when skills_score is absent.
+            # when skills_score is absent. Dedupe already ran above; assemble still
+            # re-dedupes harmlessly before MMR.
             result = assemble_first_screen(
                 result,
                 screen_size=min(limit, 10),
@@ -956,7 +966,7 @@ async def get_match_feed_count(
             min_score=min_score,
         )
     )
-    market_items = filter_and_rerank_jobs(dict(candidate), market_items, limit=100)
+    market_items = dedupe_jobs(filter_and_rerank_jobs(dict(candidate), market_items, limit=100))
     total = len(market_items)
 
     if total == 0:
@@ -971,7 +981,11 @@ async def get_match_feed_count(
             market=market,
             relaxed=min_score <= MIN_PERSIST_SCORE,
         )
-        total = len(filter_and_rerank_jobs(dict(candidate), _market_feed_items(fallback), limit=50))
+        total = len(
+            dedupe_jobs(
+                filter_and_rerank_jobs(dict(candidate), _market_feed_items(fallback), limit=50)
+            )
+        )
         if total == 0 and min_score > MIN_PERSIST_SCORE:
             relaxed = await _fetch_fallback_match_rows(
                 db,
@@ -984,7 +998,9 @@ async def get_match_feed_count(
                 relaxed=True,
             )
             total = len(
-                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                dedupe_jobs(
+                    filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                )
             )
         if total == 0:
             relaxed = await _fetch_fallback_match_rows(
@@ -998,7 +1014,9 @@ async def get_match_feed_count(
                 relaxed=True,
             )
             total = len(
-                filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                dedupe_jobs(
+                    filter_and_rerank_jobs(dict(candidate), _market_feed_items(relaxed), limit=50)
+                )
             )
         if total == 0:
             starter = await _fetch_starter_market_jobs(
@@ -1008,7 +1026,7 @@ async def get_match_feed_count(
                 remote_preference=remote_pref,
                 market=market,
             )
-            total = len(filter_and_rerank_jobs(dict(candidate), starter, limit=50))
+            total = len(dedupe_jobs(filter_and_rerank_jobs(dict(candidate), starter, limit=50)))
 
     test_jobs = await fetch_test_jobs_for_feed(
         db,
@@ -1041,7 +1059,7 @@ async def _count_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
         """,
         candidate_id,
@@ -1128,7 +1146,7 @@ async def _fetch_cached_match_rows(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
           {only_new_clause}
@@ -1542,7 +1560,7 @@ async def _fetch_starter_market_jobs(
         WHERE j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
         ORDER BY j.scraped_at DESC NULLS LAST, j.created_at DESC
@@ -1645,7 +1663,7 @@ async def _fetch_fallback_match_rows(
         WHERE j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND {_ACTIVE_JOB_EXPIRY_SQL}
+          AND {_LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
         ORDER BY
@@ -1675,6 +1693,68 @@ async def _fetch_fallback_match_rows(
     ranked.sort(key=lambda r: r["overall_score"], reverse=True)
     filtered = [row for row in ranked if row["overall_score"] >= min_score and not is_test_job(row)]
     return filtered[offset : offset + limit]
+
+
+def _serialize_single_match_detail(
+    row: asyncpg.Record | dict,
+    *,
+    candidate: dict,
+) -> dict:
+    """Serialize a cached match_scores + job join for GET /matches/{job_id}.
+
+    Avoids response-validation 500s from raw datetimes / null computed_at /
+    non-dict salary_benchmark leaking through ``**dict(row)``.
+    """
+    data = dict(row)
+    scraped = data.get("scraped_at")
+    computed_at = data.get("computed_at")
+    job_skills = list(data.get("skills_required") or [])
+    cand_canon = {canonical_skill(s) for s in (candidate.get("skills") or [])}
+    explanation = data.get("explanation")
+    if explanation is not None and not isinstance(explanation, str):
+        explanation = str(explanation)
+    salary_benchmark = data.get("salary_benchmark")
+    if isinstance(salary_benchmark, str):
+        try:
+            salary_benchmark = json.loads(salary_benchmark)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            salary_benchmark = None
+    elif salary_benchmark is not None and not isinstance(salary_benchmark, dict):
+        salary_benchmark = None
+
+    return {
+        "job_id": str(data["job_id"]),
+        "title": data.get("title") or "",
+        "company_name": data.get("company_name"),
+        "company_logo_url": data.get("company_logo_url"),
+        "location_city": data.get("location_city"),
+        "location_state": data.get("location_state"),
+        "is_remote": bool(data.get("is_remote")),
+        "employment_type": data.get("employment_type"),
+        "seniority": data.get("seniority"),
+        "ctc_min": data.get("ctc_min"),
+        "ctc_max": data.get("ctc_max"),
+        "salary_currency": data.get("salary_currency"),
+        "skills_required": job_skills,
+        "apply_url": data.get("apply_url"),
+        "description": data.get("description"),
+        "requirements": data.get("requirements"),
+        "posted_at": scraped.isoformat() if hasattr(scraped, "isoformat") else None,
+        "overall_score": float(data.get("overall_score") or 0.0),
+        "skills_score": data.get("skills_score"),
+        "experience_score": data.get("experience_score"),
+        "location_score": data.get("location_score"),
+        "ctc_score": data.get("ctc_score"),
+        "culture_score": data.get("culture_score"),
+        "career_alignment_score": data.get("career_alignment_score"),
+        "fit_recommendation": data.get("fit_recommendation"),
+        "salary_benchmark": salary_benchmark,
+        "triage_notes": data.get("triage_notes"),
+        "explanation": explanation,
+        "computed_at": computed_at.isoformat() if hasattr(computed_at, "isoformat") else None,
+        "skills_matched": [s for s in job_skills if canonical_skill(s) in cand_canon],
+        "skills_gap": [s for s in job_skills if canonical_skill(s) not in cand_canon],
+    }
 
 
 def _serialize_fallback_match_row(
@@ -2030,7 +2110,11 @@ async def get_single_match(
     if not row:
         # Compute on-the-fly (slow path — no embedding available yet)
         engine = MatchingEngine(db)
-        score = await engine.score_pair(str(candidate["id"]), job_id)
+        try:
+            score = await engine.score_pair(str(candidate["id"]), job_id)
+        except Exception:
+            logger.exception("get_single_match_score_pair_failed", job_id=job_id)
+            raise HTTPException(status_code=404, detail="Job not found or scoring failed") from None
         if score is None:
             raise HTTPException(status_code=404, detail="Job not found or scoring failed")
         row = await db.fetchrow(
@@ -2067,12 +2151,21 @@ async def get_single_match(
             full_cand = await db.fetchrow(
                 """
                 SELECT id, skills, current_title, years_experience,
-                       location_city, location_state
+                       location_city, location_state, expected_ctc_min, expected_ctc_max,
+                       remote_preference, open_to_relocation, location_scope,
+                       current_company, headline, summary
                 FROM public.candidates WHERE id = $1::uuid
                 """,
                 candidate["id"],
             )
-            computed = _serialize_fallback_match_row(dict(job_row), candidate=dict(full_cand or {}))
+            # allow_low_score: detail page must render even when feed floors drop the pair
+            computed = _serialize_fallback_match_row(
+                dict(job_row),
+                candidate=dict(full_cand or candidate),
+                allow_low_score=True,
+            )
+            if not computed:
+                raise HTTPException(status_code=404, detail="Job not found or scoring failed")
             job_skills_live = job_row["skills_required"] or []
             cand_canon_live = {canonical_skill(s) for s in (candidate["skills"] or [])}
             scraped_live = job_row["scraped_at"]
@@ -2089,24 +2182,7 @@ async def get_single_match(
                 ],
             }
 
-    # Split required skills into "you have" vs "gap" using the shared canonical
-    # taxonomy, so the score breakdown is actionable (this is what powers the
-    # "Skills gap detected" line — now it shows WHICH skills).
-    job_skills = row["skills_required"] or []
-    cand_canon = {canonical_skill(s) for s in (candidate["skills"] or [])}
-    matched = [s for s in job_skills if canonical_skill(s) in cand_canon]
-    gap = [s for s in job_skills if canonical_skill(s) not in cand_canon]
-    scraped = row["scraped_at"]
-
-    return {
-        **dict(row),
-        "job_id": str(row["job_id"]),
-        "skills_required": job_skills,
-        "skills_matched": matched,
-        "skills_gap": gap,
-        "posted_at": scraped.isoformat() if scraped else None,
-        "computed_at": row["computed_at"].isoformat(),
-    }
+    return _serialize_single_match_detail(row, candidate=dict(candidate))
 
 
 # ── Admin: embed all pending ──────────────────────────────────────────────────

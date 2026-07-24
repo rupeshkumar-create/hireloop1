@@ -48,13 +48,9 @@ import {
   Briefcase,
   Check,
   ChevronRight,
-  Loader2,
   Mic,
-  Paperclip,
   Search,
   Sparkles,
-  Send,
-  Square,
   Volume2,
 } from "@/components/brand/icons";
 import { Button, useToast } from "@/components/ui";
@@ -69,7 +65,16 @@ import {
   warmupChatContext,
   type ChatWarmupSnapshot,
 } from "@/lib/chat/warmup";
-import { prepareApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
+import { prepareApplicationKit, fetchReadyApplicationKit, type ApplicationKit } from "@/lib/api/applicationKit";
+import {
+  uploadResume,
+  applyResumeToProfile,
+  fetchResumeParseStatus,
+  waitForResumeParse,
+} from "@/lib/api/onboardingProfile";
+import { useAiOperations } from "@/components/providers/AiOperationsProvider";
+import { resolveReadyOrAccepted } from "@/lib/operations/resolve";
+import { AI_OPERATION_KINDS } from "@/lib/operations/kinds";
 import { ApplicationKitCards } from "./ApplicationKitCards";
 import { MessageText } from "./MessageText";
 import { dedupeJobs } from "@/lib/chat/dedupeJobs";
@@ -86,10 +91,14 @@ import {
   streamAaryaMessage,
   type AaryaStreamCallbacks,
 } from "@/lib/chat/aaryaStream";
+import { abortActiveTurn, shouldBargeIn } from "@/lib/chat/bargeIn";
+import {
+  MIN_VOICE_CAPTURE_MS,
+  shouldDiscardVoiceCapture,
+} from "@/lib/chat/voiceCapture";
 import {
   readChatCoachSeen,
   readChatReplyMode,
-  storeChatCoachSeen,
   storeChatReplyMode,
   type ChatReplyMode,
 } from "@/lib/chat/voicePreferences";
@@ -97,7 +106,6 @@ import {
   extractNewCompleteSentences,
   remainingSpeechTail,
 } from "@/lib/chat/sentenceTts";
-import { preconnectVoicePipeline } from "@/lib/voice/preconnect";
 import { formatStatusWithEta } from "@/lib/chat/voiceStatus";
 import { isJobApplicationIntent, isJobSearchIntent } from "@/lib/chat/messageIntent";
 import {
@@ -110,7 +118,8 @@ import {
 import { useAgentActionsRealtime } from "@/lib/hooks/useAgentActionsRealtime";
 import { useVoice } from "@/lib/hooks/useVoice";
 import { createClient } from "@/lib/supabase/client";
-import { BTN_COMPOSER_ICON, BTN_COMPOSER_SEND, BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
+import { emailDraftDisplayText } from "@/lib/security/email-content";
+import { BTN_CHIP, BTN_CHIP_ACTIVE } from "@/lib/button-classes";
 import { cn } from "@/lib/utils";
 import type { MatchedJob } from "@/lib/api/matches";
 import { invalidateMatchFeedCache } from "@/lib/api/matches";
@@ -126,9 +135,17 @@ import { AgentThinkingIndicator } from "./AgentThinkingIndicator";
 import { ActivityTimeline, type AgentAction } from "./ActivityTimeline";
 import { ProfileCompletionFlow } from "./ProfileCompletionFlow";
 import { ChatJobCards } from "./ChatJobCards";
+import {
+  JdFitAnalysisCard,
+  ResumeAnalysisCard,
+  type JdFitAnalysis,
+  type ResumeAnalysis,
+} from "./ChatAnalysisCards";
 import { ChatShell } from "@/components/chat/shell/ChatShell";
-import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
-import { VoiceDeepDiveModal } from "./VoiceDeepDiveModal";
+import { ChatComposer } from "./ChatComposer";
+import { CareerCallConsent } from "./CareerCallConsent";
+import { InThreadCallBanner } from "./InThreadCallBanner";
+import { VoiceSession } from "@/app/voice/VoiceSession";
 import {
   CareerPathOptionCards,
   type CareerPathOption,
@@ -162,6 +179,10 @@ interface Message {
   jobs?: MatchedJob[];
   /** Apply assets from prepare_application_kit in this turn */
   applicationKits?: ApplicationKit[];
+  /** Structured resume analysis card */
+  resumeAnalysis?: ResumeAnalysis;
+  /** Structured JD / role fit analysis card */
+  jdFitAnalysis?: JdFitAnalysis;
   /** Assistant reply was read aloud after a voice turn */
   spoken?: boolean;
   /** When set, render an inline intro draft panel for this intro request. */
@@ -171,24 +192,12 @@ interface Message {
 type SendOptions = {
   contentType?: "text" | "voice";
   speakReply?: boolean;
+  jobId?: string;
 };
 
 type StreamRecovery = {
   partial: string;
   continuePrompt: string;
-};
-
-/** Subset of the /resumes/upload response we actually use client-side. */
-type ResumeUploadResponse = {
-  resume_id: string;
-  parsed: {
-    full_name?: string | null;
-    current_title?: string | null;
-    current_company?: string | null;
-    years_experience?: number | null;
-    skills?: string[];
-    headline?: string | null;
-  };
 };
 
 /** Parsed message: text + optional option list extracted from ---OPTIONS--- blocks */
@@ -212,8 +221,10 @@ interface ChatInterfaceProps {
   /** Called once when a new session is created lazily, so parents can cache the ID. */
   onSessionCreated?: (id: string) => void;
   candidateName?: string;
-  /** Open the 15-min voice deep-dive modal on mount (e.g. ?voice=deep). */
+  /** Open the in-thread 15-min career call consent on mount (e.g. ?voice=deep). */
   initialVoiceDeepDive?: boolean;
+  /** Optional booked session to resume when opening an in-thread career call. */
+  scheduledVoiceSessionId?: string;
   /** Start the guided career kickoff flow (post-onboarding, ?kickoff=career). */
   initialKickoff?: boolean;
   /**
@@ -252,6 +263,26 @@ const VOICE_FEATURE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED !== "false";
 
 const OPTIONS_RE = /\n*---OPTIONS---\n([\s\S]*?)\n---END---\n*/;
 
+function looksLikeJdPaste(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 280) return false;
+  const low = t.toLowerCase();
+  const hints = [
+    "responsibilities",
+    "requirements",
+    "qualifications",
+    "about the role",
+    "job description",
+    "must have",
+    "nice to have",
+    "years of experience",
+    "we are hiring",
+    "we're hiring",
+  ];
+  const hits = hints.filter((h) => low.includes(h)).length;
+  return hits >= 2 || (hits >= 1 && t.length > 600);
+}
+
 function parseMessage(content: string): ParsedMessage {
   const match = OPTIONS_RE.exec(content);
   if (!match) return { text: content.trim(), options: [] };
@@ -273,6 +304,7 @@ export function ChatInterface({
   onSessionCreated,
   candidateName,
   initialVoiceDeepDive = false,
+  scheduledVoiceSessionId,
   initialKickoff = false,
   injectedMessage,
   applicationKitRequest = null,
@@ -284,6 +316,7 @@ export function ChatInterface({
   onJobsFound,
   returnWelcomeMessage,
 }: ChatInterfaceProps) {
+  const { trackAndWait } = useAiOperations();
   const [messages, setMessages]       = useState<Message[]>(initialMessages);
   const [kickoffActive, setKickoffActive] = useState(
     () => initialKickoff && !hasCareerKickoffDone(),
@@ -315,14 +348,18 @@ export function ChatInterface({
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [replyMode, setReplyMode] = useState<ChatReplyMode>("voice");
   const [sendImmediately, setSendImmediately] = useState(true);
-  const [voiceDeepDiveOpen, setVoiceDeepDiveOpen] = useState(initialVoiceDeepDive);
+  const [careerCallPhase, setCareerCallPhase] = useState<
+    "off" | "consent" | "active"
+  >(initialVoiceDeepDive ? "consent" : "off");
   const [showCoachMark, setShowCoachMark] = useState(false);
   const [hinglishHint, setHinglishHint] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
-  const holdActiveRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const streamingContentRef = useRef("");
+  const streamGenerationRef = useRef(0);
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
@@ -450,6 +487,7 @@ export function ChatInterface({
     speakFiller,
     stopSpeaking,
     interimTranscript,
+    audioLevel,
   } = useVoice();
 
   const messagesEndRef  = useRef<HTMLDivElement>(null);
@@ -549,7 +587,7 @@ export function ChatInterface({
   }, [authUserId, sessionId]);
 
   useEffect(() => {
-    if (initialVoiceDeepDive) setVoiceDeepDiveOpen(true);
+    if (initialVoiceDeepDive) setCareerCallPhase("consent");
   }, [initialVoiceDeepDive]);
 
   // Explicit ?kickoff=career only — career direction lives in Profile → Intelligence.
@@ -586,18 +624,8 @@ export function ChatInterface({
     spokenStreamRef.current = "";
   }, [stopSpeaking]);
 
-  const setReplyModeAndPersist = useCallback(
-    (mode: ChatReplyMode) => {
-      voiceRepliesEnabledRef.current = mode === "voice";
-      setReplyMode(mode);
-      storeChatReplyMode(mode);
-      if (mode === "text") interruptSpeech();
-    },
-    [interruptSpeech]
-  );
-
   const cancelRecording = useCallback(async () => {
-    holdActiveRef.current = false;
+    recordingStartedAtRef.current = null;
     setPendingVoiceTranscript(null);
     if (!isRecording) return;
     try {
@@ -607,6 +635,65 @@ export function ChatInterface({
     }
     setVoiceProcessing(false);
   }, [isRecording, stopRecording]);
+
+  const finalizeInterruptedPartial = useCallback(() => {
+    const partial = streamingContentRef.current.trim();
+    if (!partial) {
+      setStreamingContent("");
+      return;
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: partial,
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    streamingContentRef.current = "";
+    setStreamingContent("");
+  }, []);
+
+  const stopGeneration = useCallback(() => {
+    streamGenerationRef.current += 1;
+    abortActiveTurn({ abortRef, interruptSpeech });
+    finalizeInterruptedPartial();
+    sendInFlightRef.current = false;
+    setIsStreaming(false);
+    setThinkingStatus(null);
+  }, [finalizeInterruptedPartial, interruptSpeech]);
+
+  useEffect(() => {
+    streamingContentRef.current = streamingContent;
+  }, [streamingContent]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (isStreamingRef.current || isPlaying || isRecording) {
+        e.preventDefault();
+        if (isRecording) {
+          void cancelRecording();
+        } else {
+          stopGeneration();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cancelRecording, isPlaying, isRecording, stopGeneration]);
+
+  const setReplyModeAndPersist = useCallback(
+    (mode: ChatReplyMode) => {
+      voiceRepliesEnabledRef.current = mode === "voice";
+      setReplyMode(mode);
+      storeChatReplyMode(mode);
+      if (mode === "text") interruptSpeech();
+    },
+    [interruptSpeech]
+  );
 
   const handleComposerFocus = useCallback(() => {
     interruptSpeech();
@@ -977,8 +1064,25 @@ export function ChatInterface({
 
   const sendMessage = useCallback(
     async (text: string, options: SendOptions = {}) => {
-      if (!text.trim() || isStreaming || sendInFlightRef.current) return;
+      if (!text.trim()) return;
+
+      if (
+        shouldBargeIn({
+          isStreaming: isStreamingRef.current,
+          sendInFlight: sendInFlightRef.current,
+        })
+      ) {
+        streamGenerationRef.current += 1;
+        abortActiveTurn({ abortRef, interruptSpeech });
+        finalizeInterruptedPartial();
+        sendInFlightRef.current = false;
+        setIsStreaming(false);
+        setThinkingStatus(null);
+      }
+
+      if (sendInFlightRef.current) return;
       sendInFlightRef.current = true;
+      const myGeneration = ++streamGenerationRef.current;
 
       interruptSpeech();
       if (isRecording) await cancelRecording();
@@ -1003,13 +1107,14 @@ export function ChatInterface({
       jobDiscoveryStartedAtRef.current = null;
       setThinkingStatus("Thinking…");
       const trimmedIntent = text.trim();
-      if (isJobSearchIntent(trimmedIntent)) {
+      const isJobSearchTurn = !options.jobId && isJobSearchIntent(trimmedIntent);
+      if (isJobSearchTurn) {
         markCareerKickoffDone(authUserId ?? undefined);
         clearClientOnboardingComplete();
         setKickoffActive(false);
       }
       lastUserTurnRef.current = {
-        expectJobCards: isJobSearchIntent(trimmedIntent),
+        expectJobCards: isJobSearchTurn,
         expectApplicationKits: isJobApplicationIntent(trimmedIntent),
       };
 
@@ -1023,6 +1128,35 @@ export function ChatInterface({
 
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
+
+      // Pasted JD → immediate fit analysis card (then continue normal Aarya turn)
+      let jdFit: JdFitAnalysis | undefined;
+      if (looksLikeJdPaste(trimmedIntent)) {
+        try {
+          const jdRes = await apiAuthFetch("/api/v1/me/chat/analyze-jd", {
+            method: "POST",
+            body: JSON.stringify({ jd_text: trimmedIntent }),
+          });
+          if (jdRes.ok) {
+            jdFit = (await jdRes.json()) as JdFitAnalysis;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content:
+                  "I've scored this JD against your profile. Review the fit card — then ask me to find similar roles or prepare an application kit.",
+                content_type: "text",
+                created_at: new Date().toISOString(),
+                jdFitAnalysis: jdFit,
+              },
+            ]);
+          }
+        } catch {
+          /* continue to Aarya */
+        }
+      }
+
       setStreamingContent("");
       setTurnActionBaseline(actionCount);
       setIsStreaming(true);
@@ -1182,7 +1316,8 @@ export function ChatInterface({
             trimmed,
             contentType,
             streamCallbacks,
-            abortSignal
+            abortSignal,
+            { jobId: options.jobId }
           );
 
         let streamResult;
@@ -1219,7 +1354,15 @@ export function ChatInterface({
           finalize(streamResult.jobs);
         }
       } catch (err) {
-        if ((err as Error).name !== "AbortError") {
+        const aborted =
+          (err as Error).name === "AbortError" ||
+          Boolean(abortRef.current?.signal.aborted) ||
+          myGeneration !== streamGenerationRef.current;
+        if (aborted) {
+          if (accumulated.trim() && !streamFinalized) {
+            finalize();
+          }
+        } else if ((err as Error).name !== "AbortError") {
           const message =
             err instanceof Error && err.message
               ? sanitizeChatError(err.message)
@@ -1246,6 +1389,9 @@ export function ChatInterface({
           }
         }
       } finally {
+        if (myGeneration !== streamGenerationRef.current) {
+          return;
+        }
         sendInFlightRef.current = false;
         setIsStreaming(false);
         setThinkingStatus(null);
@@ -1290,16 +1436,15 @@ export function ChatInterface({
       }
     },
     [
-      isStreaming,
       isRecording,
       speak,
       speakFiller,
       onSessionCreated,
       actionCount,
-      attachJobsToCurrentTurnAssistant,
       reportChatJobs,
       interruptSpeech,
       cancelRecording,
+      finalizeInterruptedPartial,
       authUserId,
     ]
   );
@@ -1318,9 +1463,9 @@ export function ChatInterface({
   const handleWhyFit = useCallback(
     (job: MatchedJob) => {
       const company = job.company_name ?? "this company";
-      void sendMessage(
-        `Why is ${job.title} at ${company} a fit for me? Use job id ${job.job_id}.`
-      );
+      void sendMessage(`Why is ${job.title} at ${company} a fit for me?`, {
+        jobId: job.job_id,
+      });
     },
     [sendMessage]
   );
@@ -1342,11 +1487,12 @@ export function ChatInterface({
         } else if (!emptySttRetryRef.current) {
           emptySttRetryRef.current = true;
           appendSystemNote("I didn't catch that — listening again…");
+          recordingStartedAtRef.current = Date.now();
           await startRecording();
         } else {
           emptySttRetryRef.current = false;
           appendSystemNote(
-            "I didn't catch that. Tap and hold the mic to try again, or type instead."
+            "I didn't catch that. Tap the mic to try again, or type instead."
           );
         }
       } finally {
@@ -1356,26 +1502,55 @@ export function ChatInterface({
     [appendSystemNote, sendMessage, sendImmediately, startRecording, stopRecording]
   );
 
-  const handleMicToggle = useCallback(async () => {
+  const handleMicClick = useCallback(async () => {
+    if (!VOICE_FEATURE_ENABLED || voiceProcessing || pendingVoiceTranscript) return;
+
+    if (isRecording) {
+      const started = recordingStartedAtRef.current;
+      recordingStartedAtRef.current = null;
+      const elapsed = started ? Date.now() - started : MIN_VOICE_CAPTURE_MS;
+      if (shouldDiscardVoiceCapture(elapsed)) {
+        await cancelRecording();
+        appendSystemNote("Tap again and speak a little longer.");
+        return;
+      }
+      await finishVoiceCapture(sendImmediately);
+      return;
+    }
+
+    if (
+      shouldBargeIn({
+        isStreaming: isStreamingRef.current,
+        sendInFlight: sendInFlightRef.current,
+      })
+    ) {
+      stopGeneration();
+    }
+
+    setReplyModeAndPersist("voice");
+    interruptSpeech();
+    setPendingVoiceTranscript(null);
+    recordingStartedAtRef.current = Date.now();
+    await startRecording();
+  }, [
+    appendSystemNote,
+    cancelRecording,
+    finishVoiceCapture,
+    interruptSpeech,
+    isRecording,
+    pendingVoiceTranscript,
+    sendImmediately,
+    setReplyModeAndPersist,
+    startRecording,
+    stopGeneration,
+    voiceProcessing,
+  ]);
+
+  const cancelMic = useCallback(async () => {
     if (!VOICE_FEATURE_ENABLED || !isRecording) return;
     interruptSpeech();
     await cancelRecording();
   }, [cancelRecording, interruptSpeech, isRecording]);
-
-  const handleMicHoldStart = useCallback(async () => {
-    if (!VOICE_FEATURE_ENABLED || isStreaming || voiceProcessing) return;
-    holdActiveRef.current = true;
-    interruptSpeech();
-    setPendingVoiceTranscript(null);
-    await startRecording();
-  }, [interruptSpeech, isStreaming, startRecording, voiceProcessing]);
-
-  const handleMicHoldEnd = useCallback(async () => {
-    if (!holdActiveRef.current) return;
-    holdActiveRef.current = false;
-    if (!isRecording) return;
-    await finishVoiceCapture(sendImmediately);
-  }, [finishVoiceCapture, isRecording, sendImmediately]);
 
   const sendVoiceTranscript = useCallback(() => {
     if (!pendingVoiceTranscript?.trim()) return;
@@ -1456,6 +1631,14 @@ export function ChatInterface({
     });
 
     void prepareApplicationKit(jobId)
+      .then((outcome) =>
+        resolveReadyOrAccepted(
+          outcome,
+          trackAndWait,
+          () => fetchReadyApplicationKit(jobId),
+          { kind: AI_OPERATION_KINDS.applicationKit },
+        ),
+      )
       .then((kit) => {
         if (kitRequestRef.current?.nonce !== nonce) return;
         if (kit.saved && kit.job?.job_id) {
@@ -1493,7 +1676,7 @@ export function ChatInterface({
         setIsStreaming(false);
         setThinkingStatus(null);
       });
-  }, [applicationKitRequest]);
+  }, [applicationKitRequest, trackAndWait]);
 
   // ── Resume upload ────────────────────────────────────────────────────────
 
@@ -1535,29 +1718,44 @@ export function ChatInterface({
       ]);
 
       try {
-        // ── Upload ─────────────────────────────────────────────────────────
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const uploadRes = await apiAuthFetch("/api/v1/resumes/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const errBody = await uploadRes.json().catch(() => ({ detail: uploadRes.statusText }));
-          throw new Error((errBody as { detail?: string }).detail ?? "Upload failed");
+        // ── Upload (may return 202 + durable parse operation) ──────────────
+        const outcome = await uploadResume(file);
+        let resumeId: string;
+        if (outcome.status === "ready") {
+          resumeId = outcome.data.resume_id;
+          if (outcome.data.parse_status === "failed") {
+            throw new Error(
+              outcome.data.message ?? "Couldn't parse that CV.",
+            );
+          }
+          if (outcome.data.parse_status !== "ready") {
+            await waitForResumeParse(resumeId);
+          }
+        } else {
+          const terminal = await trackAndWait(outcome.operation, {
+            kind: AI_OPERATION_KINDS.resumeParse,
+          });
+          if (terminal.status !== "succeeded" || !terminal.result_id) {
+            throw new Error(
+              terminal.error_message?.trim() ||
+                terminal.message.trim() ||
+                "Couldn't parse that CV.",
+            );
+          }
+          resumeId = terminal.result_id;
+          const status = await fetchResumeParseStatus(resumeId);
+          if (status.parse_status === "failed") {
+            throw new Error(status.message ?? "Couldn't parse that CV.");
+          }
+          if (status.parse_status !== "ready") {
+            await waitForResumeParse(resumeId);
+          }
         }
-
-        const data: ResumeUploadResponse = await uploadRes.json();
 
         // ── Auto-apply to profile (non-fatal) ──────────────────────────────
         // replace: a CV uploaded in chat is deliberate — the profile follows it.
         try {
-          await apiAuthFetch(
-            `/api/v1/resumes/${data.resume_id}/apply-to-profile?mode=replace`,
-            { method: "POST" },
-          );
+          await applyResumeToProfile(resumeId);
           invalidateProfileCache();
           invalidateMatchFeedCache();
         } catch {
@@ -1565,15 +1763,30 @@ export function ChatInterface({
         }
 
         setIsUploading(false);
+        let analysis: ResumeAnalysis | null = null;
+        try {
+          const analysisRes = await apiAuthFetch("/api/v1/me/chat/analyze-resume", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          if (analysisRes.ok) {
+            analysis = (await analysisRes.json()) as ResumeAnalysis;
+          }
+        } catch {
+          analysis = null;
+        }
+
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: "assistant" as const,
-            content:
-              "Resume received. Open **Profile → Intelligence** to confirm your target role, then ask me to find matching jobs.",
+            content: analysis
+              ? "I've analysed your CV. Review the card below — then pick an action or ask me anything."
+              : "Resume received. Open **Profile → Intelligence** to confirm your target role, then ask me to find matching jobs.",
             content_type: "text" as const,
             created_at: new Date().toISOString(),
+            resumeAnalysis: analysis ?? undefined,
           },
         ]);
         return;
@@ -1594,7 +1807,7 @@ export function ChatInterface({
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [authUserId, isUploading, isStreaming]
+    [isUploading, isStreaming, trackAndWait]
   );
 
   // ── Career kickoff (post-onboarding guided flow) ────────────────────────
@@ -1661,7 +1874,7 @@ export function ChatInterface({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (isStreaming || composerInputDisabled) return;
+      if (composerInputDisabled) return;
       void sendMessage(input);
     }
   };
@@ -1731,6 +1944,8 @@ export function ChatInterface({
                 }
                 jobs={msgJobs}
                 applicationKits={msgKits}
+                resumeAnalysis={msg.resumeAnalysis}
+                jdFitAnalysis={msg.jdFitAnalysis}
                 jobFilters={jobFilters}
                 conversationId={sessionId ?? undefined}
                 savedJobIds={savedJobIds}
@@ -1740,6 +1955,31 @@ export function ChatInterface({
                 onRequestIntro={handleRequestIntroWithConfirm}
                 onApply={handleJobApply}
                 onWhyFit={handleWhyFit}
+                onAnalysisAction={(actionId) => {
+                  if (actionId === "find_jobs" || actionId === "find_similar") {
+                    void sendMessage("Find matching jobs for my profile in India");
+                  } else if (actionId === "fill_gaps") {
+                    void sendMessage(
+                      "Help me fill the missing profile gaps from my CV analysis",
+                    );
+                  } else if (actionId === "career_path") {
+                    void sendMessage("Build a career path for me");
+                  } else if (actionId === "mock_interview") {
+                    void sendMessage(
+                      "Give me a mock interview based on the JD we just analysed",
+                    );
+                  } else if (actionId === "prepare_kit" && msg.jdFitAnalysis?.job_id) {
+                    void sendMessage(
+                      `Prepare an application kit for job ${msg.jdFitAnalysis.job_id}`,
+                    );
+                  } else if (actionId === "request_intro" && msg.jdFitAnalysis?.job_id) {
+                    void sendMessage(
+                      `Request an intro for job ${msg.jdFitAnalysis.job_id}`,
+                    );
+                  } else {
+                    void sendMessage(`Let's do: ${actionId.replaceAll("_", " ")}`);
+                  }
+                }}
               />
             );
           })}
@@ -1838,278 +2078,88 @@ export function ChatInterface({
   );
 
   const composerSlot = (
-    <div className="bg-paper-0 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-      <div className={cn(CHAT_COLUMN_CLASS, "space-y-2")}>
-        {showCoachMark && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
-            <p className="text-micro text-ink-700 leading-relaxed">
-              Type or hold the mic to talk with Aarya. Your job matches are
-              always in <span className="font-medium">Matches</span> on the
-              left; chat never blocks them.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                storeChatCoachSeen();
-                setShowCoachMark(false);
-              }}
-              className="shrink-0 text-micro font-medium text-ink-600 hover:text-ink-900"
-            >
-              Got it
-            </button>
-          </div>
-        )}
-
-        {(isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-micro font-medium text-ink-800">
-                {isRecording
-                  ? "Listening — release mic to send, or tap below to type"
-                  : voiceProcessing
-                    ? "Processing voice…"
-                    : isPlaying
-                      ? "Speaking…"
-                      : "Review your message"}
-              </p>
-              {isRecording && interimTranscript && (
-                <p className="text-micro text-ink-600 truncate mt-0.5">
-                  {interimTranscript}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {isPlaying && (
-                <button
-                  type="button"
-                  onClick={interruptSpeech}
-                  className="text-micro text-ink-600 underline underline-offset-2"
-                >
-                  Stop
-                </button>
-              )}
-              {isRecording && (
-                <button
-                  type="button"
-                  onClick={() => void handleMicToggle()}
-                  className="text-micro text-ink-700 underline underline-offset-2"
-                >
-                  Cancel
-                </button>
-              )}
-              {replyMode === "voice" && (isPlaying || isRecording) && (
-                <button
-                  type="button"
-                  onClick={() => setReplyModeAndPersist("text")}
-                  className="text-micro text-ink-600 underline underline-offset-2"
-                >
-                  Text replies
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {pendingVoiceTranscript && (
-          <VoiceTranscriptReview
-            transcript={pendingVoiceTranscript}
-            onChange={setPendingVoiceTranscript}
-            onSend={sendVoiceTranscript}
-            onDiscard={() => setPendingVoiceTranscript(null)}
+    <div className="space-y-2">
+      {careerCallPhase === "consent" && (
+        <div className="max-w-2xl mx-auto px-4">
+          <CareerCallConsent
+            onConfirm={() => setCareerCallPhase("active")}
+            onCancel={() => setCareerCallPhase("off")}
           />
-        )}
-
-        <div
-          className={cn(
-            "bg-paper-1 rounded-lg border border-ink-200 shadow-1",
-            "transition-shadow duration-fast",
-            "focus-within:shadow-2 focus-within:border-ink-300",
-          )}
-        >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => {
-              if (isPlaying) interruptSpeech();
-              if (isRecording) void cancelRecording();
-              setInput(e.target.value);
-            }}
-            onFocus={handleComposerFocus}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              isRecording
-                ? "Tap here to type instead…"
-                : pendingVoiceTranscript
-                  ? "Edit your voice message above, then send."
-                  : isAwaitingDraft
-                    ? "Aarya is thinking…"
-                    : isStreaming
-                      ? "Type your reply — send when Aarya finishes…"
-                      : "Ask Aarya anything…"
-            }
-            rows={1}
-            disabled={composerInputDisabled}
-            className={cn(
-              "w-full bg-transparent resize-none text-body text-ink-900",
-              "placeholder:text-ink-400 focus:outline-none leading-relaxed",
-              "px-4 pt-2 pb-1 max-h-[80px] disabled:opacity-60",
-            )}
-          />
-
-          <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
-            <button
-              type="button"
-              title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
-              disabled={isUploading || isStreaming}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                BTN_COMPOSER_ICON,
-                (isUploading || isStreaming) && "opacity-40 cursor-not-allowed",
-              )}
-            >
-              {isUploading ? (
-                <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
-              ) : (
-                <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
-              )}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void handleResumeUpload(file);
-              }}
+        </div>
+      )}
+      {careerCallPhase === "active" && (
+        <div className="max-w-2xl mx-auto px-4 space-y-2">
+          <InThreadCallBanner secondsLeft={15 * 60} />
+          <div className="rounded-lg border border-accent/25 bg-accent/5">
+            <VoiceSession
+              candidateName={candidateName}
+              embedded
+              consent
+              scheduledSessionId={scheduledVoiceSessionId}
+              onComplete={() => setCareerCallPhase("off")}
             />
-
-            <div className="flex items-center gap-1">
-              {input.trim() && (
-                <button
-                  type="button"
-                  onClick={() => void sendMessage(input)}
-                  disabled={isStreaming || composerInputDisabled}
-                  aria-label={isStreaming ? "Wait for Aarya to finish" : "Send message"}
-                  title={isStreaming ? "Wait for Aarya to finish replying" : undefined}
-                  className={cn(
-                    BTN_COMPOSER_SEND,
-                    (isStreaming || composerInputDisabled) &&
-                      "opacity-40 cursor-not-allowed pointer-events-none",
-                  )}
-                >
-                  {isStreaming ? (
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
-                  ) : (
-                    <Send className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </button>
-              )}
-
-              {VOICE_FEATURE_ENABLED ? (
-                <button
-                  type="button"
-                  onPointerEnter={() => void preconnectVoicePipeline()}
-                  onFocus={() => void preconnectVoicePipeline()}
-                  onPointerDown={(e) => {
-                    if (e.pointerType === "mouse" && e.button !== 0) return;
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                    setReplyModeAndPersist("voice");
-                    void handleMicHoldStart();
-                  }}
-                  onPointerUp={(e) => {
-                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                    }
-                    void handleMicHoldEnd();
-                  }}
-                  onPointerCancel={(e) => {
-                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                    }
-                    void cancelRecording();
-                  }}
-                  disabled={
-                    isStreaming ||
-                    voiceProcessing ||
-                    Boolean(pendingVoiceTranscript)
-                  }
-                  aria-pressed={isRecording}
-                  aria-label="Hold to talk"
-                  title="Hold to talk, release to send"
-                  className={cn(
-                    BTN_COMPOSER_ICON,
-                    "h-10 w-10",
-                    isRecording && "text-destructive animate-pulse",
-                    (isStreaming || voiceProcessing) &&
-                      "opacity-40 cursor-not-allowed pointer-events-none",
-                  )}
-                >
-                  {isRecording ? (
-                    <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
-                  ) : (
-                    <Mic className="h-[17px] w-[17px]" strokeWidth={2} />
-                  )}
-                </button>
-              ) : (
-                !input.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => void sendMessage(input)}
-                    disabled={isStreaming}
-                    aria-label="Send"
-                    className={cn(BTN_COMPOSER_ICON, "opacity-50 cursor-not-allowed")}
-                  >
-                    <Send className="h-4 w-4" strokeWidth={1.5} />
-                  </button>
-                )
-              )}
-            </div>
           </div>
         </div>
-
-        {hinglishHint && (
-          <p className="text-micro text-ink-500 text-center px-2">
-            Hindi/English mix detected —{" "}
-            <button
-              type="button"
-              className="underline underline-offset-2 hover:text-ink-800"
-              onClick={() => setReplyModeAndPersist("text")}
-            >
-              use text replies
-            </button>{" "}
-            if voice is unclear.
-          </p>
-        )}
-
-        {voiceError && (
-          <div className="text-center space-y-1">
-            <p className="text-small text-ink-700">{voiceError}</p>
-            <p className="text-micro text-ink-500">
-              You can keep typing. Allow microphone access and reload to use voice.
-            </p>
-          </div>
-        )}
-      </div>
+      )}
+      {careerCallPhase !== "active" && (
+        <ChatComposer
+          input={input}
+          onInputChange={(value) => {
+            if (isPlaying) interruptSpeech();
+            if (isRecording) void cancelRecording();
+            setInput(value);
+          }}
+          onSend={() => {
+            if (isStreaming && !input.trim()) {
+              stopGeneration();
+              return;
+            }
+            void sendMessage(input);
+          }}
+          onMicClick={handleMicClick}
+          onCancelMic={cancelMic}
+          onStopGeneration={stopGeneration}
+          onStartCareerCall={() => setCareerCallPhase("consent")}
+          onResumeFile={(file) => void handleResumeUpload(file)}
+          textareaRef={textareaRef}
+          fileInputRef={fileInputRef}
+          isStreaming={isStreaming}
+          isRecording={isRecording}
+          isPlaying={isPlaying}
+          voiceProcessing={voiceProcessing}
+          audioLevel={audioLevel}
+          interimTranscript={interimTranscript}
+          pendingVoiceTranscript={pendingVoiceTranscript}
+          onPendingTranscriptChange={setPendingVoiceTranscript}
+          onSendVoiceTranscript={sendVoiceTranscript}
+          sendImmediately={sendImmediately}
+          onSendImmediatelyChange={setSendImmediately}
+          replyMode={replyMode}
+          onReplyModeChange={setReplyModeAndPersist}
+          hinglishHint={hinglishHint}
+          voiceError={voiceError}
+          showCoachMark={showCoachMark}
+          onDismissCoach={() => setShowCoachMark(false)}
+          isUploading={isUploading}
+          composerInputDisabled={composerInputDisabled}
+          isAwaitingDraft={isAwaitingDraft}
+          voiceEnabled={VOICE_FEATURE_ENABLED}
+          onComposerFocus={handleComposerFocus}
+          onKeyDown={handleKeyDown}
+          interruptSpeech={interruptSpeech}
+        />
+      )}
     </div>
   );
 
   return (
-    <>
-      <ChatShell
-        className={className}
-        messagesSlot={messagesSlot}
-        composerSlot={composerSlot}
-        messagesEndRef={messagesEndRef}
-        scrollDeps={scrollDeps}
-      />
-
-      <VoiceDeepDiveModal
-        open={voiceDeepDiveOpen}
-        onClose={() => setVoiceDeepDiveOpen(false)}
-        candidateName={candidateName}
-      />
-    </>
+    <ChatShell
+      className={className}
+      messagesSlot={messagesSlot}
+      composerSlot={composerSlot}
+      messagesEndRef={messagesEndRef}
+      scrollDeps={scrollDeps}
+    />
   );
 }
 
@@ -2407,6 +2457,8 @@ function MessageBubble({
   actions,
   jobs = [],
   applicationKits = [],
+  resumeAnalysis,
+  jdFitAnalysis,
   jobFilters = {},
   conversationId,
   savedJobIds,
@@ -2414,6 +2466,7 @@ function MessageBubble({
   onRequestIntro,
   onApply,
   onWhyFit,
+  onAnalysisAction,
 }: {
   message: Message;
   isStreaming?: boolean;
@@ -2422,6 +2475,8 @@ function MessageBubble({
   actions: AgentAction[];
   jobs?: MatchedJob[];
   applicationKits?: ApplicationKit[];
+  resumeAnalysis?: ResumeAnalysis;
+  jdFitAnalysis?: JdFitAnalysis;
   jobFilters?: JobCardFilters;
   conversationId?: string;
   savedJobIds?: Set<string>;
@@ -2429,6 +2484,7 @@ function MessageBubble({
   onRequestIntro?: (job: MatchedJob) => void;
   onApply?: (job: MatchedJob) => void;
   onWhyFit?: (job: MatchedJob) => void;
+  onAnalysisAction?: (actionId: string) => void;
 }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -2501,6 +2557,14 @@ function MessageBubble({
 
       {applicationKits.length > 0 && !isStreaming && (
         <ApplicationKitCards kits={applicationKits} />
+      )}
+
+      {resumeAnalysis && !isStreaming && (
+        <ResumeAnalysisCard analysis={resumeAnalysis} onAction={onAnalysisAction} />
+      )}
+
+      {jdFitAnalysis && !isStreaming && (
+        <JdFitAnalysisCard analysis={jdFitAnalysis} onAction={onAnalysisAction} />
       )}
 
       {/* Option cards */}
@@ -2629,12 +2693,9 @@ function InlineIntroDraft({ introId }: { introId: string }) {
               {draft.subject ?? "(no subject)"}
             </p>
           </div>
-          <div
-            className="px-4 py-3 text-small text-ink-800 leading-relaxed prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{
-              __html: draft.body_html ?? `<p>${draft.body_text ?? ""}</p>`,
-            }}
-          />
+          <div className="px-4 py-3 text-small text-ink-800 leading-relaxed whitespace-pre-wrap">
+            {emailDraftDisplayText(draft.body_html, draft.body_text)}
+          </div>
           <div className="px-4 py-3 border-t border-ink-100 flex items-center gap-2">
             <Button
               variant="primary"

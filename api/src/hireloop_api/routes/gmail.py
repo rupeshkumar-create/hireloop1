@@ -35,9 +35,10 @@ from fastapi.responses import RedirectResponse
 from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_phone_verified_user
 from hireloop_api.services.email.gmail_oauth import GmailOAuthService
+from hireloop_api.services.token_crypto import decrypt_token
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/gmail", tags=["gmail"])
+router = APIRouter(prefix="/gmail", tags=["gmail", "gmail-oauth-v2"])
 
 # Least-privilege scopes: send-only mail (P13) + event-only calendar (P07).
 # `openid email` is required to read the connected account's address from the
@@ -152,91 +153,125 @@ async def gmail_auth_url(
     }
 
 
+def _dashboard_gmail_redirect(
+    settings: Settings,
+    *,
+    status: str,
+    reason: str | None = None,
+) -> RedirectResponse:
+    """Send the browser to chat (no panel) with a gmail= query the SPA handles."""
+    base = settings.public_app_url.rstrip("/") or "https://www.hireschema.com"
+    q = f"gmail={urllib.parse.quote(status)}"
+    if reason:
+        q += f"&gmail_reason={urllib.parse.quote(reason)}"
+    return RedirectResponse(url=f"{base}/dashboard?{q}", status_code=302)
+
+
 @router.get("/callback")
 async def gmail_callback(
     code: str = Query(...),
     state: str = Query(...),  # HMAC-signed "user_id.ts.sig" issued by /connect
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
-) -> dict:
+) -> RedirectResponse:
     """
     OAuth callback: exchange auth code for tokens.
-    Redirects to /dashboard on success.
+    Redirects to /dashboard?gmail=connected (chat) on success.
     """
     # Verify the state BEFORE any token exchange — a forged or expired state must
     # never bind Google tokens to a Hireschema account.
     user_id = verify_oauth_state(settings.secret_key, state)
     if not user_id:
         logger.warning("gmail_callback_bad_state")
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+        return _dashboard_gmail_redirect(settings, status="error", reason="bad_state")
 
     redirect_uri = settings.gmail_oauth_redirect_uri
 
-    async with httpx.AsyncClient(timeout=30.0) as http:
-        # Exchange code for tokens
-        token_res = await http.post(
-            _GOOGLE_TOKEN_URL,
-            data={
-                "code": code,
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-        if not token_res.is_success:
-            logger.error("gmail_token_exchange_failed", status=token_res.status_code)
-            raise HTTPException(status_code=400, detail="Gmail OAuth failed")
-
-        tokens = token_res.json()
-
-        # Resolve the connected account's email. Prefer the userinfo endpoint;
-        # if it fails, fall back to the `email` claim in the id_token (present
-        # because we requested the `openid` scope) so the flow never hard-fails.
-        gmail_email = ""
-        userinfo_res = await http.get(
-            _GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {tokens['access_token']}"},
-        )
-        if userinfo_res.is_success:
-            gmail_email = userinfo_res.json().get("email", "")
-        if not gmail_email:
-            gmail_email = _email_from_id_token(tokens.get("id_token"))
-        if not gmail_email:
-            logger.error("gmail_email_unresolved", userinfo_status=userinfo_res.status_code)
-            raise HTTPException(status_code=400, detail="Could not fetch Gmail address")
-
-    # Get candidate_id from the verified user_id
-    candidate = await db.fetchrow(
-        "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
-        uuid.UUID(user_id),
-    )
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-
-    svc = GmailOAuthService(
-        google_client_id=settings.google_client_id,
-        google_client_secret=settings.google_client_secret,
-        db=db,
-    )
     try:
-        ok = await svc.save_oauth_tokens(
-            candidate_id=str(candidate["id"]),
-            access_token=tokens["access_token"],
-            refresh_token=tokens.get("refresh_token", ""),
-            expires_in=tokens.get("expires_in", 3600),
-            gmail_email=gmail_email,
-            scopes=tokens.get("scope", _GOOGLE_SCOPE).split(),
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            # Exchange code for tokens
+            token_res = await http.post(
+                _GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": settings.google_client_id.strip(),
+                    "client_secret": settings.google_client_secret.strip(),
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            if not token_res.is_success:
+                body = token_res.text[:300]
+                logger.error(
+                    "gmail_token_exchange_failed",
+                    status=token_res.status_code,
+                    body=body,
+                )
+                reason = "token_exchange"
+                err_payload = (
+                    token_res.json()
+                    if "application/json" in (token_res.headers.get("content-type") or "")
+                    else {}
+                )
+                err = err_payload.get("error") if isinstance(err_payload, dict) else None
+                if isinstance(err, str) and err:
+                    reason = err  # e.g. invalid_client, invalid_grant
+                return _dashboard_gmail_redirect(settings, status="error", reason=reason)
+
+            tokens = token_res.json()
+
+            # Resolve the connected account's email. Prefer the userinfo endpoint;
+            # if it fails, fall back to the `email` claim in the id_token (present
+            # because we requested the `openid` scope) so the flow never hard-fails.
+            gmail_email = ""
+            userinfo_res = await http.get(
+                _GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            )
+            if userinfo_res.is_success:
+                gmail_email = userinfo_res.json().get("email", "")
+            if not gmail_email:
+                gmail_email = _email_from_id_token(tokens.get("id_token"))
+            if not gmail_email:
+                logger.error("gmail_email_unresolved", userinfo_status=userinfo_res.status_code)
+                return _dashboard_gmail_redirect(
+                    settings, status="error", reason="email_unresolved"
+                )
+
+        # Get candidate_id from the verified user_id
+        candidate = await db.fetchrow(
+            "SELECT id FROM public.candidates WHERE user_id = $1::uuid AND deleted_at IS NULL",
+            uuid.UUID(user_id),
         )
-        if not ok:
-            raise HTTPException(status_code=500, detail="Failed to save Gmail tokens")
-    finally:
-        await svc.close()
+        if not candidate:
+            logger.warning("gmail_callback_no_candidate", user_id=user_id)
+            return _dashboard_gmail_redirect(settings, status="error", reason="no_candidate")
 
-    logger.info("gmail_connected", user_id=user_id, gmail=gmail_email)
+        scope_raw = (tokens.get("scope") or "").strip() or _GOOGLE_SCOPE
+        svc = GmailOAuthService(
+            google_client_id=settings.google_client_id.strip(),
+            google_client_secret=settings.google_client_secret.strip(),
+            db=db,
+        )
+        try:
+            ok = await svc.save_oauth_tokens(
+                candidate_id=str(candidate["id"]),
+                access_token=tokens["access_token"],
+                refresh_token=tokens.get("refresh_token") or "",
+                expires_in=tokens.get("expires_in", 3600),
+                gmail_email=gmail_email,
+                scopes=scope_raw.split(),
+            )
+            if not ok:
+                return _dashboard_gmail_redirect(settings, status="error", reason="save_failed")
+        finally:
+            await svc.close()
 
-    # Redirect the browser back to the app (env-aware, not a hardcoded prod URL).
-    return RedirectResponse(url=f"{settings.public_app_url.rstrip('/')}/dashboard?gmail=connected")
+        logger.info("gmail_connected", user_id=user_id, gmail=gmail_email)
+        return _dashboard_gmail_redirect(settings, status="connected")
+    except Exception as exc:
+        logger.error("gmail_callback_failed", error=str(exc)[:300])
+        return _dashboard_gmail_redirect(settings, status="error", reason="exception")
 
 
 @router.get("/status")
@@ -296,7 +331,7 @@ async def gmail_disconnect(
             async with httpx.AsyncClient(timeout=10.0) as http:
                 await http.post(
                     "https://oauth2.googleapis.com/revoke",
-                    params={"token": row["access_token"]},
+                    params={"token": decrypt_token(row["access_token"])},
                 )
         except Exception as exc:
             # Revocation failure is non-fatal — delete locally anyway.

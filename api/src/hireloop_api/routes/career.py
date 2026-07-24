@@ -16,7 +16,8 @@ find-jobs strategy ("search existing + background top-up"):
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, cast
 
 import asyncpg
 import httpx
@@ -29,13 +30,14 @@ from hireloop_api.config import Settings, get_settings
 from hireloop_api.deps import get_db, get_db_pool, get_phone_verified_user
 from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import job_visible_for_market_sql
+from hireloop_api.models.ai_operation import AiOperationAccepted
 from hireloop_api.routes.matches import (
     MatchedJob,
     _fetch_fallback_match_rows,
     _fetch_starter_market_jobs,
     _serialize_cached_match_row,
 )
-from hireloop_api.services.career_intelligence import CareerIntelligenceService
+from hireloop_api.services.career_intelligence import CareerIntelligence, CareerIntelligenceService
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import default_prioritize_title
 from hireloop_api.services.matching import MatchingEngine
@@ -49,6 +51,76 @@ from hireloop_api.services.test_jobs import (
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/career", tags=["career"])
+
+_GENERATION_REUSE_WINDOW = timedelta(minutes=5)
+
+
+def _is_recent_timestamp(raw_timestamp: object) -> bool:
+    if not raw_timestamp:
+        return False
+    try:
+        timestamp = (
+            raw_timestamp
+            if isinstance(raw_timestamp, datetime)
+            else datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+        )
+    except (TypeError, ValueError):
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - timestamp < _GENERATION_REUSE_WINDOW
+
+
+def _is_recent_career_path(path: dict[str, Any] | None) -> bool:
+    """Use only the immutable career-path artifact creation timestamp."""
+    return bool(path) and _is_recent_timestamp(path.get("created_at"))
+
+
+def _is_recent_career_intelligence(intelligence: dict[str, Any] | None) -> bool:
+    """Use the validated artifact generation time, never candidate update time."""
+    if not intelligence:
+        return False
+    try:
+        artifact = CareerIntelligence.model_validate(intelligence)
+    except (TypeError, ValueError):
+        return False
+    return _is_recent_timestamp(artifact.generated_at)
+
+
+def _generation_idempotency_key(candidate_id: uuid.UUID, kind: str) -> str:
+    """Stable logical key; the DB partial index permits one active attempt."""
+    return f"{kind}:{candidate_id}"
+
+
+def _accepted_operation(
+    operation_id: uuid.UUID,
+    status: Literal["queued", "running"],
+) -> AiOperationAccepted:
+    return AiOperationAccepted(
+        operation_id=operation_id,
+        status=status,
+        status_url=f"/api/v1/ai-operations/{operation_id}",
+    )
+
+
+async def _cancel_redundant_generation(
+    db: asyncpg.Connection,
+    operation_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> None:
+    """Cancel a still-active duplicate; tolerate a worker winning the race."""
+    from hireloop_api.services.ai_operations import (
+        AiOperationLifecycleError,
+        AiOperationNotFoundError,
+        cancel_owned_operation,
+    )
+
+    try:
+        await cancel_owned_operation(db, operation_id, user_id)
+    except (AiOperationLifecycleError, AiOperationNotFoundError):
+        # The worker may have committed the fresh artifact and terminal operation
+        # between our post-enqueue read and this guarded cancellation.
+        return
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -402,27 +474,50 @@ async def get_career_path(
     return {"path": path}
 
 
-@router.post("/path/generate", response_model=CareerPathResponse)
+@router.post("/path/generate", response_model=CareerPathResponse | AiOperationAccepted)
 async def generate_career_path(
-    current_user: dict = Depends(get_phone_verified_user),
+    response: Response,
+    current_user: dict[str, Any] = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    """(Re)generate the candidate's career path from their profile.
+) -> dict[str, Any] | AiOperationAccepted:
+    """Reuse a recent path or durably queue generation without awaiting the LLM."""
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import CAREER_PATH_GENERATE
 
-    Deliberately NOT Depends(get_db): the LLM build takes 30-45s and a request
-    connection held that long (× concurrent mounts waiting on the in-flight
-    build) starves the pool for every other route.
-    """
-    # #48: full path generation is a heavy LLM call — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "career_path_generate", max_per_hour=10)
     pool = await get_db_pool(settings)
-    async with pool.acquire() as db:
+    user_id = uuid.UUID(str(current_user["id"]))
+    async with pool.acquire() as db, db.transaction():
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
-    try:
-        path = await CareerPathService.generate(pool, candidate_id, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"path": path}
+        recent = await CareerPathService.get_latest(db, candidate_id)
+        if _is_recent_career_path(recent):
+            return {"path": recent}
+        candidate_uuid = uuid.UUID(candidate_id)
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_PATH_GENERATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=_generation_idempotency_key(candidate_uuid, CAREER_PATH_GENERATE),
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career path is queued.",
+        )
+        recent = await CareerPathService.get_latest(db, candidate_id)
+        if _is_recent_career_path(recent):
+            await _cancel_redundant_generation(db, outcome.operation.id, user_id)
+            return {"path": recent}
+        if outcome.created:
+            # Charge only provider work created by this transaction. A 429 rolls
+            # back the operation and its linked queue row with the outer tx.
+            await check_rate_limit(str(user_id), "career_path_generate", max_per_hour=10, db=db)
+        operation = outcome.operation
+    response.status_code = 202
+    if operation.status not in {"queued", "running"}:
+        raise RuntimeError("Enqueued career path operation is not active")
+    active_status = cast(Literal["queued", "running"], operation.status)
+    return _accepted_operation(operation.id, active_status)
 
 
 @router.post("/path/prioritize", response_model=CareerPathResponse)
@@ -755,22 +850,46 @@ async def get_career_intelligence(
 
 @router.post("/intelligence/generate")
 async def generate_career_intelligence(
-    current_user: dict = Depends(get_phone_verified_user),
+    response: Response,
+    current_user: dict[str, Any] = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
-) -> dict:
-    """
-    (Re)compute the candidate's full 24-layer Career Intelligence from their
-    resume, LinkedIn, and chat data. Synchronous (deliberate "analyze me"
-    action); falls back to a deterministic profile if the LLM is unavailable.
-    """
+) -> dict[str, Any] | AiOperationAccepted:
+    """Reuse recent intelligence or durably queue its generation."""
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import CAREER_INTELLIGENCE_GENERATE
+
     pool = await get_db_pool(settings)
-    async with pool.acquire() as db:
+    user_id = uuid.UUID(str(current_user["id"]))
+    async with pool.acquire() as db, db.transaction():
         candidate_id = await _resolve_candidate_id(db, current_user["id"])
-    try:
-        intel = await CareerIntelligenceService.generate(pool, candidate_id, settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"intelligence": intel}
+        recent = await CareerIntelligenceService.get(db, candidate_id)
+        if _is_recent_career_intelligence(recent):
+            return {"intelligence": recent}
+        candidate_uuid = uuid.UUID(candidate_id)
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_INTELLIGENCE_GENERATE,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=_generation_idempotency_key(
+                candidate_uuid, CAREER_INTELLIGENCE_GENERATE
+            ),
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career intelligence is queued.",
+        )
+        recent = await CareerIntelligenceService.get(db, candidate_id)
+        if _is_recent_career_intelligence(recent):
+            await _cancel_redundant_generation(db, outcome.operation.id, user_id)
+            return {"intelligence": recent}
+        operation = outcome.operation
+    response.status_code = 202
+    if operation.status not in {"queued", "running"}:
+        raise RuntimeError("Enqueued career intelligence operation is not active")
+    active_status = cast(Literal["queued", "running"], operation.status)
+    return _accepted_operation(operation.id, active_status)
 
 
 # ── Career-path resumes (one per direction, up to 3) ────────────────────────
@@ -790,10 +909,11 @@ async def list_career_path_resumes(
 
 @router.post("/path-resumes/generate")
 async def generate_career_path_resumes(
+    response: Response,
     current_user: dict = Depends(get_phone_verified_user),
     settings: Settings = Depends(get_settings),
     db: asyncpg.Connection = Depends(get_db),
-) -> dict:
+) -> dict | AiOperationAccepted:
     """Queue per-path resume generation and return the current list.
 
     Generation is several LLM calls (one per career path, minutes total) — it
@@ -801,7 +921,8 @@ async def generate_career_path_resumes(
     holding one here starved the pool and 503'd unrelated routes. The resumes
     page polls /path-resumes and shows per-row status.
     """
-    from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES, enqueue_job
+    from hireloop_api.services.ai_operations import enqueue_ai_operation_outcome
+    from hireloop_api.services.background_jobs import CAREER_PATH_RESUMES
     from hireloop_api.services.career_path_resume import list_path_resumes
     from hireloop_api.services.tailored_resume_settings import fetch_tailored_resume_enabled
 
@@ -811,15 +932,33 @@ async def generate_career_path_resumes(
             status_code=403,
             detail="Enable tailored resumes in Settings before generating path-specific resumes.",
         )
-    check_rate_limit(str(current_user["id"]), "career_path_resumes", max_per_hour=5)
-    await enqueue_job(
-        db,
-        kind=CAREER_PATH_RESUMES,
-        payload={"candidate_id": candidate_id},
-        idempotency_key=f"career_path_resumes:{candidate_id}",
-    )
     resumes = await list_path_resumes(db, candidate_id)
-    return {"resumes": resumes, "generating": True}
+    if resumes and all(resume.get("status") == "ready" for resume in resumes):
+        return {"resumes": resumes, "generating": False}
+
+    user_id = uuid.UUID(str(current_user["id"]))
+    candidate_uuid = uuid.UUID(candidate_id)
+    async with db.transaction():
+        outcome = await enqueue_ai_operation_outcome(
+            db,
+            user_id=user_id,
+            candidate_id=candidate_uuid,
+            kind=CAREER_PATH_RESUMES,
+            payload={"candidate_id": candidate_id},
+            idempotency_key=f"career_path_resumes:{candidate_id}",
+            resource_type="candidate",
+            resource_id=candidate_uuid,
+            stage="queued",
+            message="Your career-path resumes are queued.",
+        )
+        if outcome.created:
+            await check_rate_limit(str(user_id), "career_path_resumes", max_per_hour=5, db=db)
+    response.status_code = 202
+    operation = outcome.operation
+    return _accepted_operation(
+        operation.id,
+        cast(Literal["queued", "running"], operation.status),
+    )
 
 
 @router.get("/path-resumes/{resume_id}/download")

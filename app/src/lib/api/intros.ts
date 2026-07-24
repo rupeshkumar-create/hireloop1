@@ -30,6 +30,10 @@ export type IntroRequest = {
   sent_at?: string | null;
   opened_at?: string | null;
   replied_at: string | null;
+  followup_ready?: boolean;
+  thankyou_ready?: boolean;
+  thankyou_sent?: boolean;
+  nudged_at?: string | null;
 };
 
 export type IntroDetail = IntroRequest & {
@@ -37,6 +41,18 @@ export type IntroDetail = IntroRequest & {
   error_message: string | null;
   gmail_connected: boolean;
   hm_email?: string | null;
+  followup_draft_email?: string | null;
+  followup_draft_at?: string | null;
+  thankyou_draft_email?: string | null;
+  thankyou_draft_at?: string | null;
+  thankyou_sent_at?: string | null;
+  gmail_thread_id?: string | null;
+};
+
+export type OutboundDraft = {
+  subject?: string;
+  body_html?: string;
+  body_text?: string;
 };
 
 export type CreateIntroResult = {
@@ -144,4 +160,47 @@ export async function approveIntroSend(introId: string): Promise<void> {
       i.id === introId ? { ...i, status: "sent" } : i
     );
   }
+}
+
+export async function patchFollowupDraft(
+  introId: string,
+  draft: OutboundDraft
+): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/followup-draft`, {
+    method: "PATCH",
+    body: JSON.stringify(draft),
+  });
+}
+
+export async function approveFollowupSend(introId: string): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/approve-send-followup`, {
+    method: "POST",
+  });
+  _introsCache = null;
+}
+
+export async function createThankyouDraft(introId: string): Promise<OutboundDraft | null> {
+  const res = await apiFetch<{ thankyou_draft_email: OutboundDraft | null }>(
+    `/api/v1/intros/${introId}/thankyou-draft`,
+    { method: "POST" }
+  );
+  _introsCache = null;
+  return res.thankyou_draft_email;
+}
+
+export async function patchThankyouDraft(
+  introId: string,
+  draft: OutboundDraft
+): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/thankyou-draft`, {
+    method: "PATCH",
+    body: JSON.stringify(draft),
+  });
+}
+
+export async function approveThankyouSend(introId: string): Promise<void> {
+  await apiFetch(`/api/v1/intros/${introId}/approve-send-thankyou`, {
+    method: "POST",
+  });
+  _introsCache = null;
 }

@@ -14,6 +14,8 @@ Tool catalogue:
   - direct_apply       : record a direct application
   - save_job           : save job for later
   - prepare_application_kit : save job + tailored resume, cover letter, interview prep
+  - analyze_resume     : CV analysis card (gaps, strengths, version compare)
+  - analyze_pasted_jd  : freeform JD ↔ CV fit analysis
   - update_job_preferences : remote vs on-site job filter
   - book_voice_call    : get available voice-call slots (in-house Google Calendar)
   - voice_response     : signal that Deepgram TTS should be used for response
@@ -48,6 +50,7 @@ from hireloop_api.services.job_preferences import (
     remote_filter_sql,
     resolve_remote_preference,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.match_quality import should_persist_match
 from hireloop_api.services.matching import _assemble_score
 from hireloop_api.services.test_jobs import (
@@ -869,7 +872,7 @@ async def job_search(
               AND j.is_active = TRUE
               AND {vis}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
               {remote_clause}
               {company_exclude}
               AND (
@@ -921,7 +924,7 @@ async def job_search(
                   AND j.is_active = TRUE
                   AND {vis_fallback}
                   AND j.deleted_at IS NULL
-                  AND (j.expires_at IS NULL OR j.expires_at > NOW())
+                  AND {LIVE_JOB_VISIBLE_SQL}
                   {remote_clause}
                   {company_exclude}
                 ORDER BY ms.overall_score DESC
@@ -955,7 +958,7 @@ async def job_search(
         WHERE j.is_active = TRUE
           AND {vis_kw}
           AND j.deleted_at IS NULL
-          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          AND {LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
           AND (
@@ -1004,7 +1007,7 @@ async def job_search(
             WHERE j.is_active = TRUE
               AND {vis_tok}
               AND j.deleted_at IS NULL
-              AND (j.expires_at IS NULL OR j.expires_at > NOW())
+              AND {LIVE_JOB_VISIBLE_SQL}
               {remote_clause}
               {company_exclude}
               AND ($2::text[] IS NULL OR j.skills_required && $2::text[])
@@ -1155,7 +1158,7 @@ async def job_search(
         WHERE j.is_active = TRUE
           AND {vis_profile}
           AND j.deleted_at IS NULL
-          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          AND {LIVE_JOB_VISIBLE_SQL}
           {remote_clause}
           {company_exclude}
           AND ($2::integer IS NULL OR j.ctc_max IS NULL OR j.ctc_max >= $2::integer)
@@ -1328,7 +1331,7 @@ async def job_search(
                 payload={
                     "candidate_id": candidate_id,
                     "derive_from_candidate": True,
-                    "force_refresh": True,
+                    "force_refresh": bool(settings.auto_ingest_on_empty_search),
                     "user_id": user_id,
                     "session_id": session_id,
                 },
@@ -1339,7 +1342,7 @@ async def job_search(
                 candidate_id=candidate_id,
                 queries=path_search_titles or target_titles,
             )
-        else:
+        elif settings.auto_ingest_on_empty_search:
             # Always pull live openings on an empty personalized search so
             # "find job" / "find new job" do not dead-end when the shelf is cold.
             await enqueue_job(
@@ -1721,6 +1724,19 @@ async def get_match_score(
                     "source": "computed_live",
                 }
 
+    job = await db.fetchrow(
+        """
+        SELECT j.title AS job_title, co.name AS company_name
+        FROM public.jobs j
+        LEFT JOIN public.companies co ON co.id = j.company_id
+        WHERE j.id = $1::uuid AND j.deleted_at IS NULL
+        """,
+        uuid.UUID(job_id),
+    )
+    if job:
+        result["job_title"] = job["job_title"]
+        result["company_name"] = job["company_name"]
+
     duration_ms = int((time.monotonic() - t0) * 1000)
     await _write_action(
         db,
@@ -1730,6 +1746,134 @@ async def get_match_score(
         "get_match_score",
         {"job_id": job_id},
         {"overall_score": result.get("overall_score")},
+        duration_ms,
+    )
+    return result
+
+
+async def analyze_resume(
+    db: asyncpg.Connection,
+    user_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Analyse latest CV for chat — gaps, strengths, version compare."""
+    import time
+
+    from hireloop_api.services.chat_analysis import analyze_resume_parsed
+
+    t0 = time.monotonic()
+    uid = uuid.UUID(user_id)
+    rows = await db.fetch(
+        """
+        SELECT r.id, r.parsed_data
+        FROM public.resumes r
+        JOIN public.candidates c ON c.id = r.candidate_id AND c.deleted_at IS NULL
+        WHERE c.user_id = $1::uuid
+        ORDER BY r.created_at DESC
+        LIMIT 2
+        """,
+        uid,
+    )
+    cand = await db.fetchrow(
+        """
+        SELECT c.current_title, c.current_company, c.years_experience, c.skills,
+               c.notice_period_days, c.expected_ctc_min, c.expected_ctc_max, c.current_ctc,
+               c.location_city, c.location_state, c.headline, c.looking_for,
+               u.full_name
+        FROM public.candidates c
+        JOIN public.users u ON u.id = c.user_id
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        uid,
+    )
+    if not cand and not rows:
+        result: dict[str, Any] = {"error": "No resume or profile found"}
+    else:
+        latest: dict[str, Any] = {}
+        previous: dict[str, Any] | None = None
+        if rows:
+            raw = rows[0]["parsed_data"]
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except json.JSONDecodeError:
+                    raw = {}
+            if isinstance(raw, dict):
+                latest = dict(raw)
+            if len(rows) > 1:
+                prev = rows[1]["parsed_data"]
+                if isinstance(prev, str):
+                    try:
+                        prev = json.loads(prev)
+                    except json.JSONDecodeError:
+                        prev = {}
+                if isinstance(prev, dict):
+                    previous = dict(prev)
+        if cand:
+            for key, val in dict(cand).items():
+                if latest.get(key) in (None, "", [], {}):
+                    latest[key] = val
+        result = analyze_resume_parsed(latest, previous=previous)
+        if rows:
+            result["resume_id"] = str(rows[0]["id"])
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    await _write_action(
+        db,
+        "aarya",
+        user_id,
+        session_id,
+        "analyze_resume",
+        {},
+        {"gaps": result.get("gaps"), "resume_id": result.get("resume_id")},
+        duration_ms,
+    )
+    return result
+
+
+async def analyze_pasted_jd(
+    db: asyncpg.Connection,
+    user_id: str,
+    session_id: str,
+    jd_text: str,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Score a pasted JD against the candidate profile."""
+    import time
+
+    from hireloop_api.services.chat_analysis import analyze_jd_vs_profile
+
+    t0 = time.monotonic()
+    uid = uuid.UUID(user_id)
+    cand = await db.fetchrow(
+        """
+        SELECT c.current_title, c.current_company, c.years_experience, c.skills,
+               c.notice_period_days, c.expected_ctc_min, c.expected_ctc_max, c.current_ctc,
+               c.location_city, c.location_state, c.headline, c.looking_for,
+               u.full_name
+        FROM public.candidates c
+        JOIN public.users u ON u.id = c.user_id
+        WHERE c.user_id = $1::uuid AND c.deleted_at IS NULL
+        """,
+        uid,
+    )
+    if not cand:
+        result: dict[str, Any] = {"error": "Candidate profile not found"}
+    else:
+        result = analyze_jd_vs_profile(jd_text, dict(cand), job_id=job_id)
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    await _write_action(
+        db,
+        "aarya",
+        user_id,
+        session_id,
+        "analyze_pasted_jd",
+        {"job_id": job_id, "jd_len": len(jd_text or "")},
+        {
+            "overall_score": result.get("overall_score"),
+            "should_apply": (result.get("should_apply") or {}).get("recommendation"),
+        },
         duration_ms,
     )
     return result

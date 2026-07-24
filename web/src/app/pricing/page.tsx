@@ -152,7 +152,7 @@ export default function PricingPage() {
 
           <div className="mt-12 bg-ink-50 rounded-xl p-6">
             <p className="text-small text-ink-700">
-              India, US &amp; UK · Local currency pricing · DPDP Act 2023 compliant ·{" "}
+              India-only · Pricing in INR · DPDP Act 2023 compliant ·{" "}
               <a href="mailto:hello@hireschema.com" className="text-accent underline">
                 Questions? hello@hireschema.com
               </a>

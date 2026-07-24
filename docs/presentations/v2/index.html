@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema — Leadership decks v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    body { overflow: auto; }
+    .hub { min-height: 100vh; padding: clamp(2rem, 5vw, 4rem); max-width: 40rem; margin: 0 auto; }
+    .hub h1 { max-width: none; }
+    .deck-links { display: grid; gap: 1rem; margin-top: 2rem; }
+    a.deck-card {
+      display: block; text-decoration: none; color: inherit;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 1.25rem 1.4rem;
+    }
+    a.deck-card:hover { border-color: rgba(159,232,112,0.45); }
+    a.deck-card .n { color: var(--accent); font-family: var(--font-display); font-weight: 700; font-size: 0.85rem; }
+    a.deck-card h2 { font-size: 1.25rem; margin: 0.35rem 0; }
+    a.deck-card p { margin: 0; color: var(--muted); font-size: 0.92rem; line-height: 1.4; }
+    .dl-box {
+      margin-top: 2rem; padding: 1.1rem 1.25rem; border-radius: 16px;
+      background: var(--accent-subtle); border: 1px solid rgba(159,232,112,0.35);
+    }
+    .dl-box a { color: var(--accent); font-weight: 650; }
+  </style>
+</head>
+<body>
+  <div class="hub">
+    <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+    <p class="eyebrow">Leadership decks · v2</p>
+    <h1>Download &amp; present</h1>
+    <p class="lede">Denser, code-accurate decks. Post-MVP Aarya screening call called out. No MSG91 / SendGrid / NeverBounce / Cloudflare.</p>
+
+    <div class="deck-links">
+      <a class="deck-card" href="01-business.html"><div class="n">01</div><h2>Business &amp; technology</h2><p>Product, stack, architecture, candid status.</p></a>
+      <a class="deck-card" href="02-candidate.html"><div class="n">02</div><h2>Candidate · Aarya</h2><p>Ingest pipeline + match score math in detail.</p></a>
+      <a class="deck-card" href="03-recruiter.html"><div class="n">03</div><h2>Recruiter · Nitya</h2><p>Graph search = same MatchingEngine; pipeline write.</p></a>
+    </div>
+
+    <div class="dl-box">
+      <strong>Download all three</strong><br />
+      Open folder <code>docs/presentations/v2/</code> or unzip <a href="Hireschema-decks-v2.zip">Hireschema-decks-v2.zip</a>.<br />
+      <span style="color:var(--muted);font-size:0.9rem">Present: arrow keys · F fullscreen · Browser Print → Save as PDF</span>
+    </div>
+  </div>
+</body>
+</html>

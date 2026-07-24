@@ -39,3 +39,14 @@ async def test_production_blocks_unverified_user_when_phone_gate_enabled() -> No
         )
 
     assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_production_does_not_force_phone_gate_when_env_false() -> None:
+    """OTP is deferred — production must honor REQUIRE_PHONE_VERIFICATION=false."""
+    settings = make_settings(environment="production", require_phone_verification=False)
+    assert settings.require_phone_verification is False
+
+    user = {"id": "user-id", "phone_verified": False}
+    result = await get_phone_verified_user(current_user=user, settings=settings)
+    assert result == user

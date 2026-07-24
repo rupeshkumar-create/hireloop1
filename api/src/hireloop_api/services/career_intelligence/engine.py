@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,6 +52,15 @@ from hireloop_api.services.career_intelligence.schema import CareerIntelligence
 logger = structlog.get_logger()
 
 _inflight_intelligence_builds: set[str] = set()
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCareerIntelligence:
+    """Computed intelligence ready for a transaction-bound candidate update."""
+
+    id: uuid.UUID
+    intelligence: CareerIntelligence
+
 
 _MAX_BRIEF_CHARS = 14000
 
@@ -275,6 +285,17 @@ class CareerIntelligenceService:
         runs without holding a connection — Supabase pooler closes idle conns
         during long OpenRouter requests, which previously caused 500s on save.
         """
+        prepared = await CareerIntelligenceService.prepare(pool, candidate_id, settings)
+        await CareerIntelligenceService._save(pool, candidate_id, prepared)
+        return prepared.intelligence.model_dump()
+
+    @staticmethod
+    async def prepare(
+        pool: asyncpg.Pool,
+        candidate_id: str,
+        settings: Settings,
+    ) -> PreparedCareerIntelligence:
+        """Compute intelligence without updating the candidate row."""
         async with pool.acquire() as db:
             ctx = await CareerIntelligenceService._load_context(db, candidate_id)
             if ctx is None:
@@ -311,8 +332,28 @@ class CareerIntelligenceService:
         if not intel.open_questions:
             intel.open_questions = generate_open_questions(intel)
 
-        await CareerIntelligenceService._save(pool, candidate_id, intel)
-        return intel.model_dump()
+        return PreparedCareerIntelligence(id=uuid.UUID(candidate_id), intelligence=intel)
+
+    @staticmethod
+    async def persist(
+        db: asyncpg.Connection,
+        candidate_id: str,
+        prepared: PreparedCareerIntelligence,
+    ) -> None:
+        """Persist computed intelligence on the caller-owned transaction."""
+        status = await db.execute(
+            """
+            UPDATE public.candidates
+            SET career_intelligence = $2::jsonb,
+                career_intelligence_updated_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            uuid.UUID(candidate_id),
+            json.dumps(prepared.intelligence.model_dump()),
+        )
+        if status != "UPDATE 1":
+            raise ValueError("Candidate not found")
 
     # ── internals ────────────────────────────────────────────────────────────
 
@@ -407,25 +448,13 @@ class CareerIntelligenceService:
     async def _save(
         pool: asyncpg.Pool,
         candidate_id: str,
-        intel: CareerIntelligence,
+        prepared: PreparedCareerIntelligence,
     ) -> None:
-        payload = json.dumps(intel.model_dump())
-        cid = uuid.UUID(candidate_id)
         last_exc: Exception | None = None
         for attempt in range(2):
             try:
                 async with pool.acquire() as db:
-                    await db.execute(
-                        """
-                        UPDATE public.candidates
-                        SET career_intelligence = $2::jsonb,
-                            career_intelligence_updated_at = NOW(),
-                            updated_at = NOW()
-                        WHERE id = $1::uuid AND deleted_at IS NULL
-                        """,
-                        cid,
-                        payload,
-                    )
+                    await CareerIntelligenceService.persist(db, candidate_id, prepared)
                 return
             except (
                 asyncpg.ConnectionDoesNotExistError,

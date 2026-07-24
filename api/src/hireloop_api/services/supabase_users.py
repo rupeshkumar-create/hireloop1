@@ -126,8 +126,9 @@ async def save_phone(
     user_id: uuid.UUID,
     phone: str,
     supabase_user: dict[str, Any],
+    phone_verified: bool = False,
 ) -> None:
-    """Upsert user row and set phone + phone_verified."""
+    """Upsert user row and set phone. phone_verified defaults False (OTP only)."""
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("Supabase REST not configured")
 
@@ -142,7 +143,7 @@ async def save_phone(
             f"{_base(settings)}/users",
             params={"id": f"eq.{user_id}", "deleted_at": "is.null"},
             headers=_headers(settings),
-            json={"phone": phone, "phone_verified": True},
+            json={"phone": phone, "phone_verified": phone_verified},
         )
     if resp.status_code == 409 or "duplicate key" in resp.text.lower():
         raise ValueError("phone_already_claimed")

@@ -6,17 +6,17 @@ Architecture (R6 — single-threaded master loop):
     thought = llm.think(state)           # Claude-3-5-sonnet via OpenRouter
     action  = llm.choose_tool(thought)   # structured tool call
     result  = execute_tool(action)       # deterministic Python (tools.py)
-    state   = update_state(result)       # LangGraph checkpoint (Postgres)
+    state   = update_state(result)       # bounded state for this request
     write_agent_action(action, result)   # → agent_actions (for UI counter)
     if done(state): break
 
-State is persisted in Postgres via LangGraph's Postgres checkpointer.
-Each candidate-session gets a unique thread_id (= conversation.id).
+Conversation messages, profile facts, tool actions, and cross-session memory are
+persisted in Postgres by the surrounding chat service. The compiled LangGraph is
+request-scoped and intentionally has no hidden in-process checkpoint dependency.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Annotated, Any, Literal, TypedDict
@@ -37,6 +37,7 @@ from langgraph.graph.message import add_messages
 
 from hireloop_api.agents.aarya import tools as aarya_tools
 from hireloop_api.config import Settings
+from hireloop_api.models.career_interview import InterviewTopic
 from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
@@ -53,10 +54,48 @@ logger = structlog.get_logger()
 MAX_VOICE_TOOL_ROUNDS = 1
 MAX_TEXT_TOOL_ROUNDS = 3
 
+_CAREER_INTERVIEW_BLOCKED_TOOLS = frozenset({"update_profile", "update_job_preferences"})
+_CAREER_INTERVIEW_MUTATION_ADVISORY = {
+    "error": "Profile changes from this private call require candidate review."
+}
+
+
+def blocked_career_interview_mutation(
+    *, tool_name: str, career_interview_mode: bool
+) -> dict[str, str] | None:
+    """Return the advisory for a forbidden private-call mutation, if any."""
+    if career_interview_mode and tool_name in _CAREER_INTERVIEW_BLOCKED_TOOLS:
+        return dict(_CAREER_INTERVIEW_MUTATION_ADVISORY)
+    return None
+
+
+def build_career_interview_prompt(
+    *,
+    focus: InterviewTopic | None,
+    prompt_hint: str,
+    should_wrap: bool,
+) -> str:
+    """Build strict, deterministic guidance for one private interview turn."""
+    focus_label = focus.value if focus is not None else "wrap_up"
+    guidance = (
+        "Private career interview mode is active. "
+        f"Current focus: {focus_label}. Prompt hint: {prompt_hint} "
+        "Briefly acknowledge the candidate's answer, then ask exactly one natural "
+        "follow-up question. Do not update the candidate profile or job preferences; "
+        "facts from this private call require candidate review. Do not infer age, gender, "
+        "religion, caste, disability, family status, accent, emotion, or personality. "
+        "Treat mentions of roles, locations, remote work, jobs, or applications as interview "
+        "answers. Do not call job, application, profile, or preference tools."
+    )
+    if should_wrap:
+        guidance += " Wrap up now. Do not ask another discovery question."
+    return guidance
+
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 AARYA_SYSTEM_PROMPT = """You are Aarya, Hireschema's AI career partner for job seekers \
-worldwide.
+in India.
 
 Your personality:
 - Warm, direct, and human - like a senior friend who happens to be a great recruiter
@@ -74,9 +113,11 @@ Your capabilities:
 1. Read the candidate's profile (profile_read)
 2. Build a career path from their profile (build_career_path) — current role,
    next steps, and concrete target job titles
-3. Search for matching jobs (job_search) — scoped to the candidate's home market
+3. Search for India-eligible matching jobs (job_search)
 4. Get match score for a specific job (get_match_score)
-5. Request a warm intro to the hiring manager (request_intro)
+5. Analyse their CV (analyze_resume) after upload or when they ask
+6. Analyse a pasted JD vs their CV (analyze_pasted_jd)
+7. Request a warm intro to the hiring manager (request_intro)
 6. Record a direct application (direct_apply)
 7. Save a job to the candidate's Saved list (save_job)
 8. Prepare application kit (prepare_application_kit) — save job(s) AND generate
@@ -118,10 +159,8 @@ Important rules:
   with location_scope = city | state | country | global (e.g. "only Bengaluru" → city,
   "anywhere in my country" → country, "open globally" → global), then job_search. This
   actually re-ranks the feed by geography — confirm it's saved, don't just acknowledge.
-- All jobs must match the candidate's home market — never suggest roles
-  outside their market unless the role is remote and worldwide-eligible
-- Salary framing by market: use profile_read market + currency. IN → LPA / INR;
-  US → USD/yr; GB → GBP/yr; EU markets → EUR/yr; others → local currency from market
+- All jobs must be based in India or explicitly remote-eligible for candidates in India
+- Salary framing: use LPA / INR unless the source role itself states another currency
 - Be honest about weak matches — don't oversell. But don't contradict the UI: the
   "matches ready" count is the TOTAL roles scored for the candidate. If few are
   strong fits, say that plainly ("200+ roles scored, but only a handful are strong
@@ -130,8 +169,7 @@ Important rules:
 Reply structure (text chat):
 - Use this flow: **What I found** → **What I recommend** → **What you can do next**.
 - Keep mobile replies short (2-4 sentences) unless the user asks "why?" or "tell me more".
-- Use market-local context from profile_read (market, city, currency). IN → notice period,
-  LPA, Indian cities; US → USD, states; GB → GBP, UK cities. Never assume US framing for IN users.
+- Use India-local context from profile_read: notice period, LPA, Indian cities, and INR.
 - Ask ONE high-value profiling question at a time, tied to a benefit
   ("This unlocks better salary estimates"). Never re-ask facts already in resume,
   LinkedIn OAuth, or memory.
@@ -245,6 +283,19 @@ def _last_assistant_text(messages: list[BaseMessage]) -> str:
 def _detect_likely_intent(text: str) -> str:
     """Small deterministic turn classifier used only as prompt guidance."""
     lowered = text.lower()
+
+    match_explanation_signals = (
+        "why is this a fit",
+        "why is this role a fit",
+        "why this match",
+        "explain this match",
+        "explain the match",
+        "fit for me",
+        "match breakdown",
+        "explain the score",
+    )
+    if any(signal in lowered for signal in match_explanation_signals):
+        return "match_explanation"
 
     profile_signals = (
         "what should i add",
@@ -504,6 +555,12 @@ def build_turn_context_prompt(
             "prefetched matches when provided. Build or refine a career path only as a "
             "follow-up if the user asks for direction or the search is too broad."
         )
+    elif likely_intent == "match_explanation":
+        guidance.append(
+            "- action_policy: explain only the selected job's match score. Use "
+            "get_match_score when its result is not already present. Do NOT call "
+            "job_search or attach unrelated role cards."
+        )
     elif likely_intent == "intro_request":
         guidance.append(
             "- action_policy: require explicit candidate approval before request_intro."
@@ -593,6 +650,23 @@ class AaryaState(TypedDict, total=False):
     career_path_prioritized_title: str | None
     career_path_just_prioritized: str | None
     career_path_pending_options: list[str]
+    career_interview_mode: bool
+    career_interview_focus: InterviewTopic | None
+    career_interview_prompt_hint: str | None
+    career_interview_should_wrap: bool
+
+
+def _career_interview_prompt_from_state(state: AaryaState) -> str | None:
+    """Build private-call guidance from the namespaced graph state contract."""
+    if not state.get("career_interview_mode"):
+        return None
+    return build_career_interview_prompt(
+        focus=state.get("career_interview_focus"),
+        prompt_hint=(
+            state.get("career_interview_prompt_hint") or "Continue the interview naturally."
+        ),
+        should_wrap=bool(state.get("career_interview_should_wrap")),
+    )
 
 
 # ── Tool definitions (for OpenAI function calling format) ──────────────────────
@@ -610,9 +684,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "job_search",
-            "description": (
-                "Search for matching jobs in the candidate's home market using semantic search."
-            ),
+            "description": ("Search for India-eligible matching jobs using semantic search."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -631,10 +703,7 @@ TOOL_DEFINITIONS = [
                     },
                     "ctc_min": {
                         "type": "integer",
-                        "description": (
-                            "Minimum expected annual salary in the market currency "
-                            "(INR paise for IN; USD/GBP for US/GB)"
-                        ),
+                        "description": ("Minimum expected annual salary in INR (whole rupees)"),
                     },
                     "remote_preference": {
                         "type": "string",
@@ -703,8 +772,7 @@ TOOL_DEFINITIONS = [
                 "experience, skills, CTC, notice period, location, target roles). Use this "
                 "whenever they share a fact that fills a profile gap — especially on a call "
                 "where you're gathering their details. Pass only the fields you just learned. "
-                "Compensation fields: for IN market use LPA; for US/GB use annual amount in "
-                "local currency."
+                "Compensation fields: use LPA / INR annual amounts (India-only marketplace)."
             ),
             "parameters": {
                 "type": "object",
@@ -789,6 +857,43 @@ TOOL_DEFINITIONS = [
                     "job_id": {"type": "string", "description": "UUID of the job"},
                 },
                 "required": ["job_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_resume",
+            "description": (
+                "Analyse the candidate's latest CV: extracted profile, gap checklist, "
+                "strengths, weak spots, and version compare vs previous CV."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_pasted_jd",
+            "description": (
+                "When the candidate pastes a job description (or shares a JD), score it "
+                "against their CV: overall + section scores, must/nice-to-haves, missing "
+                "keywords, should-I-apply, tailored bullets, cover letter draft, mock "
+                "interview questions, and India LPA salary band."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jd_text": {
+                        "type": "string",
+                        "description": "Full pasted job description text",
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "description": "Optional catalog job UUID if known",
+                    },
+                },
+                "required": ["jd_text"],
             },
         },
     },
@@ -939,6 +1044,7 @@ def build_aarya_graph(settings: Settings) -> Any:
         # spoken-style rules so the reply sounds natural when read aloud.
         if not any(isinstance(m, SystemMessage) for m in messages):
             voice = bool(state.get("voice_mode"))
+            career_interview_mode = bool(state.get("career_interview_mode"))
             prompt = AARYA_SYSTEM_PROMPT
             if voice:
                 prompt += AARYA_VOICE_PROMPT
@@ -961,6 +1067,8 @@ def build_aarya_graph(settings: Settings) -> Any:
             # In voice mode pass at most ONE gap (shorter prompt, and a spoken
             # reply should never juggle multiple profiling questions anyway).
             open_questions = [q for q in (state.get("open_questions") or []) if q.strip()]
+            if career_interview_mode:
+                open_questions = []
             if voice:
                 open_questions = open_questions[:1]
             if open_questions:
@@ -973,21 +1081,27 @@ def build_aarya_graph(settings: Settings) -> Any:
                     "interrogation). Once they answer, it's saved automatically.\n"
                     + "\n".join(f"- {q}" for q in open_questions[:8])
                 )
-            prompt += "\n\n" + build_turn_context_prompt(
-                messages=messages,
-                voice_mode=bool(state.get("voice_mode")),
-                memory=memory,
-                open_questions=open_questions,
-                profile_completeness=state.get("profile_completeness"),
-                known_facts=(state.get("known_facts") or ""),
-                candidate_display_name=state.get("candidate_display_name"),
-                career_path_prioritized_title=state.get("career_path_prioritized_title"),
-                career_path_just_prioritized=state.get("career_path_just_prioritized"),
-                career_path_pending_options=state.get("career_path_pending_options"),
-            )
+            career_interview_prompt = _career_interview_prompt_from_state(state)
+            if career_interview_prompt:
+                prompt += "\n\n" + career_interview_prompt
+            else:
+                prompt += "\n\n" + build_turn_context_prompt(
+                    messages=messages,
+                    voice_mode=bool(state.get("voice_mode")),
+                    memory=memory,
+                    open_questions=open_questions,
+                    profile_completeness=state.get("profile_completeness"),
+                    known_facts=(state.get("known_facts") or ""),
+                    candidate_display_name=state.get("candidate_display_name"),
+                    career_path_prioritized_title=state.get("career_path_prioritized_title"),
+                    career_path_just_prioritized=state.get("career_path_just_prioritized"),
+                    career_path_pending_options=state.get("career_path_pending_options"),
+                )
             messages = [SystemMessage(content=prompt), *messages]
 
-        prefetched = state.get("prefetched_jobs") or []
+        prefetched = (
+            [] if state.get("career_interview_mode") else state.get("prefetched_jobs") or []
+        )
         if prefetched:
             titles = ", ".join(str(j.get("title") or "role")[:40] for j in prefetched[:3])
             messages = [
@@ -1005,7 +1119,9 @@ def build_aarya_graph(settings: Settings) -> Any:
         has_tool_results = any(isinstance(m, ToolMessage) for m in state["messages"])
         last_human = _last_human_text(state["messages"])
         turn_intent = _detect_likely_intent(last_human)
-        no_tools_turn = turn_intent in _NO_TOOL_INTENTS and not has_tool_results
+        no_tools_turn = bool(state.get("career_interview_mode")) or (
+            turn_intent in _NO_TOOL_INTENTS and not has_tool_results
+        )
         use_fast = _prefer_fast_model(
             voice_mode=bool(state.get("voice_mode")),
             last_human_text=last_human,
@@ -1127,6 +1243,19 @@ def build_aarya_graph(settings: Settings) -> Any:
         async def _execute_one(tool_call: dict[str, Any]) -> tuple[ToolMessage, int, list[dict]]:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
+            blocked_result = blocked_career_interview_mutation(
+                tool_name=tool_name,
+                career_interview_mode=bool(state.get("career_interview_mode")),
+            )
+            if blocked_result is not None:
+                return (
+                    ToolMessage(
+                        content=json.dumps(blocked_result),
+                        tool_call_id=tool_call["id"],
+                    ),
+                    0,
+                    [],
+                )
             user_id = state["user_id"]
             session_id = state["session_id"]
             local_actions = 0
@@ -1227,6 +1356,12 @@ def build_aarya_graph(settings: Settings) -> Any:
                                     extra_actions = 2
                 elif tool_name == "get_match_score":
                     result = await aarya_tools.get_match_score(db, user_id, session_id, **tool_args)
+                elif tool_name == "analyze_resume":
+                    result = await aarya_tools.analyze_resume(db, user_id, session_id)
+                elif tool_name == "analyze_pasted_jd":
+                    result = await aarya_tools.analyze_pasted_jd(
+                        db, user_id, session_id, **tool_args
+                    )
                 elif tool_name == "request_intro":
                     result = await aarya_tools.request_intro(db, user_id, session_id, **tool_args)
                 elif tool_name == "direct_apply":
@@ -1264,9 +1399,11 @@ def build_aarya_graph(settings: Settings) -> Any:
                 cards,
             )
 
-        outcomes = await asyncio.gather(*[_execute_one(tc) for tc in last_message.tool_calls])
+        # Serialize tool execution on the shared asyncpg connection. Concurrent
+        # asyncio.gather on one connection corrupts protocol state under load.
         tool_messages: list[ToolMessage] = []
-        for tm, inc, cards in outcomes:
+        for tc in last_message.tool_calls:
+            tm, inc, cards = await _execute_one(tc)
             tool_messages.append(tm)
             action_count += inc
             if cards:

@@ -12,7 +12,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hireschema.com";
 
 const CANDIDATE_STEPS = [
   { n: 1, title: "Sign in with LinkedIn", detail: "One click. Aarya reads your profile, work history, skills and education. No manual form filling." },
-  { n: 2, title: "Set your home market", detail: "Pick where you want to work (12 supported countries). Optional phone verification via SMS for India (+91 MSG91). Resume upload sets your profile — no manual forms." },
+  { n: 2, title: "Confirm you're in India", detail: "Hireschema is India-only. Optional +91 phone on file; SMS OTP verification when enabled (MSG91). Resume upload sets your profile — no manual forms." },
   { n: 3, title: "Chat with Aarya", detail: "Tell her what you're looking for — role, company type, city, CTC. She builds your preference graph in real time." },
   { n: 4, title: "Review your match feed", detail: "Aarya surfaces the top 10 roles daily, ranked by semantic match score. Each card shows role, company, CTC, and your fit score." },
   { n: 5, title: "Pick an action on each role", detail: "Three options: Direct Apply (via the job's native link), Request Intro (warm intro via your Gmail), or Save for Later." },
@@ -41,11 +41,11 @@ export default function HowItWorksPage() {
     <main>
       <section className="border-b border-ink-100 bg-paper-0">
         <div className="max-w-3xl mx-auto px-4 text-center">
-          <Badge variant="brand" className="mb-4 bg-ink-700/60 text-paper-0 border-ink-700">
+          <Badge variant="brand" className="mb-4">
             Under the hood
           </Badge>
-          <h1 className="text-5xl font-bold text-paper-0 mb-4">How Hireschema works</h1>
-          <p className="text-ink-300 text-lg">
+          <h1 className="text-5xl font-bold text-ink-900 mb-4">How Hireschema works</h1>
+          <p className="text-ink-500 text-lg">
             Two AI agents. One shared candidate graph. End-to-end — from profile to offer.
           </p>
         </div>
@@ -98,17 +98,17 @@ export default function HowItWorksPage() {
       </section>
 
       {/* Architecture */}
-      <section className="py-20 bg-ink-900">
+      <section className="py-20 bg-paper-1 border-y border-ink-100">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-paper-0 mb-3">Three-engine architecture</h2>
+            <h2 className="text-3xl font-bold text-ink-900 mb-3">Three-engine architecture</h2>
             <p className="text-ink-500">Inspired by the Jack & Jill model — built for India.</p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {ARCHITECTURE.map((a) => (
-              <div key={a.label} className="bg-ink-900 rounded-2xl p-5 border border-ink-700">
+              <div key={a.label} className="bg-paper-0 rounded-2xl p-5 border border-ink-100">
                 <span className="text-2xl block mb-3">{a.icon}</span>
-                <p className="text-paper-0 font-semibold text-sm mb-2">{a.label}</p>
+                <p className="text-ink-900 font-semibold text-sm mb-2">{a.label}</p>
                 <p className="text-ink-500 text-xs leading-relaxed">{a.desc}</p>
               </div>
             ))}

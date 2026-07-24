@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema v2 — Candidate (Aarya)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Candidate · Aarya v2</span>
+  <div class="deck">
+
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">v2 · Deck 02 · Candidate</p>
+      <h1>Aarya — engines in detail</h1>
+      <p class="lede">Where jobs come from, how match scores are calculated, and how Request Intro works — with real code paths.</p>
+      <p class="meta">July 2026</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Journey</p>
+      <h2>Candidate A → Z</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>LinkedIn</strong><span>Supabase OAuth</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Onboard</strong><span>CV · prefs · market</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Chat</strong><span>Aarya text/voice</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Matches</strong><span>Scored feed</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intro</strong><span>Gmail → HM</span></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">App</p>
+      <h2>Candidate SPA</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">UI</div><div class="arch-nodes"><span class="node">/onboarding</span><span class="node hi">/chat</span><span class="node hi">/jobs · matches</span><span class="node">/profile</span><span class="node">/r/{slug}</span></div></div>
+        <div class="arch-row"><div class="arch-label">Client</div><div class="arch-nodes"><span class="node">api.ts → FastAPI only</span><span class="node">Zustand</span><span class="node">Realtime · agent_actions</span></div></div>
+        <div class="arch-row"><div class="arch-label">API</div><div class="arch-nodes"><span class="node hi">routes/matches.py</span><span class="node">agents/aarya/</span><span class="node">JobIngester · MatchingEngine</span></div></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Profile graph</p>
+      <h2>Where candidate signals come from</h2>
+      <dl class="dl">
+        <dt>LinkedIn OAuth</dt><dd>Identity + profile fields → <code>users</code> / <code>candidates</code></dd>
+        <dt>Resume</dt><dd>Supabase Storage → parser → skills / experience on candidate row</dd>
+        <dt>Aarya chat</dt><dd>Prefs, location, seniority, must-haves written back to state</dd>
+        <dt>Embeddings</dt><dd><code>candidate_embeddings</code>: profile_embedding, skills_embedding, resume_embedding (1536-d, OpenRouter embedding-3-small)</dd>
+      </dl>
+      <p class="src">services/embeddings.py · cosine via pgvector &lt;=&gt;</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Job ingest · source</p>
+      <h2>Where jobs come from</h2>
+      <div class="card accent-edge">
+        <h3>Apify · Google Jobs only</h3>
+        <p>Actor: <code>johnvc/Google-Jobs-Scraper</code> (<code>ApifyJobsScraper</code>). LinkedIn/career-site kwargs exist in config but ingest forces Google Jobs.</p>
+      </div>
+      <div class="tag-row" style="margin-top:1rem">
+        <span class="tag">Triggers</span>
+        <span class="tag muted">cron /jobs/ingest</span>
+        <span class="tag muted">aarya_auto_ingest</span>
+        <span class="tag muted">POST /matches/find-new</span>
+        <span class="tag muted">career_path_ingest</span>
+      </div>
+      <p class="src">services/apify/jobs_scraper.py · job_ingester.py · routes/jobs.py · background_jobs.py</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Job ingest · pipeline</p>
+      <h2>Scrape → jobs table → embed → score</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Scrape</strong><span>query × location run</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Upsert</strong><span>public.jobs</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>Embed</strong><span>job_embeddings</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Score</strong><span>match_scores</span></div>
+      </div>
+      <dl class="dl">
+        <dt>Dedup keys</dt><dd><code>apify_job_id</code> → <code>canonical_fingerprint</code> → <code>apply_url</code></dd>
+        <dt>Query dedupe</dt><dd><code>job_ingest_runs</code> — skip same query/location/source within <strong>24h</strong> unless <code>force_refresh</code></dd>
+        <dt>Bucket freshness</dt><dd>Candidate ingest skips if bucket fresh <strong>12h</strong> and inventory ≥ 8 (unless force)</dd>
+        <dt>Find new</dt><dd>Enqueues ingest with <code>force_refresh=True</code>; returns only jobs not in <code>candidate_job_impressions</code></dd>
+      </dl>
+      <p class="note">Embeddings are <strong>not</strong> inside JobIngester — background workers / <code>embed_pending_and_score_candidate</code> after ingest.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Match scoring · formula</p>
+      <h2>How overall_score is calculated</h2>
+      <p class="lede" style="font-size:1rem">Core math lives in <code>MatchingEngine._assemble_score</code> (<code>services/matching.py</code>).</p>
+      <div class="formula">overall = Σ (w_i × dim_i) / Σ w_included
+<span class="c"># then × gates (role · domain · title · seniority)</span>
+
+w_skills = 0.40   w_profile = 0.30   w_experience = 0.15
+w_location = 0.10   w_ctc = 0.05
+<span class="c"># missing exp/CTC dims → weights renormed</span></div>
+      <div class="score-bars">
+        <div class="score-row"><span>Skills</span><div class="bar"><i style="width:40%"></i></div><span class="w">40%</span></div>
+        <div class="score-row"><span>Profile</span><div class="bar"><i style="width:30%"></i></div><span class="w">30%</span></div>
+        <div class="score-row"><span>Experience</span><div class="bar"><i style="width:15%"></i></div><span class="w">15%</span></div>
+        <div class="score-row"><span>Location</span><div class="bar"><i style="width:10%"></i></div><span class="w">10%</span></div>
+        <div class="score-row"><span>CTC</span><div class="bar"><i style="width:5%"></i></div><span class="w">5%</span></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Match scoring · dimensions</p>
+      <h2>Where each dim comes from</h2>
+      <dl class="dl">
+        <dt>Skills (0.40)</dt>
+        <dd>Lexical: <code>0.85×coverage + 0.15×jaccard</code> on canonical skills. Then <strong>semantic lift</strong> from cosine(<code>ce.skills_embedding</code>, <code>je.skills_embedding</code>) — embeddings only raise the lexical base (lift α=0.40).</dd>
+        <dt>Profile (0.30)</dt>
+        <dd>Cosine(<code>ce.profile_embedding</code>, <code>je.jd_embedding</code>) with calibrated lift (α=0.50).</dd>
+        <dt>Experience (0.15)</dt>
+        <dd>Only if job seniority set — in-band 1.0, under/over linear decay.</dd>
+        <dt>Location (0.10)</dt>
+        <dd>Remote+open→1.0 · same city 1.0 · country/global 0.9 · state 0.7 · else 0.2</dd>
+        <dt>CTC (0.05)</dt>
+        <dd>Overlap vs job band; missing data → 0.5</dd>
+      </dl>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Match scoring · gates &amp; floors</p>
+      <h2>After the weighted mean</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Gates (multipliers)</h3>
+          <p>Role-fit gate · domain_fit (e.g. hospitality↔tech harsh) · generic-title penalty (×0.35) · seniority gap (1.0 → 0.4)</p>
+        </div>
+        <div class="card">
+          <h3>Quality floors</h3>
+          <p>Persist ≥ <strong>0.35</strong> (path-aligned ≥0.18) · feed ≥ <strong>0.38</strong> · weak role signal dropped. Failed persist <strong>deletes</strong> old match_scores row.</p>
+        </div>
+      </div>
+      <div class="formula" style="margin-top:1rem">Written → public.match_scores
+overall_score, skills_score, experience_score, location_score, ctc_score,
+bias_audit, explanation*, title_score, ranking_model_version=v2_feature_rerank…</div>
+      <p class="src">services/matching.py · match_quality.py · domain_fit.py</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Ranking ≠ scoring</p>
+      <h2>RRF is for ordering the feed</h2>
+      <p class="lede" style="font-size:1rem"><code>overall_score</code> is computed first. Reciprocal Rank Fusion blends <em>lists</em> for presentation / Aarya search — it does not redefine the weight formula.</p>
+      <div class="formula">RRF: score += weight / (k + rank + 1)     k = 60
+
+Feed first screen: fuse (overall, skills) → MMR λ=0.72 · company cap 2
+Aarya job_search: multi-pool recall → RRF + lift 0.08·overall + 0.04·skills + 0.02·exp
+Feature rerank (search): 0.30 title + 0.20 req_skills + 0.15 resp + …</div>
+      <p class="src">services/ranking.py · job_recall_pipeline.py · job_relevance_pipeline.py</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Request Intro</p>
+      <h2>DB handshake → Gmail</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Tap</strong><span>request_intro tool</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Row</strong><span>intro_requests</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>NOTIFY</strong><span>Nitya wakes</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Send</strong><span>Gmail OAuth</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">Cold email = candidate Gmail only. Lifecycle/txn mail = <strong>Resend</strong>. No agent-to-agent RPC.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Post-MVP · planned</p>
+      <h2>Schedule 15–20 min call with Aarya</h2>
+      <p class="lede" style="font-size:1rem">After job find + match are stable: candidate books a structured Deepgram voice session (not just chat mic).</p>
+      <div class="flow">
+        <div class="flow-step"><div class="n">1</div><strong>Schedule</strong><span>15–20 min slot</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">2</div><strong>Deepgram call</strong><span>STT ↔ Aarya ↔ TTS</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">3</div><strong>Extract</strong><span>exp · path · prefs</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">4</div><strong>Write graph</strong><span>profile + embeddings</span></div>
+      </div>
+      <div class="card accent-edge" style="margin-top:1.25rem">
+        <div class="label">Purpose 1</div>
+        <h3>Better, more relevant jobs</h3>
+        <p>Call output updates candidate profile / skills / career intent so MatchingEngine and Find jobs score against a fuller picture than CV + short chat alone.</p>
+      </div>
+      <p class="src">Builds on today’s Deepgram voice path (S05) — expand into scheduled screening interview + structured extraction.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Post-MVP · dual use</p>
+      <h2>Same call = screening artifact</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Stored once</h3>
+          <p>Transcript / structured summary / screening signals persisted on the candidate (consent-logged).</p>
+        </div>
+        <div class="card">
+          <h3>Reused on apply</h3>
+          <p>When they apply to a recruiter role, backend compares <strong style="color:var(--text)">call insights + JD</strong> → screening result (shown on recruiter side — Deck 03).</p>
+        </div>
+      </div>
+      <p class="note" style="margin-top:1rem">One Aarya call serves matching quality <em>and</em> recruiter screening — not a second interview product.</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Status &amp; risks</p>
+      <h2>Match · chat · ingest (candid)</h2>
+      <div class="grid-2">
+        <div class="card risk"><h3>Job match</h3><p>Feed empty after impressions · force-refresh / Find new still needs reliability polish · score floors can hide inventory</p></div>
+        <div class="card risk"><h3>Chat find jobs</h3><p>Empty search_title skipped ingest historically · soft Apify failures · parity with Matches UI still a work item</p></div>
+      </div>
+      <div class="card risk" style="margin-top:1rem"><h3>Ops</h3><p>Ingest without embed workers → no scores. Apify key required. Impression “Find new” must not re-serve old cards.</p></div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Next 2 weeks</p>
+      <h2>Candidate focus (near-term)</h2>
+      <div class="grid-2">
+        <div class="card road"><h3>Match + Find new</h3><p>Harden ingest→embed→score chain · impression hygiene · clearer refreshing states</p></div>
+        <div class="card road"><h3>Chat parity</h3><p>Same job_search path as Matches · surface scores/rationales consistently</p></div>
+      </div>
+      <div class="card" style="margin-top:1rem"><h3>Later (after stable)</h3><p>Scheduled Aarya Deepgram screening call · profile write-back · apply-time screening package for recruiters</p></div>
+    </section>
+
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Next</p>
+      <h1>Recruiter · same scorer</h1>
+      <p class="lede">Graph search = mirror role → MatchingEngine — not a separate algorithm.</p>
+      <p class="meta"><a href="01-business.html" style="color:var(--accent)">← 01</a> · <a href="03-recruiter.html" style="color:var(--accent)">03 →</a></p>
+    </section>
+  </div>
+  <nav class="nav">
+    <div class="nav-left"><a href="index.html" style="color:var(--muted);text-decoration:none">Index</a><span class="kbd">← → · F · Print→PDF</span></div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right"><span id="slide-counter"></span><button type="button" id="prev">Prev</button><button type="button" id="next" class="primary">Next</button></div>
+  </nav>
+  <script src="shared.js"></script>
+</body>
+</html>

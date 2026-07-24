@@ -4,14 +4,14 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "About Hireschema",
   description:
-    "Hireschema is an AI recruiting platform for candidates and recruiters worldwide — market-aware matching, local salaries, and warm intros.",
+    "Hireschema is an AI recruiting platform for candidates and recruiters in India — fit-aware matching, salaries in INR, and warm intros.",
 };
 
 const VALUES = [
   {
     icon: "🌍",
     title: "Market-first",
-    desc: "Each candidate has a home market (ISO country). Jobs, salaries, and ingest are scoped to that region — plus worldwide remote roles when eligible.",
+    desc: "Candidates and roles are scoped to India. Remote roles appear only when they explicitly accept candidates based in India.",
   },
   {
     icon: "🤝",
@@ -36,7 +36,7 @@ export default function AboutPage() {
       {/* Hero */}
       <section className="border-b border-ink-100 bg-paper-0">
         <div className="max-w-3xl mx-auto px-4 text-center">
-          <h1 className="text-5xl font-bold text-paper-0 mb-6">
+          <h1 className="text-5xl font-bold text-ink-900 mb-6">
             We&apos;re building the career layer for India
           </h1>
           <p className="text-ink-300 text-lg leading-relaxed">

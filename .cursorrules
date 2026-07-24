@@ -30,12 +30,13 @@ Infra:                   AWS ap-south-1 (ECS Fargate + RDS Postgres read replica
 CDN / WAF:               Cloudflare (non-IN ASN block at WAF level)
 CI/CD:                   GitHub Actions
 
-## R4 — Multi-region marketplace (global v1)
-1. Each user has `market` (ISO 3166-1 alpha-2; IN default); candidates and jobs scoped by market
-2. Phone OTP: IN → +91/MSG91 only; other markets — optional, no SMS provider required for MVP
-3. Prices shown in local currency per market (INR, USD, GBP, EUR, AUD, CAD, CHF, AED, SGD)
-4. Job visibility: onsite = same `country_code`; remote = `allowed_regions` or worldwide
-5. `ENABLED_MARKETS` controls per-region job ingest; defaults to all supported markets
+## R4 — India-only marketplace (MVP)
+1. Product is locked to India: Indian candidates + Indian recruiters only
+2. Every user/candidate/job uses `market = 'IN'` (ISO 3166-1 alpha-2); non-IN values are rejected or normalised to IN
+3. Phone OTP: +91 via MSG91 only
+4. Prices and salaries shown in INR (LPA)
+5. Job visibility: onsite = `country_code = 'IN'`; remote = `allowed_regions` includes IN or WORLD
+6. `ENABLED_MARKETS` must be `IN` only — do not enable other regions without explicit approval
 
 ## R5 — Intro handshake via DB state only (NO agent-to-agent RPC)
 Flow: candidate clicks "Request Intro" → row in intro_requests table →
@@ -120,7 +121,20 @@ Production DB: real data only.
 11. No synchronous file I/O in FastAPI endpoints
 12. No blocking sleep() in agent loops — use asyncio.sleep()
 13. No direct DB writes from frontend — always via API
-14. No unauthenticated API endpoints except /health, /markets, and /auth/callback
+14. Public (no user Bearer JWT) API surfaces MUST match the documented allow-list
+    below — update this list when adding routes; every entry needs a stated
+    rate-limit / abuse model in docs/audit/14-security-remediation-plan.md:
+    - GET /api/v1/health, /health/ready (public)
+    - GET /api/v1/health/deep (X-Service-Secret)
+    - GET /api/v1/markets (public)
+    - POST /api/v1/jobs/ingest, /ingest/cron (X-Service-Secret)
+    - POST /api/v1/matches/embed, /recompute (X-Service-Secret)
+    - GET/POST /api/v1/gmail/callback (HMAC-signed OAuth state)
+    - POST /api/v1/webhooks/msg91-whatsapp (X-Service-Secret)
+    - GET /api/v1/public/profiles/{slug}, chat/history, apply (public + rate limits)
+    - GET /api/v1/public/roles/{slug}, POST apply (public + rate limits)
+    SPA /auth/callback is browser-side Supabase PKCE (not FastAPI).
+    Prefer timing-safe compare (hmac.compare_digest) for all service secrets.
 15. No Cloudflare bypass in production
 16. No OpenRouter calls without model fallback configured
 17. No Deepgram TTS calls without audio timeout guard (max 10s)

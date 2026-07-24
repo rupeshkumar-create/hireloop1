@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -72,6 +73,34 @@ async def _maybe_enqueue_hm_enrich(db: asyncpg.Connection, *, hm_id: str) -> uui
         kind=HM_ENRICH,
         payload={"hm_id": hm_id},
         idempotency_key=f"hm_enrich:{hm_id}",
+    )
+
+
+async def _enqueue_nitya_intro(
+    db: asyncpg.Connection,
+    *,
+    intro_id: str | uuid.UUID,
+    candidate_id: str | uuid.UUID,
+    job_id: str | uuid.UUID,
+    hm_id: str | uuid.UUID,
+    delay_seconds: int = 0,
+) -> uuid.UUID:
+    """Queue Nitya durably; LISTEN/NOTIFY remains a low-latency wake-up path."""
+    from hireloop_api.services.background_jobs import NITYA_INTRO_DRAFT, enqueue_job
+
+    return await enqueue_job(
+        db,
+        kind=NITYA_INTRO_DRAFT,
+        payload={
+            "id": str(intro_id),
+            "candidate_id": str(candidate_id),
+            "job_id": str(job_id),
+            "hm_id": str(hm_id),
+            "direction": "candidate_to_hm",
+        },
+        idempotency_key=f"nitya_intro_draft:{intro_id}",
+        run_after=datetime.now(UTC) + timedelta(seconds=delay_seconds),
+        max_attempts=5,
     )
 
 
@@ -352,6 +381,13 @@ async def create_candidate_intro(
                 candidate_name=candidate["full_name"],
                 job=job,
             )
+            await _enqueue_nitya_intro(
+                db,
+                intro_id=existing,
+                candidate_id=candidate_id,
+                job_id=job["id"],
+                hm_id=hm["id"],
+            )
             return {
                 "intro_id": str(existing),
                 "status": "pending",
@@ -377,6 +413,13 @@ async def create_candidate_intro(
             intro_id=intro_id,
             candidate_name=candidate["full_name"],
             job=job,
+        )
+        await _enqueue_nitya_intro(
+            db,
+            intro_id=intro_id,
+            candidate_id=candidate_id,
+            job_id=job["id"],
+            hm_id=hm["id"],
         )
         await _confirm_intro_to_candidate(db, user_id=user_id, job=job)
         return {
@@ -451,6 +494,14 @@ async def create_candidate_intro(
             candidate_name=candidate["full_name"],
             job=job,
         )
+        await _enqueue_nitya_intro(
+            db,
+            intro_id=existing,
+            candidate_id=candidate_id,
+            job_id=job["id"],
+            hm_id=hiring_manager_id,
+            delay_seconds=30,
+        )
         return {"intro_id": str(existing), "status": "pending", "direction": "candidate_to_hm"}
 
     intro_id = uuid.uuid4()
@@ -487,6 +538,14 @@ async def create_candidate_intro(
             )
     except Exception as exc:  # enqueue is best-effort; Nitya may still handle it via NOTIFY
         logger.info("hm_enrich_enqueue_skipped", hm_id=str(hiring_manager_id), error=str(exc))
+    await _enqueue_nitya_intro(
+        db,
+        intro_id=intro_id,
+        candidate_id=candidate_id,
+        job_id=job["id"],
+        hm_id=hiring_manager_id,
+        delay_seconds=30 if hm_enrich_job_id else 0,
+    )
     try:
         from hireloop_api.services.firecrawl.company_intel import enqueue_company_intel_if_needed
 

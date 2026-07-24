@@ -4,7 +4,8 @@ Apify Google Jobs Scraper service.
 Active actor:
   - johnvc/Google-Jobs-Scraper
 
-India geo-lock replaced by per-market scoping (IN / US / GB).
+India geo-lock: marketplace is India-only (candidates + recruiters).
+Job ingest and visibility are scoped to country_code=IN.
 
 Typical cost: ~$0.50 per 1,000 job listings = ~₹0.04/job.
 
@@ -119,13 +120,9 @@ DEFAULT_GOOGLE_JOBS_ACTOR = "johnvc/Google-Jobs-Scraper"
 DEFAULT_LINKEDIN_JOBS_ACTOR = DEFAULT_GOOGLE_JOBS_ACTOR
 APIFY_API_BASE = "https://api.apify.com/v2"
 
-# Market-specific Google Jobs actor configuration (johnvc/Google-Jobs-Scraper)
+# India-only Google Jobs actor configuration (johnvc/Google-Jobs-Scraper)
 _MARKET_GOOGLE_CONFIG: dict[str, dict[str, str]] = {
     "IN": {"country": "in", "language": "en", "google_domain": "google.co.in"},
-    "US": {"country": "us", "language": "en", "google_domain": "google.com"},
-    "GB": {"country": "gb", "language": "en", "google_domain": "google.co.uk"},
-    "DE": {"country": "de", "language": "de", "google_domain": "google.de"},
-    "FR": {"country": "fr", "language": "fr", "google_domain": "google.fr"},
 }
 
 DEFAULT_MAX_PAGINATION = 3
@@ -171,18 +168,12 @@ class ApifyJobsScraper:
         low = loc.lower()
         hints = {
             "IN": "india",
-            "US": "united states",
-            "GB": "united kingdom",
         }
         hint = hints.get(market, "")
         if hint and hint in low:
             return loc
         if market == "IN":
             return f"{loc}, India" if "india" not in low else loc
-        if market == "US":
-            return f"{loc}, United States" if "united states" not in low else loc
-        if market == "GB":
-            return f"{loc}, United Kingdom" if "united kingdom" not in low else loc
         return loc
 
     async def scrape(
@@ -488,15 +479,10 @@ class ApifyJobsScraper:
 
     @staticmethod
     def _resolve_market(location_raw: str, title: str, country_raw: str = "") -> str | None:
+        """Return IN when the job is India-scoped; otherwise None (skip)."""
         country_map = {
             "in": "IN",
             "india": "IN",
-            "us": "US",
-            "usa": "US",
-            "united states": "US",
-            "uk": "GB",
-            "gb": "GB",
-            "united kingdom": "GB",
         }
         country_market = country_map.get(country_raw.lower())
         market = (
@@ -506,6 +492,26 @@ class ApifyJobsScraper:
         )
         if market and market in SUPPORTED_MARKETS:
             return market
+        # Default scrape locations are India hubs — accept unmarked India results.
+        low = f" {(location_raw or '').lower()} {(title or '').lower()} "
+        if "india" in low or any(
+            city in low
+            for city in (
+                "bengaluru",
+                "bangalore",
+                "mumbai",
+                "hyderabad",
+                "delhi",
+                "pune",
+                "chennai",
+                "gurugram",
+                "gurgaon",
+                "noida",
+                "kolkata",
+                "ahmedabad",
+            )
+        ):
+            return "IN"
         return None
 
     @staticmethod

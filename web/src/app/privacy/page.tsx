@@ -10,7 +10,7 @@ const SECTIONS = [
   {
     id: "overview",
     title: "1. Overview",
-    content: `Hireschema ("Hireschema", "we", "us") operates an AI-powered recruiting platform for candidates in India, the United States, and the United Kingdom (phone-verified). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
+    content: `Hireschema ("Hireschema", "we", "us") operates an AI-powered recruiting platform for candidates and recruiters in India (phone-verified with +91 when configured). This Privacy Policy explains how we collect, use, store, and protect your personal data in compliance with India's Digital Personal Data Protection (DPDP) Act 2023.
 
 By using Hireschema, you consent to the practices described in this policy. If you do not agree, please do not use the platform.`,
   },
@@ -122,7 +122,7 @@ export default function PrivacyPage() {
             DPDP Act 2023 compliant
           </div>
           <h1 className="text-4xl font-bold text-ink-900 mb-2">Privacy Policy</h1>
-          <p className="text-ink-500 text-sm">Effective: January 2026 · India, US &amp; UK</p>
+          <p className="text-ink-500 text-sm">Effective: January 2026 · India</p>
         </div>
 
         {/* TOC */}

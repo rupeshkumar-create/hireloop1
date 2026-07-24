@@ -1,0 +1,844 @@
+"""Unit coverage for the user-safe durable AI operation lifecycle."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import socket
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+import pytest
+
+from hireloop_api.models.ai_operation import AiOperationAccepted, AiOperationResponse
+from hireloop_api.services import ai_operations
+
+NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+USER_ID = uuid.uuid4()
+OPERATION_ID = uuid.uuid4()
+JOB_ID = uuid.uuid4()
+
+
+def _httpx_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://provider.invalid/generate")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError("provider response detail", request=request, response=response)
+
+
+def _with_cause(error: BaseException, cause: BaseException) -> BaseException:
+    error.__cause__ = cause
+    return error
+
+
+def _operation_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "status": "queued",
+        "progress_percent": 0,
+        "stage": "queued",
+        "message": "Your application kit is queued.",
+        "result_type": None,
+        "result_id": None,
+        "error_code": None,
+        "error_message": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+        "completed_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
+class ScriptedConnection:
+    """Small asyncpg-shaped test double with explicitly scripted results."""
+
+    def __init__(
+        self,
+        *,
+        fetchrows: list[dict[str, object] | None] | None = None,
+        fetchvals: list[object] | None = None,
+        fetch_result: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.fetchrows = list(fetchrows or [])
+        self.fetchvals = list(fetchvals or [])
+        self.fetch_result = list(fetch_result or [])
+        self.calls: list[tuple[str, str, tuple[object, ...]]] = []
+        self._in_transaction = False
+        self.transaction_entries = 0
+
+    def is_in_transaction(self) -> bool:
+        return self._in_transaction
+
+    def transaction(self) -> ScriptedTransaction:
+        return ScriptedTransaction(self)
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        self.calls.append(("fetchrow", query, args))
+        return self.fetchrows.pop(0) if self.fetchrows else None
+
+    async def fetchval(self, query: str, *args: object) -> object:
+        self.calls.append(("fetchval", query, args))
+        return self.fetchvals.pop(0) if self.fetchvals else None
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.calls.append(("fetch", query, args))
+        return self.fetch_result
+
+    async def execute(self, query: str, *args: object) -> str:
+        self.calls.append(("execute", query, args))
+        return "UPDATE 1"
+
+
+class ScriptedTransaction:
+    def __init__(self, db: ScriptedConnection) -> None:
+        self.db = db
+
+    async def __aenter__(self) -> None:
+        self.db._in_transaction = True
+        self.db.transaction_entries += 1
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        self.db._in_transaction = False
+
+
+def test_response_serialization_omits_private_queue_and_raw_error_fields() -> None:
+    response = AiOperationResponse.model_validate(
+        {
+            **_operation_row(),
+            "payload": {"resume_text": "private"},
+            "last_error": "provider response included a secret",
+            "worker_id": "worker-1",
+        }
+    )
+
+    serialized = response.model_dump(mode="json")
+    assert "payload" not in serialized
+    assert "last_error" not in serialized
+    assert "worker_id" not in serialized
+    assert response.retryable is False
+
+
+def test_accepted_response_uses_the_approved_polling_contract() -> None:
+    accepted = AiOperationAccepted(
+        operation_id=OPERATION_ID,
+        status="queued",
+        status_url=f"/api/v1/ai-operations/{OPERATION_ID}",
+    )
+
+    assert accepted.retry_after_ms == 1500
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "retryable"),
+    [
+        (TimeoutError("secret timeout detail"), "provider_timeout", True),
+        (RuntimeError("HTTP 429 from provider"), "provider_rate_limited", True),
+        (ConnectionError("provider unavailable"), "provider_unavailable", True),
+        (OSError("DNS network unreachable: secret.internal"), "network_unreachable", True),
+        (OSError("local disk is full"), "internal_error", False),
+        (
+            httpx.ConnectError(
+                "All connection attempts failed: private-host",
+                request=httpx.Request("POST", "https://provider.invalid/generate"),
+            ),
+            "network_unreachable",
+            True,
+        ),
+        (
+            _with_cause(
+                RuntimeError("provider SDK request failed"),
+                _with_cause(
+                    httpx.ConnectError(
+                        "connection failed",
+                        request=httpx.Request("POST", "https://provider.invalid/generate"),
+                    ),
+                    socket.gaierror(-2, "Name or service not known"),
+                ),
+            ),
+            "network_unreachable",
+            True,
+        ),
+        (
+            httpx.ReadTimeout(
+                "private timeout detail",
+                request=httpx.Request("POST", "https://provider.invalid/generate"),
+            ),
+            "provider_timeout",
+            True,
+        ),
+        (_httpx_status_error(429), "provider_rate_limited", True),
+        (_httpx_status_error(503), "provider_unavailable", True),
+        (ValueError("malformed provider response"), "invalid_input", False),
+        (RuntimeError("candidate profile is insufficient"), "insufficient_profile", False),
+        (PermissionError("forbidden"), "permission_denied", False),
+        (RuntimeError("job has expired"), "job_expired", False),
+        (asyncio.CancelledError(), "cancelled", False),
+        (RuntimeError("resume text and token abc123"), "internal_error", False),
+    ],
+)
+def test_error_classification_is_stable_and_does_not_echo_raw_errors(
+    error: BaseException,
+    code: str,
+    retryable: bool,
+) -> None:
+    classified = ai_operations.classify_operation_error(error)
+
+    assert classified.code == code
+    assert classified.retryable is retryable
+    if str(error):
+        assert str(error) not in classified.message
+    assert len(classified.message) <= ai_operations.MAX_SAFE_ERROR_MESSAGE_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_enqueue_creates_operation_and_job_on_the_caller_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inserted = _operation_row(background_job_id=None)
+    queued_payload = {
+        "candidate_id": "private-candidate-id",
+        "operation_id": str(OPERATION_ID),
+    }
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "application_kit",
+        "payload": queued_payload,
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    linked = _operation_row(background_job_id=JOB_ID)
+    db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
+    observed: dict[str, object] = {}
+
+    async def fake_enqueue_job(db_arg: object, **kwargs: object) -> uuid.UUID:
+        observed["db"] = db_arg
+        observed.update(kwargs)
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    response = await ai_operations.enqueue_ai_operation(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        candidate_id=uuid.uuid4(),
+        kind="application_kit",
+        payload={"candidate_id": "private-candidate-id"},
+        idempotency_key=f"application_kit:{USER_ID}:job",
+        stage="queued",
+        message="Your application kit is queued.",
+    )
+
+    assert response.id == OPERATION_ID
+    assert observed["db"] is db
+    assert observed["payload"] == queued_payload
+    assert observed["idempotency_key"] == f"ai_operation:{OPERATION_ID}"
+    assert not any("COMMIT" in query.upper() for _, query, _ in db.calls)
+    assert any("background_job_id" in query for _, query, _ in db.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued_operation_id", [None, str(uuid.uuid4())])
+async def test_enqueue_refuses_incompatible_reused_queue_job(
+    monkeypatch: pytest.MonkeyPatch,
+    queued_operation_id: str | None,
+) -> None:
+    inserted = _operation_row(background_job_id=None)
+    queue_payload: dict[str, object] = {"candidate_id": "private-candidate-id"}
+    if queued_operation_id is not None:
+        queue_payload["operation_id"] = queued_operation_id
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "application_kit",
+        "payload": queue_payload,
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    db = ScriptedConnection(fetchrows=[inserted, queue_row])
+
+    async def fake_enqueue_job(db_arg: object, **kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.enqueue_ai_operation(
+            db,  # type: ignore[arg-type]
+            user_id=USER_ID,
+            candidate_id=uuid.uuid4(),
+            kind="application_kit",
+            payload={"candidate_id": "private-candidate-id"},
+            idempotency_key=f"application_kit:{USER_ID}:job",
+        )
+
+    assert not any(
+        method == "fetchrow" and "SET background_job_id" in query for method, query, _ in db.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_reuses_an_active_owned_operation_without_creating_a_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = ScriptedConnection(fetchrows=[None, _operation_row(status="running")])
+
+    async def unexpected_enqueue(*args: object, **kwargs: object) -> uuid.UUID:
+        raise AssertionError("active operation must not enqueue another job")
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", unexpected_enqueue)
+
+    response = await ai_operations.enqueue_ai_operation(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="application_kit",
+        payload={},
+        idempotency_key=f"application_kit:{USER_ID}:job",
+    )
+
+    assert response.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_outcome_distinguishes_created_from_reused_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inserted = _operation_row(background_job_id=None)
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": {"operation_id": str(OPERATION_ID)},
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    linked = _operation_row(background_job_id=JOB_ID)
+    created_db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
+    reused_db = ScriptedConnection(fetchrows=[None, _operation_row(status="running")])
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    created = await ai_operations.enqueue_ai_operation_outcome(
+        created_db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+    reused = await ai_operations.enqueue_ai_operation_outcome(
+        reused_db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+
+    assert created.created is True
+    assert created.operation.id == OPERATION_ID
+    assert reused.created is False
+    assert reused.operation.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_retries_when_conflicting_operation_terminalizes_between_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conflict loser gets a fresh INSERT snapshot after the winner finishes."""
+    inserted = _operation_row(background_job_id=None)
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": {"operation_id": str(OPERATION_ID)},
+        "idempotency_key": f"ai_operation:{OPERATION_ID}",
+    }
+    linked = _operation_row(background_job_id=JOB_ID)
+    # INSERT conflicts, active SELECT sees no row because the winner terminalized,
+    # then the retry INSERT creates the next attempt.
+    db = ScriptedConnection(fetchrows=[None, None, inserted, queue_row, linked])
+    queue_calls = 0
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        nonlocal queue_calls
+        queue_calls += 1
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    outcome = await ai_operations.enqueue_ai_operation_outcome(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={},
+        idempotency_key="career_path_generate:candidate",
+    )
+
+    insert_calls = [
+        query
+        for method, query, _args in db.calls
+        if method == "fetchrow" and "INSERT INTO public.ai_operations" in query
+    ]
+    assert outcome.created is True
+    assert outcome.operation.id == OPERATION_ID
+    assert len(insert_calls) == 2
+    assert queue_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_contention_retry_is_bounded_and_does_not_create_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = ScriptedConnection(fetchrows=[None, None, None, None, None, None])
+    queue_calls = 0
+
+    async def unexpected_enqueue(*_args: object, **_kwargs: object) -> uuid.UUID:
+        nonlocal queue_calls
+        queue_calls += 1
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", unexpected_enqueue)
+
+    with pytest.raises(
+        ai_operations.AiOperationLifecycleError,
+        match="could not be queued due to contention",
+    ):
+        await ai_operations.enqueue_ai_operation_outcome(
+            db,  # type: ignore[arg-type]
+            user_id=USER_ID,
+            kind="career_path_generate",
+            payload={},
+            idempotency_key="career_path_generate:candidate",
+        )
+
+    insert_calls = [
+        query
+        for method, query, _args in db.calls
+        if method == "fetchrow" and "INSERT INTO public.ai_operations" in query
+    ]
+    assert len(insert_calls) == ai_operations._MAX_ENQUEUE_CONTENTION_ATTEMPTS
+    assert queue_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_terminal_operation_allows_new_attempt_with_same_logical_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The partial conflict target must ignore terminal attempts for this key."""
+    new_operation_id = uuid.uuid4()
+    logical_key = f"career_path_generate:{uuid.uuid4()}"
+    inserted = _operation_row(id=new_operation_id, kind="career_path_generate")
+    queued_payload = {"candidate_id": str(uuid.uuid4()), "operation_id": str(new_operation_id)}
+    queue_row = {
+        "id": JOB_ID,
+        "kind": "career_path_generate",
+        "payload": queued_payload,
+        "idempotency_key": f"ai_operation:{new_operation_id}",
+    }
+    linked = _operation_row(
+        id=new_operation_id,
+        kind="career_path_generate",
+        background_job_id=JOB_ID,
+    )
+    db = ScriptedConnection(fetchrows=[inserted, queue_row, linked])
+
+    async def fake_enqueue_job(_db: object, **_kwargs: object) -> uuid.UUID:
+        return JOB_ID
+
+    monkeypatch.setattr("hireloop_api.services.background_jobs.enqueue_job", fake_enqueue_job)
+
+    response = await ai_operations.enqueue_ai_operation(
+        db,  # type: ignore[arg-type]
+        user_id=USER_ID,
+        kind="career_path_generate",
+        payload={"candidate_id": queued_payload["candidate_id"]},
+        idempotency_key=logical_key,
+    )
+
+    insert_sql = db.calls[0][1]
+    assert response.id == new_operation_id
+    assert "ON CONFLICT (idempotency_key)" in insert_sql
+    assert "WHERE status IN ('queued', 'running') AND deleted_at IS NULL" in insert_sql
+
+
+@pytest.mark.asyncio
+async def test_running_and_success_transitions_are_atomic_and_guarded() -> None:
+    running = _operation_row(
+        status="running", progress_percent=1, stage="starting", message="Starting work."
+    )
+    succeeded = _operation_row(
+        status="succeeded",
+        progress_percent=100,
+        stage="ready",
+        message="Your application kit is ready.",
+        result_type="application_kit",
+        result_id=uuid.uuid4(),
+        completed_at=NOW,
+    )
+    db = ScriptedConnection(fetchrows=[running, succeeded])
+
+    started = await ai_operations.mark_operation_running(
+        db,
+        OPERATION_ID,
+        stage="starting",
+        message="Starting work.",  # type: ignore[arg-type]
+    )
+    finished = await ai_operations.mark_operation_succeeded(
+        db,  # type: ignore[arg-type]
+        OPERATION_ID,
+        result_type="application_kit",
+        result_id=succeeded["result_id"],  # type: ignore[arg-type]
+        message="Your application kit is ready.",
+    )
+
+    assert started is not None and started.status == "running"
+    assert finished is not None and finished.status == "succeeded"
+    running_sql = db.calls[0][1]
+    success_sql = db.calls[1][1]
+    assert "status = 'queued'" in running_sql
+    assert "status = 'running'" in success_sql
+    assert "progress_percent = 100" in success_sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result_type", "result_id"),
+    [
+        ("application_kit", None),
+        (None, uuid.uuid4()),
+        ("   ", uuid.uuid4()),
+    ],
+)
+async def test_result_bearing_operation_rejects_missing_or_partial_result_references(
+    result_type: str | None,
+    result_id: uuid.UUID | None,
+) -> None:
+    db = ScriptedConnection()
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.mark_operation_succeeded(
+            db,  # type: ignore[arg-type]
+            OPERATION_ID,
+            result_type=result_type,
+            result_id=result_id,
+        )
+
+    assert db.calls == []
+
+
+@pytest.mark.asyncio
+async def test_application_kit_cannot_succeed_without_a_result_reference() -> None:
+    db = ScriptedConnection()
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.mark_operation_succeeded(
+            db,  # type: ignore[arg-type]
+            OPERATION_ID,
+        )
+
+    assert db.calls == []
+
+
+def test_success_has_no_unrestricted_resultless_bypass() -> None:
+    parameters = inspect.signature(ai_operations.mark_operation_succeeded).parameters
+
+    assert "allow_resultless" not in parameters
+
+
+@pytest.mark.asyncio
+async def test_progress_update_enforces_monotonicity_at_the_sql_boundary() -> None:
+    db = ScriptedConnection(fetchrows=[None])
+
+    updated = await ai_operations.update_operation_progress(
+        db,  # type: ignore[arg-type]
+        OPERATION_ID,
+        20,
+        "generating",
+        "Generating your application kit.",
+    )
+
+    assert updated is None
+    sql = db.calls[0][1]
+    assert "status = 'running'" in sql
+    assert "$2 >= progress_percent" in sql
+    assert "BETWEEN 0 AND 99" in sql
+
+
+@pytest.mark.asyncio
+async def test_terminal_operations_cannot_be_mutated() -> None:
+    db = ScriptedConnection(fetchrows=[None, None, None])
+
+    assert await ai_operations.mark_operation_running(db, OPERATION_ID) is None  # type: ignore[arg-type]
+    assert (
+        await ai_operations.update_operation_progress(
+            db,
+            OPERATION_ID,
+            90,
+            "saving",
+            "Saving your result.",  # type: ignore[arg-type]
+        )
+        is None
+    )
+    assert (
+        await ai_operations.mark_operation_succeeded(
+            db,  # type: ignore[arg-type]
+            OPERATION_ID,
+            result_type="application_kit",
+            result_id=uuid.uuid4(),
+        )
+        is None
+    )
+    assert all(
+        "status = 'queued'" in query or "status = 'running'" in query
+        for method, query, _ in db.calls
+        if method == "fetchrow"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failure_persists_only_safe_operation_error_and_raw_queue_error() -> None:
+    failed = _operation_row(
+        status="failed",
+        error_code="provider_timeout",
+        error_message="The AI provider took too long to respond. Please try again.",
+        completed_at=NOW,
+    )
+    db = ScriptedConnection(fetchrows=[failed])
+    raw = TimeoutError("Bearer secret-provider-token")
+
+    response = await ai_operations.mark_operation_failed(
+        db,
+        OPERATION_ID,
+        raw,  # type: ignore[arg-type]
+    )
+
+    assert response is not None
+    assert response.error_code == "provider_timeout"
+    operation_args = db.calls[0][2]
+    queue_args = db.calls[1][2]
+    assert str(raw) not in operation_args
+    assert str(raw) in queue_args
+    assert "background_jobs" in db.calls[1][1]
+
+
+@pytest.mark.asyncio
+async def test_cancel_checks_owner_and_cancels_linked_active_queue_job() -> None:
+    cancelled = _operation_row(status="cancelled", completed_at=NOW)
+    db = ScriptedConnection(fetchrows=[cancelled])
+
+    response = await ai_operations.cancel_owned_operation(
+        db,
+        OPERATION_ID,
+        USER_ID,  # type: ignore[arg-type]
+    )
+
+    assert response.status == "cancelled"
+    assert "user_id = $2" in db.calls[0][1]
+    assert "status IN ('queued', 'running')" in db.calls[0][1]
+    assert "background_jobs" in db.calls[1][1]
+
+
+@pytest.mark.asyncio
+async def test_retry_requires_owned_retryable_failure_and_reuses_private_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_payload = {"candidate_id": str(uuid.uuid4()), "operation_id": str(OPERATION_ID)}
+    retry_row = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": old_payload,
+        "max_attempts": 3,
+    }
+    db = ScriptedConnection(fetchrows=[retry_row])
+    observed: dict[str, Any] = {}
+    retried = AiOperationResponse.model_validate(_operation_row(id=uuid.uuid4(), status="queued"))
+
+    async def fake_enqueue(db_arg: object, **kwargs: object) -> AiOperationResponse:
+        observed["db"] = db_arg
+        observed.update(kwargs)
+        return retried
+
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", fake_enqueue)
+
+    response = await ai_operations.retry_owned_operation(
+        db,
+        OPERATION_ID,
+        USER_ID,
+        now=NOW,  # type: ignore[arg-type]
+    )
+
+    assert response.id == retried.id
+    assert observed["retry_of"] == OPERATION_ID
+    assert observed["payload"] == {"candidate_id": old_payload["candidate_id"]}
+    assert observed["db"] is db
+    assert "FOR UPDATE OF o" in db.calls[0][1]
+    assert "retry_of = $1" in db.calls[1][1]
+    assert db.transaction_entries == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_returns_existing_active_child_without_enqueuing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": {"candidate_id": str(uuid.uuid4())},
+        "max_attempts": 3,
+    }
+    active_child = _operation_row(id=uuid.uuid4(), user_id=USER_ID, status="running")
+    db = ScriptedConnection(fetchrows=[source, active_child])
+
+    async def unexpected_enqueue(*args: object, **kwargs: object) -> AiOperationResponse:
+        raise AssertionError("an active retry child must be reused")
+
+    monkeypatch.setattr(ai_operations, "enqueue_ai_operation", unexpected_enqueue)
+
+    response = await ai_operations.retry_owned_operation(
+        db,
+        OPERATION_ID,
+        USER_ID,
+        now=NOW,  # type: ignore[arg-type]
+    )
+
+    assert response.id == active_child["id"]
+    assert response.status == "running"
+    assert "FOR UPDATE OF o" in db.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_retry_refuses_source_with_completed_child() -> None:
+    source = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": {"candidate_id": str(uuid.uuid4())},
+        "max_attempts": 3,
+    }
+    completed_child = _operation_row(
+        id=uuid.uuid4(),
+        user_id=USER_ID,
+        status="succeeded",
+        progress_percent=100,
+        result_type="application_kit",
+        result_id=uuid.uuid4(),
+        completed_at=NOW,
+    )
+    db = ScriptedConnection(fetchrows=[source, completed_child])
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+    assert "FOR UPDATE OF o" in db.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_non_retryable_failure() -> None:
+    db = ScriptedConnection(
+        fetchrows=[
+            {
+                "id": OPERATION_ID,
+                "error_code": "invalid_input",
+                "expires_at": None,
+                "payload": {},
+            }
+        ]
+    )
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_missing_background_job() -> None:
+    db = ScriptedConnection(fetchrows=[None], fetchvals=["failed"])
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+    retry_query = db.calls[0][1]
+    assert "JOIN public.background_jobs" in retry_query
+    assert "j.payload IS NOT NULL" in retry_query
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, [], "{malformed json"])
+async def test_retry_rejects_missing_non_object_or_malformed_payload(payload: object) -> None:
+    retry_row = {
+        "id": OPERATION_ID,
+        "kind": "application_kit",
+        "candidate_id": uuid.uuid4(),
+        "recruiter_id": None,
+        "resource_type": "job",
+        "resource_id": uuid.uuid4(),
+        "idempotency_key": f"application_kit:{USER_ID}:job",
+        "error_code": "provider_timeout",
+        "expires_at": NOW + timedelta(hours=1),
+        "payload": payload,
+        "max_attempts": 3,
+    }
+    db = ScriptedConnection(fetchrows=[retry_row])
+
+    with pytest.raises(ai_operations.AiOperationLifecycleError):
+        await ai_operations.retry_owned_operation(
+            db,
+            OPERATION_ID,
+            USER_ID,
+            now=NOW,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_owned_reads_filter_soft_deleted_rows_and_project_safe_columns() -> None:
+    db = ScriptedConnection(
+        fetchrows=[_operation_row()], fetch_result=[_operation_row(status="running")]
+    )
+
+    one = await ai_operations.get_owned_operation(db, OPERATION_ID, USER_ID)  # type: ignore[arg-type]
+    active = await ai_operations.list_owned_operations(db, USER_ID)  # type: ignore[arg-type]
+
+    assert one is not None
+    assert active[0].status == "running"
+    for _, query, _ in db.calls:
+        assert "deleted_at IS NULL" in query
+        assert "payload" not in query
+        assert "last_error" not in query
+        assert "SELECT *" not in query.upper()

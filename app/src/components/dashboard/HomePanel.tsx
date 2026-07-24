@@ -27,7 +27,11 @@ import {
   type MyProfileData,
 } from "@/lib/api/profile";
 import { fetchIntros, getCachedIntros, type IntroRequest } from "@/lib/api/intros";
-import { fetchGoogleStatus } from "@/lib/api/gmail";
+import {
+  fetchGoogleStatus,
+  GOOGLE_CONNECTED_EVENT,
+  type GoogleStatus,
+} from "@/lib/api/gmail";
 import { fetchCareerIntelligence, fetchCareerPath } from "@/lib/api/career";
 import { CareerPathOptionCards } from "@/components/career/CareerPathOptionCards";
 import { CollapsibleSection } from "@/components/dashboard/CollapsibleSection";
@@ -92,9 +96,19 @@ function SetupChecklist({
   const [googleConnected, setGoogleConnected] = useState(false);
 
   useEffect(() => {
-    fetchGoogleStatus()
-      .then((s) => setGoogleConnected(s.connected && s.send_enabled))
-      .catch(() => setGoogleConnected(false));
+    function applyStatus(s: GoogleStatus) {
+      setGoogleConnected(s.connected && s.send_enabled);
+    }
+    fetchGoogleStatus().then(applyStatus).catch(() => setGoogleConnected(false));
+    const onConnected = (ev: Event) => {
+      const detail = (ev as CustomEvent<GoogleStatus>).detail;
+      if (detail) applyStatus(detail);
+      else {
+        fetchGoogleStatus().then(applyStatus).catch(() => setGoogleConnected(false));
+      }
+    };
+    window.addEventListener(GOOGLE_CONNECTED_EVENT, onConnected);
+    return () => window.removeEventListener(GOOGLE_CONNECTED_EVENT, onConnected);
   }, []);
 
   useEffect(() => {

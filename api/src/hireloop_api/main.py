@@ -16,6 +16,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request, Response
@@ -26,10 +27,12 @@ from hireloop_api.agents.nitya.agent import NityaWorker
 from hireloop_api.config import get_settings
 from hireloop_api.rate_limit import rate_limit_middleware
 from hireloop_api.routes.admin import router as admin_router
+from hireloop_api.routes.ai_operations import router as ai_operations_router
 from hireloop_api.routes.application_kits import router as application_kits_router
 from hireloop_api.routes.auth import router as auth_router
 from hireloop_api.routes.career import router as career_router
 from hireloop_api.routes.chat import router as chat_router
+from hireloop_api.routes.chat_analysis import router as chat_analysis_router
 from hireloop_api.routes.gmail import router as gmail_router
 from hireloop_api.routes.health import router as health_router
 from hireloop_api.routes.hiring_managers import router as hiring_managers_router
@@ -50,19 +53,22 @@ from hireloop_api.routes.voice import router as voice_router
 from hireloop_api.routes.voice_sessions import router as voice_sessions_router
 from hireloop_api.routes.whatsapp_routes import router as whatsapp_router
 
-# ── Structured logging setup ──────────────────────────────────────────────────
-structlog.configure(
-    processors=[
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(),
-    ]
-)
-logger = structlog.get_logger()
-
 # ── Settings ──────────────────────────────────────────────────────────────────
 settings = get_settings()
+
+# ── Structured logging setup ──────────────────────────────────────────────────
+_log_processors: list[Any] = [
+    structlog.contextvars.merge_contextvars,
+    structlog.processors.add_log_level,
+    structlog.processors.TimeStamper(fmt="iso"),
+]
+if settings.environment in ("production", "staging"):
+    _log_processors.append(structlog.processors.JSONRenderer())
+else:
+    _log_processors.append(structlog.dev.ConsoleRenderer())
+
+structlog.configure(processors=_log_processors)
+logger = structlog.get_logger()
 
 # ── Error tracking (Sentry) ───────────────────────────────────────────────────
 # No-op unless SENTRY_DSN is configured. PII is never sent (DPDP Act 2023).
@@ -76,6 +82,8 @@ if settings.sentry_dsn:
         send_default_pii=False,
     )
     logger.info("sentry_initialised", environment=settings.environment)
+elif settings.environment == "production":
+    logger.error("sentry_dsn_missing_in_production")
 
 # ── Nitya worker (background LISTEN/NOTIFY) ───────────────────────────────────
 _nitya_worker: NityaWorker | None = None
@@ -211,6 +219,9 @@ app.middleware("http")(rate_limit_middleware)
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(markets_router, prefix="/api/v1")
 
+# Owned lifecycle state for durable AI generation tasks
+app.include_router(ai_operations_router, prefix="/api/v1")
+
 # P04: auth (LinkedIn OAuth callback + MSG91 SMS OTP)
 app.include_router(auth_router, prefix="/api/v1")
 
@@ -222,6 +233,7 @@ app.include_router(voice_sessions_router, prefix="/api/v1")
 
 # P08: Aarya chat (SSE streaming)
 app.include_router(chat_router, prefix="/api/v1")
+app.include_router(chat_analysis_router, prefix="/api/v1")
 
 # P09: Job ingestion (Apify) + public job listing
 app.include_router(jobs_router, prefix="/api/v1")

@@ -1,5 +1,10 @@
 # Hireschema — Build Phases (User Journey Order)
 
+> Release contract: see `HIRELOOP_MVP.md`. Existing capabilities are retained;
+> current hardening makes privacy opt-in, resume parsing and Nitya drafts durable,
+> requires explicit recruiter role context, and promotes security/build checks to
+> release-blocking CI gates. Real-provider beta smoke remains required.
+
 Phases follow the **exact order a real user experiences the product**, not technical concerns.
 Build → test → ship each phase before moving to the next.
 
@@ -26,6 +31,26 @@ BLOCKED ON KEYS ─────────────────────�
 NOT STARTED ────────────────────────────────────── S22 (infra deploy)
 DEFERRED ───────────────────────────────────────── S23 (payments)
 ```
+
+### Durable AI operations (2026-07-22) — code complete, prod rollout gated
+
+Non-interactive external-AI generation (career path/intelligence, Application Kits,
+tailored resumes, learning roadmaps, resume parse/enrichment) now returns `202` with
+an owned `ai_operations` lifecycle record; workers publish progress; the SPA polls and
+recovers after reload. Chat + voice remain real-time (CI allowlist).
+
+**Verification (Task 10 local gate — 2026-07-23):**
+- Backend: ruff check/format + pytest — 984 passed, 27 skipped (integration DB not required)
+- Frontend: app vitest (33) + typecheck + lint + `build:web` + `build:app` — pass
+- Audits: `pnpm audit --prod --audit-level high` reports 3 high on `next@15.5.20` (pre-existing; not introduced by this branch); `pip-audit` — no known vulns; gitleaks findings are pre-existing test fixtures (`re_test_key_…`)
+- Migration dry-run (`supabase db push --linked --dry-run`): pending **only** `20260722173000_ai_operations.sql` (not applied)
+
+**Pending human production approval (do not execute without explicit go):**
+1. Backend-first deploy order — apply migration → Railway API/worker → then Vercel
+2. Authenticated prod smoke checklist — submit/202/reload/complete/retry/cancel/IDOR 404
+3. Railway latency audit — 7-day HTTP logs; converted submissions must stay under ordinary budget
+
+Plan: `docs/superpowers/plans/2026-07-22-durable-ai-operations.md`
 
 ---
 
@@ -62,7 +87,7 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 ## S02 — Phone OTP Verification (optional)  ✅ 🧪
 
-> Optional phone verification: India (+91/MSG91) when configured. Other markets can use the app without SMS OTP.
+> Optional phone verification: India (+91/MSG91) when configured.
 > Not required for signup — available in Settings when configured.
 
 **What's built:**
@@ -79,7 +104,7 @@ SELECT id, email, role, created_at FROM public.users ORDER BY created_at DESC LI
 
 **Env needed:**
 ```
-ENABLED_MARKETS=IN,US,GB,AT,DE,FR,AE,AU,CA,CH,NL,SG
+ENABLED_MARKETS=IN
 MSG91_AUTH_KEY=...          # IN OTP (+91 only)
 ```
 
@@ -92,12 +117,12 @@ SELECT email, phone_verified, market, phone FROM public.users WHERE phone_verifi
 
 ## S03 — Onboarding Wizard (v2)  ✅ 🧪
 
-> Two-step activation after signup: welcome → CV + market + DPDP consent.
+> Two-step activation after signup: welcome → CV + DPDP consent (India-only).
 > On completion → `/dashboard` with jobs panel open.
 
 **Steps:**
 1. **Welcome** — Aarya introduces herself
-2. **Activate** — CV upload, market picker, legal consent → `complete-onboarding`
+2. **Activate** — CV upload, legal consent → `complete-onboarding` (market fixed to IN)
 
 **What's built:**
 - `/onboarding/OnboardingFlow.tsx` — v2 two-step wizard
@@ -142,11 +167,11 @@ ORDER BY c.created_at DESC LIMIT 5;
 5. Try the mic button (Chrome/Edge) — speak a message
 ```
 
-**Model:** `anthropic/claude-opus-4.7` via OpenRouter (already configured)
+**Model:** `anthropic/claude-opus-4.7` via OpenRouter
 
-**Env needed (already set):**
+**Env needed (configure through the deployment secret manager):**
 ```
-OPENROUTER_API_KEY=sk-or-v1-770a06...
+OPENROUTER_API_KEY=<set in api/.env / Railway — never commit>
 OPENROUTER_PRIMARY_MODEL=anthropic/claude-opus-4.7
 ```
 
@@ -158,11 +183,11 @@ JOIN public.candidates ca ON ca.id = c.candidate_id ORDER BY c.created_at DESC L
 
 ---
 
-## S05 — Voice Chat (15-min Aarya Session)  ✅ 🧪
+## S05 — Private Aarya Career Discovery (15-minute call)  ✅ 🧪
 
-> User taps the phone icon → `/voice` page.
-> Aarya speaks to them, they reply by voice.
-> Same Aarya agent as text chat. STT runs via Deepgram for reliability.
+> A candidate can start now or schedule a private 15-minute conversation with Aarya.
+> Aarya learns about their experience, skills, languages, location, and job preferences.
+> The same Aarya agent handles text and voice; STT runs via Deepgram for reliability.
 
 **Architecture (Deepgram STT + browser TTS):**
 ```
@@ -171,27 +196,56 @@ Mic → MediaRecorder → /api/v1/voice/stt (Deepgram Nova-3, language=multi) �
 ```
 
 **What's built:**
-- `/voice` page with animated waveform UI
+- Start-now and scheduled-call entry points in the dashboard voice experience
+- Scheduling is non-exclusive across candidates; a candidate cannot double-book the same minute
 - `useVoice.ts` — MediaRecorder → Deepgram STT (server-side) + SpeechSynthesis TTS
-- Conversation loop (listen → stream → speak → repeat)
-- On session end → `POST /api/v1/voice/sessions` → unlocks `/matches` gate
+- A deterministic 15-minute coverage policy and conversation loop (listen → stream → speak → repeat)
+- A private, persistent transcript; audio is not retained by default
+- Google Calendar is optional reminder enrichment and does not create or promise Google Meet
+- Profile and job-preference mutation is deferred to a candidate-confirmed Phase 2 review flow
+- On session end → `POST /api/v1/voice-sessions/{session_id}/complete` records the final lifecycle state
 
 **How to test:**
 ```
 1. Add `DEEPGRAM_API_KEY` to `api/.env` and restart API
-2. Open /voice in Chrome or Edge
-3. Tap the mic button
+2. Open `/dashboard` in Chrome or Edge
+3. Choose Start now, or schedule a time and open the reminder deep link
 4. Say: "Hi Aarya, I'm a senior software engineer looking for roles in Bengaluru"
 5. Aarya should respond via speaker
 6. Have a short conversation, then tap End
 7. Should redirect to /dashboard
+8. Confirm the transcript persists, no audio URL is stored, and profile/preferences are unchanged
+9. In the browser network panel, confirm the completion request is
+   `POST /api/v1/voice-sessions/{session_id}/complete`
 ```
 
-**DB check (should unlock /matches):**
+**DB check (lifecycle + durable interview coverage):**
 ```sql
-SELECT vs.status, vs.duration_secs FROM public.voice_sessions vs
-JOIN public.candidates c ON c.id = vs.candidate_id ORDER BY vs.created_at DESC LIMIT 3;
+SELECT
+  vs.id,
+  vs.status,
+  vs.conversation_id,
+  vs.consent_version,
+  vs.started_at,
+  vs.ended_at,
+  vs.duration_secs,
+  vs.completion_reason,
+  vs.transcript_version,
+  vs.extraction_status,
+  vs.recording_url,
+  cis.state_version,
+  cis.state
+FROM public.voice_sessions vs
+JOIN public.candidates c ON c.id = vs.candidate_id
+LEFT JOIN public.career_interview_states cis ON cis.session_id = vs.id
+WHERE vs.session_type = 'career_chat'
+ORDER BY vs.created_at DESC
+LIMIT 3;
 ```
+
+Expected after completion: `status = 'completed'`, `ended_at` and
+`completion_reason` are set, `duration_secs` is at most 960, `recording_url IS NULL`,
+and the linked `career_interview_states` row contains the final coverage state.
 
 ---
 
@@ -204,6 +258,7 @@ JOIN public.candidates c ON c.id = vs.candidate_id ORDER BY vs.created_at DESC L
 - `ResumeUpload.tsx` component (drag-drop + file picker)
 - `POST /api/v1/resumes/upload` → Affinda parse → updates `candidates` row
 - `resumes` table row → triggers `/matches` gate unlock
+- Durable AI ops: parse/profile-expansion enqueue via `ai_operations` (`202` + shared progress UI)
 
 **How to test:**
 ```
@@ -416,7 +471,7 @@ Never use SendGrid for cold/unsolicited intro emails.
 
 **What's built:**
 - "Tailor Resume" action on job cards
-- `POST /api/v1/tailored-resumes/tailor` → background LLM task (~30s)
+- `POST /api/v1/tailored-resumes/tailor` → durable `ai_operations` enqueue (`202`, progress/retry/cancel)
 - `GET /api/v1/tailored-resumes/tailored/{id}/download` → HTML
 
 **How to test:**

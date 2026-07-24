@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema v2 — Business &amp; Technology</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Business &amp; Technology v2</span>
+  <div class="deck">
+
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">v2 · Deck 01 · Leadership</p>
+      <h1>Business &amp; technology</h1>
+      <p class="lede">Two agents. One Postgres candidate graph. Multi-market marketplace — with honest status on what’s live vs pending.</p>
+      <p class="meta">July 2026 · Download pack: Hireschema-decks-v2.zip</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">One line</p>
+      <h2>Not a job board with a chatbot</h2>
+      <p class="lede">Candidates get Aarya (career agent). Recruiters get Nitya (pipeline agent). Both read/write the same Supabase graph. Intros handshake via DB rows — never agent-to-agent RPC.</p>
+      <div class="split-agents">
+        <div class="agent-card aarya"><div class="who">Candidate</div><h3>Aarya</h3><p>Profile · chat/voice · Google Jobs ingest · scored matches · Request Intro</p></div>
+        <div class="bridge"><div class="ring">DB</div>intro_requests</div>
+        <div class="agent-card nitya"><div class="who">Recruiter</div><h3>Nitya</h3><p>JD · publish · score candidates · draft/send via Gmail OAuth</p></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Value</p>
+      <h2>Why it exists</h2>
+      <div class="grid-2">
+        <div class="card accent-edge"><h3>Candidate</h3><p>Less apply-spam. Scored roles from live ingest. One-tap intro from <em>their</em> Gmail.</p></div>
+        <div class="card accent-edge"><h3>Recruiter</h3><p>JD in minutes (form or URL). Shortlist from the same matcher. Warm intros, not spray.</p></div>
+      </div>
+      <div class="tag-row"><span class="tag">Markets IN · US · UK+</span><span class="tag muted">Local currency</span><span class="tag muted">Market-scoped jobs</span></div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Surfaces</p>
+      <h2>What ships where</h2>
+      <div class="arch">
+        <div class="arch-row"><div class="arch-label">web/</div><div class="arch-nodes"><span class="node">Marketing · hireschema.com</span><span class="node">Next.js 15 · Vercel</span></div></div>
+        <div class="arch-row"><div class="arch-label">app/</div><div class="arch-nodes"><span class="node hi">Candidate SPA</span><span class="node hi">Recruiter SPA</span><span class="node">/r/{slug} public</span><span class="node">Zustand · Realtime</span></div></div>
+        <div class="arch-row"><div class="arch-label">api/</div><div class="arch-nodes"><span class="node hi">FastAPI · LangGraph</span><span class="node">MatchingEngine</span><span class="node">JobIngester</span><span class="node">Aarya · Nitya</span></div></div>
+        <div class="arch-row"><div class="arch-label">Data</div><div class="arch-nodes"><span class="node hi">Supabase Postgres + pgvector</span><span class="node">Auth · Storage · Realtime</span></div></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Architecture</p>
+      <h2>System map</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+          <rect x="20" y="30" width="140" height="60" rx="10" fill="#1c1c1c" stroke="#2a2a2a"/><text x="90" y="65" text-anchor="middle" fill="#fafafa" font-size="12" font-family="Syne">Candidate app</text>
+          <rect x="20" y="110" width="140" height="60" rx="10" fill="#1c1c1c" stroke="#2a2a2a"/><text x="90" y="145" text-anchor="middle" fill="#fafafa" font-size="12" font-family="Syne">Recruiter app</text>
+          <rect x="20" y="190" width="140" height="60" rx="10" fill="#1c1c1c" stroke="#2a2a2a"/><text x="90" y="225" text-anchor="middle" fill="#fafafa" font-size="12" font-family="Syne">Marketing</text>
+          <rect x="220" y="70" width="180" height="130" rx="12" fill="#1c1c1c" stroke="#383838"/><text x="310" y="110" text-anchor="middle" fill="#9fe870" font-size="13" font-family="Syne">FastAPI</text><text x="310" y="135" text-anchor="middle" fill="#a3a3a3" font-size="11">LangGraph · Matching</text><text x="310" y="155" text-anchor="middle" fill="#a3a3a3" font-size="11">Ingest · Intros</text><text x="310" y="175" text-anchor="middle" fill="#a3a3a3" font-size="11">Railway / ECS</text>
+          <rect x="450" y="30" width="280" height="90" rx="12" fill="#1c1c1c" stroke="#9fe870"/><text x="590" y="70" text-anchor="middle" fill="#9fe870" font-size="13" font-family="Syne">Supabase</text><text x="590" y="95" text-anchor="middle" fill="#a3a3a3" font-size="11">Postgres · pgvector · Auth · Realtime</text>
+          <rect x="450" y="150" width="280" height="110" rx="12" fill="#1c1c1c" stroke="#2a2a2a"/><text x="590" y="185" text-anchor="middle" fill="#fafafa" font-size="12" font-family="Syne">Services in use</text><text x="590" y="210" text-anchor="middle" fill="#a3a3a3" font-size="11">OpenRouter · Deepgram · Apify</text><text x="590" y="230" text-anchor="middle" fill="#a3a3a3" font-size="11">Firecrawl · Resend · Gmail OAuth</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Stack (live)</p>
+      <h2>Confirmed technology</h2>
+      <table class="table">
+        <thead><tr><th>Layer</th><th>Choice</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Frontend</td><td>Next.js 15 · TS · Tailwind · shadcn</td><td>web + app</td></tr>
+          <tr><td>Auth</td><td>Supabase · LinkedIn OAuth</td><td>Phone OTP not in active stack</td></tr>
+          <tr><td>API / agents</td><td>FastAPI · LangGraph · asyncpg</td><td>Single-threaded master loop</td></tr>
+          <tr><td>AI</td><td>OpenRouter + embedding-3-small</td><td>Fallback model required</td></tr>
+          <tr><td>Voice</td><td>Deepgram STT/TTS</td><td>Same chat surface</td></tr>
+          <tr><td>Jobs</td><td>Apify Google Jobs scraper</td><td>Not LinkedIn cookie scrapers</td></tr>
+          <tr><td>Email</td><td>Resend (txn) · Gmail OAuth (cold)</td><td>No SendGrid / MSG91 on slides</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Agents</p>
+      <h2>Master loop</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Think</strong><span>LLM over state</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Tool</strong><span>Structured call</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Execute</strong><span>Python services</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Write</strong><span>checkpoint + agent_actions</span></div>
+      </div>
+      <p class="note" style="margin-top:1.25rem">Intros: candidate taps Request Intro → <code>intro_requests</code> → NOTIFY → Nitya. No Aarya↔Nitya HTTP.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Trust</p>
+      <h2>DPDP posture</h2>
+      <div class="grid-3">
+        <div class="card"><h3>consent_log</h3><p>Purpose + timestamp per collection event.</p></div>
+        <div class="card"><h3>Export / delete</h3><p><code>GET /me/export</code> · <code>DELETE /me</code> soft-delete.</p></div>
+        <div class="card"><h3>bias_audit</h3><p>On every <code>match_scores</code> row.</p></div>
+      </div>
+      <p class="src">privacy@hireschema.com</p>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Status &amp; risks</p>
+      <h2>What is pending (candid)</h2>
+      <div class="grid-2">
+        <div class="card risk">
+          <h3>Product gaps</h3>
+          <p>Job match feed reliability · chat “find jobs” polish · E2E not fully proven with all keys</p>
+        </div>
+        <div class="card risk">
+          <h3>Dependencies</h3>
+          <p>Apify token · Gmail OAuth app · Resend · embedding/score workers must run after ingest</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem"><h3>Tracker reality</h3><p>S01–S21 largely coded · needs manual testing · S22 infra incomplete · payments deferred · <strong style="color:var(--text)">Aarya screening call = post-MVP</strong> (after jobs stable)</p></div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">Next 2 weeks</p>
+      <h2>Near-term (stabilize MVP)</h2>
+      <div class="grid-2">
+        <div class="card road"><h3>Stabilize matching</h3><p>Find jobs / Find new · impression hygiene · score floors · chat→matches parity</p></div>
+        <div class="card road"><h3>Close key loops</h3><p>Gmail intro E2E · Apify ingest monitoring · Resend lifecycle smoke</p></div>
+      </div>
+    </section>
+
+    <section class="slide dense">
+      <p class="eyebrow">After MVP is stable</p>
+      <h2>Aarya screening call (planned)</h2>
+      <p class="lede" style="font-size:1rem">Once jobs + candidate + recruiter basics work: every candidate schedules a <strong style="color:var(--text)">15–20 min Deepgram voice call with Aarya</strong>.</p>
+      <div class="grid-2" style="margin-top:1rem">
+        <div class="card accent-edge">
+          <div class="label">Purpose 1 · Candidate</div>
+          <h3>Richer profile → better jobs</h3>
+          <p>Experience, career path, preferences from the call update the graph so matches get more relevant.</p>
+        </div>
+        <div class="card accent-edge">
+          <div class="label">Purpose 2 · Recruiter</div>
+          <h3>Screening on apply</h3>
+          <p>When a candidate applies to a recruiter JD, backend screens call transcript + JD and shows a screening result to the recruiter.</p>
+        </div>
+      </div>
+      <p class="note" style="margin-top:1rem">Prerequisite: stable ingest/match and working candidate + recruiter MVP. Builds on Deepgram voice (S05 exists as a lighter session today).</p>
+    </section>
+
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Next</p>
+      <h1>Candidate deep-dive</h1>
+      <p class="lede">Ingest pipeline, score math, Request Intro — with source files called out.</p>
+      <p class="meta"><a href="index.html" style="color:var(--accent)">Index</a> · <a href="02-candidate.html" style="color:var(--accent)">Deck 02 →</a></p>
+    </section>
+  </div>
+  <nav class="nav">
+    <div class="nav-left"><a href="index.html" style="color:var(--muted);text-decoration:none">Index</a><span class="kbd">← → · F · Print→PDF</span></div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right"><span id="slide-counter"></span><button type="button" id="prev">Prev</button><button type="button" id="next" class="primary">Next</button></div>
+  </nav>
+  <script src="shared.js"></script>
+</body>
+</html>

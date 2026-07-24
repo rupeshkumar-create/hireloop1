@@ -540,3 +540,131 @@ def test_fallback_location_score_respects_country_scope() -> None:
 
     assert result is not None
     assert result["location_score"] == 0.9
+
+
+class DuplicateCachedScoresDb:
+    """Two near-duplicate cached matches — feed at limit=50 must collapse to one."""
+
+    def __init__(self) -> None:
+        self.candidate_id = uuid.uuid4()
+        self.last_match_query: str | None = None
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        assert "public.candidates" in query
+        return {
+            "id": self.candidate_id,
+            "current_title": "Software Engineer",
+            "current_company": "Acme SaaS",
+            "headline": "Backend platform engineer",
+            "summary": "Builds B2B SaaS products",
+            "years_experience": 5,
+            "skills": ["python", "react", "sql"],
+            "location_city": "Bengaluru",
+            "location_state": "Karnataka",
+            "expected_ctc_min": None,
+            "expected_ctc_max": None,
+            "remote_preference": "any",
+            "open_to_relocation": False,
+            "location_scope": "city",
+            "aarya_state": {},
+            "market": "IN",
+            "target_titles": ["Backend Software Engineer"],
+        }
+
+    async def fetchval(self, query: str, *args: object) -> int:
+        return 0
+
+    async def executemany(self, query: str, args: object) -> None:
+        return None
+
+    async def execute(self, query: str, *args: object) -> None:
+        return None
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        if "FROM public.match_scores" in query:
+            self.last_match_query = query
+            shared = {
+                "title": "Backend Software Engineer",
+                "company_name": "Acme India",
+                "location_city": "Bengaluru",
+                "location_state": "Karnataka",
+                "is_remote": False,
+                "employment_type": "full_time",
+                "seniority": "senior",
+                "ctc_min": None,
+                "ctc_max": None,
+                "salary_currency": "INR",
+                "skills_required": ["python", "sql"],
+                "description": "Build backend services for a B2B SaaS platform.",
+                "overall_score": 0.82,
+                "skills_score": 0.85,
+                "experience_score": 0.8,
+                "location_score": 1.0,
+                "ctc_score": 0.5,
+                "explanation": "Strong skill fit.",
+                "llm_rationale": None,
+                "llm_rationale_at": None,
+                "computed_at": datetime.now(UTC),
+                "has_kit": False,
+                "intro_status": None,
+                "scraped_at": datetime.now(UTC),
+            }
+            return [
+                {
+                    **shared,
+                    "job_id": uuid.uuid4(),
+                    "apply_url": "https://boards.example/acme-be?src=google",
+                    "overall_score": 0.84,
+                },
+                {
+                    **shared,
+                    "job_id": uuid.uuid4(),
+                    "apply_url": "https://boards.example/acme-be?src=ats",
+                    "overall_score": 0.80,
+                },
+            ]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_match_feed_dedupes_near_duplicates_at_limit_50(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_embed_score(*_a: object, **_kw: object) -> tuple[int, int]:
+        return 0, 0
+
+    monkeypatch.setattr(
+        "hireloop_api.services.embeddings.embed_pending_and_score_candidate",
+        fake_embed_score,
+    )
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
+    db = DuplicateCachedScoresDb()
+
+    result = await matches.get_match_feed(
+        min_score=0.35,
+        limit=50,
+        offset=0,
+        only_new=False,
+        current_user={"id": str(uuid.uuid4())},
+        db=db,  # type: ignore[arg-type]
+    )
+
+    assert len(result) == 1
+    assert result[0]["company_name"] == "Acme India"
+    assert result[0]["title"] == "Backend Software Engineer"
+    assert db.last_match_query is not None
+    assert "45 days" in db.last_match_query
+    assert "expires_at" in db.last_match_query
+
+
+@pytest.mark.asyncio
+async def test_match_count_dedupes_near_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(matches, "get_settings", _test_settings)
+    total = await matches.get_match_feed_count(
+        min_score=0.35,
+        current_user={"id": str(uuid.uuid4())},
+        db=DuplicateCachedScoresDb(),  # type: ignore[arg-type]
+    )
+    assert total == {"total": 1}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 from hireloop_api.config import Settings
@@ -17,12 +19,26 @@ def test_is_thin_description() -> None:
     assert not is_thin_description("x" * THIN_JD_MIN_CHARS)
 
 
-def test_validate_firecrawl_url_blocks_linkedin() -> None:
+def test_validate_firecrawl_url_blocks_linkedin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("99.86.1.1", 0)),
+        ],
+    )
     with pytest.raises(ValueError, match="LinkedIn"):
         validate_firecrawl_url("https://www.linkedin.com/jobs/view/123")
 
 
-def test_is_scrapable_job_url_greenhouse() -> None:
+def test_is_scrapable_job_url_greenhouse(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("99.86.1.1", 0)),
+        ],
+    )
     assert is_scrapable_job_url("https://boards.greenhouse.io/acme/jobs/123456")
 
 

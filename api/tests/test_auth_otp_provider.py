@@ -1,8 +1,8 @@
 import pytest
-from fastapi import HTTPException
+from pydantic import ValidationError
 
 from hireloop_api.config import Settings
-from hireloop_api.routes.auth import SendOTPRequest, _select_otp_provider, send_otp
+from hireloop_api.routes.auth import SendOTPRequest, _select_otp_provider
 
 MSG91_SETTINGS = {
     "msg91_auth_key": "msg91-key",
@@ -17,8 +17,8 @@ def make_settings(**overrides: object) -> Settings:
         "service_secret": "test-service-secret",
         "msg91_auth_key": "",
         "msg91_otp_template_id": "",
-        **overrides,
     }
+    values.update(overrides)
     return Settings(_env_file=None, **values)
 
 
@@ -27,10 +27,11 @@ def test_development_uses_msg91_for_india_when_configured() -> None:
     assert _select_otp_provider(settings, "IN") == "msg91"
 
 
-def test_development_uses_local_for_non_india() -> None:
+def test_non_india_market_normalises_to_india_otp() -> None:
+    """India-only product: US/GB codes normalise to IN for provider selection."""
     settings = make_settings(environment="development", **MSG91_SETTINGS)
-    assert _select_otp_provider(settings, "US") == "local"
-    assert _select_otp_provider(settings, "DE") == "local"
+    assert _select_otp_provider(settings, "US") == "msg91"
+    assert _select_otp_provider(settings, "DE") == "msg91"
 
 
 def test_development_uses_local_when_no_provider_configured() -> None:
@@ -43,59 +44,18 @@ def test_production_uses_msg91_for_india_when_configured() -> None:
     assert _select_otp_provider(settings, "IN") == "msg91"
 
 
-def test_production_unconfigured_for_non_india() -> None:
-    settings = make_settings(environment="production", **MSG91_SETTINGS)
-    assert _select_otp_provider(settings, "US") == "unconfigured"
-    assert _select_otp_provider(settings, "GB") == "unconfigured"
+def test_production_unconfigured_without_msg91() -> None:
+    settings = make_settings(environment="production")
+    assert _select_otp_provider(settings, "IN") == "unconfigured"
 
 
-@pytest.mark.asyncio
-async def test_send_otp_unconfigured_in_production_for_us() -> None:
-    settings = make_settings(environment="production", **MSG91_SETTINGS)
-    phone = "+14155550100"
-
-    class _FakeDB:
-        async def fetchrow(self, query: str, *args: object) -> None:
-            return None
-
-    with pytest.raises(HTTPException) as exc:
-        await send_otp(
-            SendOTPRequest(phone=phone, market="US"),
-            request=None,  # type: ignore[arg-type]
-            settings=settings,
-            current_user={"id": "user-id"},
-            db=_FakeDB(),  # type: ignore[arg-type]
-        )
-
-    assert exc.value.status_code == 503
-    assert "India" in str(exc.value.detail)
+def test_send_otp_rejects_non_india_phone() -> None:
+    with pytest.raises(ValidationError) as exc:
+        SendOTPRequest(phone="+14155550100", market="IN")
+    assert "Indian" in str(exc.value) or "+91" in str(exc.value)
 
 
-@pytest.mark.asyncio
-async def test_development_local_otp_for_us(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = make_settings(environment="development")
-    phone = "+14155550100"
-
-    class _FakeDB:
-        def __init__(self) -> None:
-            self.executed = 0
-
-        async def fetchrow(self, query: str, *args: object) -> None:
-            return None
-
-        async def execute(self, query: str, *args: object) -> str:
-            self.executed += 1
-            return "INSERT 0 1"
-
-    db = _FakeDB()
-    response = await send_otp(
-        SendOTPRequest(phone=phone, market="US"),
-        request=None,  # type: ignore[arg-type]
-        settings=settings,
-        current_user={"id": "user-id"},
-        db=db,  # type: ignore[arg-type]
-    )
-
-    assert response.delivery_channel == "local_dev"
-    assert response.dev_otp is not None
-    assert db.executed >= 1
+def test_send_otp_accepts_india_phone() -> None:
+    req = SendOTPRequest(phone="+919876543210", market="IN")
+    assert req.phone == "+919876543210"
+    assert req.market == "IN"

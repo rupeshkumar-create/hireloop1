@@ -71,7 +71,7 @@ def brand_shell(
 </td></tr>
 <tr><td style="padding:0 28px 24px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
   <p style="margin:0;font-size:12px;line-height:1.5;color:{INK_MUTED};">
-    Hireschema — AI recruiting for India, the US &amp; the UK
+    Hireschema — AI recruiting for India
   </p>
   <p style="margin:8px 0 0;font-size:11px;line-height:1.5;color:#9CA3AF;">
     Manage email alerts in Settings → Notifications on Hireschema.

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hireschema — Candidate (Aarya)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <span id="deck-title" hidden>Candidate · Aarya</span>
+  <div class="deck">
+
+    <section class="slide title-slide active">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">Deck 02 · Candidate</p>
+      <h1>Aarya — engines &amp; architecture</h1>
+      <p class="lede">From LinkedIn signup to Request Intro: how the candidate product finds jobs, scores them, and opens doors.</p>
+      <p class="meta">July 2026</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">A → Z</p>
+      <h2>Candidate journey</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Signup</strong><span>LinkedIn OAuth</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>Onboard</strong><span>Profile · CV · prefs</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>Chat</strong><span>Aarya text/voice</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Matches</strong><span>Scored feed</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Intro</strong><span>Gmail → HM</span></div>
+      </div>
+      <p class="note" style="margin-top:1.75rem">Optional: phone OTP (+91 / MSG91) in Settings — not a signup blocker.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">App architecture</p>
+      <h2>Candidate SPA shape</h2>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-label">Routes</div>
+          <div class="arch-nodes">
+            <span class="node">/signup · /onboarding</span>
+            <span class="node hi">/chat (Aarya)</span>
+            <span class="node hi">/jobs · /matches</span>
+            <span class="node">/profile · /settings</span>
+            <span class="node">/r/{slug} public apply</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Client</div>
+          <div class="arch-nodes">
+            <span class="node">Next.js App Router</span>
+            <span class="node">Zustand stores</span>
+            <span class="node">api.ts → FastAPI only</span>
+            <span class="node">Supabase Realtime (actions)</span>
+          </div>
+        </div>
+        <div class="arch-row">
+          <div class="arch-label">Gate</div>
+          <div class="arch-nodes">
+            <span class="node hi">CandidateGate</span>
+            <span class="node">Public paths stay public (role pages)</span>
+            <span class="node">Recruiter users redirected off candidate chrome</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Profile engine</p>
+      <h2>How the candidate graph fills</h2>
+      <div class="grid-3">
+        <div class="card accent-edge">
+          <div class="label">Source</div>
+          <h3>LinkedIn</h3>
+          <p>OAuth identity + profile fields; LinkedIn URL on portfolio / live link.</p>
+        </div>
+        <div class="card accent-edge">
+          <div class="label">Source</div>
+          <h3>Resume</h3>
+          <p>Upload → Supabase Storage (signed URLs) → parser → skills / experience.</p>
+        </div>
+        <div class="card accent-edge">
+          <div class="label">Source</div>
+          <h3>Aarya chat</h3>
+          <p>Preferences, location, seniority, must-haves — written back to candidate state.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1.25rem">
+        <h3>Embeddings</h3>
+        <p>Profile + skills vectors (1536-d) in pgvector with HNSW · cosine similarity only.</p>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Aarya agent</p>
+      <h2>Master loop + tools</h2>
+      <div class="two-col">
+        <div>
+          <ul class="list-clean">
+            <li><strong style="color:var(--text)">profile_read</strong> — load candidate state</li>
+            <li><strong style="color:var(--text)">job_search</strong> — query / trigger ingest</li>
+            <li><strong style="color:var(--text)">match_score</strong> — explain a role</li>
+            <li><strong style="color:var(--text)">request_intro</strong> — write intro_requests</li>
+            <li><strong style="color:var(--text)">voice_response</strong> — TTS path</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="label">UI contract</div>
+          <h3>Same surface for voice &amp; text</h3>
+          <p>Mic in the chat composer. STT → text → same LLM pipeline. No separate voice screen.</p>
+          <p style="margin-top:0.75rem;color:var(--muted)">Deepgram Nova-3 in · Aura out (timeout guarded).</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Job finding</p>
+      <h2>From “find jobs” to cards</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg" aria-label="Job find pipeline">
+          <rect x="20" y="90" width="130" height="80" rx="12" fill="#1c1c1c" stroke="#9fe870"/>
+          <text x="85" y="125" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="13" font-weight="700">User intent</text>
+          <text x="85" y="145" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">Find jobs / chat</text>
+
+          <text x="175" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="200" y="90" width="140" height="80" rx="12" fill="#1c1c1c" stroke="#2a2a2a"/>
+          <text x="270" y="125" text-anchor="middle" fill="#fafafa" font-family="Syne,sans-serif" font-size="13" font-weight="700">API matches</text>
+          <text x="270" y="145" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">title · market · prefs</text>
+
+          <text x="360" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="385" y="70" width="150" height="120" rx="12" fill="rgba(159,232,112,0.12)" stroke="#9fe870"/>
+          <text x="460" y="110" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="13" font-weight="700">Apify ingest</text>
+          <text x="460" y="132" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">LinkedIn Jobs</text>
+          <text x="460" y="152" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">no-cookie actors</text>
+          <text x="460" y="172" text-anchor="middle" fill="#6b6b6b" font-family="DM Sans,sans-serif" font-size="10">force refresh / empty title OK</text>
+
+          <text x="555" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="580" y="90" width="130" height="80" rx="12" fill="#1c1c1c" stroke="#2a2a2a"/>
+          <text x="645" y="125" text-anchor="middle" fill="#fafafa" font-family="Syne,sans-serif" font-size="13" font-weight="700">jobs table</text>
+          <text x="645" y="145" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">+ embeddings</text>
+
+          <text x="730" y="135" fill="#6b6b6b" font-size="18">→</text>
+
+          <rect x="755" y="90" width="125" height="80" rx="12" fill="#1c1c1c" stroke="#9fe870"/>
+          <text x="817" y="125" text-anchor="middle" fill="#9fe870" font-family="Syne,sans-serif" font-size="13" font-weight="700">match_scores</text>
+          <text x="817" y="145" text-anchor="middle" fill="#a3a3a3" font-family="DM Sans,sans-serif" font-size="11">feed cards</text>
+        </svg>
+      </div>
+      <p class="note">“Find new” excludes already-impressed jobs — no silent re-serve of old cards.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Matching</p>
+      <h2>Score composition</h2>
+      <div class="two-col">
+        <div>
+          <p class="lede" style="font-size:1rem;margin-bottom:0.5rem">Hybrid signals fused (RRF-style) so one strong skill hit isn’t buried by weak embeddings.</p>
+          <div class="score-bars">
+            <div class="score-row"><span>Skills</span><div class="bar"><i style="width:88%"></i></div><span class="w">high</span></div>
+            <div class="score-row"><span>Profile emb.</span><div class="bar"><i style="width:72%"></i></div><span class="w">med</span></div>
+            <div class="score-row"><span>Skills emb.</span><div class="bar"><i style="width:65%"></i></div><span class="w">med</span></div>
+            <div class="score-row"><span>Constraints</span><div class="bar"><i style="width:55%"></i></div><span class="w">gate</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>What the card shows</h3>
+          <ul class="list-clean" style="margin-top:0.5rem">
+            <li>Overall score + skill match “N of M”</li>
+            <li>skills_matched vs skills_gap</li>
+            <li>LLM rationale (persisted)</li>
+            <li>Intro status chip when requested</li>
+            <li>bias_audit JSON on every score row</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Market rules</p>
+      <h2>Visibility &amp; markets</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Candidate.market</h3>
+          <p>ISO country code (IN default). Jobs and candidates scoped by market; prices in local currency.</p>
+        </div>
+        <div class="card">
+          <h3>Job visibility</h3>
+          <p><strong style="color:var(--text)">Onsite</strong> → same country_code. <strong style="color:var(--text)">Remote</strong> → allowed_regions or worldwide.</p>
+        </div>
+      </div>
+      <p class="note"><code>ENABLED_MARKETS</code> controls which regions ingest jobs.</p>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Request Intro</p>
+      <h2>Handshake via DB only</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="n">01</div><strong>Tap Intro</strong><span>Candidate confirms</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">02</div><strong>intro_requests</strong><span>Row + status</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">03</div><strong>NOTIFY</strong><span>Nitya wakes</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">04</div><strong>Enrich HM</strong><span>Apify + NeverBounce</span></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="n">05</div><strong>Gmail send</strong><span>Candidate OAuth</span></div>
+      </div>
+      <div class="grid-2" style="margin-top:1.5rem">
+        <div class="card warn">
+          <h3>Never SendGrid for cold</h3>
+          <p>Transactional mail only. Cold HM email always from the candidate’s connected Gmail.</p>
+        </div>
+        <div class="card">
+          <h3>Status in the feed</h3>
+          <p>Intro state maps onto match cards — requested, sent, replied, etc.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Realtime</p>
+      <h2>Transparency UI</h2>
+      <div class="grid-2">
+        <div class="card accent-edge">
+          <h3>agent_actions</h3>
+          <p>Each tool call → row (job_id, action_type, payload, ts). Frontend subscribes via Supabase Realtime.</p>
+        </div>
+        <div class="card">
+          <h3>Copy pattern</h3>
+          <p>“Aarya performed 7 actions on your profile.” — running count, not a black box.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Public apply</p>
+      <h2>Recruiter role → candidate path</h2>
+      <ul class="list-clean">
+        <li>Public page <code>/r/{slug}</code> stays reachable for everyone</li>
+        <li>“Apply for this job” → candidate signup with post-auth redirect</li>
+        <li>Publish sets apply_url; onboarding honors return to Jobs</li>
+        <li>Logged-in recruiters are not yanked off public role pages</li>
+      </ul>
+    </section>
+
+    <section class="slide title-slide">
+      <div class="brand-mark"><span class="dot">H</span> Hireschema</div>
+      <p class="eyebrow">End of deck 02</p>
+      <h1>Candidate side complete</h1>
+      <p class="lede">Next: recruiter signup → JD → find candidates → Nitya.</p>
+      <p class="meta"><a href="01-business-overview.html" style="color:var(--accent)">← Business</a> &nbsp;·&nbsp; <a href="03-recruiter.html" style="color:var(--accent)">Recruiter →</a></p>
+    </section>
+  </div>
+
+  <nav class="nav">
+    <div class="nav-left">
+      <a href="index.html" style="color:var(--muted);text-decoration:none">All decks</a>
+      <span class="kbd">← → space · F fullscreen</span>
+    </div>
+    <div class="progress"><i id="progress-bar"></i></div>
+    <div class="nav-right">
+      <span id="slide-counter">1 / 12</span>
+      <button type="button" id="prev">Prev</button>
+      <button type="button" id="next" class="primary">Next</button>
+    </div>
+  </nav>
+  <script src="shared.js"></script>
+</body>
+</html>

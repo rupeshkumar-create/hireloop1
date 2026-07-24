@@ -12,6 +12,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import asyncpg
 import structlog
@@ -40,6 +41,12 @@ from hireloop_api.market_db import fetch_candidate_market
 from hireloop_api.markets import currency_for_market, job_visible_for_market_sql, normalize_market
 from hireloop_api.services.candidate_display_name import resolve_candidate_display_name
 from hireloop_api.services.career_intelligence import CareerIntelligenceService
+from hireloop_api.services.career_interview import (
+    ActiveCareerInterviewNotFoundError,
+    CareerInterviewExpiredError,
+    CareerInterviewTurn,
+    record_turn_and_select_focus,
+)
 from hireloop_api.services.career_path import CareerPathService
 from hireloop_api.services.career_path_selection import (
     career_path_options,
@@ -49,6 +56,7 @@ from hireloop_api.services.career_path_selection import (
 )
 from hireloop_api.services.chat_sessions import get_or_create_primary_conversation
 from hireloop_api.services.chat_stream import (
+    career_interview_completion_event,
     sse_done,
     sse_error,
     sse_jobs,
@@ -59,6 +67,7 @@ from hireloop_api.services.job_search_refresh import (
     fetch_shown_job_ids,
     wants_fresh_job_results,
 )
+from hireloop_api.services.job_visibility import LIVE_JOB_VISIBLE_SQL
 from hireloop_api.services.memory import (
     CandidateMemoryService,
     format_known_facts,
@@ -166,6 +175,28 @@ def _agent_message_text(content: object) -> str:
 def _extract_application_kit_job_ids(text: str) -> list[str]:
     """Return explicit job UUIDs from an application-kit request, preserving order."""
     return list(dict.fromkeys(match.group(0).lower() for match in _JOB_UUID_RE.finditer(text)))[:3]
+
+
+async def _enqueue_chat_application_kits(
+    db: asyncpg.Connection,
+    *,
+    user_id: str,
+    candidate_id: str,
+    job_ids: list[str],
+) -> None:
+    """Queue durable application-kit operations for chat-triggered apply requests."""
+    from hireloop_api.routes.application_kits import enqueue_application_kit_generation
+
+    user_uuid = uuid.UUID(str(user_id))
+    candidate_uuid = uuid.UUID(str(candidate_id))
+    for job_id in job_ids:
+        async with db.transaction():
+            await enqueue_application_kit_generation(
+                db,
+                user_id=user_uuid,
+                candidate_id=candidate_uuid,
+                job_id=uuid.UUID(str(job_id)),
+            )
 
 
 def _build_application_kit_reply(result: dict) -> str:
@@ -356,6 +387,196 @@ class CreateSessionResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     content_type: str = "text"  # 'text' | 'voice'
+    job_id: uuid.UUID | None = None
+    voice_session_id: uuid.UUID | None = None
+
+
+class ChatTurnRouting(BaseModel):
+    """Deterministic routing inputs kept separate from private interview turns."""
+
+    normal_routing_enabled: bool
+    user_intent: str
+    application_kit_job_ids: list[str]
+
+
+def resolve_chat_turn_routing(
+    body: SendMessageRequest, *, career_interview_mode: bool
+) -> ChatTurnRouting:
+    """Disable job/career-path/application routing during a private interview."""
+    if career_interview_mode:
+        return ChatTurnRouting(
+            normal_routing_enabled=False,
+            user_intent="general",
+            application_kit_job_ids=[],
+        )
+    user_intent = _detect_likely_intent(body.content)
+    application_kit_job_ids = (
+        _extract_application_kit_job_ids(body.content) if user_intent == "job_application" else []
+    )
+    return ChatTurnRouting(
+        normal_routing_enabled=True,
+        user_intent=user_intent,
+        application_kit_job_ids=application_kit_job_ids,
+    )
+
+
+def _memory_update_background(
+    *,
+    settings: Settings,
+    candidate_id: str,
+    conversation_id: str,
+    career_interview_mode: bool,
+) -> BackgroundTask | None:
+    """Keep private-call facts out of automatic profile and preference extraction."""
+    if career_interview_mode:
+        return None
+    return BackgroundTask(run_memory_update, settings, candidate_id, conversation_id)
+
+
+async def prepare_career_interview_turn(
+    *,
+    db: asyncpg.Connection,
+    message_id: uuid.UUID,
+    body: SendMessageRequest,
+    candidate_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> CareerInterviewTurn | None:
+    """Validate and persist a private career-call answer before invoking Aarya."""
+    if body.content_type != "voice" or body.voice_session_id is None:
+        return None
+    try:
+        return await record_turn_and_select_focus(
+            db,
+            session_id=body.voice_session_id,
+            candidate_id=candidate_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            content=body.content,
+            content_type=body.content_type,
+        )
+    except ActiveCareerInterviewNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Career call is no longer active") from exc
+    except CareerInterviewExpiredError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Career call reached its 15-minute limit",
+        ) from exc
+
+
+def _match_explanation_job_id(body: SendMessageRequest, user_intent: str) -> str | None:
+    """Resolve a selected job without requiring its UUID in user-visible chat copy."""
+    if user_intent != "match_explanation":
+        return None
+    if body.job_id is not None:
+        return str(body.job_id)
+    match = _JOB_UUID_RE.search(body.content)
+    return match.group(0).lower() if match else None
+
+
+def _build_match_explanation_reply(result: dict[str, Any]) -> str:
+    """Build a grounded explanation for exactly one selected role."""
+    error = str(result.get("error") or "").strip()
+    if error:
+        return (
+            "I couldn't load the match details for that role. It may no longer be active. "
+            "Open the role again and retry **Why this match**."
+        )
+
+    title = str(result.get("job_title") or "this role")
+    company = str(result.get("company_name") or "the company")
+    overall = float(result.get("overall_score") or 0)
+    explanation = str(result.get("explanation") or "").strip()
+    if not explanation:
+        explanation = "The score compares your skills, experience, location, and compensation fit."
+
+    dimensions = (
+        ("Skills", result.get("skills_score")),
+        ("Experience", result.get("experience_score")),
+        ("Location", result.get("location_score")),
+        ("Compensation", result.get("ctc_score")),
+    )
+    breakdown = "\n".join(
+        f"- {label}: **{round(float(value))}%**" for label, value in dimensions if value is not None
+    )
+    suffix = f"\n\n**Score breakdown**\n{breakdown}" if breakdown else ""
+    return f"**{round(overall)}% match — {title} at {company}**\n\n{explanation}{suffix}"
+
+
+async def _persist_user_message(
+    db: asyncpg.Connection,
+    *,
+    conversation_id: uuid.UUID,
+    content: str,
+    content_type: str,
+) -> None:
+    """Persist an ordinary user turn; private turns use the locked repository."""
+    await db.execute(
+        """
+        INSERT INTO public.messages (id, conversation_id, role, content, content_type)
+        VALUES ($1::uuid, $2::uuid, 'user', $3, $4)
+        """,
+        uuid.uuid4(),
+        conversation_id,
+        content,
+        content_type,
+    )
+
+
+async def load_prompt_history(
+    db: asyncpg.Connection,
+    conversation_id: uuid.UUID,
+    *,
+    voice_session_id: uuid.UUID | None,
+) -> list[asyncpg.Record]:
+    """Load either ordinary chat or one private call, never a mixed transcript."""
+    if voice_session_id is None:
+        return await db.fetch(
+            """
+            SELECT role, content FROM (
+                SELECT m.role, m.content, m.created_at
+                FROM public.messages m
+                WHERE m.conversation_id = $1::uuid
+                  AND m.voice_session_id IS NULL
+                ORDER BY m.created_at DESC
+                LIMIT 50
+            ) recent
+            ORDER BY created_at ASC
+            """,
+            conversation_id,
+        )
+    return await db.fetch(
+        """
+        SELECT role, content FROM (
+            SELECT m.role, m.content, m.created_at
+            FROM public.messages m
+            WHERE m.conversation_id = $1::uuid
+              AND m.voice_session_id = $2::uuid
+            ORDER BY m.created_at DESC
+            LIMIT 50
+        ) recent
+        ORDER BY created_at ASC
+        """,
+        conversation_id,
+        voice_session_id,
+    )
+
+
+async def load_recent_ordinary_assistant(
+    db: asyncpg.Connection, conversation_id: uuid.UUID
+) -> str | None:
+    """Load career-path context without exposing private-call replies."""
+    row = await db.fetchrow(
+        """
+        SELECT content FROM public.messages
+        WHERE conversation_id = $1::uuid
+          AND role = 'assistant'
+          AND voice_session_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        conversation_id,
+    )
+    return str(row["content"]) if row and row.get("content") else None
 
 
 async def _persist_assistant_reply(
@@ -363,40 +584,38 @@ async def _persist_assistant_reply(
     conversation_id: str,
     full_response: str,
     title_hint: str,
+    *,
+    assistant_message_id: uuid.UUID,
+    voice_session_id: uuid.UUID | None = None,
 ) -> None:
     """Save the assistant turn on a fresh pooled connection (avoids stale stream conn)."""
     pool = await get_db_pool(settings)
     async with pool.acquire() as conn:
-        last_row = await conn.fetchrow(
+        insert_result = await conn.execute(
             """
-            SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid AND role = 'assistant'
-            ORDER BY created_at DESC
-            LIMIT 1
+            INSERT INTO public.messages
+              (id, conversation_id, role, content, content_type, voice_session_id)
+            VALUES ($1::uuid, $2::uuid, 'assistant', $3, 'text', $4::uuid)
+            ON CONFLICT (id) DO NOTHING
             """,
-            coerce_uuid(conversation_id),
-        )
-        if last_row and (last_row["content"] or "").strip() == full_response.strip():
-            return
-        await conn.execute(
-            """
-            INSERT INTO public.messages (id, conversation_id, role, content, content_type)
-            VALUES ($1::uuid, $2::uuid, 'assistant', $3, 'text')
-            """,
-            uuid.uuid4(),
+            assistant_message_id,
             coerce_uuid(conversation_id),
             full_response,
+            voice_session_id,
         )
-        await conn.execute(
-            """
-            UPDATE public.conversations
-            SET title = CASE WHEN title = 'New conversation' THEN $1 ELSE title END,
-                updated_at = NOW()
-            WHERE id = $2::uuid
-            """,
-            title_hint[:60],
-            coerce_uuid(conversation_id),
-        )
+        if str(insert_result).endswith("0 0"):
+            return
+        if voice_session_id is None:
+            await conn.execute(
+                """
+                UPDATE public.conversations
+                SET title = CASE WHEN title = 'New conversation' THEN $1 ELSE title END,
+                    updated_at = NOW()
+                WHERE id = $2::uuid
+                """,
+                title_hint[:60],
+                coerce_uuid(conversation_id),
+            )
 
 
 async def _prefetch_top_jobs(
@@ -421,7 +640,7 @@ async def _prefetch_top_jobs(
           AND j.is_active = TRUE
           AND {vis}
           AND j.deleted_at IS NULL
-          AND (j.expires_at IS NULL OR j.expires_at > NOW())
+          AND {LIVE_JOB_VISIBLE_SQL}
         ORDER BY ms.overall_score DESC NULLS LAST
         LIMIT $2::integer
         """,
@@ -685,6 +904,7 @@ async def list_sessions(
                (
                  SELECT count(*) FROM public.messages m
                  WHERE m.conversation_id = c.id
+                   AND m.voice_session_id IS NULL
                ) as message_count
         FROM public.conversations c
         JOIN public.candidates ca ON ca.id = c.candidate_id
@@ -724,6 +944,7 @@ async def get_user_chat_history(
         FROM public.messages m
         WHERE m.conversation_id = $1::uuid
           AND m.role IN ('user', 'assistant')
+          AND m.voice_session_id IS NULL
         ORDER BY m.created_at ASC
         LIMIT $2 OFFSET $3
         """,
@@ -736,6 +957,7 @@ async def get_user_chat_history(
         SELECT count(*) FROM public.messages m
         WHERE m.conversation_id = $1::uuid
           AND m.role IN ('user', 'assistant')
+          AND m.voice_session_id IS NULL
         """,
         uuid.UUID(convo_id),
     )
@@ -759,10 +981,11 @@ async def send_message(
     Send a message to Aarya and stream the response.
     Uses Server-Sent Events (text/event-stream).
     """
-    # #48: every turn is real LLM spend — cap per user per hour.
-    check_rate_limit(str(current_user["id"]), "chat_turn", max_per_hour=60)
-
     pool = await get_db_pool(settings)
+
+    # #48: every turn is real LLM spend — cap per user per hour (cluster-wide).
+    async with pool.acquire() as rl_db:
+        await check_rate_limit(str(current_user["id"]), "chat_turn", max_per_hour=60, db=rl_db)
 
     # Pre-stream DB work on a short-lived connection — do not hold through SSE.
     async with pool.acquire() as db:
@@ -779,7 +1002,18 @@ async def send_message(
         if not convo:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        candidate_id = str(convo["candidate_id"])
+        candidate_uuid = uuid.UUID(str(convo["candidate_id"]))
+        candidate_id = str(candidate_uuid)
+        user_message_id = uuid.uuid4()
+        career_interview_turn = await prepare_career_interview_turn(
+            db=db,
+            message_id=user_message_id,
+            body=body,
+            candidate_id=candidate_uuid,
+            conversation_id=coerce_uuid(conversation_id),
+        )
+        career_interview_mode = career_interview_turn is not None
+        turn_routing = resolve_chat_turn_routing(body, career_interview_mode=career_interview_mode)
         candidate_market = await fetch_candidate_market(db, uuid.UUID(candidate_id))
         memory_summary = await CandidateMemoryService.get_memory_summary(db, candidate_id)
         career_facts = await CandidateMemoryService.get_career_facts(db, candidate_id)
@@ -795,17 +1029,13 @@ async def send_message(
         open_questions = await CareerIntelligenceService.get_open_questions(db, candidate_id)
         profile_completeness = await CareerIntelligenceService.get_completeness(db, candidate_id)
 
-        user_msg_id = str(uuid.uuid4())
-        await db.execute(
-            """
-            INSERT INTO public.messages (id, conversation_id, role, content, content_type)
-            VALUES ($1::uuid, $2::uuid, 'user', $3, $4)
-            """,
-            user_msg_id,
-            coerce_uuid(conversation_id),
-            body.content,
-            body.content_type,
-        )
+        if not career_interview_mode:
+            await _persist_user_message(
+                db,
+                conversation_id=coerce_uuid(conversation_id),
+                content=body.content,
+                content_type=body.content_type,
+            )
 
         career_path_row = await CareerPathService.get_latest(db, candidate_id)
         career_path_prioritized = (career_path_row or {}).get("prioritized_title") or None
@@ -823,29 +1053,23 @@ async def send_message(
             else []
         )
 
-        last_assistant_row = await db.fetchrow(
-            """
-            SELECT content FROM public.messages
-            WHERE conversation_id = $1::uuid AND role = 'assistant'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            coerce_uuid(conversation_id),
-        )
-        recent_assistant = last_assistant_row["content"] if last_assistant_row else None
+        recent_assistant = await load_recent_ordinary_assistant(db, coerce_uuid(conversation_id))
 
-        career_path_just_prioritized = await try_apply_career_path_selection(
-            db,
-            candidate_id,
-            body.content,
-            recent_assistant_message=recent_assistant,
-        )
+        career_path_just_prioritized = None
+        if turn_routing.normal_routing_enabled:
+            career_path_just_prioritized = await try_apply_career_path_selection(
+                db,
+                candidate_id,
+                body.content,
+                recent_assistant_message=recent_assistant,
+            )
         if career_path_just_prioritized:
             career_path_prioritized = career_path_just_prioritized
             career_path_pending = []
             clear_session_tool_cache(conversation_id, "job_search")
 
-        user_intent = _detect_likely_intent(body.content)
+        user_intent = turn_routing.user_intent
+        match_explanation_job_id = _match_explanation_job_id(body, user_intent)
         wants_jobs = user_intent == "job_search" or bool(career_path_just_prioritized)
         prefetched_jobs: list[dict] = []
         if wants_jobs and user_intent != "job_search":
@@ -853,25 +1077,27 @@ async def send_message(
         if wants_jobs:
             await _enqueue_background_match_embed(db, candidate_id)
 
-        search_title = resolve_job_search_query(
-            body.content,
-            user_intent=user_intent,
-            career_path=career_path_row,
-            prioritized_title=career_path_prioritized,
-            just_prioritized=career_path_just_prioritized,
-            current_title=(
-                str(cand_prefs["current_title"]).strip()
-                if cand_prefs and cand_prefs.get("current_title")
-                else None
-            ),
-            looking_for=(
-                str(cand_prefs["looking_for"]).strip()
-                if cand_prefs and cand_prefs.get("looking_for")
-                else None
-            ),
-        )
+        search_title = None
+        if turn_routing.normal_routing_enabled:
+            search_title = resolve_job_search_query(
+                body.content,
+                user_intent=user_intent,
+                career_path=career_path_row,
+                prioritized_title=career_path_prioritized,
+                just_prioritized=career_path_just_prioritized,
+                current_title=(
+                    str(cand_prefs["current_title"]).strip()
+                    if cand_prefs and cand_prefs.get("current_title")
+                    else None
+                ),
+                looking_for=(
+                    str(cand_prefs["looking_for"]).strip()
+                    if cand_prefs and cand_prefs.get("looking_for")
+                    else None
+                ),
+            )
         search_city: str | None = None
-        fresh_jobs = wants_fresh_job_results(body.content)
+        fresh_jobs = turn_routing.normal_routing_enabled and wants_fresh_job_results(body.content)
         exclude_job_ids: list[str] = []
         if fresh_jobs:
             clear_session_tool_cache(conversation_id, "job_search")
@@ -902,17 +1128,10 @@ async def send_message(
         # Take the MOST RECENT 50 turns (not the oldest), then restore chronological
         # order. Older context is preserved in the rolling memory summary, so a long
         # conversation never loses its latest turns to the window.
-        history = await db.fetch(
-            """
-            SELECT role, content FROM (
-                SELECT role, content, created_at FROM public.messages
-                WHERE conversation_id = $1::uuid
-                ORDER BY created_at DESC
-                LIMIT 50
-            ) recent
-            ORDER BY created_at ASC
-            """,
+        history = await load_prompt_history(
+            db,
             coerce_uuid(conversation_id),
+            voice_session_id=(body.voice_session_id if career_interview_mode else None),
         )
 
     # Long threads: keep only the latest turns in the LLM window. Older context
@@ -947,17 +1166,29 @@ async def send_message(
         "profile_completeness": profile_completeness,
         "prefetched_jobs": prefetched_jobs if include_prefetch else [],
         "candidate_display_name": display_name,
-        "career_path_prioritized_title": career_path_prioritized,
-        "career_path_just_prioritized": career_path_just_prioritized,
-        "career_path_pending_options": career_path_pending,
+        "career_path_prioritized_title": (
+            career_path_prioritized if not career_interview_mode else None
+        ),
+        "career_path_just_prioritized": (
+            career_path_just_prioritized if not career_interview_mode else None
+        ),
+        "career_path_pending_options": career_path_pending if not career_interview_mode else [],
+        "career_interview_mode": career_interview_mode,
+        "career_interview_focus": career_interview_turn.focus if career_interview_turn else None,
+        "career_interview_prompt_hint": (
+            career_interview_turn.prompt_hint if career_interview_turn else None
+        ),
+        "career_interview_should_wrap": (
+            career_interview_turn.should_wrap if career_interview_turn else False
+        ),
     }
 
     graph = get_aarya_graph(settings)
     voice_mode = body.content_type == "voice"
+    assistant_message_id = uuid.uuid4()
+    message_voice_session_id = body.voice_session_id if career_interview_mode else None
     title_hint = body.content[:60]
-    application_kit_job_ids = (
-        _extract_application_kit_job_ids(body.content) if user_intent == "job_application" else []
-    )
+    application_kit_job_ids = turn_routing.application_kit_job_ids
 
     logger.info(
         "aarya_turn_start",
@@ -968,6 +1199,7 @@ async def send_message(
 
     async def event_stream() -> AsyncIterator[str]:
         full_response = ""
+        assistant_reply_persisted = False
         last_msg_id: str | None = None
         stream_jobs = list(prefetched_jobs)
         deterministic_job_reply: str | None = None
@@ -1071,6 +1303,41 @@ async def send_message(
                     )
             if include_prefetch and stream_jobs:
                 yield sse_jobs(stream_jobs)
+            if match_explanation_job_id:
+                yield sse_status(
+                    tool_status_label("get_match_score", voice_mode=voice_mode),
+                    spoken_filler=(
+                        tool_status_spoken_filler("get_match_score") if voice_mode else None
+                    ),
+                    eta_sec=tool_status_eta("get_match_score"),
+                    hinglish_hint=hinglish,
+                )
+                async with pool.acquire() as db:
+                    match_result = await aarya_tools.get_match_score(
+                        db,
+                        str(current_user["id"]),
+                        conversation_id,
+                        match_explanation_job_id,
+                    )
+                full_response = _build_match_explanation_reply(match_result)
+                yield sse_text(full_response)
+                try:
+                    await _persist_assistant_reply(
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        assistant_message_id=assistant_message_id,
+                        voice_session_id=message_voice_session_id,
+                    )
+                except Exception as save_exc:
+                    logger.error(
+                        "assistant_message_save_failed",
+                        error=str(save_exc),
+                        conversation_id=conversation_id,
+                    )
+                yield sse_done()
+                return
             if application_kit_job_ids:
                 yield sse_status(
                     tool_status_label("prepare_application_kit", voice_mode=voice_mode),
@@ -1080,20 +1347,13 @@ async def send_message(
                     eta_sec=tool_status_eta("prepare_application_kit"),
                     hinglish_hint=hinglish,
                 )
-                from hireloop_api.services.background_jobs import APPLICATION_KIT, enqueue_job
-
                 async with pool.acquire() as db:
-                    for job_id in application_kit_job_ids:
-                        await enqueue_job(
-                            db,
-                            kind=APPLICATION_KIT,
-                            payload={
-                                "candidate_id": candidate_id,
-                                "job_id": job_id,
-                            },
-                            idempotency_key=f"application_kit:{candidate_id}:{job_id}",
-                            max_attempts=3,
-                        )
+                    await _enqueue_chat_application_kits(
+                        db,
+                        user_id=str(current_user["id"]),
+                        candidate_id=str(candidate_id),
+                        job_ids=application_kit_job_ids,
+                    )
                 full_response = (
                     "I'm building your application kit in the background — "
                     "I'll add the cards here as soon as they're ready. "
@@ -1102,7 +1362,12 @@ async def send_message(
                 yield sse_text(full_response)
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        assistant_message_id=assistant_message_id,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1117,7 +1382,12 @@ async def send_message(
                 yield sse_text(deterministic_job_reply)
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        assistant_message_id=assistant_message_id,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1194,8 +1464,14 @@ async def send_message(
             if full_response:
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        assistant_message_id=assistant_message_id,
+                        voice_session_id=message_voice_session_id,
                     )
+                    assistant_reply_persisted = True
                 except Exception as save_exc:
                     logger.error(
                         "assistant_message_save_failed",
@@ -1203,6 +1479,13 @@ async def send_message(
                         conversation_id=conversation_id,
                     )
 
+            completion_event = career_interview_completion_event(
+                career_interview_mode=career_interview_mode,
+                should_wrap=(career_interview_turn.should_wrap if career_interview_turn else False),
+                reply_persisted=assistant_reply_persisted,
+            )
+            if completion_event:
+                yield completion_event
             yield sse_done()
 
         except Exception as exc:
@@ -1210,7 +1493,12 @@ async def send_message(
             if full_response:
                 try:
                     await _persist_assistant_reply(
-                        settings, conversation_id, full_response, title_hint
+                        settings,
+                        conversation_id,
+                        full_response,
+                        title_hint,
+                        assistant_message_id=assistant_message_id,
+                        voice_session_id=message_voice_session_id,
                     )
                 except Exception as save_exc:
                     logger.error(
@@ -1235,7 +1523,12 @@ async def send_message(
         # After the reply is fully streamed, remember this exchange: extract
         # profile facts (newer-wins) + refresh the rolling cross-conversation
         # memory. Runs on its own pooled connection and never raises.
-        background=BackgroundTask(run_memory_update, settings, candidate_id, conversation_id),
+        background=_memory_update_background(
+            settings=settings,
+            candidate_id=candidate_id,
+            conversation_id=conversation_id,
+            career_interview_mode=career_interview_mode,
+        ),
     )
 
 
@@ -1254,7 +1547,10 @@ async def get_messages(
         FROM public.messages m
         JOIN public.conversations c ON c.id = m.conversation_id
         JOIN public.candidates ca ON ca.id = c.candidate_id
-        WHERE m.conversation_id = $1::uuid AND ca.user_id = $2 AND c.deleted_at IS NULL
+        WHERE m.conversation_id = $1::uuid
+          AND ca.user_id = $2
+          AND c.deleted_at IS NULL
+          AND m.voice_session_id IS NULL
         ORDER BY m.created_at ASC
         LIMIT $3 OFFSET $4
         """,
@@ -1292,7 +1588,9 @@ async def get_actions(
     last_user_at = await db.fetchval(
         """
         SELECT created_at FROM public.messages
-        WHERE conversation_id = $1::uuid AND role = 'user'
+        WHERE conversation_id = $1::uuid
+          AND role = 'user'
+          AND voice_session_id IS NULL
         ORDER BY created_at DESC
         LIMIT 1
         """,

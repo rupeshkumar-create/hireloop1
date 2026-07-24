@@ -16,7 +16,7 @@ from hireloop_api.services.apify.sample_jobs import SAMPLE_RAW_ITEMS, sample_job
 def test_sample_records_are_valid_jobs() -> None:
     recs = sample_job_records()
     assert len(recs) == len(SAMPLE_RAW_ITEMS) >= 10
-    assert all(r.country_code in ("IN", "US", "GB") for r in recs)
+    assert all(r.country_code == "IN" for r in recs)
     assert all(r.title for r in recs)
     assert all(r.apify_job_id.startswith("gj_gj_sample_") for r in recs)
     # Skill extraction populated most roles (the matching signal).

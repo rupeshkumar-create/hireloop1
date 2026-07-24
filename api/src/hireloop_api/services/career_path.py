@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -29,6 +30,17 @@ from hireloop_api.markets import MARKET_LABELS, normalize_market
 logger = structlog.get_logger()
 
 _inflight_path_builds: set[str] = set()
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCareerPath:
+    """Provider result ready for a transaction-bound database insert."""
+
+    id: uuid.UUID
+    parsed: dict[str, Any]
+    target_locations: list[str]
+    model: str
+
 
 _SYSTEM_PROMPT_TEMPLATE = """You are Aarya, a career strategist for professionals in {market_label}.
 
@@ -84,11 +96,7 @@ Rules:
 def build_career_path_system_prompt(market: str | None = None) -> str:
     m = normalize_market(market)
     market_label = MARKET_LABELS.get(m, "India")
-    board_phrase = {
-        "IN": "Indian job-board titles",
-        "US": "US job-board titles",
-        "GB": "UK job-board titles",
-    }.get(m, f"{market_label} job-board titles")
+    board_phrase = "Indian job-board titles"
     return _SYSTEM_PROMPT_TEMPLATE.replace("{market_label}", market_label).replace(
         "{job_board_phrase}", board_phrase
     )
@@ -128,7 +136,7 @@ async def expand_similar_titles(
 
     prompt = (
         "List 4-6 alternative job titles that mean the same role as "
-        f'"{title}" on major job boards (India/US/UK). Return ONLY real, '
+        f'"{title}" on major job boards in India. Return ONLY real, '
         "searchable posted titles people hire for (e.g. 'Customer Success "
         "Manager', 'Backend Engineer'). Never skills, keywords, soft skills, "
         "or marketing phrases. Return ONLY a JSON array of strings."
@@ -250,6 +258,17 @@ class CareerPathService:
         candidate_id: str,
         settings: Settings,
     ) -> dict[str, Any]:
+        prepared = await CareerPathService.prepare(pool, candidate_id, settings)
+        async with pool.acquire() as db:
+            return await CareerPathService.persist(db, candidate_id, prepared)
+
+    @staticmethod
+    async def prepare(
+        pool: asyncpg.Pool,
+        candidate_id: str,
+        settings: Settings,
+    ) -> PreparedCareerPath:
+        """Compute a path without writing the generated artifact."""
         async with pool.acquire() as db:
             profile = await CareerPathService._load_profile(db, candidate_id)
         if profile is None:
@@ -273,15 +292,12 @@ class CareerPathService:
             profile.get("career_intelligence") or {},
         )
         if intel_path:
-            target_locations = _derive_locations(profile)
-            async with pool.acquire() as db:
-                return await CareerPathService._save(
-                    db,
-                    candidate_id,
-                    intel_path,
-                    target_locations,
-                    "career_intelligence",
-                )
+            return PreparedCareerPath(
+                id=uuid.uuid4(),
+                parsed=intel_path,
+                target_locations=_derive_locations(profile),
+                model="career_intelligence",
+            )
 
         model = settings.openrouter_primary_model
         parsed: dict[str, Any] | None = None
@@ -296,9 +312,28 @@ class CareerPathService:
             parsed = _fallback_path(profile)
             model = "fallback"
 
-        target_locations = _derive_locations(profile)
-        async with pool.acquire() as db:
-            return await CareerPathService._save(db, candidate_id, parsed, target_locations, model)
+        return PreparedCareerPath(
+            id=uuid.uuid4(),
+            parsed=parsed,
+            target_locations=_derive_locations(profile),
+            model=model,
+        )
+
+    @staticmethod
+    async def persist(
+        db: asyncpg.Connection,
+        candidate_id: str,
+        prepared: PreparedCareerPath,
+    ) -> dict[str, Any]:
+        """Insert a prepared path on the caller-owned completion transaction."""
+        return await CareerPathService._save(
+            db,
+            candidate_id,
+            prepared.parsed,
+            prepared.target_locations,
+            prepared.model,
+            path_id=prepared.id,
+        )
 
     @staticmethod
     async def get_latest(
@@ -472,18 +507,21 @@ class CareerPathService:
         parsed: dict[str, Any],
         target_locations: list[str],
         model: str,
+        *,
+        path_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         steps = _clean_steps(parsed.get("steps"))
         target_titles = _clean_titles(parsed.get("target_titles"))
         row = await db.fetchrow(
             """
             INSERT INTO public.career_paths
-              (candidate_id, "current_role", summary, steps, target_titles,
+              (id, candidate_id, "current_role", summary, steps, target_titles,
                target_locations, model)
-            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::text[], $6::text[], $7)
+            VALUES ($1, $2::uuid, $3, $4, $5::jsonb, $6::text[], $7::text[], $8)
             RETURNING id, "current_role", summary, steps, target_titles,
                       target_locations, model, created_at, updated_at
             """,
+            path_id or uuid.uuid4(),
             uuid.UUID(candidate_id),
             (parsed.get("current_role") or None),
             (parsed.get("summary") or None),

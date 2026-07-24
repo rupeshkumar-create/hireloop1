@@ -35,6 +35,8 @@ const STATUS_META: Record<
   drafting: { tone: "accent", label: "Drafting email", Icon: Clock },
   draft_ready: { tone: "accent", label: "Email drafted", Icon: Clock },
   sent: { tone: "strong", label: "Intro sent", Icon: CheckCircle },
+  opened: { tone: "strong", label: "Opened", Icon: CheckCircle },
+  replied: { tone: "strong", label: "Replied", Icon: CheckCircle },
   accepted: { tone: "strong", label: "Accepted", Icon: CheckCircle },
   declined: { tone: "muted", label: "Declined", Icon: XCircle },
   expired: { tone: "muted", label: "Expired", Icon: XCircle },
@@ -244,6 +246,20 @@ export function IntrosList({ variant = "page", className }: IntrosListProps) {
                       {meta.label}
                     </Badge>
                   </div>
+                  {(intro.followup_ready || intro.thankyou_ready) && (
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {intro.followup_ready && (
+                        <Badge tone="accent" className="text-[10px]">
+                          Follow-up ready
+                        </Badge>
+                      )}
+                      {intro.thankyou_ready && (
+                        <Badge tone="accent" className="text-[10px]">
+                          Thank-you ready
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                   {intro.company_name && (
                     <p className="text-micro text-ink-500 truncate">
                       {intro.company_name}

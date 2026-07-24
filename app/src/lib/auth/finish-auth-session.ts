@@ -33,14 +33,23 @@ export async function finishAuthSession(
     });
   } catch (err) {
     if (err instanceof Error && err.name === "TimeoutError") {
-      throw new ApiUnreachableError(
-        base,
-        new Error(
+      throw new ApiUnreachableError({
+        path: "/api/v1/auth/bootstrap",
+        reason: "timeout",
+        timeoutMs: BOOTSTRAP_TIMEOUT_MS,
+        baseUrl: base,
+        cause: new Error(
           "Account setup timed out — the API may be unable to reach the database. Try again in a moment.",
         ),
-      );
+      });
     }
-    throw new ApiUnreachableError(base, err);
+    throw new ApiUnreachableError({
+      path: "/api/v1/auth/bootstrap",
+      reason: "network",
+      timeoutMs: BOOTSTRAP_TIMEOUT_MS,
+      baseUrl: base,
+      cause: err,
+    });
   }
 
   const data = (await res.json().catch(() => ({}))) as {

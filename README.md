@@ -1,6 +1,6 @@
 # Hireschema
 
-**Hireschema** — AI recruiting platform for India, the US, and the UK. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
+**Hireschema** — AI recruiting platform for India. Aarya (candidate AI) + Nitya (recruiter AI) powered by a shared Postgres candidate graph.
 
 > Replicating the Jack & Jill model (Tinker Tailor Talent, London) for the Indian market — INR, +91-only, ap-south-1, DPDP-compliant.
 
@@ -99,13 +99,13 @@ Current phase: **P01 — Repo & CI scaffold** `in_progress`
 | WhatsApp | MSG91 |
 | Infra | AWS ap-south-1, ECS Fargate, Cloudflare WAF |
 
-## Multi-region marketplace (global)
+## India-only marketplace (MVP)
 
-Candidates and jobs are scoped by `market` (12 supported ISO countries):
-- Phone OTP: India (+91) via MSG91 only; optional in Settings
-- Salaries in local currency (INR, USD, GBP, EUR, AUD, CAD, CHF, AED, SGD)
-- Job visibility: onsite = same country; remote = `allowed_regions` or worldwide
-- `ENABLED_MARKETS` controls per-region job ingest on the API
+Candidates, recruiters, and jobs are scoped to India (`market = IN`):
+- Phone OTP: +91 via MSG91 only
+- Salaries in INR (LPA)
+- Job visibility: onsite = India; remote = `allowed_regions` includes IN or WORLD
+- `ENABLED_MARKETS=IN` — job ingest is India-only
 
 ## License
 

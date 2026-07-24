@@ -147,7 +147,7 @@ async def bootstrap_candidate_public_profile(
     user_id: uuid.UUID,
     display_name: str | None,
 ) -> str | None:
-    """Ensure a slug exists when public sharing is enabled (default for new candidates)."""
+    """Ensure a slug exists only after the candidate explicitly enables sharing."""
     row = await db.fetchrow(
         """
         SELECT public_profile_enabled, hide_contact_public, public_slug
@@ -167,13 +167,6 @@ async def bootstrap_candidate_public_profile(
             candidate_id,
             display_name=display_name,
             hide_contact=hide_contact,
-        )
-        await db.execute(
-            """
-            INSERT INTO public.consent_log (user_id, purpose, granted)
-            VALUES ($1::uuid, 'public_profile_publish', TRUE)
-            """,
-            user_id,
         )
     return slug
 

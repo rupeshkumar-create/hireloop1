@@ -1,6 +1,6 @@
 /**
- * Hireschema Marketing Site Tailwind config — follows DESIGN.md (repo root).
- * Identical token set to app/. Marketing pages use the same primitives.
+ * Hireschema Marketing Site Tailwind config — follows DESIGN.md v2 (repo root).
+ * Dark charcoal + lime. Ink scale inverted for dark surfaces.
  */
 import type { Config } from "tailwindcss";
 
@@ -19,21 +19,21 @@ const config: Config = {
       white: "#FFFFFF",
       black: "#000000",
       ink: {
-        50:  "#F1F1EE",
-        100: "#E6E6E4",
-        200: "#D4D4D0",
-        300: "#B5B5BA",
-        400: "#8E8E94",
-        500: "#6B6B72",
-        600: "#4A4A50",
-        700: "#36363B",
-        800: "#1F1F23",
-        900: "#0E0E10",
+        50:  "#1B1B1B",
+        100: "#2A2A2A",
+        200: "#333333",
+        300: "#4D4D4D",
+        400: "#6B6B6B",
+        500: "#A3A3A3",
+        600: "#C4C4C4",
+        700: "#E0E0E0",
+        800: "#F0F0F0",
+        900: "#FAFAFA",
       },
       paper: {
-        DEFAULT: "#FAFAF7",
-        0:       "#FAFAF7",
-        1:       "#FFFFFF",
+        DEFAULT: "#141414",
+        0:       "#141414",
+        1:       "#1C1C1C",
       },
       accent: {
         DEFAULT: "#9FE870",
@@ -42,8 +42,8 @@ const config: Config = {
         ring:    "rgba(159, 232, 112, 0.30)",
       },
       destructive: {
-        DEFAULT: "#B91C1C",
-        bg:      "#FEE2E2",
+        DEFAULT: "#F76D6D",
+        bg:      "rgba(247, 109, 109, 0.14)",
       },
     },
     extend: {
@@ -72,9 +72,9 @@ const config: Config = {
         full: "0",
       },
       boxShadow: {
-        "1": "0 1px 2px rgba(14,14,16,0.04), 0 1px 1px rgba(14,14,16,0.02)",
-        "2": "0 4px 16px rgba(14,14,16,0.06), 0 2px 4px rgba(14,14,16,0.04)",
-        focus: "0 0 0 2px #FAFAF7, 0 0 0 4px #9FE870",
+        "1": "0 1px 2px rgba(0,0,0,0.4), 0 1px 1px rgba(0,0,0,0.2)",
+        "2": "0 4px 16px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3)",
+        focus: "0 0 0 2px #141414, 0 0 0 4px #9FE870",
       },
       transitionTimingFunction: {
         "out-soft": "cubic-bezier(0.16, 1, 0.3, 1)",
