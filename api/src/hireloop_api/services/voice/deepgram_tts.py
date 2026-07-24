@@ -61,7 +61,7 @@ async def synthesize_speech(
     # encoding=mp3 → a compact, browser-friendly audio container.
     params = {"model": model, "encoding": "mp3"}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             DEEPGRAM_SPEAK_URL,
             headers=headers,

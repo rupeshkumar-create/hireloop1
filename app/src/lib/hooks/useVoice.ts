@@ -98,6 +98,9 @@ async function resolveSttMode(): Promise<VoiceMode> {
 
 export type VoiceSupportStatus = "supported" | "stt_only" | "tts_only" | "unsupported";
 
+/** R16 #17 — Deepgram TTS must not hang longer than 10s. */
+export const DEEPGRAM_TTS_TIMEOUT_MS = 10_000;
+
 /** Returns what voice features are available in this browser. */
 export function getVoiceSupportStatus(): VoiceSupportStatus {
   if (typeof window === "undefined") return "unsupported";
@@ -106,7 +109,8 @@ export function getVoiceSupportStatus(): VoiceSupportStatus {
   // STT works via either the MediaRecorder→Deepgram upload path or the native
   // Web Speech API (used as a no-key fallback).
   const hasSTT = hasMediaRecorder || getSpeechRecognitionCtor() !== null;
-  const hasTTS = !!window.speechSynthesis;
+  // TTS: Deepgram Aura plays via HTMLAudioElement; browser SpeechSynthesis is fallback.
+  const hasTTS = typeof Audio !== "undefined" || !!window.speechSynthesis;
   if (hasSTT && hasTTS) return "supported";
   if (hasSTT) return "stt_only";
   if (hasTTS) return "tts_only";
@@ -209,6 +213,7 @@ export function useVoice() {
   const liveWsRef         = useRef<WebSocket | null>(null);
   const captureCtxRef     = useRef<AudioContext | null>(null);
   const processorRef      = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef    = useRef<AudioWorkletNode | null>(null);
   const liveFinalRef      = useRef<string>(""); // accumulated final segments
 
   // ── Live mic level meter ──────────────────────────────────────────────────
@@ -455,6 +460,16 @@ export function useVoice() {
 
   /** Tear down live capture + WS, reset state, resolve any pending stop. */
   const finalizeLive = useCallback(() => {
+    const worklet = workletNodeRef.current;
+    if (worklet) {
+      try {
+        worklet.port.onmessage = null;
+        worklet.disconnect();
+      } catch {
+        /* ignore */
+      }
+      workletNodeRef.current = null;
+    }
     const processor = processorRef.current;
     if (processor) {
       try {
@@ -588,24 +603,10 @@ export function useVoice() {
         settled = true;
         clearTimeout(openTimer);
 
-        const source = ctx.createMediaStreamSource(stream);
-        const processor = ctx.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
-        // Route through a muted gain so onaudioprocess fires without echoing
-        // the mic back to the speakers.
-        const mute = ctx.createGain();
-        mute.gain.value = 0;
-        source.connect(processor);
-        processor.connect(mute);
-        mute.connect(ctx.destination);
-
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0);
-          // Live waveform level (RMS).
+        const shipPcm = (input: Float32Array) => {
           let sum = 0;
           for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
           setAudioLevel(Math.min(1, Math.sqrt(sum / input.length) * 3.2));
-          // Float32 [-1,1] → linear16 PCM, then ship to the proxy.
           if (ws.readyState === WebSocket.OPEN) {
             const pcm = new Int16Array(input.length);
             for (let i = 0; i < input.length; i++) {
@@ -616,9 +617,43 @@ export function useVoice() {
           }
         };
 
-        setInterimTranscript("");
-        setIsRecording(true);
-        resolveStart();
+        const startScriptProcessorFallback = () => {
+          const source = ctx.createMediaStreamSource(stream);
+          const processor = ctx.createScriptProcessor(4096, 1, 1);
+          processorRef.current = processor;
+          const mute = ctx.createGain();
+          mute.gain.value = 0;
+          source.connect(processor);
+          processor.connect(mute);
+          mute.connect(ctx.destination);
+          processor.onaudioprocess = (e) => {
+            shipPcm(e.inputBuffer.getChannelData(0));
+          };
+          setInterimTranscript("");
+          setIsRecording(true);
+          resolveStart();
+        };
+
+        const source = ctx.createMediaStreamSource(stream);
+        void ctx.audioWorklet
+          .addModule("/worklets/pcm-capture-processor.js")
+          .then(() => {
+            if (liveWsRef.current !== ws) return;
+            const worklet = new AudioWorkletNode(ctx, "pcm-capture-processor");
+            workletNodeRef.current = worklet;
+            worklet.port.onmessage = (ev: MessageEvent<{ samples?: Float32Array }>) => {
+              const samples = ev.data?.samples;
+              if (samples) shipPcm(samples);
+            };
+            source.connect(worklet);
+            setInterimTranscript("");
+            setIsRecording(true);
+            resolveStart();
+          })
+          .catch(() => {
+            // AudioWorklet unavailable — keep live STT via deprecated ScriptProcessor.
+            startScriptProcessorFallback();
+          });
       };
 
       ws.onmessage = (ev) => {
@@ -783,8 +818,7 @@ export function useVoice() {
    */
   const speakDeepgram = useCallback(
     async (spoken: string, playbackRate = 1.0, isCurrent?: () => boolean): Promise<void> => {
-    // Deepgram Aura TTS — keep a purpose-specific deadline (server also guards
-    // audio synthesis); do not use the generic AI-job timeout narrative.
+    // Deepgram Aura TTS — R16 #17: hard 10s guard on fetch + playback.
     const res = await apiAuthFetch(
       "/api/v1/voice/tts",
       {
@@ -792,7 +826,7 @@ export function useVoice() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: spoken }),
       },
-      { timeoutMs: 30_000 },
+      { timeoutMs: DEEPGRAM_TTS_TIMEOUT_MS },
     );
     if (!res.ok) throw new Error(`TTS ${res.status}`);
     const blob = await res.blob();
@@ -807,9 +841,11 @@ export function useVoice() {
       audio.playbackRate = playbackRate;
       ttsAudioRef.current = audio;
       let settled = false;
+      let playbackTimer: ReturnType<typeof setTimeout> | null = null;
       const settle = (options?: { error?: Error; stopAudio?: boolean }) => {
         if (settled) return;
         settled = true;
+        if (playbackTimer) clearTimeout(playbackTimer);
         audio.onplay = null;
         audio.onended = null;
         audio.onerror = null;
@@ -834,6 +870,7 @@ export function useVoice() {
       const cancelPlayback = () => settle({ stopAudio: true });
       cancelTtsPlaybackRef.current?.();
       cancelTtsPlaybackRef.current = cancelPlayback;
+      playbackTimer = setTimeout(() => settle({ stopAudio: true }), DEEPGRAM_TTS_TIMEOUT_MS);
       audio.onplay = () => {
         if (voiceMountedRef.current) setIsPlaying(true);
       };
@@ -973,6 +1010,12 @@ export function useVoice() {
       meterStreamRef.current?.getTracks().forEach((t) => t.stop());
       meterStreamRef.current = null;
       // Live streaming teardown (no setState — component is unmounting).
+      try {
+        workletNodeRef.current?.disconnect();
+      } catch {
+        /* ignore */
+      }
+      workletNodeRef.current = null;
       try {
         processorRef.current?.disconnect();
       } catch {
