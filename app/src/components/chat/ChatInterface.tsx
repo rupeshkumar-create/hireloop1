@@ -51,7 +51,9 @@ import {
   Loader2,
   Mic,
   Paperclip,
+  Phone,
   Search,
+  Settings,
   Sparkles,
   Send,
   Square,
@@ -92,9 +94,15 @@ import {
   StaleSessionError,
   sanitizeChatError,
   storeAaryaSession,
+  storeVoiceSendOnPause,
   streamAaryaMessage,
   type AaryaStreamCallbacks,
 } from "@/lib/chat/aaryaStream";
+import { abortActiveTurn, shouldBargeIn } from "@/lib/chat/bargeIn";
+import {
+  MIN_VOICE_CAPTURE_MS,
+  shouldDiscardVoiceCapture,
+} from "@/lib/chat/voiceCapture";
 import {
   readChatCoachSeen,
   readChatReplyMode,
@@ -143,6 +151,7 @@ import {
   type ResumeAnalysis,
 } from "./ChatAnalysisCards";
 import { ChatShell } from "@/components/chat/shell/ChatShell";
+import { ComposerWaveform } from "./ComposerWaveform";
 import { VoiceTranscriptReview } from "./VoiceTranscriptReview";
 import { VoiceDeepDiveModal } from "./VoiceDeepDiveModal";
 import {
@@ -351,7 +360,10 @@ export function ChatInterface({
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyLoadedForRef = useRef<string | null>(null);
   const [streamRecovery, setStreamRecovery] = useState<StreamRecovery | null>(null);
-  const holdActiveRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const streamingContentRef = useRef("");
+  const streamGenerationRef = useRef(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const wasStreamingRef = useRef(false);
   const streamJobsRef = useRef<MatchedJob[]>([]);
   const spokenStreamRef = useRef("");
@@ -479,6 +491,7 @@ export function ChatInterface({
     speakFiller,
     stopSpeaking,
     interimTranscript,
+    audioLevel,
   } = useVoice();
 
   const messagesEndRef  = useRef<HTMLDivElement>(null);
@@ -615,18 +628,8 @@ export function ChatInterface({
     spokenStreamRef.current = "";
   }, [stopSpeaking]);
 
-  const setReplyModeAndPersist = useCallback(
-    (mode: ChatReplyMode) => {
-      voiceRepliesEnabledRef.current = mode === "voice";
-      setReplyMode(mode);
-      storeChatReplyMode(mode);
-      if (mode === "text") interruptSpeech();
-    },
-    [interruptSpeech]
-  );
-
   const cancelRecording = useCallback(async () => {
-    holdActiveRef.current = false;
+    recordingStartedAtRef.current = null;
     setPendingVoiceTranscript(null);
     if (!isRecording) return;
     try {
@@ -636,6 +639,65 @@ export function ChatInterface({
     }
     setVoiceProcessing(false);
   }, [isRecording, stopRecording]);
+
+  const finalizeInterruptedPartial = useCallback(() => {
+    const partial = streamingContentRef.current.trim();
+    if (!partial) {
+      setStreamingContent("");
+      return;
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: partial,
+        content_type: "text",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    streamingContentRef.current = "";
+    setStreamingContent("");
+  }, []);
+
+  const stopGeneration = useCallback(() => {
+    streamGenerationRef.current += 1;
+    abortActiveTurn({ abortRef, interruptSpeech });
+    finalizeInterruptedPartial();
+    sendInFlightRef.current = false;
+    setIsStreaming(false);
+    setThinkingStatus(null);
+  }, [finalizeInterruptedPartial, interruptSpeech]);
+
+  useEffect(() => {
+    streamingContentRef.current = streamingContent;
+  }, [streamingContent]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (isStreamingRef.current || isPlaying || isRecording) {
+        e.preventDefault();
+        if (isRecording) {
+          void cancelRecording();
+        } else {
+          stopGeneration();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cancelRecording, isPlaying, isRecording, stopGeneration]);
+
+  const setReplyModeAndPersist = useCallback(
+    (mode: ChatReplyMode) => {
+      voiceRepliesEnabledRef.current = mode === "voice";
+      setReplyMode(mode);
+      storeChatReplyMode(mode);
+      if (mode === "text") interruptSpeech();
+    },
+    [interruptSpeech]
+  );
 
   const handleComposerFocus = useCallback(() => {
     interruptSpeech();
@@ -1006,8 +1068,25 @@ export function ChatInterface({
 
   const sendMessage = useCallback(
     async (text: string, options: SendOptions = {}) => {
-      if (!text.trim() || isStreaming || sendInFlightRef.current) return;
+      if (!text.trim()) return;
+
+      if (
+        shouldBargeIn({
+          isStreaming: isStreamingRef.current,
+          sendInFlight: sendInFlightRef.current,
+        })
+      ) {
+        streamGenerationRef.current += 1;
+        abortActiveTurn({ abortRef, interruptSpeech });
+        finalizeInterruptedPartial();
+        sendInFlightRef.current = false;
+        setIsStreaming(false);
+        setThinkingStatus(null);
+      }
+
+      if (sendInFlightRef.current) return;
       sendInFlightRef.current = true;
+      const myGeneration = ++streamGenerationRef.current;
 
       interruptSpeech();
       if (isRecording) await cancelRecording();
@@ -1279,7 +1358,15 @@ export function ChatInterface({
           finalize(streamResult.jobs);
         }
       } catch (err) {
-        if ((err as Error).name !== "AbortError") {
+        const aborted =
+          (err as Error).name === "AbortError" ||
+          Boolean(abortRef.current?.signal.aborted) ||
+          myGeneration !== streamGenerationRef.current;
+        if (aborted) {
+          if (accumulated.trim() && !streamFinalized) {
+            finalize();
+          }
+        } else if ((err as Error).name !== "AbortError") {
           const message =
             err instanceof Error && err.message
               ? sanitizeChatError(err.message)
@@ -1306,6 +1393,9 @@ export function ChatInterface({
           }
         }
       } finally {
+        if (myGeneration !== streamGenerationRef.current) {
+          return;
+        }
         sendInFlightRef.current = false;
         setIsStreaming(false);
         setThinkingStatus(null);
@@ -1350,7 +1440,6 @@ export function ChatInterface({
       }
     },
     [
-      isStreaming,
       isRecording,
       speak,
       speakFiller,
@@ -1359,6 +1448,7 @@ export function ChatInterface({
       reportChatJobs,
       interruptSpeech,
       cancelRecording,
+      finalizeInterruptedPartial,
       authUserId,
     ]
   );
@@ -1401,11 +1491,12 @@ export function ChatInterface({
         } else if (!emptySttRetryRef.current) {
           emptySttRetryRef.current = true;
           appendSystemNote("I didn't catch that — listening again…");
+          recordingStartedAtRef.current = Date.now();
           await startRecording();
         } else {
           emptySttRetryRef.current = false;
           appendSystemNote(
-            "I didn't catch that. Tap and hold the mic to try again, or type instead."
+            "I didn't catch that. Tap the mic to try again, or type instead."
           );
         }
       } finally {
@@ -1415,26 +1506,55 @@ export function ChatInterface({
     [appendSystemNote, sendMessage, sendImmediately, startRecording, stopRecording]
   );
 
-  const handleMicToggle = useCallback(async () => {
+  const handleMicClick = useCallback(async () => {
+    if (!VOICE_FEATURE_ENABLED || voiceProcessing || pendingVoiceTranscript) return;
+
+    if (isRecording) {
+      const started = recordingStartedAtRef.current;
+      recordingStartedAtRef.current = null;
+      const elapsed = started ? Date.now() - started : MIN_VOICE_CAPTURE_MS;
+      if (shouldDiscardVoiceCapture(elapsed)) {
+        await cancelRecording();
+        appendSystemNote("Tap again and speak a little longer.");
+        return;
+      }
+      await finishVoiceCapture(sendImmediately);
+      return;
+    }
+
+    if (
+      shouldBargeIn({
+        isStreaming: isStreamingRef.current,
+        sendInFlight: sendInFlightRef.current,
+      })
+    ) {
+      stopGeneration();
+    }
+
+    setReplyModeAndPersist("voice");
+    interruptSpeech();
+    setPendingVoiceTranscript(null);
+    recordingStartedAtRef.current = Date.now();
+    await startRecording();
+  }, [
+    appendSystemNote,
+    cancelRecording,
+    finishVoiceCapture,
+    interruptSpeech,
+    isRecording,
+    pendingVoiceTranscript,
+    sendImmediately,
+    setReplyModeAndPersist,
+    startRecording,
+    stopGeneration,
+    voiceProcessing,
+  ]);
+
+  const cancelMic = useCallback(async () => {
     if (!VOICE_FEATURE_ENABLED || !isRecording) return;
     interruptSpeech();
     await cancelRecording();
   }, [cancelRecording, interruptSpeech, isRecording]);
-
-  const handleMicHoldStart = useCallback(async () => {
-    if (!VOICE_FEATURE_ENABLED || isStreaming || voiceProcessing) return;
-    holdActiveRef.current = true;
-    interruptSpeech();
-    setPendingVoiceTranscript(null);
-    await startRecording();
-  }, [interruptSpeech, isStreaming, startRecording, voiceProcessing]);
-
-  const handleMicHoldEnd = useCallback(async () => {
-    if (!holdActiveRef.current) return;
-    holdActiveRef.current = false;
-    if (!isRecording) return;
-    await finishVoiceCapture(sendImmediately);
-  }, [finishVoiceCapture, isRecording, sendImmediately]);
 
   const sendVoiceTranscript = useCallback(() => {
     if (!pendingVoiceTranscript?.trim()) return;
@@ -1758,7 +1878,7 @@ export function ChatInterface({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (isStreaming || composerInputDisabled) return;
+      if (composerInputDisabled) return;
       void sendMessage(input);
     }
   };
@@ -1967,7 +2087,7 @@ export function ChatInterface({
         {showCoachMark && (
           <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2.5">
             <p className="text-micro text-ink-700 leading-relaxed">
-              Type or hold the mic to talk with Aarya. Your job matches are
+              Type or tap the mic to talk with Aarya. Your job matches are
               always in <span className="font-medium">Matches</span> on the
               left; chat never blocks them.
             </p>
@@ -1984,26 +2104,47 @@ export function ChatInterface({
           </div>
         )}
 
-        {(isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
+        {(isStreaming || isRecording || voiceProcessing || isPlaying || pendingVoiceTranscript) && (
           <div className="flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-micro font-medium text-ink-800">
-                {isRecording
-                  ? "Listening — release mic to send, or tap below to type"
-                  : voiceProcessing
-                    ? "Processing voice…"
-                    : isPlaying
-                      ? "Speaking…"
-                      : "Review your message"}
-              </p>
-              {isRecording && interimTranscript && (
-                <p className="text-micro text-ink-600 truncate mt-0.5">
-                  {interimTranscript}
+            <div className="min-w-0 flex-1 flex items-center gap-2">
+              <ComposerWaveform
+                level={audioLevel}
+                active={isRecording || isPlaying}
+                mode={isRecording ? "listening" : "speaking"}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-micro font-medium text-ink-800">
+                  {isRecording
+                    ? "Listening — tap mic again to send"
+                    : voiceProcessing
+                      ? "Processing voice…"
+                      : isStreaming
+                        ? "Aarya is replying…"
+                        : isPlaying
+                          ? "Speaking…"
+                          : "Review your message"}
                 </p>
-              )}
+                {isRecording && interimTranscript && (
+                  <p
+                    className="text-micro text-ink-600 truncate mt-0.5"
+                    aria-live="polite"
+                  >
+                    {interimTranscript}
+                  </p>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {isPlaying && (
+              {isStreaming && (
+                <button
+                  type="button"
+                  onClick={stopGeneration}
+                  className="text-micro text-ink-700 underline underline-offset-2"
+                >
+                  Stop
+                </button>
+              )}
+              {isPlaying && !isStreaming && (
                 <button
                   type="button"
                   onClick={interruptSpeech}
@@ -2015,7 +2156,7 @@ export function ChatInterface({
               {isRecording && (
                 <button
                   type="button"
-                  onClick={() => void handleMicToggle()}
+                  onClick={() => void cancelMic()}
                   className="text-micro text-ink-700 underline underline-offset-2"
                 >
                   Cancel
@@ -2066,13 +2207,13 @@ export function ChatInterface({
                 : pendingVoiceTranscript
                   ? "Edit your voice message above, then send."
                   : isAwaitingDraft
-                    ? "Aarya is thinking…"
+                    ? "Aarya is thinking… send to barge in"
                     : isStreaming
-                      ? "Type your reply — send when Aarya finishes…"
+                      ? "Send to interrupt Aarya…"
                       : "Ask Aarya anything…"
             }
             rows={1}
-            disabled={composerInputDisabled}
+            disabled={composerInputDisabled && !isStreaming}
             className={cn(
               "w-full bg-transparent resize-none text-body text-ink-900",
               "placeholder:text-ink-400 focus:outline-none leading-relaxed",
@@ -2081,22 +2222,103 @@ export function ChatInterface({
           />
 
           <div className="flex items-center justify-between px-3 pb-2 pt-0.5">
-            <button
-              type="button"
-              title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
-              disabled={isUploading || isStreaming}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                BTN_COMPOSER_ICON,
-                (isUploading || isStreaming) && "opacity-40 cursor-not-allowed",
-              )}
-            >
-              {isUploading ? (
-                <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
-              ) : (
-                <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
-              )}
-            </button>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                title={isUploading ? "Uploading resume…" : "Upload resume (PDF or DOCX)"}
+                disabled={isUploading}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  BTN_COMPOSER_ICON,
+                  isUploading && "opacity-40 cursor-not-allowed",
+                )}
+              >
+                {isUploading ? (
+                  <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.5} />
+                )}
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  aria-label="Voice settings"
+                  aria-expanded={settingsOpen}
+                  title="Voice settings"
+                  onClick={() => setSettingsOpen((o) => !o)}
+                  className={BTN_COMPOSER_ICON}
+                >
+                  <Settings className="h-[17px] w-[17px]" strokeWidth={1.5} />
+                </button>
+                {settingsOpen && (
+                  <div
+                    className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-ink-200 bg-paper-0 p-3 shadow-2 z-20 space-y-3"
+                    role="dialog"
+                    aria-label="Voice settings"
+                  >
+                    <div>
+                      <p className="text-micro font-medium text-ink-800 mb-1.5">
+                        After recording
+                      </p>
+                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
+                        <input
+                          type="radio"
+                          name="voice-send-mode"
+                          checked={sendImmediately}
+                          onChange={() => {
+                            storeVoiceSendOnPause(true);
+                            setSendImmediately(true);
+                          }}
+                        />
+                        Send immediately
+                      </label>
+                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
+                        <input
+                          type="radio"
+                          name="voice-send-mode"
+                          checked={!sendImmediately}
+                          onChange={() => {
+                            storeVoiceSendOnPause(false);
+                            setSendImmediately(false);
+                          }}
+                        />
+                        Review before send
+                      </label>
+                    </div>
+                    <div>
+                      <p className="text-micro font-medium text-ink-800 mb-1.5">
+                        Aarya replies
+                      </p>
+                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
+                        <input
+                          type="radio"
+                          name="reply-mode"
+                          checked={replyMode === "voice"}
+                          onChange={() => setReplyModeAndPersist("voice")}
+                        />
+                        Voice
+                      </label>
+                      <label className="flex items-center gap-2 text-micro text-ink-700 py-0.5">
+                        <input
+                          type="radio"
+                          name="reply-mode"
+                          checked={replyMode === "text"}
+                          onChange={() => setReplyModeAndPersist("text")}
+                        />
+                        Text
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-micro text-ink-500 underline"
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -2109,21 +2331,53 @@ export function ChatInterface({
             />
 
             <div className="flex items-center gap-1">
-              {input.trim() && (
+              {VOICE_FEATURE_ENABLED && (
                 <button
                   type="button"
-                  onClick={() => void sendMessage(input)}
-                  disabled={isStreaming || composerInputDisabled}
-                  aria-label={isStreaming ? "Wait for Aarya to finish" : "Send message"}
-                  title={isStreaming ? "Wait for Aarya to finish replying" : undefined}
+                  title="Start 15-min career call"
+                  aria-label="Start career call"
+                  onClick={() => setVoiceDeepDiveOpen(true)}
+                  disabled={isRecording || voiceProcessing}
+                  className={cn(
+                    BTN_COMPOSER_ICON,
+                    (isRecording || voiceProcessing) &&
+                      "opacity-40 cursor-not-allowed",
+                  )}
+                >
+                  <Phone className="h-[17px] w-[17px]" strokeWidth={1.5} />
+                </button>
+              )}
+
+              {(input.trim() || isStreaming) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isStreaming && !input.trim()) {
+                      stopGeneration();
+                      return;
+                    }
+                    void sendMessage(input);
+                  }}
+                  disabled={composerInputDisabled && !isStreaming}
+                  aria-label={
+                    isStreaming && !input.trim()
+                      ? "Stop generation"
+                      : "Send message"
+                  }
+                  title={
+                    isStreaming && !input.trim()
+                      ? "Stop generation"
+                      : undefined
+                  }
                   className={cn(
                     BTN_COMPOSER_SEND,
-                    (isStreaming || composerInputDisabled) &&
+                    composerInputDisabled &&
+                      !isStreaming &&
                       "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
-                  {isStreaming ? (
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+                  {isStreaming && !input.trim() ? (
+                    <Square className="h-3.5 w-3.5" strokeWidth={2} fill="currentColor" />
                   ) : (
                     <Send className="h-4 w-4" strokeWidth={1.5} />
                   )}
@@ -2135,37 +2389,16 @@ export function ChatInterface({
                   type="button"
                   onPointerEnter={() => void preconnectVoicePipeline()}
                   onFocus={() => void preconnectVoicePipeline()}
-                  onPointerDown={(e) => {
-                    if (e.pointerType === "mouse" && e.button !== 0) return;
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                    setReplyModeAndPersist("voice");
-                    void handleMicHoldStart();
-                  }}
-                  onPointerUp={(e) => {
-                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                    }
-                    void handleMicHoldEnd();
-                  }}
-                  onPointerCancel={(e) => {
-                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                    }
-                    void cancelRecording();
-                  }}
-                  disabled={
-                    isStreaming ||
-                    voiceProcessing ||
-                    Boolean(pendingVoiceTranscript)
-                  }
+                  onClick={() => void handleMicClick()}
+                  disabled={voiceProcessing || Boolean(pendingVoiceTranscript)}
                   aria-pressed={isRecording}
-                  aria-label="Hold to talk"
-                  title="Hold to talk, release to send"
+                  aria-label={isRecording ? "Stop recording" : "Start voice message"}
+                  title={isRecording ? "Tap to stop" : "Tap to talk"}
                   className={cn(
                     BTN_COMPOSER_ICON,
                     "h-10 w-10",
                     isRecording && "text-destructive animate-pulse",
-                    (isStreaming || voiceProcessing) &&
+                    voiceProcessing &&
                       "opacity-40 cursor-not-allowed pointer-events-none",
                   )}
                 >
@@ -2180,7 +2413,7 @@ export function ChatInterface({
                   <button
                     type="button"
                     onClick={() => void sendMessage(input)}
-                    disabled={isStreaming}
+                    disabled={!input.trim()}
                     aria-label="Send"
                     className={cn(BTN_COMPOSER_ICON, "opacity-50 cursor-not-allowed")}
                   >
